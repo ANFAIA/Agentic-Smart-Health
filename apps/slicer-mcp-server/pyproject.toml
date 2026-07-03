@@ -1,0 +1,11 @@
+[project]
+name = "slicer-mcp-server"
+version = "0.1.0"
+description = "Servidor MCP para integración con 3D Slicer"
+requires-python = ">=3.11"
+dependencies = [
+    "core-schemas",
+]
+
+[tool.uv.sources]
+core-schemas = { workspace = true }

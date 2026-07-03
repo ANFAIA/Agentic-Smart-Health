@@ -1,0 +1,11 @@
+[project]
+name = "agent-orchestrator"
+version = "0.1.0"
+description = "Orquestador de agentes para Agentic Smart Health"
+requires-python = ">=3.11"
+dependencies = [
+    "core-schemas",
+]
+
+[tool.uv.sources]
+core-schemas = { workspace = true }

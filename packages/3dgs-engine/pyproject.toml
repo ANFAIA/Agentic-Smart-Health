@@ -1,0 +1,6 @@
+[project]
+name = "3dgs-engine"
+version = "0.1.0"
+description = "Motor de renderizado 3D Gaussian Splatting para Agentic Smart Health"
+requires-python = ">=3.11"
+dependencies = []

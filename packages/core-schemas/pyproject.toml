@@ -1,0 +1,8 @@
+[project]
+name = "core-schemas"
+version = "0.1.0"
+description = "Esquemas Pydantic compartidos para Agentic Smart Health"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+]
