@@ -22,7 +22,7 @@ Actualiza este archivo siempre que añadas, modifiques o retires un agente. Las 
 
 | # | Nombre del agente | Rol / Propósito | Herramientas MCP | Reglas de delegación |
 |---|---|---|---|---|
-| — | *(sin agentes registrados aún)* | — | — | — |
+| 1 | research-agent | Agente de investigación autónomo que busca, ingerir y resume literatura científica (3DGS, DICOM, normativas) usando RAG | Ninguna (trabaja con filesystem local) | No requiere aprobación humana; puede delegar en el orquestador para escalar problemas de ingesta |
 
 ---
 
