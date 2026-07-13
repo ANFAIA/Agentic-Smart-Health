@@ -2,7 +2,7 @@
 
 Sistema multiagente para la integración, análisis y representación de datos clínicos dentales heterogéneos sobre un **Digital Twin** del paciente, basado en Gaussian Splatting con atributos clínicos por punto/zona y soporte de series temporales.
 
-> Proyecto open source · Licencia Apache 2.0 · Python ≥ 3.11
+> Proyecto open source · Licencia Apache 2.0 · Python ≥ 3.13
 
 ---
 
@@ -32,11 +32,13 @@ agentic-smart-health/          ← workspace root
 ├── Makefile                   ← comandos de desarrollo
 ├── apps/
 │   ├── agent-orchestrator/    ← orquestador del sistema multiagente
+│   ├── research-agent/        ← agente de investigación (RAG + literatura científica)
 │   └── slicer-mcp-server/     ← servidor MCP para integración con 3D Slicer
 ├── packages/
 │   ├── core-schemas/          ← esquemas Pydantic compartidos
 │   └── 3dgs-engine/           ← motor de renderizado 3D Gaussian Splatting
-├── data/                      ← datos de trabajo (sintéticos / anonimizados)
+├── data/
+│   └── research-agent/        ← knowledge base del agente de investigación
 ├── docs/                      ← documentación (ver nota más abajo)
 ├── notebooks/                 ← experimentación y exploración
 └── tests/                     ← suite de pruebas global
@@ -63,6 +65,31 @@ Servidor **MCP (Model Context Protocol)** que expone una interfaz para la integr
 
 Depende igualmente de `core-schemas` para mantener la coherencia de los datos a través de la interfaz MCP.
 
+### `research-agent`
+
+Agente de investigación autónomo que busca, ingerir y resume literatura científica sobre 3D Gaussian Splatting, el estándar DICOM y normativas clínicas. Construido con Python, Anthropic Claude / Ollama, Qdrant y embeddings locales.
+
+**Funcionalidades principales:**
+- Búsqueda semántica de papers en Semantic Scholar y arXiv
+- Ingesta y indexación de documentos mediante RAG (Qdrant + fastembed)
+- Generación de reportes estructurados en Markdown
+- Soporte para ejecución local con Ollama (gratis, sin API key)
+
+**Modos de ejecución:**
+- `uv run python -m src.main` — Claude con tool calling nativo (requiere API key)
+- `uv run python -m src.main_local` — Ollama local (gratis, 100% privado)
+
+**Estructura:**
+- `src/main.py` — Orquestador CLI con Claude
+- `src/main_local.py` — Variante local con Ollama
+- `src/tools.py` — Herramientas de sistema (sandbox de disco)
+- `src/rag.py` — Motor RAG (Qdrant + fastembed)
+- `src/references.py` — Descubrimiento de papers
+
+No depende de `core-schemas`; mantiene sus propios modelos internos para RAG.
+
+**Nota:** Este agente es un port de [jeicob](https://github.com/lgarbayo/jeicob), adaptado para integrarse en el monorepo.
+
 ---
 
 ## Paquetes compartidos (`packages/`)
@@ -81,7 +108,7 @@ Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implement
 
 ### Requisitos previos
 
-- Python ≥ 3.11
+- Python ≥ 3.13
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado en el sistema
 
 ### Instalación
