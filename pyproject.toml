@@ -6,3 +6,26 @@ requires-python = ">=3.13"
 
 [tool.uv.workspace]
 members = ["apps/*", "packages/*"]
+
+# Herramientas del agente guardián de CI (revisión estática, sin LLM).
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.15",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "data", "notebooks"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = false
+exclude = ['^\.venv/', '^data/', '^notebooks/']

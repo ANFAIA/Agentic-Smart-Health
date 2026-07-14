@@ -86,4 +86,65 @@ Agentes de IA externos utilizados para asistir el desarrollo del proyecto. No fo
 | Herramienta | Rol en el proyecto | Notas |
 |---|---|---|
 | OpenCode / Claude Code | Codificación, refactorización, generación de tests | Integrado en el flujo de trabajo diario |
-| *(otros)* | *(rol)* | *(notas)* |
+| AI Code Reviewer (guardián de CI) | Revisión estática automática de cada PR | Ver ficha detallada abajo |
+
+---
+
+### `ai-code-reviewer` — Agente guardián de CI/CD
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `ai-code-reviewer` |
+| **Tipo** | Agente guardián dev-time (no forma parte del sistema en producción) |
+| **Ubicación** | `.github/workflows/ai-code-review.yml` + `scripts/audit_pr.py` |
+| **Estado** | `active` |
+| **Tecnología** | Revisión **estática, sin LLM**: Ruff + MyPy + auditor de arquitectura propio |
+
+**Rol / Propósito**
+
+> Audita automáticamente cada Pull Request antes del merge para garantizar calidad
+> de código, tipado y cumplimiento de la arquitectura hexagonal del monorepo.
+> Se dispara en los eventos `pull_request` (`opened`, `synchronize`, `reopened`) y
+> revisa **únicamente los archivos Python que toca el PR** (enfocado en el diff).
+
+**Chequeos que ejecuta**
+
+| Chequeo | Herramienta | ¿Bloquea el merge? | Cómo reporta |
+|---|---|---|---|
+| Estilo / lint | `ruff check` | No (informativo) | Anotaciones inline nativas de GitHub |
+| Formato | `ruff format --diff` | No (informativo) | Log del job |
+| Tipos | `mypy` | No (informativo) | Anotaciones inline (`::error`/`::warning`) |
+| **Arquitectura** | `scripts/audit_pr.py` | **Sí** | Comentario de revisión en la línea afectada + resumen |
+
+**Reglas de arquitectura auditadas** (regla → violación que detecta)
+
+1. **Pydantic v2 estricto en `packages/core-schemas`**: prohíbe el shim `pydantic.v1`,
+   los decoradores/estilos de v1 (`@validator`, `@root_validator`, `class Config`) y
+   `BaseSettings` (movido a `pydantic-settings`).
+2. **Sin dependencias cruzadas en `apps/`**: un componente de `apps/` no puede importar
+   el paquete de otro app. El código compartido debe vivir en `packages/`
+   (p. ej. `core-schemas`) y comunicarse mediante sus contratos de datos.
+
+**Permisos (GitHub Actions token)**
+
+| Permiso | Nivel | Motivo |
+|---|---|---|
+| `contents` | `read` | Hacer checkout del código del PR |
+| `pull-requests` | `write` | Publicar comentarios inline y el resumen de la revisión |
+| `checks` | `write` | Marcar el check como fallido cuando hay violaciones de arquitectura |
+
+> El agente **no** tiene permiso de escritura sobre el código (`contents: read`): no
+> puede aplicar cambios ni hacer merge; solo comenta y aprueba/bloquea el check. Usa el
+> `GITHUB_TOKEN` efímero del workflow, sin secretos externos ni acceso a datos clínicos.
+
+**Política de fallo**
+
+- Violación de arquitectura → el check falla (`core.setFailed`) y bloquea el merge.
+- Errores de Ruff/MyPy → se reportan como anotaciones pero **no** bloquean (informativo).
+- Cualquier archivo no parseable se omite en el auditor (lo cazan Ruff/MyPy).
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-07-14 | 0.1.0 | Registro inicial del agente guardián de CI |
