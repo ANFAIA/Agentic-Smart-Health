@@ -18,75 +18,84 @@ Actualiza este archivo siempre que añadas, modifiques o retires un agente. Las 
 
 ## Registro de agentes
 
-### Agentes activos
-
-| # | Nombre del agente | Rol / Propósito | Herramientas MCP | Reglas de delegación |
-|---|---|---|---|---|
-| 1 | research-agent | Agente de investigación autónomo que busca, ingerir y resume literatura científica (3DGS, DICOM, normativas) usando RAG | Ninguna (trabaja con filesystem local) | No requiere aprobación humana; puede delegar en el orquestador para escalar problemas de ingesta |
-
----
-
-## Plantilla de registro
-
-Copia el bloque siguiente para cada nuevo agente y rellena todos los campos.
-
----
-
-### `<NombreDelAgente>`
+### `research-agent` — Agente de investigación
 
 | Campo | Valor |
 |---|---|
-| **Nombre** | `<nombre-tecnico-del-agente>` |
+| **Nombre** | `research-agent` |
 | **Versión** | `0.1.0` |
-| **Ubicación** | `apps/agent-orchestrator/src/agents/<nombre>/` |
-| **Estado** | `active` / `experimental` / `deprecated` |
+| **Ubicación** | `apps/research-agent/` (`src/main.py` · `src/main_local.py`) |
+| **Estado** | `active` |
+| **Fase del pipeline** | Ingesta y síntesis de conocimiento (no toca datos clínicos del paciente) |
+| **Cerebro (LLM)** | Claude (`claude-opus-4-8` por defecto) vía Tool Runner del SDK de Anthropic. Variante local sin coste con Ollama (`main_local.py`, bucle ReAct manual). |
 
 **Rol / Propósito**
 
-> Descripción de una o dos frases explicando qué hace el agente, qué problema resuelve y en qué fase del pipeline actúa (ingesta / fusión / análisis / exportación).
+> Agente conversacional (CLI) que **descubre, ingiere, indexa y sintetiza**
+> literatura científica sobre 3D Gaussian Splatting, el estándar DICOM y
+> normativas clínicas. Recupera papers de fuentes académicas abiertas, los
+> vuelca en una base vectorial local (RAG) y produce reportes Markdown
+> estructurados (abstract + explicación completa) en `docs_output/`. Actúa en la
+> fase de **ingesta de conocimiento**: alimenta al proyecto con contexto
+> bibliográfico; **no procesa datos clínicos de pacientes**.
 
-**Herramientas MCP a las que tiene acceso**
+**Herramientas a las que tiene acceso** (tool calling nativo `@beta_tool`, **no** MCP)
 
-| Herramienta MCP | Servidor | Permisos | Notas |
+| Herramienta | Backend | Permisos | Notas |
 |---|---|---|---|
-| `<nombre-herramienta>` | `slicer-mcp-server` / `<otro>` | read / write / execute | *(descripción breve)* |
+| `read_directory` | Filesystem (`data/research-agent/knowledge_base/`) | read | Lista los documentos disponibles en el corpus. |
+| `read_file` | Filesystem (`knowledge_base/`) | read | Lee un PDF/MD/TXT completo (truncado a 100k chars). Sandbox anti *path traversal*. |
+| `ingest_corpus` | RAG — Qdrant on-disk + `fastembed` | write (índice) | Trocea (chunk 1000/overlap 150), vectoriza e indexa todo el corpus. Idempotente. |
+| `search_corpus` | RAG — Qdrant | read | Búsqueda semántica (coseno, `top_k=5`) multi-documento. |
+| `search_references` | HTTP — Semantic Scholar → arXiv (fallback) | read (red) | Descubre papers externos; sin API key. |
+| `download_reference` | HTTP + Filesystem (`knowledge_base/`) | write (fichero) | Descarga un PDF (solo http(s), valida `%PDF`, máx. 50 MB) y lo auto-indexa. |
+| `write_summary` | Filesystem (`docs_output/`) | write | Persiste el reporte final; valida estructura (abstract + explicación más extensa). Fuerza `.md` y nombre base. |
+
+> **Fronteras de seguridad:** lectura confinada a `knowledge_base/`, escritura
+> confinada a `docs_output/`; `../` y symlinks que escapen se bloquean antes de
+> tocar disco. Modelo por defecto vía `ANTHROPIC_API_KEY` (`.env`); la variante
+> Ollama no envía documentos fuera de la máquina.
 
 **Inputs esperados**
 
 ```
-# Esquema de entrada (referencia a core-schemas o descripción inline)
+Consulta en lenguaje natural del usuario (CLI interactivo), p. ej.:
+  "Busca literatura reciente sobre 3DGS en imagen dental y resúmela."
+Corpus de partida (opcional): ficheros .pdf/.md/.txt en
+  data/research-agent/knowledge_base/
 ```
 
 **Outputs generados**
 
 ```
-# Esquema de salida (referencia a core-schemas o descripción inline)
+- Reporte Markdown en apps/research-agent/docs_output/resumen_<tema>.md
+  Estructura: # Título · > Fuente · ## Abstract · ## Explicación completa
+              · ## Puntos clave (opcional)
+- Efecto lateral: base vectorial Qdrant persistida en
+  data/research-agent/.qdrant_data/ (colección "papers")
+- Respuestas conversacionales citando la fuente (nombre de documento)
 ```
 
 **Reglas de delegación**
 
-- El agente puede delegar en: `<NombreDeOtroAgente>` cuando `<condición>`.
-- Requiere aprobación humana (human-in-the-loop) para: `<lista de acciones sensibles>`.
-- No puede delegar: `<lista de responsabilidades no delegables>`.
-- Política de reintentos: `<n>` reintentos antes de escalar al orquestador.
-- Política de fallo: `<comportamiento en caso de error no recuperable>`.
+- Flujo autónomo de descubrimiento: `search_references` → `download_reference`
+  (auto-indexa) → `search_corpus`/`read_file` → `write_summary`.
+- **No requiere aprobación humana**: opera sobre literatura pública y su propio
+  sandbox de ficheros; no accede a datos clínicos ni a almacenamiento autorizado
+  del paciente.
+- No puede delegar en otros agentes del sistema (no hay integración con el
+  orquestador todavía); es un agente autocontenido de un solo turno interactivo.
+- Política de fallo: las tools **nunca** lanzan al llamador — devuelven el error
+  como texto (`ERROR: …`) para que el modelo reaccione/reintente. Semantic
+  Scholar cae automáticamente a arXiv ante cualquier fallo (incl. 429).
+- Concurrencia: Qdrant on-disk bloquea el directorio para un solo proceso; para
+  concurrencia real se migraría a Qdrant en servidor sin cambiar la interfaz.
 
 **Historial de cambios**
 
 | Fecha | Versión | Cambio |
 |---|---|---|
-| YYYY-MM-DD | 0.1.0 | Registro inicial del agente |
-
----
-
-## Agentes de desarrollo (dev-time)
-
-Agentes de IA externos utilizados para asistir el desarrollo del proyecto. No forman parte del sistema en producción.
-
-| Herramienta | Rol en el proyecto | Notas |
-|---|---|---|
-| OpenCode / Claude Code | Codificación, refactorización, generación de tests | Integrado en el flujo de trabajo diario |
-| AI Code Reviewer (guardián de CI) | Revisión estática automática de cada PR | Ver ficha detallada abajo |
+| 2026-07-14 | 0.1.0 | Registro inicial: RAG local (Qdrant + fastembed), tools de filesystem, descubrimiento externo (Semantic Scholar/arXiv) y generación de reportes. Variantes Claude y Ollama. |
 
 ---
 
@@ -148,3 +157,15 @@ Agentes de IA externos utilizados para asistir el desarrollo del proyecto. No fo
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-07-14 | 0.1.0 | Registro inicial del agente guardián de CI |
+
+---
+
+### Agentes de desarrollo (dev-time)
+
+Herramientas de IA externas que el equipo usa para asistir el desarrollo. **No forman parte del sistema en producción** ni tienen acceso autónomo al runtime: toda su salida entra al repositorio como código propuesto y pasa por Pull Request + revisión humana (y por el guardián `ai-code-reviewer`) antes de mergearse.
+
+| Herramienta | Rol en el proyecto | Modelo | Notas de gobernanza |
+|---|---|---|---|
+| OpenCode / Claude Code | Asistentes de codificación interactivos: generación, refactorización, tests y documentación bajo dirección de una persona del equipo | Claude (Opus/Sonnet según sesión) | Conducidos por humano (no autónomos); sin acceso a datos clínicos; todo output vía PR + revisión humana. No se les delega decisiones clínicas ni de arquitectura. |
+
+> Se documentan a nivel de fila (no con la ficha de agente) porque son asistentes **interactivos**, no agentes del sistema: no tienen contrato de datos, fase de pipeline ni reglas de delegación propias. Registra aquí cualquier otra herramienta de IA dev-time que se incorpore.
