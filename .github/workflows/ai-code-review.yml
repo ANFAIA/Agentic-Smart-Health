@@ -1,0 +1,150 @@
+name: AI Code Review
+
+# Agente guardián de CI: revisión estática (sin LLM) de cada Pull Request.
+# Audita estilo (Ruff), tipos (MyPy) y reglas de arquitectura del monorepo.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  checks: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install dependencies (incl. ruff + mypy)
+        run: uv sync --group dev
+
+      # Acota la revisión a los .py que toca el PR (guardián enfocado en el diff).
+      - name: Collect changed files
+        id: changed
+        run: |
+          uv run python scripts/audit_pr.py --list-changed > changed_files.txt
+          echo "Archivos .py modificados:"
+          cat changed_files.txt
+          if [ -s changed_files.txt ]; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- Estilo: Ruff genera anotaciones inline nativas de GitHub ---
+      - name: Ruff check
+        if: steps.changed.outputs.has_files == 'true'
+        run: xargs -a changed_files.txt uv run ruff check --output-format=github
+        continue-on-error: true
+
+      - name: Ruff format check
+        if: steps.changed.outputs.has_files == 'true'
+        run: xargs -a changed_files.txt uv run ruff format --diff
+        continue-on-error: true
+
+      # --- Tipos: MyPy convertido a anotaciones inline ---
+      - name: MyPy type check
+        if: steps.changed.outputs.has_files == 'true'
+        run: |
+          set -o pipefail
+          xargs -a changed_files.txt uv run mypy --show-column-numbers \
+            --no-error-summary --explicit-package-bases \
+            | tee mypy_report.txt || true
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          rx = re.compile(r"^(.+?):(\d+):(?:(\d+):)?\s+(error|warning|note):\s+(.*)$")
+          for line in Path("mypy_report.txt").read_text().splitlines():
+              m = rx.match(line)
+              if not m:
+                  continue
+              path, ln, col, level, msg = m.groups()
+              gh = "error" if level == "error" else "warning"
+              col_attr = f",col={col}" if col else ""
+              msg = msg.replace("\n", " ")
+              print(f"::{gh} file={path},line={ln}{col_attr}::mypy: {msg}")
+          PY
+        continue-on-error: true
+
+      # --- Arquitectura: reglas específicas del monorepo (Pydantic v2 / cross-app) ---
+      - name: Architecture audit
+        id: audit
+        run: uv run python scripts/audit_pr.py
+        continue-on-error: true
+
+      # --- Publica comentarios inline + resumen y decide el bloqueo ---
+      - name: Publish review
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const comments = fs.existsSync('line_comments.json')
+              ? JSON.parse(fs.readFileSync('line_comments.json', 'utf8'))
+              : [];
+
+            let auditBody = '';
+            if (fs.existsSync('audit_report.txt')) {
+              auditBody = fs.readFileSync('audit_report.txt', 'utf8').trim();
+            }
+
+            // 1) Comentarios inline en la línea afectada (violaciones de arquitectura).
+            for (const c of comments) {
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  commit_id: context.payload.pull_request.head.sha,
+                  path: c.path,
+                  line: c.line,
+                  body: c.body,
+                });
+              } catch (err) {
+                core.warning(`No se pudo comentar en ${c.path}:${c.line} — ${err.message}`);
+              }
+            }
+
+            // 2) Comentario-resumen del agente guardián.
+            let summary = '## 🛡️ AI Code Review (estático, sin LLM)\n\n';
+            summary += '| Chequeo | Resultado |\n|---|---|\n';
+            summary += '| Ruff (estilo) | ☑️ ejecutado (ver anotaciones) |\n';
+            summary += '| MyPy (tipos) | ☑️ ejecutado (ver anotaciones) |\n';
+            if (comments.length === 0) {
+              summary += '| Arquitectura | ✅ sin violaciones |\n\n';
+              summary += 'No se han detectado dependencias cruzadas entre apps ni ';
+              summary += 'incumplimientos de Pydantic v2 en `core-schemas`.\n';
+            } else {
+              summary += `| Arquitectura | ❌ ${comments.length} violación(es) |\n\n`;
+              summary += `### Violaciones de arquitectura\n\n${auditBody}\n\n`;
+              summary += '⚠️ **Estas reglas bloquean el merge.** Revisa los comentarios ';
+              summary += 'inline en las líneas afectadas.\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: summary,
+            });
+
+            // 3) Las violaciones de arquitectura hacen fallar el check (gate de merge).
+            if (comments.length > 0) {
+              core.setFailed(`${comments.length} violación(es) de arquitectura detectada(s).`);
+            }
