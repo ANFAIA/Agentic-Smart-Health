@@ -1,0 +1,76 @@
+# Residual Gaussian Splatting (RGS) para reconstrucción de CBCT con ultra-escasas vistas
+
+> **Fuente:** Residual Gaussian Splatting for Ultra Sparse-View CBCT Reconstruction - 2604.27552v1.pdf — Lin, J.; Fang, J.; Wang, S.; Lai, C.; Zhang, Y.; Chen, Y.; Liu, Q. (Nanchang University y Southeast University). arXiv:2604.27552v1, 30 Apr 2026. Código: github.com/yqx7150/RGS.
+
+## Abstract
+
+Este trabajo (Lin, Fang, Wang et al., arXiv:2604.27552v1) aborda el problema del "sesgo espectral" que afecta al 3D Gaussian Splatting (3DGS) cuando se usa para reconstruir tomografía computarizada de haz cónico (CBCT) a partir de muy pocas proyecciones: la optimización fotométrica convencional favorece las bajas frecuencias, produciendo reconstrucciones sobre-suavizadas que pierden los detalles anatómicos de alta frecuencia. Los autores proponen Residual Gaussian Splatting (RGS), un marco que integra el análisis multi-resolución por wavelets con 3DGS mediante una representación gaussiana "espectralmente desacoplada" que estratifica el campo volumétrico en un componente base geométrico y un componente residual de detalle. La clave es resolver la incompatibilidad matemática entre la no-negatividad estricta de la atenuación física de rayos X y la naturaleza bipolar (con media casi nula) de los coeficientes wavelet de alta frecuencia: en lugar de ajustar explícitamente esos coeficientes con signo, RGS los reformula como una tarea de compensación residual implícita y no-negativa en el dominio de proyección crudo. Además introduce una estrategia de optimización colaborativa espectral-espacial basada en currículum (fase de calentamiento en baja frecuencia + restricción bloqueada en frecuencia) para evitar la interferencia espectral (crosstalk) entre componentes. En datasets clínicos (AAPM) y en un espécimen biológico real, RGS supera consistentemente a métodos analíticos, iterativos y de neural rendering de referencia, alcanzando 34.68 dB de PSNR y 0.909 de SSIM con solo 20 vistas y preservando texturas trabeculares y vasculares finas.
+
+## Explicación completa
+
+## Problema y motivación
+
+La CBCT (cone-beam computed tomography) es una modalidad de imagen 3D esencial en diagnóstico clínico (muy usada en odontología, entre otros): un tubo de rayos X en forma de cono y un detector de panel plano rotan de forma sincronizada alrededor del sujeto, adquiriendo proyecciones 2D que luego se reconstruyen en un volumen 3D. En escenarios de **ultra-escasas vistas** (pocas proyecciones), reducir el número de adquisiciones disminuye la dosis de radiación y el tiempo de escaneo, pero convierte la reconstrucción en un problema fuertemente mal condicionado (ill-posed).
+
+Los métodos históricos tienen limitaciones: los **analíticos** (FDK) son eficientes pero sufren artefactos severos (streaks) en vistas escasas; los **iterativos / compressed sensing** usan priors de esparsidad (incluidas wavelets multi-escala para preservar bordes) pero son costosos y tienden a sobre-suavizar por regularización excesiva. Los métodos de **deep learning** (dominio de proyección, post-procesado en imagen, arquitecturas dual-domain, generativos) mejoran, pero dependen de datos pareados o incurren en gran sobrecarga computacional.
+
+Recientemente, las **representaciones neuronales implícitas** (NeRF, 3DGS) han avanzado el modelado volumétrico continuo. Adaptaciones a CT como **NAF** (campos de atenuación neuronal) y **X-GS / R²-Gaussian** usan campos implícitos y gaussianas 3D para proyección diferenciable, refinando la física del renderizado para cumplir la ley de Beer-Lambert.
+
+**El problema central**: la optimización basada estrictamente en gradiente sufre **sesgo espectral** (spectral bias, Rahaman et al. 2019): converge desproporcionadamente rápido en las bajas frecuencias. En CT, las pérdidas fotométricas globales están dominadas por las aproximaciones estructurales de alta energía, de modo que la optimización ignora los detalles anatómicos finos de alta frecuencia, dando lugar a las reconstrucciones sobre-suavizadas típicas del 3DGS estándar. El análisis frecuencial de los autores (Fig. 3) confirma que el 3DGS captura la topología global de baja frecuencia pero agota la energía de alta frecuencia respecto al ground truth, con el error localizado en los bordes estructurales, y que durante el entrenamiento los errores de baja frecuencia convergen rápido mientras los de alta frecuencia se estancan.
+
+**El obstáculo matemático**: aplicar directamente el análisis wavelet para recuperar detalle choca con una incompatibilidad fundamental. Los coeficientes wavelet de alta frecuencia son de **media nula y bipolares** (tienen valores positivos y negativos), mientras que la atenuación de rayos X es **estrictamente no-negativa**. Los autores lo formalizan (la "incompatibilidad de la supervisión espectral"): si se define una pérdida explícita para ajustar los sub-bandas de alta frecuencia con signo, en cualquier ubicación del detector donde el coeficiente objetivo es negativo, el valor renderizado no puede volverse negativo (la base gaussiana es no-negativa), por lo que el gradiente empuja continuamente el coeficiente de densidad σ hacia valores más pequeños, **suprimiendo** el primitivo en vez de usarlo para representar el detalle deseado.
+
+## Metodología: Residual Gaussian Splatting (RGS)
+
+RGS reconstruye un campo de atenuación 3D a partir de proyecciones de rayos X escasas combinando descomposición de priors espectrales con un splatting gaussiano de doble componente. La tubería tiene dos etapas secuenciales.
+
+**Fundamentos adaptados a CT.** En vez de modelar radiancia opaca, las gaussianas se reutilizan como funciones base continuas que aproximan el campo de densidad/atenuación μ(x). Como la atenuación tisular es isótropa, se descartan los armónicos esféricos dependientes de la vista. El renderizado sigue estrictamente la ley aditiva de Beer-Lambert (integral de línea), no el α-blending de oclusión, y la integral de línea de una gaussiana 3D produce analíticamente una gaussiana 2D, lo que evita el ray-marching y acelera el renderizado.
+
+**Etapa 1 – Inicialización gaussiana espectralmente desacoplada.** Se aplica una DWT (transformada wavelet discreta) 2D de un solo nivel a cada proyección, obteniendo una sub-banda de aproximación de baja frecuencia (P_LF) y tres sub-bandas direccionales de alta frecuencia (P_LH, P_HL, P_HH):
+- La componente de **baja frecuencia** se reconstruye analíticamente con el operador FDK (Feldkamp-Davis-Kress) para dar un prior geométrico grueso: V_LF = FDK(P_LF).
+- Las tres sub-bandas de **alta frecuencia** se agregan en un **mapa de energía no-negativo** (M_HF = P_LH + P_HL + P_HH) que se retroproyecta (V_sal = B(M_HF)) como prior volumétrico de alta frecuencia.
+
+Con estos dos priors se inicializan dos conjuntos de gaussianas: G_base (inicialización por umbral de densidad desde la reconstrucción de baja frecuencia, con un umbral τ_air para suprimir la región de aire) y G_detail (inicialización guiada por saliencia desde el prior de alta frecuencia, donde un parámetro k controla la proporción de localizaciones de alta saliencia usadas). **Punto crucial**: los coeficientes de alta frecuencia NO se usan como objetivos de supervisión directos, solo para construir un prior espacial no-negativo que inicializa el detalle; la recuperación real de las estructuras finas se difiere al ajuste residual en el dominio de proyección crudo. El campo de atenuación queda representado como la **superposición** de las dos componentes gaussianas.
+
+**Etapa 2 – Optimización colaborativa espectral-espacial (basada en currículum).** El refinamiento se hace directamente en el dominio de proyección crudo, en dos fases:
+- **Fase I (calentamiento en baja frecuencia)**: se congela G_detail y solo se optimiza G_base contra el objetivo de baja frecuencia P_LF (pérdida L_Phase1 = ‖P_LF − P̂_base‖²) durante T_warm iteraciones. Esto estabiliza la topología anatómica global antes de activar el detalle.
+- **Fase II (refinamiento conjunto geometría-textura)**: se optimizan ambas componentes con el objetivo combinado L_Phase2 = L_global + λ·L_cons, donde L_global = ‖P − (P̂_base + P̂_detail)‖² es la fidelidad de proyección total y L_cons = ‖P_LF − P̂_base‖² es una pérdida de consistencia de baja frecuencia que mantiene anclada la base. Bajo esta formulación, **G_detail no reproduce coeficientes wavelet con signo**, sino que aprende el contenido de proyección residual que queda sin explicar tras la base, es decir, una **compensación residual implícita y no-negativa**.
+
+En ambas fases los updates por gradiente se acoplan con **control adaptativo de densidad** (ADC: dividir, clonar o podar primitivos). El razonamiento del currículum: si ambos conjuntos se optimizan juntos desde el inicio, la base (con escala espacial mayor y energía inicial dominante) absorbe errores que deberían ir al detalle, provocando "crosstalk espectral" y suprimiendo la recuperación de textura. Tras la optimización, el campo gaussiano continuo se voxeliza en una rejilla cartesiana predefinida para obtener el volumen 3D final.
+
+## Experimentos y resultados
+
+**Datos**: dataset clínico AAPM Mayo Clinic Low-Dose CT (volúmenes voxelizados a 256³, con radiografías reconstruidas digitalmente para emular CBCT, proyecciones 512×800) y datos biológicos reales. Implementado en PyTorch, 25.000 iteraciones, G_base con 50.000 primitivos grandes y G_detail con 30.000 más pequeños (opacidad inicial 0.01) localizados en el top 5% de energía espectral de alta frecuencia; 5.000 iteraciones de warm-up y peso de consistencia λ=0.5. Código disponible en github.com/yqx7150/RGS.
+
+**Comparativa** (frente a FDK analítico, SART iterativo, y neural rendering: NAF, R²-Gaussian, 3DGR), medida en PSNR y SSIM sobre regiones de tórax y abdomen con 60, 40 y 20 vistas:
+- RGS logra consistentemente el mejor rendimiento en todos los niveles de esparsidad. Bajo el escenario más mal condicionado de **20 vistas**, mantiene **PSNR promedio 34.68 dB y SSIM 0.909**, superando al segundo mejor baseline (3DGR con 34.15/0.897).
+- Con 40 vistas: 37.59/0.954; con 60 vistas: 38.97/0.975.
+- FDK se degrada severamente por artefactos de streak; SART suprime ruido pero sobre-suaviza bordes; los baselines neuronales (NAF, R²-Gaussian, 3DGR) mejoran la geometría global pero se estancan al recuperar texturas complejas por el sesgo espectral.
+- Cualitativamente (Fig. 5), RGS resuelve la vascularidad fina del parénquima pulmonar y la textura esponjosa del hueso trabecular vertebral que los demás rinden como bloques homogéneos, sin reintroducir ruido ni artefactos.
+
+**Ablaciones (40 vistas)**:
+- *Sin el prior wavelet* (w/o Wavelet): caída consistente de PSNR/SSIM (de 37.22/0.951 a 35.86/0.936 de media) y bordes sobre-suavizados; el análisis frecuencial muestra decaimiento abrupto de energía y aumento del error relativo en altas frecuencias, confirmando que los priors wavelet son indispensables para la fidelidad micro-estructural.
+- *Sin currículum* (w/o Curriculum, entrenar ambos conjuntos simultáneamente): degradación sustancial (de 37.62/0.953 a 34.65/0.922 de media) por "competencia espectral sin restricción" — la base absorbe la varianza de alta frecuencia del detalle, suprimiendo la recuperación de textura.
+
+**Validación en espécimen real**: un escarabajo rinoceronte físico escaneado con 40 proyecciones sobre 360°. RGS recupera con precisión las texturas delicadas de órganos internos y preserva bordes nítidos y de alto contraste del exoesqueleto quitinoso, mientras FDK se degrada por artefactos, SART sobre-suaviza y NAF/R²-Gaussian no resuelven bien el micro-detalle interno. Esto demuestra robustez y generalización sobre datos de adquisición física real.
+
+## Limitaciones
+
+El propio marco reconoce implícitamente algunas restricciones: el enfoque introduce una arquitectura de doble componente con hiperparámetros adicionales (τ_air, k, λ, duración del warm-up, número de primitivos por componente) que requieren calibración. La descomposición wavelet se usa solo en un nivel y solo para inicialización. Aunque no añade sobrecarga en inferencia, el proceso de optimización (25.000 iteraciones) sigue siendo intensivo. La evaluación se centra en PSNR/SSIM y en un único espécimen biológico real; queda por validar en un rango más amplio de escenarios clínicos y protocolos reales de CBCT.
+
+## Relevancia clínica
+
+La CBCT es una herramienta central en la práctica dental y en diagnóstico 3D. La capacidad de RGS de reconstruir con alta fidelidad a partir de **ultra-escasas vistas** (hasta 20) es directamente relevante para **reducir la dosis de radiación al paciente y acortar los tiempos de escaneo** sin sacrificar los detalles anatómicos finos —estructuras trabeculares óseas, vascularidad, tejidos blandos de bajo contraste— que son diagnósticamente críticos. Al resolver el compromiso entre supresión de artefactos y preservación de detalle, RGS ofrece un camino hacia imagen de baja dosis y alta precisión con potencial en aplicaciones biológicas y pre-clínicas, además de las clínicas.
+
+## Puntos clave
+
+- Identifica el 'sesgo espectral' (spectral bias) del 3DGS como causa del sobre-suavizado en la reconstrucción CBCT con ultra-escasas vistas: la optimización fotométrica favorece las bajas frecuencias y pierde el detalle anatómico de alta frecuencia.
+- Formaliza la 'incompatibilidad de la supervisión espectral': los coeficientes wavelet de alta frecuencia son bipolares (con signo, media nula) mientras que la atenuación de rayos X es estrictamente no-negativa, por lo que supervisarlos directamente suprime los primitivos gaussianos.
+- Propone una representación gaussiana espectralmente desacoplada que estratifica el campo volumétrico en un componente base geométrico (baja frecuencia, vía FDK) y un componente residual de detalle (alta frecuencia, vía mapa de energía no-negativo retroproyectado).
+- Reformula la recuperación de detalles como una tarea de compensación residual implícita y no-negativa en el dominio de proyección crudo, en vez de ajustar explícitamente los coeficientes wavelet con signo.
+- Optimización colaborativa espectral-espacial basada en currículum: Fase I de calentamiento solo con la base en baja frecuencia (detalle congelado) + Fase II de refinamiento conjunto con consistencia de baja frecuencia, para evitar el crosstalk espectral.
+- En el dataset clínico AAPM con solo 20 vistas alcanza PSNR 34.68 dB y SSIM 0.909, superando a FDK, SART, NAF, R²-Gaussian y 3DGR; también gana con 40 y 60 vistas.
+- Las ablaciones confirman que tanto el prior wavelet como el esquema de currículum son esenciales: quitarlos degrada PSNR/SSIM y reintroduce sobre-suavizado o competencia espectral.
+- Validado en un espécimen biológico real (escarabajo rinoceronte, 40 proyecciones): recupera texturas internas finas y bordes nítidos del exoesqueleto, demostrando generalización a datos de adquisición física real.
+- No añade sobrecarga en inferencia y la integral de línea de gaussianas 3D produce analíticamente gaussianas 2D, acelerando el renderizado respecto a modelos implícitos con ray-marching.
+- Relevancia clínica: permite reconstrucción de alta fidelidad con menos proyecciones, reduciendo dosis de radiación y tiempo de escaneo, preservando estructuras trabeculares y vasculares diagnósticamente críticas.
