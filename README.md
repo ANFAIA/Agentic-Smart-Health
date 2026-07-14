@@ -41,7 +41,10 @@ agentic-smart-health/          ← workspace root
 │   └── research-agent/        ← knowledge base del agente de investigación
 ├── docs/                      ← documentación (ver nota más abajo)
 ├── notebooks/                 ← experimentación y exploración
-└── tests/                     ← suite de pruebas global
+├── tests/                     ← suite de pruebas global
+├── scripts/                   ← utilidades de CI (auditor de arquitectura de PRs)
+└── .github/
+    └── workflows/             ← CI: agente de revisión de código (ai-code-reviewer)
 ```
 
 ---
@@ -101,6 +104,32 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 ### `3dgs-engine`
 
 Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implementa la representación neuronal del Digital Twin: cada punto/zona del espacio almacena atributos clínicos (color, densidad ósea, datos clínicos asociados, timestamp). Proporciona las primitivas necesarias para construir, actualizar y consultar el gemelo digital, así como para las operaciones de exportación reversible a STL e imágenes.
+
+---
+
+## Revisión de código y CI (`ai-code-reviewer`)
+
+Cada Pull Request pasa por un **agente guardián de revisión estática** ejecutado en GitHub Actions. No usa LLM: combina linters estándar con un auditor de arquitectura propio, y revisa **únicamente los archivos Python que toca el PR** (enfocado en el diff). Publica anotaciones inline sobre las líneas afectadas y un comentario-resumen en el PR.
+
+**Qué comprueba:**
+
+| Chequeo | Herramienta | ¿Bloquea el merge? |
+|---|---|---|
+| Estilo y formato | `ruff` | No — informativo (anotaciones inline) |
+| Tipos | `mypy` | No — informativo (anotaciones inline) |
+| **Arquitectura** | `scripts/audit_pr.py` | **Sí** — hace fallar el check |
+
+**Reglas de arquitectura (bloqueantes):**
+
+- **Pydantic v2 estricto** en `packages/core-schemas`: prohíbe el shim `pydantic.v1` y los idiomas de v1 (`@validator`, `@root_validator`, `class Config`, `BaseSettings`).
+- **Sin dependencias cruzadas entre `apps/`**: un app no puede importar el paquete de otro; el código compartido debe vivir en `packages/` (p. ej. `core-schemas`).
+
+**Componentes:**
+
+- `.github/workflows/ai-code-review.yml` — orquesta los chequeos, publica comentarios y decide el gate de merge.
+- `scripts/audit_pr.py` — auditor de arquitectura (AST, solo librería estándar).
+
+Las herramientas de desarrollo se instalan con `uv sync --group dev` (grupo `dev`: `ruff`, `mypy`). Ficha completa del agente en [`AGENTS.md`](AGENTS.md).
 
 ---
 
