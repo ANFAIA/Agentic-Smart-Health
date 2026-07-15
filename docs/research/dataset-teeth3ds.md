@@ -2,8 +2,9 @@
 
 > **Estado (2026-07-15):** dataset **evaluado y recomendado**; **licencia resuelta
 > a CC-BY 4.0** según el paper (ver §4). Descarga vía **Google Drive** (§6).
-> **Subconjunto aún NO descargado** (paso manual pendiente). Este documento cierra
-> la parte de *documentación* del DoD de la Issue 1.
+> **Subconjunto descargado y verificado** en `data/raw/teeth3ds/` (gitignored):
+> **12 pacientes / 24 escaneos** (maxilar+mandíbula), cada `.obj` con su `.json` de
+> labels. **Issue 1 cerrada.**
 
 Contraparte de código: PoC MVP 1 (`notebooks/01-vtk-3dgs-poc.ipynb`, pendiente).
 Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-agent-pipeline.md).
@@ -21,13 +22,25 @@ Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-age
 - **Papers:** arXiv:2210.06094 (Teeth3DS+); Ben Hamadou et al., *Teeth3DS: a
   benchmark for teeth segmentation and labeling from intra-oral 3D scans* (2022).
 
-## 2. Formato
+## 2. Formato y estructura (verificado en el subconjunto)
 
-- **Mallas:** `.obj` (una por arcada/paciente).
-- **Etiquetas:** `.json` por malla — instancia y etiqueta **por diente**
-  (numeración compatible con **FDI**) + landmarks en el subconjunto 3DTeethLand.
-- **Splits:** ficheros `.txt` de train/test (listas de IDs de caso, p. ej.
-  `EJWZZZRF_lower`).
+- **Mallas:** `.obj` (una por arcada: `<ID>_upper.obj` / `<ID>_lower.obj`).
+- **Etiquetas:** `.json` **por vértice** (no por diente). Claves:
+  `id_patient`, `jaw`, `labels`, `instances`.
+  - `labels`: código **FDI** por vértice (p. ej. `31–37, 41–47`), **`0` = encía**.
+    Los FDI validan contra el `FDICode` del contrato (`[1-4][1-8]|[5-8][1-5]`).
+  - `instances`: id de instancia por vértice (`0` = encía; 1 por diente).
+  - Densidad alta: ~110k vértices etiquetados por malla.
+- **Layout en disco — DOS árboles paralelos** (no `.obj`+`.json` juntos):
+
+  ```
+  data/raw/teeth3ds/
+    3D_scans_per_patient_obj_files/<ID>/<ID>_{upper,lower}.obj
+    ground-truth_labels_instances/<ID>/<ID>_{upper,lower}.json
+  ```
+  El loader del PoC debe cruzar por `<ID>_<jaw>` entre ambos árboles.
+- **Splits:** ficheros `.txt` de train/test (listas de IDs, p. ej. `EJWZZZRF_lower`)
+  — en el OSF, no necesarios para el PoC.
 
 ## 3. Dónde vive cada cosa (realidad de acceso)
 
