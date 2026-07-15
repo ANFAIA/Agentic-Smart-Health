@@ -160,6 +160,33 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 ---
 
+### Agentes de análisis (stubs `planned`)
+
+Agentes del pipeline clínico **aún no implementados**. Se registran aquí como
+*stubs* de diseño (roles y contratos previstos) para cerrar la Tarea 3 de la issue
+de arquitectura multiagente. Su diseño de alto nivel vive en
+[`docs/architecture/multi-agent-pipeline.md`](docs/architecture/multi-agent-pipeline.md).
+Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-schemas`
+—nunca vuelven al fichero crudo— y dejan su propia `Provenance`.
+
+| Agente | Estado | Fase | Rol previsto | Entrada → salida | Human-in-the-loop |
+|---|---|---|---|---|---|
+| `segmentation-agent` | `planned` | Análisis · segmentación | Asignar `region_id` (FDI) a las gaussianas (segmentación anatómica). Prerrequisito del ancla semántica de la fusión. | `TwinSnapshot` sin etiquetas → snapshot con `region_id` poblado | Revisión si afecta al diagnóstico |
+| `pathology-agent` | `planned` | Análisis · diagnóstico | Detectar patologías a partir de densidad (σ), color y geometría. | `TwinSnapshot` → `RegionalObservation` con hallazgos | **Sí** — decisión clínicamente sensible |
+| `clinical-poc-agent` | `planned` (PoC) | Análisis · prueba de concepto | Métrica visual básica: inflamación por color de encía y espacio encía-diente. | `TwinSnapshot` → reporte de texto (log) | Sí |
+
+> **Frontera de diseño:** estos stubs **no** tienen tools MCP, permisos ni reglas de
+> delegación definitivos todavía; se detallarán al implementarlos, cada uno con su
+> ficha completa (como `research-agent`) y, si toca, su ADR. Registrarlos ahora fija
+> su **rol y contrato**, no su implementación.
+
+**Agentes de ingesta previstos** (`planned`, regla «1 modalidad = 1 soporte = 1 agente»):
+`cbct-agent` (DICOM → densidad σ), `stl-agent` (STL → color superficial),
+`report-agent` (PDF → pH regional), `image-agent` (foto 2D → previsualización 3D, PoC).
+Detalle en el [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
+
+---
+
 ### Agentes de desarrollo (dev-time)
 
 Herramientas de IA externas que el equipo usa para asistir el desarrollo. **No forman parte del sistema en producción** ni tienen acceso autónomo al runtime: toda su salida entra al repositorio como código propuesto y pasa por Pull Request + revisión humana (y por el guardián `ai-code-reviewer`) antes de mergearse.
