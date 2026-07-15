@@ -85,6 +85,12 @@ publicado**: la descarga real es por Google Drive (§6).
 
 ## 6. Pasos de descarga (Google Drive — ruta real)
 
+> **Vía recomendada (reproducible):** `./scripts/fetch_teeth3ds.sh` — baja y extrae
+> exactamente el subconjunto fijado (los 12 casos del PoC) en `data/raw/teeth3ds/`,
+> con verificación de emparejado. Idempotente. Requiere `gdown`
+> (`uv pip install gdown`). Los pasos manuales de abajo son el *fallback* si el
+> script falla (p. ej. cuota de Drive).
+
 Carpeta oficial (usada por la comunidad, p. ej. ToothGroupNetwork):
 `https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby`
 
