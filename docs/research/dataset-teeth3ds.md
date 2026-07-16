@@ -87,6 +87,22 @@ publicado**: la descarga real es por Google Drive (§6).
   foto→3DGS **con verdad-terreno para comparar**, resolviendo la inexistencia de un
   dataset público de fotos dentales multi-vista (DentalSplat/Dental3R son cerrados).
 
+### 5.1 Qué HABILITA el dataset (y qué no)
+
+El dataset es de **mallas**, no de fotos. Eso determina qué PoC son posibles:
+
+| Objetivo | ¿Posible con este dataset? | Por qué |
+|---|---|---|
+| **Gaussian splatting clásico** (`vtkGaussianSplatter`) | ✅ Hecho (PoC MVP 1) | Partimos de la geometría (puntos de la malla) |
+| **3DGS moderno** (fotos-con-pose → gaussianas entrenadas) | ✅ Sí, **vía vistas sintéticas** | Renderizamos la malla desde N ángulos → **fotos + poses conocidas** + nube inicial; se salta COLMAP. Sirve de validación con verdad-terreno |
+| **Foto→3D REAL** (fotos en crudo de cámara → COLMAP → 3DGS) | ❌ No | No hay **fotos reales** dentales multi-vista; el dataset no las contiene y no existe uno público |
+
+> **Matiz honesto:** el 3DGS moderno vía vistas sintéticas es **circular** (renderizamos
+> desde la malla y reconstruimos la misma malla) — vale como **validación del motor
+> 3DGS** y para producir un `.splat` para el visor web (Issue 3), **no** como
+> solución del caso clínico «solo con fotos del móvil», que requeriría una captura
+> real fuera de este dataset.
+
 ## 6. Pasos de descarga (Google Drive — ruta real)
 
 > **Vía recomendada (reproducible):** `./scripts/fetch_teeth3ds.sh` — baja y extrae
