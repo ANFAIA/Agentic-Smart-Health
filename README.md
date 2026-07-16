@@ -14,6 +14,19 @@ El sector dental maneja datos altamente heterogéneos: escáneres CBCT (DICOM), 
 
 ---
 
+## Cómo encaja todo (vista rápida)
+
+Varios **agentes** (trabajadores con una única responsabilidad) traducen ficheros
+clínicos heterogéneos (DICOM, STL, PDF, foto) a un **documento común** —el
+`TwinSnapshot` de [`core-schemas`](packages/core-schemas/)—, lo enriquecen y lo
+materializan para que un **visor** lo muestre; un **orquestador**
+([`agent-orchestrator`](apps/agent-orchestrator/)) reparte el trabajo. El
+«modelo» (LLM) no es una capa central: es el *cerebro* que razona **dentro** de un
+agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
+
+> 📐 **Mapa completo de las 6 capas y el recorrido del dato** (pensado para quien
+> llega nuevo): [`docs/architecture/multi-agent-pipeline.md` §0](docs/architecture/multi-agent-pipeline.md#0-vista-de-conjunto-para-quien-llega-nuevo).
+
 ## Arquitectura del monorepo
 
 El repositorio está organizado como un **monorepo gestionado con [`uv` workspaces`](https://docs.astral.sh/uv/concepts/workspaces/)**. El archivo `pyproject.toml` raíz declara el workspace y agrupa automáticamente todos los miembros bajo `apps/` y `packages/`:
@@ -106,6 +119,25 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implementa la representación neuronal del Digital Twin: cada punto/zona del espacio almacena atributos clínicos (color, densidad ósea, datos clínicos asociados, timestamp). Proporciona las primitivas necesarias para construir, actualizar y consultar el gemelo digital, así como para las operaciones de exportación reversible a STL e imágenes.
 
 ---
+
+## Notebooks — pruebas de concepto (spikes)
+
+El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
+(no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
+decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
+el **subconjunto de Teeth3DS+ descargado** (`data/raw/teeth3ds/`, 12 pacientes / 24
+escaneos, gitignored).
+
+| Notebook | Qué valida | GPU |
+|---|---|---|
+| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato | No |
+| `02` | Visor 3D interactivo de escritorio (VTK) | No |
+| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | No |
+| `04` | **3DGS moderno entrenado** (`gsplat`) → contrato | Sí |
+
+Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
+Aún **no** cubierto: foto→3D con fotos reales, fusión multimodal (CBCT+STL) e
+integración como agentes.
 
 ## Revisión de código y CI (`ai-code-reviewer`)
 
