@@ -97,3 +97,26 @@ uv run jupyter notebook   # abrir 02, ejecutar celdas en orden; NO usar nbconver
 ```
 
 Mismo dataset de entrada que el `01`.
+
+---
+
+## `03-synthetic-views-for-3dgs.ipynb` — 3DGS moderno · Mitad 1 (vistas + poses)
+
+**Prerequisito del 3DGS moderno.** El 3DGS entrenado necesita **fotos multi-vista
+con pose de cámara** + una nube inicial. No hay fotos dentales reales, así que las
+**sintetizamos desde la malla** (poses conocidas → se salta COLMAP). Sin GPU.
+
+Genera en `data/processed/teeth3ds/<caso>_3dgs/` (gitignored):
+- `images/r_XXX.png` — N vistas RGB (órbita azimut × elevación).
+- `transforms.json` — intrínsecos + c2w por vista (formato instant-ngp/Nerfstudio),
+  **auto-verificado por reproyección** (~0 px).
+- `init.ply` — nube de puntos inicial para sembrar la optimización.
+
+```bash
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/03-synthetic-views-for-3dgs.ipynb
+```
+
+> **Mitad 2 (pendiente, requiere GPU):** entrenar el 3DGS con `gsplat` a partir de
+> esos artefactos, exportar el `.splat`/`.ply`, serializar al contrato y visualizar
+> (Issue 3). Alcance y matiz «circular» (validación del motor, no foto→3D real) en
+> [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md).
