@@ -1,13 +1,17 @@
 # Dataset — Teeth3DS+ (escaneos intraorales 3D)
 
-> **Estado (2026-07-15):** dataset **evaluado y recomendado**; **licencia resuelta
+> **Estado (2026-07-16):** dataset **evaluado y recomendado**; **licencia resuelta
 > a CC-BY 4.0** según el paper (ver §4). Descarga vía **Google Drive** (§6).
 > **Subconjunto descargado y verificado** en `data/raw/teeth3ds/` (gitignored):
 > **12 pacientes / 24 escaneos** (maxilar+mandíbula), cada `.obj` con su `.json` de
-> labels. **Issue 1 cerrada.**
+> labels. **Issue 1 cerrada.** El **PoC MVP 1 (Issue 2) que lo consume ya está
+> hecho** (ver abajo).
 
-Contraparte de código: PoC MVP 1 (`notebooks/01-vtk-3dgs-poc.ipynb`, pendiente).
-Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-agent-pipeline.md).
+Contraparte de código: **PoC MVP 1 hecho** —
+[`notebooks/01-vtk-3dgs-poc.ipynb`](../../notebooks/01-vtk-3dgs-poc.ipynb)
+(resultados y alcance en [`notebooks/README.md`](../../notebooks/README.md)):
+carga la malla, valida el ancla FDI, corre `vtkGaussianSplatter` y serializa al
+contrato. Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-agent-pipeline.md).
 
 ---
 
@@ -82,6 +86,22 @@ publicado**: la descarga real es por Google Drive (§6).
   fotos multi-vista sintéticas** desde cada malla → alimentar el pipeline
   foto→3DGS **con verdad-terreno para comparar**, resolviendo la inexistencia de un
   dataset público de fotos dentales multi-vista (DentalSplat/Dental3R son cerrados).
+
+### 5.1 Qué HABILITA el dataset (y qué no)
+
+El dataset es de **mallas**, no de fotos. Eso determina qué PoC son posibles:
+
+| Objetivo | ¿Posible con este dataset? | Por qué |
+|---|---|---|
+| **Gaussian splatting clásico** (`vtkGaussianSplatter`) | ✅ Hecho (PoC MVP 1) | Partimos de la geometría (puntos de la malla) |
+| **3DGS moderno** (fotos-con-pose → gaussianas entrenadas) | ✅ Sí, **vía vistas sintéticas** | Renderizamos la malla desde N ángulos → **fotos + poses conocidas** + nube inicial; se salta COLMAP. Sirve de validación con verdad-terreno |
+| **Foto→3D REAL** (fotos en crudo de cámara → COLMAP → 3DGS) | ❌ No | No hay **fotos reales** dentales multi-vista; el dataset no las contiene y no existe uno público |
+
+> **Matiz honesto:** el 3DGS moderno vía vistas sintéticas es **circular** (renderizamos
+> desde la malla y reconstruimos la misma malla) — vale como **validación del motor
+> 3DGS** y para producir un `.splat` para el visor web (Issue 3), **no** como
+> solución del caso clínico «solo con fotos del móvil», que requeriría una captura
+> real fuera de este dataset.
 
 ## 6. Pasos de descarga (Google Drive — ruta real)
 
