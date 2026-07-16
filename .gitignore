@@ -43,6 +43,13 @@ secrets/
 # -----------------------------------------------------------------------------
 # Datos clínicos y archivos sensibles
 # -----------------------------------------------------------------------------
+# NO se versionan por tres motivos: (1) pesan (mallas/volúmenes de varios GB),
+# (2) reproducibilidad — se regeneran desde su origen, no se guardan en git:
+#     - data/raw/       = dataset de origen  -> scripts/fetch_teeth3ds.sh
+#     - data/processed/ = artefactos derivados (.ply, vistas, transforms.json)
+#                         -> los generan los notebooks/ al ejecutarse
+#     - data/external/  = terceros
+# (3) licencia/soberanía del dato: no redistribuir datos clínicos vía el repo.
 data/raw/
 data/processed/
 data/external/

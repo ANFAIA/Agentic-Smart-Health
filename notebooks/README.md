@@ -4,10 +4,39 @@ Experimentación y pruebas de concepto del pipeline. Cada notebook valida **un
 eslabón** de la arquitectura ([`docs/architecture/multi-agent-pipeline.md`](../docs/architecture/multi-agent-pipeline.md))
 de forma manual, antes de convertirlo en agente.
 
+## Qué se ha probado (resumen)
+
+Estos notebooks son **spikes de validación técnica** — no son el sistema final ni
+resultados clínicos, sino pruebas para de-arriesgar decisiones de arquitectura.
+Todos corren sobre el **subconjunto de Teeth3DS+ que descargamos**
+(`data/raw/teeth3ds/`, **12 pacientes / 24 escaneos**, gitignored — ver
+[nota del dataset](../docs/research/dataset-teeth3ds.md)); los renders usan un caso
+representativo (`01A6GW4A_lower`).
+
+| Notebook | Qué se validó exactamente | GPU |
+|---|---|---|
+| **01** | VTK carga la malla real y hace *splatting clásico* (baseline) → serializa al contrato | No |
+| **02** | Visor 3D interactivo de escritorio (VTK): malla, campo, nube de puntos | No |
+| **03** | Generar **vistas sintéticas + poses de cámara exactas** (input del 3DGS), sin COLMAP | No |
+| **04** | **3DGS moderno entrenado** (`gsplat`/GPU) sobre esas vistas → contrato | **Sí** |
+
+**No se ha probado (aún):** foto→3D con **fotos reales**, **fusión multimodal**
+(CBCT+STL), ni la integración como **agentes / LLM**. El 3DGS moderno se validó por
+vía sintética (matiz «circular» documentado en
+[`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md)).
+
 > **Cómo ejecutarlos:** desde la raíz del repo, `uv run jupyter notebook`. El
 > prefijo `uv run` hace que el kernel use el `.venv` del workspace (donde están
 > `vtk`, `numpy`, etc.); lanzarlo con `jupyter notebook` a secas usaría el Python
 > del sistema y fallaría con `ModuleNotFoundError`.
+
+> **Sobre los datos (`data/` está gitignored):** los notebooks **leen** de
+> `data/raw/teeth3ds/` (el dataset, que se baja con
+> [`scripts/fetch_teeth3ds.sh`](../scripts/fetch_teeth3ds.sh)) y **escriben** sus
+> artefactos (`.ply`, vistas, `transforms.json`, campo entrenado) en
+> `data/processed/`. Nada de eso se versiona: es **regenerable** re-ejecutando los
+> notebooks, **pesa** (varios GB) y **no debe redistribuirse** por el repo (licencia
+> y soberanía del dato). El repo guarda la *receta* (código + script), no el dato.
 
 ---
 
