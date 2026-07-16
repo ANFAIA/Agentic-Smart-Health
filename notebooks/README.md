@@ -86,9 +86,9 @@ nuevas.**
 > lanza **se bloquea** hasta que la cierras (tecla `q`). Por eso va **sin salidas
 > embebidas** — su resultado es la ventana, no una imagen.
 
-Muestra dos cosas rotables: la malla coloreada por FDI y el campo
-`vtkGaussianSplatter`. Controles: arrastrar (rotar), rueda (zoom), Shift+arrastrar
-(pan), `q` (cerrar).
+Muestra tres cosas rotables: la malla coloreada por FDI, el campo
+`vtkGaussianSplatter` y la nube de puntos (vértices). Controles: arrastrar
+(rotar), rueda (zoom), Shift+arrastrar (pan), `q` (cerrar).
 
 ### Cómo correrlo
 
