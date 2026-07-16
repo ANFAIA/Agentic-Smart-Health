@@ -142,5 +142,8 @@ L1 baja de ~0.16 a ~0.03; la reconstrucción reproduce la arcada dental.
 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/04-train-3dgs-gsplat.ipynb
 ```
 
+Incluye un **visor interactivo** (§7, ventana nativa VTK como el `02`) para rotar el
+campo de gaussianas entrenado — requiere pantalla, se lanza con `uv run jupyter notebook`.
+
 **Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
 armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (Issue 3).
