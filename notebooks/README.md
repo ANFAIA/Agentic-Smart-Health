@@ -71,3 +71,29 @@ ver [`scripts/fetch_teeth3ds.sh`](../scripts/fetch_teeth3ds.sh) y la
 
 **Siguiente:** Issue 3 (visor web three.js / GaussianSplats3D) y, tras el spike de
 motores, redactar el **ADR 002** de render.
+
+---
+
+## `02-vtk-interactive-viewer.ipynb` — Visor 3D interactivo (ventana nativa VTK)
+
+Complemento del `01`. Aquel renderiza *offscreen* a PNG (fotos fijas); este abre una
+**ventana nativa del sistema** para **rotar / zoom / pan** el modelo con el ratón,
+usando `vtkRenderWindowInteractor` con estilo *trackball*. **Cero dependencias
+nuevas.**
+
+> ⚠️ **Requiere entorno gráfico (pantalla).** No corre *headless* (servidor/CI) ni
+> renderiza dentro del notebook: abre una **ventana aparte**, y la celda que la
+> lanza **se bloquea** hasta que la cierras (tecla `q`). Por eso va **sin salidas
+> embebidas** — su resultado es la ventana, no una imagen.
+
+Muestra dos cosas rotables: la malla coloreada por FDI y el campo
+`vtkGaussianSplatter`. Controles: arrastrar (rotar), rueda (zoom), Shift+arrastrar
+(pan), `q` (cerrar).
+
+### Cómo correrlo
+
+```bash
+uv run jupyter notebook   # abrir 02, ejecutar celdas en orden; NO usar nbconvert --execute (bloquea)
+```
+
+Mismo dataset de entrada que el `01`.
