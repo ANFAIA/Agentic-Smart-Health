@@ -1,13 +1,17 @@
 # Dataset — Teeth3DS+ (escaneos intraorales 3D)
 
-> **Estado (2026-07-15):** dataset **evaluado y recomendado**; **licencia resuelta
+> **Estado (2026-07-16):** dataset **evaluado y recomendado**; **licencia resuelta
 > a CC-BY 4.0** según el paper (ver §4). Descarga vía **Google Drive** (§6).
 > **Subconjunto descargado y verificado** en `data/raw/teeth3ds/` (gitignored):
 > **12 pacientes / 24 escaneos** (maxilar+mandíbula), cada `.obj` con su `.json` de
-> labels. **Issue 1 cerrada.**
+> labels. **Issue 1 cerrada.** El **PoC MVP 1 (Issue 2) que lo consume ya está
+> hecho** (ver abajo).
 
-Contraparte de código: PoC MVP 1 (`notebooks/01-vtk-3dgs-poc.ipynb`, pendiente).
-Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-agent-pipeline.md).
+Contraparte de código: **PoC MVP 1 hecho** —
+[`notebooks/01-vtk-3dgs-poc.ipynb`](../../notebooks/01-vtk-3dgs-poc.ipynb)
+(resultados y alcance en [`notebooks/README.md`](../../notebooks/README.md)):
+carga la malla, valida el ancla FDI, corre `vtkGaussianSplatter` y serializa al
+contrato. Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture/multi-agent-pipeline.md).
 
 ---
 

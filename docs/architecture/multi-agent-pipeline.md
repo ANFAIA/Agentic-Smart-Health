@@ -15,6 +15,58 @@
 > [`core-schemas`](../../packages/core-schemas/), el *cómo* de cada pieza llegará
 > con los MVP escalonados.
 
+## 0. Vista de conjunto (para quien llega nuevo)
+
+Si es tu primer contacto con el sistema, lee **solo esta sección**: te da el mapa
+antes del detalle. El resto del documento formaliza cada pieza.
+
+**La idea en una frase:** varios **agentes** (trabajadores con una única
+responsabilidad) traducen ficheros clínicos heterogéneos a un **documento común**
+(el `TwinSnapshot`), lo enriquecen y lo materializan para que un **visor** lo
+muestre. Un **orquestador** reparte el trabajo.
+
+**Las 6 capas** (de fuera hacia dentro):
+
+| Capa | Qué es | Componente en el repo |
+|---|---|---|
+| **Visualización** | Lo que ve el usuario | `web-viewer` (three.js) · VTK / 3D Slicer |
+| **Orquestación** | Reparte y ordena las tareas | `apps/agent-orchestrator` |
+| **Agentes** | Hacen el trabajo (ingesta + análisis) | `cbct/stl/report/image-agent`, `segmentation/pathology-agent`… |
+| **Cerebro (LLM)** | Razona **dentro** de un agente (no es una capa central; no todos lo usan) | Claude / Ollama — hoy solo en `research-agent` |
+| **Contrato de datos** | El idioma común por el que se hablan los agentes | `packages/core-schemas` → `TwinSnapshot` |
+| **Almacén pesado** | Guarda los millones de gaussianas (referenciadas por hash) | `packages/3dgs-engine` |
+
+> **La confusión típica:** «el modelo» (el LLM) **no** es el sistema entero ni una
+> capa aparte — es la *cabeza pensante* de un agente concreto. El agente es el
+> empleado (rol + herramientas + permisos); el orquestador es el jefe; el
+> `TwinSnapshot` es el documento que se pasan entre sí.
+
+**El recorrido de un dato:**
+
+```
+Ficheros crudos (DICOM / STL / PDF / foto)
+   │  [Agentes de INGESTA]        1 modalidad = 1 soporte = 1 agente
+   ▼
+TwinSnapshot  ──────────────►  core-schemas (idioma común); lo pesado → 3dgs-engine (por hash)
+   │  [FUSIÓN espacial]           registro STL↔CBCT + ancla FDI
+   ▼
+TwinSnapshot fusionado
+   │  [Agentes de ANÁLISIS]       enriquecen (segmentación, patología…) · Human-in-the-loop
+   ▼
+   │  [EXPORT]                     JSON del contrato + campo .ply/.splat
+   ▼
+Visores (web three.js / VTK)  ◄── lo que ve el usuario
+
+  agent-orchestrator coordina todo el recorrido de principio a fin.
+```
+
+> **Dónde encaja lo construido hasta ahora:** el
+> [PoC MVP 1](../../notebooks/README.md) (`notebooks/01-vtk-3dgs-poc.ipynb`) es un
+> adelanto **manual** del tramo `stl-agent` → `3dgs-engine` → visor VTK — sin
+> orquestador ni LLM todavía — para validar que las piezas encajan.
+
+---
+
 ### Cobertura de la issue *Diseño de Arquitectura Multiagente (Semana 1-2)*
 
 | # | Tarea | Dónde se resuelve | Estado |
