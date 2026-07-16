@@ -14,6 +14,19 @@ El sector dental maneja datos altamente heterogéneos: escáneres CBCT (DICOM), 
 
 ---
 
+## Cómo encaja todo (vista rápida)
+
+Varios **agentes** (trabajadores con una única responsabilidad) traducen ficheros
+clínicos heterogéneos (DICOM, STL, PDF, foto) a un **documento común** —el
+`TwinSnapshot` de [`core-schemas`](packages/core-schemas/)—, lo enriquecen y lo
+materializan para que un **visor** lo muestre; un **orquestador**
+([`agent-orchestrator`](apps/agent-orchestrator/)) reparte el trabajo. El
+«modelo» (LLM) no es una capa central: es el *cerebro* que razona **dentro** de un
+agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
+
+> 📐 **Mapa completo de las 6 capas y el recorrido del dato** (pensado para quien
+> llega nuevo): [`docs/architecture/multi-agent-pipeline.md` §0](docs/architecture/multi-agent-pipeline.md#0-vista-de-conjunto-para-quien-llega-nuevo).
+
 ## Arquitectura del monorepo
 
 El repositorio está organizado como un **monorepo gestionado con [`uv` workspaces`](https://docs.astral.sh/uv/concepts/workspaces/)**. El archivo `pyproject.toml` raíz declara el workspace y agrupa automáticamente todos los miembros bajo `apps/` y `packages/`:
