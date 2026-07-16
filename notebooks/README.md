@@ -116,7 +116,31 @@ Genera en `data/processed/teeth3ds/<caso>_3dgs/` (gitignored):
 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/03-synthetic-views-for-3dgs.ipynb
 ```
 
-> **Mitad 2 (pendiente, requiere GPU):** entrenar el 3DGS con `gsplat` a partir de
-> esos artefactos, exportar el `.splat`/`.ply`, serializar al contrato y visualizar
-> (Issue 3). Alcance y matiz «circular» (validación del motor, no foto→3D real) en
-> [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md).
+> **Mitad 2:** ver `04` abajo. Alcance y matiz «circular» (validación del motor, no
+> foto→3D real) en [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md).
+
+---
+
+## `04-train-3dgs-gsplat.ipynb` — 3DGS moderno · Mitad 2 (entrenamiento)
+
+**El 3DGS moderno de verdad.** Toma el paquete del `03` (vistas + poses + `init.ply`)
+y **entrena** un campo de gaussianas anisótropas optimizándolas contra las vistas
+(pérdida fotométrica L1) con `gsplat`. Exporta el `.ply` entrenado y lo serializa al
+contrato (`TwinSnapshot`).
+
+✅ **Validado end-to-end en RTX 5070 (sm_120)**: `torch 2.11.0+cu128` + `gsplat 1.5.3`.
+L1 baja de ~0.16 a ~0.03; la reconstrucción reproduce la arcada dental.
+
+> ⚠️ **Requiere GPU.** `torch`/`gsplat` se instalan **ad-hoc en el venv** (no en
+> `pyproject.toml`: son específicos de GPU y romperían la lock compartida / CI):
+> ```bash
+> uv pip install torch --index-url https://download.pytorch.org/whl/cu128   # Blackwell/sm_120
+> uv pip install gsplat   # compila kernels CUDA en el primer uso (~45 s)
+> ```
+
+```bash
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/04-train-3dgs-gsplat.ipynb
+```
+
+**Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
+armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (Issue 3).
