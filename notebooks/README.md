@@ -1,0 +1,73 @@
+# Notebooks — PoC / MVPs escalonados
+
+Experimentación y pruebas de concepto del pipeline. Cada notebook valida **un
+eslabón** de la arquitectura ([`docs/architecture/multi-agent-pipeline.md`](../docs/architecture/multi-agent-pipeline.md))
+de forma manual, antes de convertirlo en agente.
+
+> **Cómo ejecutarlos:** desde la raíz del repo, `uv run jupyter notebook`. El
+> prefijo `uv run` hace que el kernel use el `.venv` del workspace (donde están
+> `vtk`, `numpy`, etc.); lanzarlo con `jupyter notebook` a secas usaría el Python
+> del sistema y fallaría con `ModuleNotFoundError`.
+
+---
+
+## `01-vtk-3dgs-poc.ipynb` — Malla dental → Gaussian Splatting (VTK)
+
+**Issue 2 · PoC MVP 1.** Valida el eslabón mínimo del pipeline
+*«malla 3D → representación gaussiana volumétrica → contrato de datos»* con la
+librería de entrada (VTK) y el dataset real (Teeth3DS+).
+
+### Qué hace (flujo)
+
+`caso → malla .obj + labels FDI → render coloreado → nube de puntos →
+vtkGaussianSplatter → campo de densidad 3D → render isosuperficie →
+artefacto .ply + hash → TwinSnapshot del contrato`
+
+### Qué se logró (validado)
+
+- **La cadena mínima corre de extremo a extremo** con datos reales: VTK carga las
+  mallas de Teeth3DS+ (~110k vértices), las *splattea* a un campo de densidad
+  volumétrico 3D y lo renderiza.
+- **Las etiquetas FDI casan con la geometría** (render coloreado por diente): el
+  ancla semántica `region_id` está bien alineada → ground truth listo para el
+  futuro `segmentation-agent` y para la fusión semántica.
+- **VTK es viable** como librería de entrada y renderiza *headless* (offscreen →
+  PNG), sirve en servidor/CI sin pantalla.
+- **El PoC no queda huérfano de la arquitectura**: la salida se serializa al
+  contrato [`core-schemas`](../packages/core-schemas/) (`TwinSnapshot` +
+  `gaussian_field_ref` por hash). El patrón «el campo masivo se referencia, no se
+  embebe» funciona en la práctica.
+
+### Qué NO es (alcance honesto)
+
+- **No es 3DGS entrenado.** `vtkGaussianSplatter` es *splatting* de densidad
+  clásico: gaussianas **isótropas**, sin optimización diferenciable ni armónicos
+  esféricos. Es un **baseline / banco de pruebas**, no el motor final.
+- **No hace foto→3D todavía**: parte de una malla existente (aunque abre la puerta
+  a renderizar vistas sintéticas con verdad-terreno para ese pipeline).
+- **No hay fusión multimodal** (CBCT+STL) — es trabajo posterior.
+
+### Qué decide (insumo para los ADR)
+
+| Hallazgo | Alimenta |
+|---|---|
+| Qué da VTK y qué le falta (isótropas, coste O(n³), sensibilidad a `Radius`) | **D1 · ADR 002** (motor de render) |
+| Los `.obj` traen color por vértice sin usar | canal `color_superficie` de la **fusión** |
+| Encía aislable (`label`/`instance` 0) | futuro PoC de inflamación/pH |
+
+### Cómo correrlo
+
+```bash
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/01-vtk-3dgs-poc.ipynb
+# o, interactivo:
+uv run jupyter notebook
+```
+
+Requiere el subconjunto Teeth3DS+ en `data/raw/teeth3ds/` (gitignored) —
+ver [`scripts/fetch_teeth3ds.sh`](../scripts/fetch_teeth3ds.sh) y la
+[nota del dataset](../docs/research/dataset-teeth3ds.md). Genera un artefacto
+`.ply` en `data/processed/teeth3ds/` (gitignored). Los dos renders quedan
+**embebidos** en el `.ipynb` (visibles en GitHub sin ejecutar).
+
+**Siguiente:** Issue 3 (visor web three.js / GaussianSplats3D) y, tras el spike de
+motores, redactar el **ADR 002** de render.
