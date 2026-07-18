@@ -181,7 +181,7 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 > su **rol y contrato**, no su implementación.
 
 **Agentes de ingesta previstos** (`planned`, regla «1 modalidad = 1 soporte = 1 agente»):
-`cbct-agent` (DICOM → densidad σ), `stl-agent` (STL → color superficial),
+`cbct-agent` (DICOM → densidad σ), `mesh-agent` (malla intraoral → color superficial),
 `report-agent` (PDF → pH regional), `image-agent` (foto 2D → previsualización 3D, PoC).
 Detalle en el [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
 
