@@ -7,7 +7,7 @@ Traducción a Pydantic v2 del diseño conceptual de la Semana 1:
      gaussiana  →  `GaussianPrimitive` (θₙ = {c, Σ, σ}).
   2. Extensión con metadatos clínicos de distinto soporte geométrico:
        · densidad  σ            → volumétrico  (por gaussiana)
-       · color_superficie       → superficial  (STL, solo la cáscara)
+       · color_superficie       → superficial  (malla intraoral, solo la cáscara)
        · pH                     → regional     (informe, capa dispersa por FDI)
   3. Soporte de series temporales para evaluar la evolución clínica:
        modelo híbrido = snapshots por adquisición (geometría/densidad,
@@ -35,6 +35,11 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Versión del contrato de datos (SemVer). Se serializa en cada `TwinSnapshot`
+# para que un JSON persistido declare bajo qué esquema se escribió y no quede
+# "huérfano" si el contrato (o el formato del campo gaussiano) evoluciona.
+SCHEMA_VERSION = "1.0.0"
+
 
 # --------------------------------------------------------------------------- #
 # Vocabulario controlado
@@ -42,10 +47,23 @@ from pydantic import BaseModel, ConfigDict, Field
 class Modality(str, Enum):
     """Fuente de la que procede un dato ingerido."""
 
-    CBCT = "cbct"      # DICOM  → densidad σ (volumétrico)
-    STL = "stl"        # malla  → color_superficie (superficial)
-    REPORT = "report"  # PDF    → pH y otros atributos regionales
+    CBCT = "cbct"      # DICOM        → densidad σ (volumétrico)
+    MESH = "mesh"      # malla intraoral (OBJ/PLY, color por vértice) → color_superficie
+    REPORT = "report"  # PDF          → pH y otros atributos regionales
     IMAGE = "image"    # foto 2D
+
+
+class ModalityStatus(str, Enum):
+    """Resultado de la ingesta de una modalidad en un snapshot.
+
+    Hace explícito el fallo/ausencia: un snapshot parcial deja de ser
+    indistinguible de uno completo. Sin esto, «falta la malla» y «el agente de
+    malla falló» serían el mismo silencio (ver ADR 001, manejo de fallos de ingesta).
+    """
+
+    OK = "ok"            # ingerida y traducida al contrato
+    MISSING = "missing"  # no se aportó el fichero de esta modalidad
+    FAILED = "failed"    # se intentó pero falló (corrupto, no parseable…)
 
 
 class Support(str, Enum):
@@ -66,6 +84,26 @@ FDICode = Annotated[
     str,
     Field(pattern=r"^([1-4][1-8]|[5-8][1-5])$", description="Diente en numeración ISO-FDI, p. ej. '16'."),
 ]
+
+
+# --------------------------------------------------------------------------- #
+# Resultado de ingesta por modalidad (manejo explícito de fallos/ausencias)
+# --------------------------------------------------------------------------- #
+class ModalityIngestion(BaseModel):
+    """Estado de la ingesta de una modalidad concreta en un snapshot.
+
+    Es el registro *fail-loud* del borde de ingesta: el orquestador anota aquí
+    el resultado de cada modalidad que intentó (o esperaba) ingerir, de modo
+    que un snapshot parcial lo declare en vez de llegar callado a exportación.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    modality: Modality
+    status: ModalityStatus
+    detail: str | None = Field(
+        default=None, description="Motivo si status != ok (p. ej. 'DICOM corrupto')."
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +129,12 @@ class Provenance(BaseModel):
 # Atributos por-punto: la primitiva gaussiana extendida  (θₙ⁺)
 # --------------------------------------------------------------------------- #
 class Color(BaseModel):
-    """Color RGB de superficie (canal de apariencia reintroducido desde el STL)."""
+    """Color RGB de superficie (canal de apariencia reintroducido desde la malla intraoral).
+
+    El color lo aporta el escáner intraoral como color por vértice en la malla
+    (OBJ/PLY en el dataset Teeth3DS+). Un STL «pelado» no lleva color: por eso la
+    fuente es la malla, no el formato STL.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -110,8 +153,8 @@ class GaussianPrimitive(BaseModel):
                               los armónicos esféricos se descartan por isotropía).
 
     Extensión clínica:
-        color_superficie  → RGB de la malla STL (soporte SUPERFICIAL; None si la
-                            gaussiana no cae en la banda ε de la superficie).
+        color_superficie  → RGB de la malla intraoral (soporte SUPERFICIAL; None si
+                            la gaussiana no cae en la banda ε de la superficie).
         region_id         → etiqueta FDI del diente; ancla semántica que une esta
                             primitiva con la capa regional (pH) y con las demás
                             modalidades.
@@ -172,16 +215,32 @@ class TwinSnapshot(BaseModel):
     """Estado completo del Digital Twin en una adquisición (visita/escaneo).
 
     Snapshot-céntrico por reversibilidad: cada snapshot es autocontenido y basta
-    para regenerar STL/imágenes de esa fecha. El campo gaussiano masivo no se
+    para regenerar la malla/imágenes de esa fecha. El campo gaussiano masivo no se
     embebe: se referencia por hash/URI al almacén de `3dgs-engine`.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: str = Field(
+        default=SCHEMA_VERSION,
+        description="Versión del contrato bajo el que se escribió este snapshot (SemVer).",
+    )
     acquisition_id: str
     timestamp: datetime
-    modalities: list[Modality] = Field(default_factory=list)
-    gaussian_field_ref: str = Field(description="Hash/URI del campo gaussiano en 3dgs-engine.")
+    modalities: list[Modality] = Field(
+        default_factory=list,
+        description="Modalidades presentes (status OK). El resultado completo por "
+        "modalidad —incluidas las que faltan o fallaron— vive en `ingestion`.",
+    )
+    ingestion: list[ModalityIngestion] = Field(
+        default_factory=list,
+        description="Log autoritativo del resultado de ingesta por modalidad (fail-loud).",
+    )
+    gaussian_field_ref: str = Field(
+        description="Hash/URI del campo gaussiano en 3dgs-engine. Invariante fail-loud: "
+        "al cargar/exportar hay que validar que el blob referenciado existe; una "
+        "referencia colgante es un error, no un modelo vacío silencioso.",
+    )
     n_primitives: int | None = Field(default=None, ge=0)
     regional: list[RegionalObservation] = Field(default_factory=list)
     provenance: Provenance

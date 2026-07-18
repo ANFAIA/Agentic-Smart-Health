@@ -5,11 +5,14 @@ exclusivamente a través de estos modelos (ver AGENTS.md y ADR 001).
 """
 
 from core_schemas.models import (
+    SCHEMA_VERSION,
     ClinicalAttributes,
     Color,
     FDICode,
     GaussianPrimitive,
     Modality,
+    ModalityIngestion,
+    ModalityStatus,
     PatientDigitalTwin,
     Provenance,
     RegionalObservation,
@@ -18,11 +21,14 @@ from core_schemas.models import (
 )
 
 __all__ = [
+    "SCHEMA_VERSION",
     "ClinicalAttributes",
     "Color",
     "FDICode",
     "GaussianPrimitive",
     "Modality",
+    "ModalityIngestion",
+    "ModalityStatus",
     "PatientDigitalTwin",
     "Provenance",
     "RegionalObservation",
