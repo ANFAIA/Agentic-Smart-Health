@@ -25,10 +25,15 @@ representativo (`01A6GW4A_lower`).
 vía sintética (matiz «circular» documentado en
 [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md)).
 
-> **Cómo ejecutarlos:** desde la raíz del repo, `uv run jupyter notebook`. El
-> prefijo `uv run` hace que el kernel use el `.venv` del workspace (donde están
-> `vtk`, `numpy`, etc.); lanzarlo con `jupyter notebook` a secas usaría el Python
-> del sistema y fallaría con `ModuleNotFoundError`.
+> **Cómo ejecutarlos:** para **01–03** (sin GPU), desde la raíz del repo,
+> `uv run jupyter notebook`. El prefijo `uv run` hace que el kernel use el `.venv`
+> del workspace (donde están `vtk`, `numpy`, `pydantic`); lanzarlo con `jupyter
+> notebook` a secas usaría el Python del sistema y fallaría con `ModuleNotFoundError`.
+>
+> **El `04` (GPU) usa un entorno aparte.** `torch`/`gsplat` son específicos de la
+> máquina (cu128/Blackwell) y **no** viven en el `.venv` del workspace —un `uv sync`
+> los podaría—: tienen su propio venv y su kernel de Jupyter **"Dental GPU (3DGS)"**
+> (montaje en §04). Al abrir el `04`, selecciona ese kernel.
 
 > **Sobre los datos (`data/` está gitignored):** los notebooks **leen** de
 > `data/raw/teeth3ds/` (el dataset, que se baja con
@@ -160,19 +165,27 @@ contrato (`TwinSnapshot`).
 ✅ **Validado end-to-end en RTX 5070 (sm_120)**: `torch 2.11.0+cu128` + `gsplat 1.5.3`.
 L1 baja de ~0.16 a ~0.03; la reconstrucción reproduce la arcada dental.
 
-> ⚠️ **Requiere GPU.** `torch`/`gsplat` se instalan **ad-hoc en el venv** (no en
-> `pyproject.toml`: son específicos de GPU y romperían la lock compartida / CI):
+> ⚠️ **Requiere GPU, en su propio entorno.** `torch`/`gsplat` son específicos de la
+> máquina (cu128/Blackwell) y **no** van en `pyproject.toml` (romperían la lock
+> compartida / CI, y un `uv sync` los podaría del `.venv`). Viven en un **venv
+> dedicado** con su kernel de Jupyter. Montaje **una sola vez**:
 > ```bash
-> uv pip install torch --index-url https://download.pytorch.org/whl/cu128   # Blackwell/sm_120
-> uv pip install gsplat   # compila kernels CUDA en el primer uso (~45 s)
+> python3.13 -m venv ~/.venvs/dental-gpu
+> ~/.venvs/dental-gpu/bin/pip install torch --index-url https://download.pytorch.org/whl/cu128  # Blackwell/sm_120
+> ~/.venvs/dental-gpu/bin/pip install gsplat vtk numpy pydantic jupyter ipykernel  # gsplat compila kernels CUDA (~45 s)
+> ~/.venvs/dental-gpu/bin/python -m ipykernel install --user --name dental-gpu --display-name "Dental GPU (3DGS)"
 > ```
+> El `.venv` del workspace queda intacto para contrato/tests; un `uv sync` ya no te
+> tumba torch. `core_schemas` se importa por `sys.path` (no hace falta instalarlo).
 
 ```bash
-uv run jupyter nbconvert --to notebook --execute --inplace notebooks/04-train-3dgs-gsplat.ipynb
+# ejecutar con el entorno dedicado (NO 'uv run', que usaría el .venv del workspace sin torch)
+~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/04-train-3dgs-gsplat.ipynb
 ```
 
 Incluye un **visor interactivo** (§7, ventana nativa VTK como el `02`) para rotar el
-campo de gaussianas entrenado — requiere pantalla, se lanza con `uv run jupyter notebook`.
+campo de gaussianas entrenado — requiere pantalla; lánzalo con
+`~/.venvs/dental-gpu/bin/jupyter notebook` (kernel **"Dental GPU (3DGS)"**).
 
 **Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
 armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (Issue 3).
