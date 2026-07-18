@@ -89,15 +89,17 @@ sobre el mismo soporte geométrico**, y esa es la decisión de diseño:
 | Atributo | Origen | Soporte geométrico | Densidad de datos | Cómo se asigna |
 |---|---|---|---|---|
 | `σ` densidad | CBCT · DICOM | **Volumétrico** — todo el volumen | Denso · por gaussiana | Reconstrucción RGS |
-| `color_superficie` | STL · malla | **Superficial** — cáscara 2-manifold | Solo gaussianas en banda ε | Registro STL ↔ CBCT |
+| `color_superficie` | Malla intraoral · OBJ/PLY (color por vértice) | **Superficial** — cáscara 2-manifold | Solo gaussianas en banda ε | Registro malla ↔ CBCT |
 | `pH` | Informe · PDF | **Regional** — por diente/zona | Disperso · 1 valor/región | Capa dispersa `region_id → pH` (FDI) |
 
 **Decisiones:**
 
 - **`color_superficie`** reintroduce a propósito un canal de apariencia superficial
   que RGS había *descartado* (los SH) por ser isótropa la atenuación. El CBCT no lo
-  necesitaba; el Digital Twin sí. Requiere registrar el STL contra el volumen y solo
-  aplica a las gaussianas de la cáscara → `Color | None`.
+  necesitaba; el Digital Twin sí. El color lo aporta el **escáner intraoral como
+  color por vértice de la malla** (OBJ/PLY en Teeth3DS+) — no un STL «pelado», que no
+  lleva color. Transferirlo a las gaussianas requiere registrar la malla contra el
+  volumen y solo aplica a las de la cáscara → `Color | None`.
 - **`pH`** no es por-punto sino por-zona. Modelo **híbrido**: lo volumétrico/superficial
   se embebe en la gaussiana; lo regional vive en una **capa dispersa** indexada por
   `region_id` (FDI), y las gaussianas la heredan. Las etiquetas FDI hacen de
@@ -111,7 +113,7 @@ flowchart LR
     direction TB
     GEO["cₙ, Σₙ · geometría (heredado)"]
     DEN["σₙ ≥ 0 · densidad — VOLUMÉTRICO"]
-    COL["color_superficie : RGB | null — SUPERFICIAL (STL)"]
+    COL["color_superficie : RGB | null — SUPERFICIAL (malla intraoral)"]
     RID["region_id : FDI · ancla semántica"]
     PH["pH : float | null — REGIONAL"]
     TS["t : timestamp · longitudinal"]
@@ -145,7 +147,7 @@ Se evaluaron tres modelos:
 | **C · Híbrido (elegido)** | snapshots + observaciones regionales *timestamped* | reversibilidad **y** evolución de atributos |
 
 **Modelo híbrido:** el gemelo es una secuencia de `TwinSnapshot` (uno por
-visita/escaneo, autocontenido → **reversibilidad**: se puede regenerar STL/imágenes
+visita/escaneo, autocontenido → **reversibilidad**: se puede regenerar la malla/imágenes
 de esa fecha). El campo gaussiano masivo no se embebe: se referencia por hash/URI al
 almacén de `3dgs-engine`. Cada snapshot lleva sus `RegionalObservation` con
 `timestamp`, de modo que **la evolución de un atributo** (p. ej. el pH del diente 16)
@@ -195,4 +197,4 @@ inválido se rechazan en tiempo de validación.
 
 - Lin et al., *Residual Gaussian Splatting for Ultra Sparse-View CBCT Reconstruction*, arXiv:2604.27552v1 (2026).
 - Notas de los otros papers del Grupo 2: [`01_3dgs_usage/`](01_3dgs_usage/) (DentalGS aporta las etiquetas FDI como ancla semántica; NNTV-GS comparte la física Beer-Lambert con otro regularizador).
-- Estándares: ISO 3950 (numeración dental FDI), DICOM, STL.
+- Estándares: ISO 3950 (numeración dental FDI), DICOM; mallas 3D (OBJ/PLY).
