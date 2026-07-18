@@ -3,6 +3,9 @@ name = "agentic-smart-health"
 version = "0.1.0"
 description = "Agentic Smart Health - Monorepo raíz"
 requires-python = ">=3.13"
+dependencies = [
+    "core-schemas",
+]
 
 [tool.uv.workspace]
 members = ["apps/*", "packages/*"]
@@ -12,11 +15,18 @@ members = ["apps/*", "packages/*"]
 dev = [
     "ruff>=0.9",
     "mypy>=1.15",
+    "pytest>=8.0",
     "vtk>=9.6.2",
     "numpy>=2.5.1",
     "jupyter>=1.1.1",
     "ipykernel>=7.3.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+
+[tool.uv.sources]
+core-schemas = { workspace = true }
 
 [tool.ruff]
 line-length = 100
