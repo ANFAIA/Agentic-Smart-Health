@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Estado** | Aceptado |
-| **Fecha** | 2026-07-13 (rev. 2026-07-14) |
+| **Fecha** | 2026-07-13 (rev. 2026-07-17) |
 | **Decisor** | Equipo de desarrollo — Agentic Smart Health |
 | **Ámbito** | Semana 1 · Tarea 1 (contratos de datos para la ingesta) |
 | **Implementación** | [`packages/core-schemas/src/core_schemas/models.py`](../../packages/core-schemas/src/core_schemas/models.py) |
@@ -25,7 +25,7 @@ uno produce un dato de **naturaleza geométrica diferente**:
 | Aparato | Fichero | Aporta | ¿Dónde tiene sentido ese dato? |
 |---|---|---|---|
 | CBCT (escáner 3D de rayos X) | DICOM | **densidad** radiológica (σ) | en **todo el volumen** |
-| Escáner intraoral | STL (malla) | **color** de superficie | solo en la **cáscara** |
+| Escáner intraoral | malla intraoral (OBJ/PLY) | **color** de superficie | solo en la **cáscara** |
 | Informe clínico | PDF | **pH** (y otros) por diente | un valor **por región** |
 
 Los tres describen **la misma boca**, pero no "viven" en el mismo lugar
@@ -48,7 +48,7 @@ repetir el pH en cada punto y a inventar densidad donde no la hay.
 
 Además, el sistema debe soportar:
 
-1. **Ingesta multimodal** (DICOM, STL, PDF) hacia el monorepo.
+1. **Ingesta multimodal** (DICOM, malla OBJ, PDF) hacia el monorepo.
 2. **Series temporales** para evaluar la evolución clínica.
 3. **Trazabilidad** completa (RGPD/HIPAA): qué se ingirió, con qué transformación.
 4. **Integración con 3DGS** sin cargar millones de gaussianas en memoria.
@@ -63,23 +63,27 @@ disperso (pH) se *guarda*.
 
 ```mermaid
 flowchart TB
-  DCM["CBCT · DICOM"] -->|"reconstrucción RGS"| GP["millones de<br/>GaussianPrimitive<br/>(center, σ, color, region_id)"]
+  DCM["CBCT · DICOM"] -->|"reconstrucción RGS"| GP["millones de<br/>GaussianPrimitive<br/>(center, σ, color)"]
   GP -.->|"⚠ demasiado pesado para Pydantic"| ENG[("3dgs-engine<br/>tensores / nube de puntos")]
   ENG -->|"puntero: hash / URI"| REF["gaussian_field_ref"]
 
   PDF["Informe · PDF"] -->|"extracción pH por diente"| RO["RegionalObservation<br/>(FDI 16 → pH 6.9)"]
 
+  SEG["segmentation-agent<br/>(fase posterior)"] -.->|"puebla region_id (FDI)"| GP
+
   REF --> SNAP["TwinSnapshot · 1 visita"]
   RO --> SNAP
-  STL["Escaneo · STL"] -.->|"registro STL↔CBCT (banda ε)"| GP
+  MESH["Escaneo · malla OBJ"] -.->|"registro malla↔CBCT (banda ε)"| GP
   SNAP -->|"provenance de cada valor"| SNAP
 
   classDef file fill:#eef2f4,stroke:#6b7b83,color:#16232b;
   classDef heavy fill:#f7e7e8,stroke:#b0393f,color:#b0393f;
   classDef store fill:#d7edf1,stroke:#0d7d94,color:#0a5c6d;
-  class DCM,PDF,STL file;
+  classDef proc fill:#ece3f7,stroke:#7b4fc0,color:#5b3a94;
+  class DCM,PDF,MESH file;
   class GP,ENG heavy;
   class SNAP,RO,REF store;
+  class SEG proc;
 ```
 
 - La **geometría/densidad masiva** → *no* se embebe: `TwinSnapshot.gaussian_field_ref`
@@ -87,7 +91,12 @@ flowchart TB
 - El **pH** (pocos valores) → *sí* se guarda dentro del snapshot como lista de
   `RegionalObservation`.
 - El **color** solo aplica a las gaussianas que caen en la banda ε de la
-  superficie tras registrar el STL contra el volumen (de ahí `Color | None`).
+  superficie tras registrar la malla contra el volumen (de ahí `Color | None`).
+- El **`region_id` (FDI)** *no* nace en la reconstrucción RGS: lo **puebla la fase
+  de segmentación** (pipeline §6, fase 3), no la ingesta. El diagrama lo muestra
+  como paso posterior (`segmentation-agent -.-> region_id`) para no dar a entender
+  que el ancla semántica viene "gratis" con el volumen. El *origen* concreto de las
+  etiquetas (manual / segmentación / DentalGS) sigue abierto (pipeline §3).
 
 ---
 
@@ -140,7 +149,7 @@ Los atributos **no comparten soporte** y por eso viven en modelos distintos:
 > restricción validada en los modelos. Se mantiene porque nombra explícitamente la
 > decisión y será útil cuando los agentes de ingesta declaren qué soporte producen.
 > Tensión conocida: el color es conceptualmente "superficial" pero se almacena
-> *por gaussiana* (en el contenedor volumétrico), porque tras el registro STL↔CBCT
+> *por gaussiana* (en el contenedor volumétrico), porque tras el registro malla↔CBCT
 > son las gaussianas de la cáscara las que reciben el RGB.
 
 ### 4.2 Campo gaussiano referenciado, no embebido
@@ -150,11 +159,18 @@ Los atributos **no comparten soporte** y por eso viven en modelos distintos:
 (de)serializar. El contrato define la *unidad canónica* (`GaussianPrimitive`) para
 serializar conjuntos pequeños, no para almacenar el campo completo.
 
+> **Invariante *fail-loud* (referencia colgante).** Un `TwinSnapshot` JSON válido
+> puede apuntar a un hash que no existe en `3dgs-engine` (blob nunca subido o
+> borrado). Al **cargar o exportar** hay que **validar que el blob existe** y
+> abortar ruidosamente si no; nunca renderizar un modelo vacío en silencio. La
+> política de ciclo de vida del blob (retención, GC) queda pendiente, pero el
+> chequeo de existencia es obligatorio desde ya.
+
 ### 4.3 Enfoque snapshot-céntrico (reversibilidad)
 
 Cada `TwinSnapshot` es autocontenido: su propio `gaussian_field_ref`, sus
 modalidades y sus observaciones. **Razón: reversibilidad** — para regenerar el
-STL/imágenes de una fecha concreta basta con ese snapshot. Frente a mutar un único
+la malla/imágenes de una fecha concreta basta con ese snapshot. Frente a mutar un único
 twin (que perdería el historial), las fotos inmutables preservan el pasado.
 
 ### 4.4 `PatientDigitalTwin` como secuencia temporal
@@ -176,12 +192,45 @@ volumétrica (densidad), su color de superficie y su pH regional se relacionan
 porque todos apuntan al mismo diente (p. ej. "16"). Sin ese código común serían
 tres nubes de datos inconexas.
 
+> **Pendiente — el ancla FDI es hoy un *single point of failure* semántico.** Todo
+> el pegamento depende de que `region_id` sea correcto en las tres fuentes
+> (segmentación geométrica, informe/PDF, numeración clínica) y **no hay validación
+> cruzada**: `FDICode` valida el *formato* (`"36"` y `"46"` son ambos válidos), no
+> que el diente sea el correcto. Un swap de OCR en `report-agent` (leer "36" por
+> "46") colgaría el pH del diente equivocado **sin ningún error visible** — error
+> clínico silencioso. Tampoco se representan los casos borde (diente ausente,
+> supernumerario, prótesis/implante). La defensa —verificación cruzada
+> independiente (¿coinciden los dientes de la segmentación con los del informe?) y
+> un vocabulario para los casos borde— queda **abierta** (se explora, sin validar, en
+> el borrador especulativo ADR 003); se deja aquí **nombrada** para no tratarla como
+> resuelta.
+
 ### 4.7 Validación *fail-loud*
 
 `FDICode` valida el patrón ISO-FDI (`^([1-4][1-8]|[5-8][1-5])$`: permanentes
 11–48, temporales 51–85); `density ≥ 0`, `pH ∈ [0,14]`, RGB `0–255`, y
 `ConfigDict(extra="forbid")` rechaza campos no previstos. Los datos mal formados se
 rechazan en tiempo de validación, no aguas abajo.
+
+### 4.8 Versión de contrato y manejo explícito de fallos de ingesta
+
+Dos añadidos que hacen el snapshot **auto-descriptivo y honesto sobre lo que falta**:
+
+- **`schema_version` (SemVer, constante `SCHEMA_VERSION`).** Cada `TwinSnapshot`
+  declara bajo qué versión del contrato se escribió. **Razón:** evita snapshots
+  "huérfanos" — un JSON persistido antes de un cambio de contrato (o del formato
+  del campo gaussiano) se detecta por versión en vez de fallar de forma opaca aguas
+  abajo. Es la contraparte del canal binario `.ply/.splat`, cuyo formato aún se fija
+  en spike.
+- **`ingestion: list[ModalityIngestion]` con `ModalityStatus` (`ok` / `missing` /
+  `failed`).** El campo `modalities` solo lista las presentes; por sí solo, un
+  snapshot al que le falta la malla es **indistinguible** de uno donde el `mesh-agent`
+  falló. `ingestion` es el log autoritativo del borde de ingesta: el orquestador
+  anota el resultado de cada modalidad (con `detail` si no fue `ok`). **Razón:** un
+  snapshot parcial debe **declararse como parcial**, no llegar callado a exportación
+  y visualización — requisito de un sistema clínico. La **política del orquestador**
+  ante un fallo (abortar vs. continuar parcial vs. reintentar) es decisión de diseño
+  aparte; el contrato solo garantiza que el estado quede **representado**.
 
 ---
 
@@ -202,17 +251,29 @@ rechazan en tiempo de validación, no aguas abajo.
 **Positivas**
 - Separación de responsabilidades clara (volumétrico / superficial / regional).
 - Soporte nativo de series temporales y de la consulta de evolución.
-- Trazabilidad completa y seudonimización desde el contrato.
+- Trazabilidad **por observación** (fichero, agente, confianza) y seudonimización
+  desde el contrato.
 - Rendimiento: el campo masivo se referencia, no se carga.
 
 **Negativas / costes asumidos**
 - Mayor complejidad inicial que un modelo plano.
 - **Acoplamiento operativo**: hay que mantener sincronizados `3dgs-engine`
   (tensores) y `core-schemas` (punteros) — si el almacén cambia el hash, el
-  snapshot queda colgado.
-- El registro STL↔CBCT (banda ε) es un prerequisito externo aún **no diseñado**
+  snapshot queda colgado. *Mitigado en parte:* §4.2 exige validar la existencia del
+  blob al cargar/exportar (*fail-loud*); la política de ciclo de vida (GC, versionado
+  de hash) sigue abierta.
+- El registro malla↔CBCT (banda ε) es un prerequisito externo aún **no diseñado**
   (ver Tarea 2 / futuro ADR de fusión).
 - El `Support` como enum no-validado es documentación, no garantía (§4.1).
+
+**Contradicción que este ADR deja *nombrada y abierta* (sin resolver):**
+- **Inmutabilidad vs. «enriquecimiento».** §4.3 usa la inmutabilidad del snapshot
+  como argumento de reversibilidad, pero el pipeline dice que `pathology-agent` /
+  `segmentation-agent` **enriquecen** el snapshot. Mutar contradice la inmutabilidad;
+  crear un snapshot nuevo por enriquecimiento contradice «1 snapshot = 1 visita».
+  La respuesta candidata (enriquecimientos como **eventos append-only**, base
+  inmutable) → abierto (esbozada, sin validar, en el borrador especulativo
+  [ADR 003](003-verification-fault-tolerance.md)).
 
 ---
 
@@ -226,10 +287,11 @@ Implementación en [`packages/core-schemas/src/core_schemas/models.py`](../../pa
 | Color de superficie | `Color` | RGB 0–255 |
 | Atributos regionales | `ClinicalAttributes` | `ph` (0–14); extensible (movilidad, sondaje…) |
 | Observación temporal | `RegionalObservation` | región + atributos + `timestamp` + `provenance` |
-| Snapshot por visita | `TwinSnapshot` | referencia al campo gaussiano; reversibilidad |
+| Snapshot por visita | `TwinSnapshot` | `schema_version` + referencia al campo gaussiano; reversibilidad |
+| Resultado de ingesta | `ModalityIngestion` | estado por modalidad (`ok`/`missing`/`failed`) + `detail` — fail-loud (§4.8) |
 | Gemelo del paciente | `PatientDigitalTwin` | secuencia de snapshots + `series()` / `latest()` |
 | Trazabilidad | `Provenance` | fichero, modalidad, agente, confianza (RGPD/HIPAA) |
-| Vocabulario | `Modality`, `Support`, `FDICode` | enums + patrón ISO-FDI |
+| Vocabulario | `Modality`, `ModalityStatus`, `Support`, `FDICode` | enums + patrón ISO-FDI |
 
 ### 7.1 Fundamento físico de la densidad (por qué σ y no color)
 
@@ -240,7 +302,7 @@ gaussianas: `μ(x) = Σᵢ σᵢ · G(x | cᵢ, Σᵢ)`. Por eso la primitiva de
 fotométrico se **re-significa**: la opacidad `α ∈ [0,1]` pasa a densidad `σ ≥ 0`
 (no acotada) y los armónicos esféricos de color se **descartan** (la atenuación es
 isótropa). El `color_superficie` reintroduce a propósito ese canal de apariencia,
-pero solo en la cáscara, desde el STL.
+pero solo en la cáscara, desde la malla intraoral.
 
 ```mermaid
 flowchart LR
@@ -248,7 +310,7 @@ flowchart LR
     direction TB
     GEO["cₙ, Σₙ · geometría (heredado)"]
     DEN["σₙ ≥ 0 · densidad — VOLUMÉTRICO"]
-    COL["color_superficie : RGB | null — SUPERFICIAL (STL)"]
+    COL["color_superficie : RGB | null — SUPERFICIAL (malla)"]
     RID["region_id : FDI · ancla semántica"]
   end
   SP["capa dispersa · pH<br/>16 → 6.8 · 21 → 7.1 · 36 → 6.4<br/>(region_id → pH)"]
@@ -271,5 +333,5 @@ flowchart LR
 - Lin et al., *Residual Gaussian Splatting for Ultra Sparse-View CBCT
   Reconstruction*, arXiv:2604.27552v1 (2026).
 - Estudio de formato y física: [`docs/research/3dgs-clinical-extension.md`](../research/3dgs-clinical-extension.md).
-- Estándares: ISO 3950 (numeración dental FDI), DICOM, STL.
+- Estándares: ISO 3950 (numeración dental FDI), DICOM; mallas 3D (OBJ/PLY).
 - Principios de agentes y contratos: [`AGENTS.md`](../../AGENTS.md).
