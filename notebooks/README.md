@@ -19,6 +19,7 @@ representativo (`01A6GW4A_lower`).
 | **02** | Visor 3D interactivo de escritorio (VTK): malla, campo, nube de puntos | No |
 | **03** | Generar **vistas sintéticas + poses de cámara exactas** (input del 3DGS), sin COLMAP | No |
 | **04** | **3DGS moderno entrenado** (`gsplat`/GPU) sobre esas vistas → contrato | **Sí** |
+| **exercise** | **Segmentación FDI por punto** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent` | **Sí** |
 
 **No se ha probado (aún):** foto→3D con **fotos reales**, **fusión multimodal**
 (CBCT+STL), ni la integración como **agentes / LLM**. El 3DGS moderno se validó por
@@ -189,3 +190,19 @@ campo de gaussianas entrenado — requiere pantalla; lánzalo con
 
 **Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
 armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (Issue 3).
+
+---
+
+## `exercise-point-transformer-teeth3ds.ipynb` — Segmentación de dientes (FDI) por punto
+
+Prototipo del **`segmentation-agent`**: nube de puntos del escaneo intraoral →
+etiqueta **FDI por punto**. Point Transformer (PyG) *pos-only* sobre **Teeth3DS+ completo**
+(300 pacientes / 600 mallas), con **loss ponderada por clase** y diagnóstico `tooth_acc`.
+
+**Hallazgo:** con el split real 80/20 el modelo **aprende el train** (`tooth_acc` 0.16→0.81)
+pero **no generaliza** (`tooth_acc` test plano ~0.05). El límite **no es la cantidad de datos**,
+sino la falta de **features por punto** → justifica el **gris CBCT** (comentario #2 del jefe).
+
+Detalle completo, tabla de resultados, caveats y reproducción:
+[`exercise-point-transformer-teeth3ds.md`](exercise-point-transformer-teeth3ds.md). Requiere el
+kernel GPU **"Dental GPU (3DGS)"** (ver §04).
