@@ -1,11 +1,14 @@
 # Dataset — Teeth3DS+ (escaneos intraorales 3D)
 
-> **Estado (2026-07-16):** dataset **evaluado y recomendado**; **licencia resuelta
+> **Estado (2026-07-22):** dataset **evaluado y recomendado**; **licencia resuelta
 > a CC-BY 4.0** según el paper (ver §4). Descarga vía **Google Drive** (§6).
-> **Subconjunto descargado y verificado** en `data/raw/teeth3ds/` (gitignored):
-> **12 pacientes / 24 escaneos** (maxilar+mandíbula), cada `.obj` con su `.json` de
-> labels. **Issue 1 cerrada.** El **PoC MVP 1 (Issue 2) que lo consume ya está
-> hecho** (ver abajo).
+> **Dataset completo descargado y verificado** en `data/raw/teeth3ds/` (gitignored):
+> **300 pacientes / 600 escaneos** (maxilar+mandíbula), **~70 M vértices
+> etiquetados**, 7,3 GiB — todo lo que publican los zips oficiales (base + `_b2`).
+> Cada `.obj` tiene su `.json` de labels: **0 huérfanos**. **Issue 1 cerrada.**
+>
+> *(Hasta el 2026-07-21 se trabajaba sobre un subconjunto de 12 pacientes / 24
+> escaneos; el script sigue pudiendo bajar solo ese con `--subset`.)*
 
 Contraparte de código: **PoC MVP 1 hecho** —
 [`notebooks/01-vtk-3dgs-poc.ipynb`](../../notebooks/01-vtk-3dgs-poc.ipynb)
@@ -26,7 +29,7 @@ contrato. Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture
 - **Papers:** arXiv:2210.06094 (Teeth3DS+); Ben Hamadou et al., *Teeth3DS: a
   benchmark for teeth segmentation and labeling from intra-oral 3D scans* (2022).
 
-## 2. Formato y estructura (verificado en el subconjunto)
+## 2. Formato y estructura (verificado sobre los 600 escaneos)
 
 - **Mallas:** `.obj` (una por arcada: `<ID>_upper.obj` / `<ID>_lower.obj`).
 - **Etiquetas:** `.json` **por vértice** (no por diente). Claves:
@@ -34,7 +37,7 @@ contrato. Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture
   - `labels`: código **FDI** por vértice (p. ej. `31–37, 41–47`), **`0` = encía**.
     Los FDI validan contra el `FDICode` del contrato (`[1-4][1-8]|[5-8][1-5]`).
   - `instances`: id de instancia por vértice (`0` = encía; 1 por diente).
-  - Densidad alta: ~110k vértices etiquetados por malla.
+  - Densidad alta: **mediana 116k** vértices etiquetados por malla.
 - **Layout en disco — DOS árboles paralelos** (no `.obj`+`.json` juntos):
 
   ```
@@ -45,6 +48,35 @@ contrato. Diseño: [`docs/architecture/multi-agent-pipeline.md`](../architecture
   El loader del PoC debe cruzar por `<ID>_<jaw>` entre ambos árboles.
 - **Splits:** ficheros `.txt` de train/test (listas de IDs, p. ej. `EJWZZZRF_lower`)
   — en el OSF, no necesarios para el PoC.
+
+### 2.1 Qué contiene de verdad (medido sobre los 600 escaneos)
+
+Caracterización recorriendo **todas** las etiquetas (~6 s; los `.json` pesan ~0,7 MB
+frente a los ~12 MB de cada malla). Reproducible en
+[`notebooks/01-vtk-3dgs-poc.ipynb`](../../notebooks/01-vtk-3dgs-poc.ipynb) §1b, con
+las figuras embebidas.
+
+| Magnitud | Valor medido |
+|---|---|
+| Escaneos / pacientes | 600 / 300 (300 upper + 300 lower) · **0 huérfanos** |
+| Vértices por escaneo | mediana **116.475** · rango 13.034 – 219.518 · total **69,9 M** |
+| Dientes por arcada | mediana **14** · rango 9 – 16 · **solo 1 de 600** llega a 16 |
+| Encía (`label` 0) | **43%** de los vértices de media — clase mayoritaria |
+
+**Desbalance por código FDI** (% de escaneos de su arcada en los que aparece):
+
+| Código | Presencia | Lectura |
+|---|---|---|
+| `18` | **0%** | **no aparece en ningún escaneo** — clase inaprendible |
+| `28`, `38`, `48` | ~1% | cordales, prácticamente ausentes |
+| `17`, `27`, `37`, `47` | 63–70% | segundos molares: faltan en ~1 de cada 3 |
+| resto | 91–100% | presentes casi siempre |
+
+> **Consecuencia de diseño.** Esto no es color local: (a) obliga a **loss ponderada
+> por clase** en el `segmentation-agent` y descarta la *accuracy* global como
+> métrica —la encía sola ya da el 43%—; y (b) **acota lo que el sistema puede
+> prometer**: un modelo entrenado aquí **no segmenta cordales**, porque casi nunca
+> los ha visto. Declararlo es parte del alcance, no una nota al pie.
 
 ## 3. Dónde vive cada cosa (realidad de acceso)
 
@@ -99,35 +131,54 @@ El dataset es de **mallas**, no de fotos. Eso determina qué PoC son posibles:
 
 > **Matiz honesto:** el 3DGS moderno vía vistas sintéticas es **circular** (renderizamos
 > desde la malla y reconstruimos la misma malla) — vale como **validación del motor
-> 3DGS** y para producir un `.splat` para el visor web (Issue 3), **no** como
+> 3DGS** y para producir un `.splat` para el visor web (Issue 17), **no** como
 > solución del caso clínico «solo con fotos del móvil», que requeriría una captura
 > real fuera de este dataset.
 
+**Escala alcanzada (2026-07-22).** Con el dataset completo, esa validación del motor
+dejó de ser una anécdota: [`03`](../../notebooks/03-synthetic-views-for-3dgs.ipynb)
+genera **2.880 vistas** (20 casos × 144) con error de reproyección de pose
+**0,0000 px en todas**, y [`04`](../../notebooks/04-train-3dgs-gsplat.ipynb) entrena
+8 casos evaluando en **vistas retenidas** (1 de cada 8, nunca vistas): **21,04 ±
+0,19 dB** de PSNR, con una brecha train−retenidas de 0,65 dB. Que la desviación
+entre anatomías sea de 0,19 dB es lo que convierte esto en insumo del **ADR 002**.
+Generar 2.880 imágenes sintéticas en vez de 24 **no cambia** el matiz circular de
+arriba: mejora la evidencia sobre el motor, no sobre el pipeline foto→3D clínico.
+
 ## 6. Pasos de descarga (Google Drive — ruta real)
 
-> **Vía recomendada (reproducible):** `./scripts/fetch_teeth3ds.sh` — baja y extrae
-> exactamente el subconjunto fijado (los 12 casos del PoC) en `data/raw/teeth3ds/`,
-> con verificación de emparejado. Idempotente. Requiere `gdown`
-> (`uv pip install gdown`). Los pasos manuales de abajo son el *fallback* si el
-> script falla (p. ej. cuota de Drive).
+> **Vía recomendada (reproducible):** `./scripts/fetch_teeth3ds.sh` — baja los zips
+> del Drive oficial y los extrae en `data/raw/teeth3ds/`, verificando el emparejado
+> `.obj` ↔ `.json`. Idempotente. Requiere `gdown` (`uv pip install gdown`).
+>
+> | Invocación | Qué deja en disco |
+> |---|---|
+> | `./scripts/fetch_teeth3ds.sh` | **dataset completo**: 300 pacientes / 600 escaneos / ~7,3 GiB |
+> | `./scripts/fetch_teeth3ds.sh --subset` | solo los 12 pacientes del PoC original (~300 MiB) |
+> | `… --force` | re-extrae aunque ya haya casos en destino |
+>
+> Los pasos manuales de abajo son el *fallback* si el script falla (p. ej. cuota de
+> Drive).
 
 Carpeta oficial (usada por la comunidad, p. ej. ToothGroupNetwork):
 `https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby`
 
-Ficheros (zips):
+Ficheros (zips) — **los cuatro juntos son el dataset**, 300 pacientes / 600 escaneos:
 - Mallas: `3D_scans_per_patient_obj_files.zip` + `3D_scans_per_patient_obj_files_b2.zip`
 - Labels: `ground-truth_labels_instances.zip` + `ground-truth_labels_instances_b2.zip`
 
 Pasos:
-1. Descargar **un** zip de mallas + su zip de labels (el `_b2` es la 2ª mitad; con
-   el primero basta para el PoC).
-2. Descomprimir y quedarse con un **subconjunto pequeño** (~10 casos maxilar+mandíbula)
-   en `data/raw/teeth3ds/` (carpeta **gitignored**).
-3. Verificar: cada caso = `<ID>_<upper|lower>.obj` + su `.json` de labels.
+1. Descargar los **cuatro** zips (el `_b2` es la continuación, no un duplicado; con
+   el par base solo se tiene media biblioteca de pacientes).
+2. Descomprimir los dos árboles en `data/raw/teeth3ds/` (carpeta **gitignored**),
+   respetando `3D_scans_per_patient_obj_files/` y `ground-truth_labels_instances/`.
+3. Verificar: cada caso = `<ID>_<upper|lower>.obj` **+** su `.json` de labels. Un
+   `.obj` sin `.json` se descarta (es la regla de ingesta que aplica el código).
 
 > Nota práctica: los zips agrupan **todos** los pacientes (varios GB); no se puede
-> bajar «solo 10 casos» — se baja el zip y se extrae el subconjunto. Herramienta:
-> `gdown` (`pip install gdown`; `gdown --folder <URL>` o por ID de fichero).
+> bajar «solo 10 casos» — se baja el zip y se extrae lo que interese (eso hace
+> `--subset`). Herramienta: `gdown` (`pip install gdown`; `gdown --folder <URL>` o
+> por ID de fichero).
 
 ## 7. Alternativas si la licencia bloquea
 
