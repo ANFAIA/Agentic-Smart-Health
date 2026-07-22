@@ -19,9 +19,10 @@ clase**, el diagnóstico **`tooth_acc`** y el IoU calculado a mano.
 | **Datos** | **Teeth3DS+ completo**: 600 mallas / 300 pacientes (`data/raw/teeth3ds/`, gitignored) |
 | **Muestra** | ~117k vértices/malla → submuestreo a **2048 puntos** |
 | **Split** | **por paciente** 240 train / 60 test (80/20, `seed 42`, sin fuga entre train y test) |
-| **Modelo** | Point Transformer de segmentación, ~4.6M parámetros, **`pos-only`** (solo geometría XYZ) |
+| **Modelo** | Point Transformer de segmentación, ~4.6M parámetros |
+| **Features** | ablación: `pos-only` (geometría) · **normales** · **gris CBCT sintético** (swap-ready) · normal+gris |
 | **Loss** | `nll_loss` **ponderada por clase** (*median-frequency balancing*, peso topado a 50) |
-| **Épocas / HW** | 20 · RTX 5070 (sm_120), torch cu128 · ~4.5 s/época (~108 s total) |
+| **Épocas / HW** | 20 · RTX 5070 (sm_120), torch cu128 · ~4×100 s (4 configs) |
 
 ### Por qué la loss ponderada
 
@@ -38,44 +39,51 @@ pesa **~147×** más que la encía, de modo que el modelo no puede «ganar» ign
 
 ---
 
-## Resultados
+## Resultados — ablación de features (A2)
 
-| Métrica | Época 1 | Época 20 |
-|---|---|---|
-| `loss` | 2.88 | **0.57** (satura) |
-| `acc` global | 0.10 | 0.70 |
-| **`tooth_acc` train** | 0.16 | **0.81** |
-| **`tooth_acc` test** | 0.03 | **0.055** (plano ~0.05, rango 0.001–0.15, sin tendencia) |
+Primero se vio que **`pos-only` no generaliza** (memoriza el train, `tooth_acc` train ~0.76 pero test
+~0.08). La pregunta de A2: **¿qué feature por punto arregla la generalización, y cuánto aporta cada
+una?** Ablación con el **mismo split/semilla** (`tooth_acc` test = media de 5 sorteos):
 
-- **El modelo aprende el train**: `tooth_acc(train)` sube de 0.16 a **0.81** y la loss satura → con
-  480 mallas hay señal de sobra y la optimización funciona.
-- **No generaliza**: `tooth_acc(test)` se queda **plano en ~0.05**, sin tendencia ascendente. El hueco
-  train/test es enorme (0.81 vs 0.05).
+| config | in_ch | train | **test** | Δ vs pos-only |
+|---|---|---|---|---|
+| pos-only (geometría) | 1 | 0.759 | **0.078** | — |
+| **normales** | 3 | 0.831 | **0.842** | **+0.765** |
+| gris CBCT sintético | 1 | 0.770 | **0.793** | +0.715 |
+| normal + gris | 4 | 0.806 | 0.713 | +0.635 |
+
+- **`pos-only` no transfiere** (test 0.08): con input por punto constante el modelo se apoya solo en la
+  **posición absoluta**, que cambia de una arcada a otra.
+- **Cualquier descriptor LOCAL por punto rompe la degeneración**: normales 0.84, gris 0.79.
+- **Son redundantes**: `normal+gris` (0.71) **no supera** a ninguno solo — combinar incluso perjudica
+  (−0.13 vs normales). Un buen descriptor local **basta**.
 
 ---
 
 ## Conclusiones
 
-1. **El cuello de botella NO es la cantidad de datos.** Con 480 mallas de entrenamiento el modelo
-   aprende el train sin problema; lo que falla es la **generalización a pacientes nuevos**.
+1. **La palanca no es «más datos» ni «el CBCT»**, sino dar al modelo **un descriptor geométrico LOCAL
+   por punto**. Las **normales** son lo más simple y lo mejor (`tooth_acc` test **0.84**). `pos-only`
+   se apoya en posición absoluta y no generaliza.
 
-2. **La geometría sola tiene techo.** Un modelo `pos-only` **memoriza** el train pero **no identifica
-   el FDI** en arcadas no vistas: la posición no distingue la simetría izquierda/derecha (11↔21) ni
-   dientes vecinos casi idénticos. Ese es el límite estructural del experimento.
+2. **El gris CBCT *sintético* no es inerte, pero no valida el CBCT real.** Solo, sube a 0.79 — pero es
+   un **proxy geométrico** (grosor/densidad local de la malla), redundante con las normales. Que un
+   gris *sintético* ya casi sature la mejora significa que **con pura geometría se llega a ~0.84**; el
+   **listón para el CBCT real** es **superar normales-solo** aportando la **densidad interna**
+   (esmalte/dentina/hueso) que la geometría no tiene.
 
-3. **La palanca son *features por punto*** (comentario #2 del jefe). Añadir el **gris del CBCT** —o al
-   menos normales de superficie— como canal de entrada (`in_channels>1`) da al modelo la información
-   que la geometría no tiene (la densidad discrimina esmalte/dentina/hueso/encía). Hoy bloqueado por
-   falta de **CBCT emparejado** con la malla → vía **sintética** (voxelizar la malla a un campo de
-   atenuación; issue G).
+3. **El valor del CBCT se realiza por FUSIÓN, no pintando gris por vértice.** El paper líder —**DDMF**
+   ([arXiv:2203.05784](https://arxiv.org/abs/2203.05784), *Patterns* 2023, **503 pacientes CBCT+IOS
+   emparejados**)— segmenta cada modalidad por separado y las **fusiona por registro** (RANSAC-FPFH +
+   ICP multiescala → **0.17 mm** ASSD); el gris nunca es feature de vértice. Su rama de malla (IOSNet)
+   separa encía+FDI con **CE + centroid loss + boundary loss**, sin intensidad. → el `cbct-agent` va
+   por segmentación propia + registro, no por gris-por-vértice.
 
 ### Caveats metodológicos
 
-- **`tooth_acc(test)` ruidoso** (bota 0.001 → 0.15 → 0.03): en parte es **artefacto de medición** —
-  `FixedPoints` re-submuestrea 2048 puntos aleatorios *también en test*, así que cada época evalúa
-  sobre un sorteo distinto. Un eval **determinista** (o promediar varios sorteos) lo limpiaría, pero
-  **no** cerrará el hueco de generalización.
-- **`mIoU` no informativo** aquí (convención parte-ausente → 1.0).
+- **`tooth_acc(test)`** final = **media de 5 sorteos** de `FixedPoints` (que re-submuestrea también en
+  test) → quita la varianza de submuestreo.
+- **`mIoU` no informativo** aquí (convención parte-ausente → 1.0); por eso el diagnóstico es `tooth_acc`.
 
 ---
 
@@ -97,9 +105,11 @@ Requiere el **kernel GPU dedicado** `Dental GPU (3DGS)` (torch cu128 + `pyg-lib`
 ## Conexión con el proyecto
 
 - Es el **esqueleto del `segmentation-agent`** (entrada nube de puntos → salida FDI por punto).
-- Da la **evidencia medida** de por qué ese agente necesita el **twin fusionado**: sin features del
-  CBCT sobre la malla, la segmentación FDI no generaliza.
+- Da la **evidencia medida** de que el CBCT entra por **fusión** (segmentar CBCT aparte + registro
+  CBCT↔malla, estilo DDMF), **no** pintando gris por vértice. Ese es el diseño del `cbct-agent`.
+- El canal de gris queda **swap-ready** en el código (muestreo trilineal de un volumen); cuando haya
+  CBCT real registrado, solo se sustituye el volumen sintético.
 - Validar el FDI predicho contra el informe clínico sería el `fdi-consistency-agent` (ADR 003).
 
-**Siguiente paso (A2):** cablear un canal de feature **CBCT-sintético** (gris por vértice desde un
-campo de atenuación voxelizado de la malla) y re-medir `tooth_acc(test)`.
+**Siguiente paso (A3):** **boundary loss** (frontera diente-encía, top-5% puntos) + **centroid loss**
+al estilo IOSNet/DDMF — mejora el borde con la encía usando Teeth3DS+, **sin CBCT**.
