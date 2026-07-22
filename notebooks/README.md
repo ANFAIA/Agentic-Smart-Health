@@ -8,17 +8,20 @@ de forma manual, antes de convertirlo en agente.
 
 Estos notebooks son **spikes de validación técnica** — no son el sistema final ni
 resultados clínicos, sino pruebas para de-arriesgar decisiones de arquitectura.
-Todos corren sobre el **subconjunto de Teeth3DS+ que descargamos**
-(`data/raw/teeth3ds/`, **12 pacientes / 24 escaneos**, gitignored — ver
-[nota del dataset](../docs/research/dataset-teeth3ds.md)); los renders usan un caso
-representativo (`01A6GW4A_lower`).
+Todos corren sobre **Teeth3DS+ completo** (`data/raw/teeth3ds/`, **300 pacientes /
+600 escaneos / ~70 M vértices etiquetados**, 7,3 GiB, gitignored — ver
+[nota del dataset](../docs/research/dataset-teeth3ds.md)). Los renders detallados
+usan un caso de referencia fijo (`01A6GW4A_lower`) para ser reproducibles, pero
+**cada notebook ejercita además el dataset entero**: barridos sobre muestras
+aleatorias con semilla fija, en vez de una demo sobre un único escaneo.
 
-| Notebook | Qué se validó exactamente | GPU |
-|---|---|---|
-| **01** | VTK carga la malla real y hace *splatting clásico* (baseline) → serializa al contrato | No |
-| **02** | Visor 3D interactivo de escritorio (VTK): malla, campo, nube de puntos | No |
-| **03** | Generar **vistas sintéticas + poses de cámara exactas** (input del 3DGS), sin COLMAP | No |
-| **04** | **3DGS moderno entrenado** (`gsplat`/GPU) sobre esas vistas → contrato | **Sí** |
+| Notebook | Qué se validó exactamente | Escala | GPU |
+|---|---|---|---|
+| **01** | VTK carga la malla real y hace *splatting clásico* (baseline) → serializa al contrato · caracteriza los 600 escaneos · barrido de robustez | 600 escaneos + 24 casos en la cadena completa | No |
+| **02** | Visor 3D interactivo de escritorio (VTK): malla, campo, nube de puntos, sobre cualquier caso | selector de los 600 | No |
+| **03** | Generar **vistas sintéticas + poses de cámara exactas** (input del 3DGS), sin COLMAP | **2 880 vistas** · 20 casos | No |
+| **04** | **3DGS moderno entrenado** (`gsplat`/GPU) evaluado en **vistas retenidas** → contrato | 8 casos entrenados | **Sí** |
+| **exercise** | **Segmentación FDI por punto** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent` | 600 mallas | **Sí** |
 
 **No se ha probado (aún):** foto→3D con **fotos reales**, **fusión multimodal**
 (CBCT+STL), ni la integración como **agentes / LLM**. El 3DGS moderno se validó por
@@ -53,24 +56,39 @@ librería de entrada (VTK) y el dataset real (Teeth3DS+).
 
 ### Qué hace (flujo)
 
-`caso → malla .obj + labels FDI → render coloreado → nube de puntos →
+`inventario de los 600 escaneos → caracterización (dientes/arcada, encía, FDI raros) →
+caso → malla .obj + labels FDI → render coloreado → nube de puntos →
 vtkGaussianSplatter → campo de densidad 3D → render isosuperficie →
-artefacto .ply + hash → TwinSnapshot del contrato`
+artefacto .ply + hash → TwinSnapshot del contrato →
+barrido de la cadena sobre 24 casos aleatorios → galería de 6 pacientes`
 
 ### Qué se logró (validado)
 
 - **La cadena mínima corre de extremo a extremo** con datos reales: VTK carga las
-  mallas de Teeth3DS+ (~110k vértices), las *splattea* a un campo de densidad
-  volumétrico 3D y lo renderiza.
+  mallas de Teeth3DS+ (mediana **116k vértices**), las *splattea* a un campo de
+  densidad volumétrico 3D y lo renderiza.
+- **Y aguanta el dataset entero**: el barrido (§6) repite carga + labels +
+  *splatting* sobre **24 escaneos aleatorios** (semilla fija) sin una sola
+  excepción, midiendo el coste — ~0,05 s de carga + ~0,15 s de splat por escaneo,
+  que es el presupuesto del futuro `mesh-agent`.
 - **Las etiquetas FDI casan con la geometría** (render coloreado por diente): el
   ancla semántica `region_id` está bien alineada → ground truth listo para el
-  futuro `segmentation-agent` y para la fusión semántica.
+  futuro `segmentation-agent` y para la fusión semántica. La galería (§7) lo
+  enseña sobre **seis anatomías distintas**, no solo sobre el caso de la foto.
+- **El desbalance del dataset está cuantificado** (§1b, los 600 escaneos en ~6 s):
+  la encía es el **43%** de los vértices; la mediana real es de **14 dientes por
+  arcada**, no 16; el FDI `18` **no aparece en ningún escaneo**, los cordales
+  `28`/`38`/`48` en el **1%**, y los segundos molares (`17`/`27`/`37`/`47`) faltan
+  en un tercio. Justifica la *loss* ponderada del `segmentation-agent` y **acota lo
+  que puede prometer**: no segmentará cordales, porque casi no los ha visto.
 - **VTK es viable** como librería de entrada y renderiza *headless* (offscreen →
   PNG), sirve en servidor/CI sin pantalla.
 - **El PoC no queda huérfano de la arquitectura**: la salida se serializa al
   contrato [`core-schemas`](../packages/core-schemas/) (`TwinSnapshot` +
   `gaussian_field_ref` por hash). El patrón «el campo masivo se referencia, no se
   embebe» funciona en la práctica.
+- **El emparejamiento es una regla de ingesta**, no un detalle: `list_cases()`
+  descarta el `.obj` sin su `.json` — sin ancla semántica no hay ingesta.
 
 ### Qué NO es (alcance honesto)
 
@@ -88,6 +106,8 @@ artefacto .ply + hash → TwinSnapshot del contrato`
 | Qué da VTK y qué le falta (isótropas, coste O(n³), sensibilidad a `Radius`) | **D1 · ADR 002** (motor de render) |
 | Los `.obj` traen color por vértice sin usar | canal `color_superficie` de la **fusión** |
 | Encía aislable (`label`/`instance` 0) | futuro PoC de inflamación/pH |
+| Desbalance FDI medido (encía 43%, cordales ~ausentes, mediana 14 dientes) | *loss* ponderada y **alcance declarado** del `segmentation-agent` |
+| Coste por escaneo medido y extrapolado a los 600 | dimensionado de la ingesta por lotes (`mesh-agent`) |
 
 ### Cómo correrlo
 
@@ -97,11 +117,12 @@ uv run jupyter nbconvert --to notebook --execute --inplace notebooks/01-vtk-3dgs
 uv run jupyter notebook
 ```
 
-Requiere el subconjunto Teeth3DS+ en `data/raw/teeth3ds/` (gitignored) —
-ver [`scripts/fetch_teeth3ds.sh`](../scripts/fetch_teeth3ds.sh) y la
+Tarda ~15 s (lo caro es el barrido de 24 casos, no el caso de referencia). Requiere
+Teeth3DS+ en `data/raw/teeth3ds/` (gitignored) — ver
+[`scripts/fetch_teeth3ds.sh`](../scripts/fetch_teeth3ds.sh) y la
 [nota del dataset](../docs/research/dataset-teeth3ds.md). Genera un artefacto
-`.ply` en `data/processed/teeth3ds/` (gitignored). Los dos renders quedan
-**embebidos** en el `.ipynb` (visibles en GitHub sin ejecutar).
+`.ply` en `data/processed/teeth3ds/` (gitignored). Renders, figuras del dataset y
+galería quedan **embebidos** en el `.ipynb` (visibles en GitHub sin ejecutar).
 
 **Siguiente:** Issue 3 (visor web three.js / GaussianSplats3D) y, tras el spike de
 motores, redactar el **ADR 002** de render.
@@ -124,6 +145,12 @@ Muestra tres cosas rotables: la malla coloreada por FDI, el campo
 `vtkGaussianSplatter` y la nube de puntos (vértices). Controles: arrastrar
 (rotar), rueda (zoom), Shift+arrastrar (pan), `q` (cerrar).
 
+**Selector de caso.** La §1 inventaría los **600 escaneos** y expone
+`CASO = ("<paciente>", "<arcada>")` — cámbialo por cualquiera, o usa
+`caso_aleatorio()` / `caso_aleatorio(seed=3)` y re-ejecuta. Es la herramienta para
+mirar *de verdad* un escaneo cuando un número del `01` sorprende (por qué esa
+arcada tiene 9 dientes, o esa malla 25k vértices en vez de 116k).
+
 ### Cómo correrlo
 
 ```bash
@@ -140,30 +167,58 @@ Mismo dataset de entrada que el `01`.
 con pose de cámara** + una nube inicial. No hay fotos dentales reales, así que las
 **sintetizamos desde la malla** (poses conocidas → se salta COLMAP). Sin GPU.
 
-Genera en `data/processed/teeth3ds/<caso>_3dgs/` (gitignored):
-- `images/r_XXX.png` — N vistas RGB (órbita azimut × elevación).
+**Ahora genera un lote, no una demo:** `N_CASOS × AZIMUTS × ELEVACIONES`. Por
+defecto **20 casos × 144 vistas = 2 880 imágenes** en ~100 s y ~128 MiB
+(configurable en la celda de configuración). Genera en
+`data/processed/teeth3ds/<caso>_3dgs/` (gitignored), **uno por caso**:
+- `images/r_XXXX.png` — 144 vistas RGB (24 azimuts × 6 elevaciones).
 - `transforms.json` — intrínsecos + c2w por vista (formato instant-ngp/Nerfstudio),
-  **auto-verificado por reproyección** (~0 px).
+  **auto-verificado por reproyección en todas las vistas**.
 - `init.ply` — nube de puntos inicial para sembrar la optimización.
+
+**Resultado:** peor error de reproyección **0,0000 px sobre las 2 880 vistas** — las
+poses del dataset sintético son exactas, así que si el 04 reconstruye mal, la culpa
+no es de las cámaras. La §5 verifica además la integridad de cada paquete
+(nº de PNG == nº de poses, `init.ply` legible).
 
 ```bash
 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/03-synthetic-views-for-3dgs.ipynb
 ```
 
-> **Mitad 2:** ver `04` abajo. Alcance y matiz «circular» (validación del motor, no
-> foto→3D real) en [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md).
+> **Por qué más vistas:** con 24 el 3DGS puede parecer que funciona porque hay poco
+> que contradecirle; con ~144 por caso la reconstrucción tiene que ser consistente
+> desde muchos más ángulos, y sobran vistas para **retener algunas** y evaluar en
+> ellas (lo que hace el `04`).
+
+> **Mitad 2:** ver `04` abajo. Generar 2 880 imágenes sintéticas en vez de 24 mejora
+> la validación del **motor** y **no cambia** el matiz «circular» (no es foto→3D
+> real) documentado en
+> [`docs/research/dataset-teeth3ds.md` §5.1](../docs/research/dataset-teeth3ds.md).
 
 ---
 
 ## `04-train-3dgs-gsplat.ipynb` — 3DGS moderno · Mitad 2 (entrenamiento)
 
-**El 3DGS moderno de verdad.** Toma el paquete del `03` (vistas + poses + `init.ply`)
-y **entrena** un campo de gaussianas anisótropas optimizándolas contra las vistas
-(pérdida fotométrica L1) con `gsplat`. Exporta el `.ply` entrenado y lo serializa al
-contrato (`TwinSnapshot`).
+**El 3DGS moderno de verdad.** Toma los paquetes del `03` (vistas + poses +
+`init.ply`) y **entrena** un campo de gaussianas anisótropas optimizándolas contra
+las vistas (pérdida fotométrica L1) con `gsplat`. Exporta el `.ply` entrenado y lo
+serializa al contrato (`TwinSnapshot`).
+
+**Se evalúa en vistas retenidas.** 1 de cada 8 vistas se aparta y el modelo **no la
+ve nunca** (convenio Nerfstudio/instant-ngp, que solo es viable ahora que hay 144
+vistas por caso). El PSNR sobre ellas distingue *reconstruir geometría* de
+*memorizar fotos* — la L1 de entrenamiento, sola, no.
 
 ✅ **Validado end-to-end en RTX 5070 (sm_120)**: `torch 2.11.0+cu128` + `gsplat 1.5.3`.
-L1 baja de ~0.16 a ~0.03; la reconstrucción reproduce la arcada dental.
+
+| Métrica (8 casos entrenados, 2 000 iters c/u) | Valor |
+|---|---|
+| PSNR en **vistas retenidas** | **21,04 ± 0,19 dB** (rango 20,72–21,30) |
+| Brecha PSNR train − retenidas | **0,65 dB** → sin sobreajuste apreciable |
+| Coste | ~5 ms/iteración · <400 MiB de VRAM · ~6 s por caso |
+
+Que la desviación entre anatomías sea de **0,19 dB** es el resultado que vale para
+el ADR: el motor se comporta igual en arcadas distintas, no solo en el caso bonito.
 
 > ⚠️ **Requiere GPU, en su propio entorno.** `torch`/`gsplat` son específicos de la
 > máquina (cu128/Blackwell) y **no** van en `pyproject.toml` (romperían la lock
@@ -183,9 +238,29 @@ L1 baja de ~0.16 a ~0.03; la reconstrucción reproduce la arcada dental.
 ~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/04-train-3dgs-gsplat.ipynb
 ```
 
-Incluye un **visor interactivo** (§7, ventana nativa VTK como el `02`) para rotar el
-campo de gaussianas entrenado — requiere pantalla; lánzalo con
+Tarda ~1,5 min (caso de referencia con 3 000 iters + barrido de 8 casos). Incluye un
+**visor interactivo** (§8, ventana nativa VTK como el `02`) para rotar el campo de
+gaussianas entrenado — requiere pantalla; lánzalo con
 `~/.venvs/dental-gpu/bin/jupyter notebook` (kernel **"Dental GPU (3DGS)"**).
 
 **Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
-armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (Issue 3).
+armónicos esféricos (sin ellos el especular del render no se puede reproducir),
+SSIM, y export `.splat` para el visor web (**Issue 17**).
+
+---
+
+## `exercise-point-transformer-teeth3ds.ipynb` — Segmentación de dientes (FDI) por punto
+
+Prototipo del **`segmentation-agent`**: nube de puntos del escaneo intraoral →
+etiqueta **FDI por punto**. Point Transformer (PyG) sobre **Teeth3DS+ completo**
+(300 pacientes / 600 mallas), con **loss ponderada por clase** y diagnóstico `tooth_acc`.
+
+**Hallazgo (ablación de features, `tooth_acc` test):** `pos-only` no generaliza (**0.08**); basta
+**un descriptor local por punto** para arreglarlo — **normales 0.84**, gris CBCT sintético 0.79,
+y combinarlos **no suma** (redundantes). La palanca no es «más datos» ni «el CBCT», sino la
+geometría **local**. El gris real aporta por **fusión** (registro CBCT↔malla, estilo DDMF), no
+pintando gris por vértice.
+
+Detalle completo, ablación, referencia DDMF y reproducción:
+[`exercise-point-transformer-teeth3ds.md`](exercise-point-transformer-teeth3ds.md). Requiere el
+kernel GPU **"Dental GPU (3DGS)"** (ver §04).

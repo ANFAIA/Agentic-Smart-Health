@@ -125,15 +125,15 @@ Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implement
 El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
 (no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
 decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
-el **subconjunto de Teeth3DS+ descargado** (`data/raw/teeth3ds/`, 12 pacientes / 24
-escaneos, gitignored).
+**Teeth3DS+ completo** (`data/raw/teeth3ds/`, 300 pacientes / 600 escaneos / ~70 M
+vértices etiquetados, gitignored).
 
-| Notebook | Qué valida | GPU |
-|---|---|---|
-| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato | No |
-| `02` | Visor 3D interactivo de escritorio (VTK) | No |
-| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | No |
-| `04` | **3DGS moderno entrenado** (`gsplat`) → contrato | Sí |
+| Notebook | Qué valida | Escala | GPU |
+|---|---|---|---|
+| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato · caracterización del dataset | 600 escaneos · barrido de 24 | No |
+| `02` | Visor 3D interactivo de escritorio (VTK), sobre cualquier caso | selector de los 600 | No |
+| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | 2 880 vistas · 20 casos | No |
+| `04` | **3DGS moderno entrenado** (`gsplat`) evaluado en vistas retenidas → contrato | 8 casos · 21,0 dB PSNR | Sí |
 
 Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
 Aún **no** cubierto: foto→3D con fotos reales, fusión multimodal (CBCT+STL) e
