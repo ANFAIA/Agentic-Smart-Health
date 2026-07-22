@@ -39,37 +39,56 @@ pesa **~147×** más que la encía, de modo que el modelo no puede «ganar» ign
 
 ---
 
-## Resultados — ablación de features (A2)
+## Resultados — A2 · ablación de features
 
-Primero se vio que **`pos-only` no generaliza** (memoriza el train, `tooth_acc` train ~0.76 pero test
-~0.08). La pregunta de A2: **¿qué feature por punto arregla la generalización, y cuánto aporta cada
-una?** Ablación con el **mismo split/semilla** (`tooth_acc` test = media de 5 sorteos):
+Primero se vio que **`pos-only` no generaliza** (memoriza el train pero el `tooth_acc` test se queda
+en ~0.01–0.08). La pregunta de A2: **¿qué feature por punto arregla la generalización, y cuánto aporta
+cada una?** Ablación con el **mismo split/semilla** (`tooth_acc` test = media de 5 sorteos):
 
-| config | in_ch | train | **test** | Δ vs pos-only |
-|---|---|---|---|---|
-| pos-only (geometría) | 1 | 0.759 | **0.078** | — |
-| **normales** | 3 | 0.831 | **0.842** | **+0.765** |
-| gris CBCT sintético | 1 | 0.770 | **0.793** | +0.715 |
-| normal + gris | 4 | 0.806 | 0.713 | +0.635 |
+| config | in_ch | train | **test** |
+|---|---|---|---|
+| pos-only (geometría) | 1 | 0.78 | **0.01** |
+| normales | 3 | 0.83 | **0.76** |
+| gris CBCT sintético | 1 | 0.73 | **0.74** |
+| normal + gris | 4 | 0.83 | **0.76** |
 
-- **`pos-only` no transfiere** (test 0.08): con input por punto constante el modelo se apoya solo en la
-  **posición absoluta**, que cambia de una arcada a otra.
-- **Cualquier descriptor LOCAL por punto rompe la degeneración**: normales 0.84, gris 0.79.
-- **Son redundantes**: `normal+gris` (0.71) **no supera** a ninguno solo — combinar incluso perjudica
-  (−0.13 vs normales). Un buen descriptor local **basta**.
+- **`pos-only` no transfiere** (test ~0.01–0.08): con input por punto constante el modelo se apoya solo
+  en la **posición absoluta**, que cambia de una arcada a otra.
+- **Cualquier descriptor LOCAL por punto rompe la degeneración** → salto a **~0.74–0.84**.
+- Las tres configs con features son **estadísticamente indistinguibles** y el gris **no aporta** sobre
+  las normales → **redundantes**. Un buen descriptor local **basta**.
+
+> **Varianza.** Los valores oscilan **±~0.05–0.1 entre ejecuciones** (no-determinismo GPU + submuestreo
+> aleatorio). Lo robusto es lo **cualitativo** (pos-only cae; una feature local lo arregla; el gris no
+> suma), no el 2º decimal. Se adopta **normales** por ser la más simple.
+
+## Resultados — A3 · boundary + centroid loss (estilo IOSNet/DDMF)
+
+Sobre la mejor config (**normales, sin CBCT**), dos pérdidas extra que atacan el **borde diente-encía**:
+**boundary loss** (CE sobre el 10% de puntos frontera) + **centroid loss** (centro predicho ≈ centro
+real por diente). Se mide además el acierto **en la frontera**:
+
+| | `tooth_acc` | **frontera** |
+|---|---|---|
+| normales · CE | 0.758 | 0.657 |
+| + boundary + centroid | 0.792 | 0.707 |
+| **Δ** | **+0.034** | **+0.051** |
+
+Mejora **modesta pero consistente**, y **mayor en la frontera** (+0.05) que global (+0.03) — justo
+donde se diseñó. Coste: ~172 s vs ~99 s (la centroid loss añade overhead).
 
 ---
 
 ## Conclusiones
 
 1. **La palanca no es «más datos» ni «el CBCT»**, sino dar al modelo **un descriptor geométrico LOCAL
-   por punto**. Las **normales** son lo más simple y lo mejor (`tooth_acc` test **0.84**). `pos-only`
-   se apoya en posición absoluta y no generaliza.
+   por punto**. Las **normales** son la opción más simple y tan buena como cualquier otra feature
+   (~0.76–0.84). `pos-only` se apoya en posición absoluta y no generaliza.
 
-2. **El gris CBCT *sintético* no es inerte, pero no valida el CBCT real.** Solo, sube a 0.79 — pero es
+2. **El gris CBCT *sintético* no es inerte, pero no valida el CBCT real.** Solo, sube a ~0.74 — pero es
    un **proxy geométrico** (grosor/densidad local de la malla), redundante con las normales. Que un
-   gris *sintético* ya casi sature la mejora significa que **con pura geometría se llega a ~0.84**; el
-   **listón para el CBCT real** es **superar normales-solo** aportando la **densidad interna**
+   gris *sintético* ya sature la mejora significa que **con pura geometría se llega a ~0.8**; el
+   **listón para el CBCT real** es **superar a normales-solo** aportando la **densidad interna**
    (esmalte/dentina/hueso) que la geometría no tiene.
 
 3. **El valor del CBCT se realiza por FUSIÓN, no pintando gris por vértice.** El paper líder —**DDMF**
@@ -79,10 +98,15 @@ una?** Ablación con el **mismo split/semilla** (`tooth_acc` test = media de 5 s
    separa encía+FDI con **CE + centroid loss + boundary loss**, sin intensidad. → el `cbct-agent` va
    por segmentación propia + registro, no por gris-por-vértice.
 
+4. **Las pérdidas boundary/centroid (A3) mejoran el borde con la encía** usando solo Teeth3DS+ (+0.05
+   en frontera) — la receta de IOSNet, sin CBCT.
+
 ### Caveats metodológicos
 
+- **Varianza ±~0.05–0.1 entre ejecuciones** (no-determinismo GPU + submuestreo): fiarse de lo
+  cualitativo, no del 2º decimal.
 - **`tooth_acc(test)`** final = **media de 5 sorteos** de `FixedPoints` (que re-submuestrea también en
-  test) → quita la varianza de submuestreo.
+  test) → quita parte de la varianza de submuestreo.
 - **`mIoU` no informativo** aquí (convención parte-ausente → 1.0); por eso el diagnóstico es `tooth_acc`.
 
 ---
@@ -111,5 +135,7 @@ Requiere el **kernel GPU dedicado** `Dental GPU (3DGS)` (torch cu128 + `pyg-lib`
   CBCT real registrado, solo se sustituye el volumen sintético.
 - Validar el FDI predicho contra el informe clínico sería el `fdi-consistency-agent` (ADR 003).
 
-**Siguiente paso (A3):** **boundary loss** (frontera diente-encía, top-5% puntos) + **centroid loss**
-al estilo IOSNet/DDMF — mejora el borde con la encía usando Teeth3DS+, **sin CBCT**.
+**Estado.** A1 (split real) · A2 (ablación de features) · A3 (boundary + centroid loss) ✅. El canal de
+gris queda **swap-ready** para el CBCT real. Siguientes palancas naturales cuando haya datos: **CBCT
+real por fusión** (registro CBCT↔malla estilo DDMF) para el `cbct-agent`, y validar el FDI contra el
+informe (`fdi-consistency-agent`).
