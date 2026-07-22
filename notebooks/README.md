@@ -196,13 +196,15 @@ armónicos esféricos, métricas PSNR/SSIM, export `.splat` para el visor web (I
 ## `exercise-point-transformer-teeth3ds.ipynb` — Segmentación de dientes (FDI) por punto
 
 Prototipo del **`segmentation-agent`**: nube de puntos del escaneo intraoral →
-etiqueta **FDI por punto**. Point Transformer (PyG) *pos-only* sobre **Teeth3DS+ completo**
+etiqueta **FDI por punto**. Point Transformer (PyG) sobre **Teeth3DS+ completo**
 (300 pacientes / 600 mallas), con **loss ponderada por clase** y diagnóstico `tooth_acc`.
 
-**Hallazgo:** con el split real 80/20 el modelo **aprende el train** (`tooth_acc` 0.16→0.81)
-pero **no generaliza** (`tooth_acc` test plano ~0.05). El límite **no es la cantidad de datos**,
-sino la falta de **features por punto** → justifica el **gris CBCT** (comentario #2 del jefe).
+**Hallazgo (ablación de features, `tooth_acc` test):** `pos-only` no generaliza (**0.08**); basta
+**un descriptor local por punto** para arreglarlo — **normales 0.84**, gris CBCT sintético 0.79,
+y combinarlos **no suma** (redundantes). La palanca no es «más datos» ni «el CBCT», sino la
+geometría **local**. El gris real aporta por **fusión** (registro CBCT↔malla, estilo DDMF), no
+pintando gris por vértice.
 
-Detalle completo, tabla de resultados, caveats y reproducción:
+Detalle completo, ablación, referencia DDMF y reproducción:
 [`exercise-point-transformer-teeth3ds.md`](exercise-point-transformer-teeth3ds.md). Requiere el
 kernel GPU **"Dental GPU (3DGS)"** (ver §04).
