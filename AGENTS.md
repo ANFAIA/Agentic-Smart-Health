@@ -160,6 +160,93 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 ---
 
+### Agentes de ingesta — `mesh-agent` · `cbct-agent` · `report-agent`
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/ingestion-agents/` (`mesh_agent.py` · `cbct_agent.py` · `report_agent.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 1 · Ingesta (frontera raw → contrato) |
+| **Contrato común** | `IngestionOutput` + `BaseIngestionAgent` en `ingestion_agents/base.py` |
+| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline`) |
+
+> **Por qué viven en `packages/` y no en `apps/<modalidad>-agent/`:** el
+> orquestador (un `app`) tiene que importarlos, y el `ai-code-reviewer` prohíbe
+> las dependencias cruzadas entre `apps/`. La regla del monorepo obliga a que el
+> código compartido esté en `packages/` — es la rama «o `packages/` si lo
+> comparten varios» de la skill `add-ingestion-agent`.
+
+**Rol / Propósito**
+
+> Traducen **un** fichero clínico crudo a un fragmento del contrato de
+> `core-schemas`, declarando su `Provenance`. Regla: **1 modalidad = 1 soporte =
+> 1 agente**. Son los **únicos** componentes que tocan ficheros crudos: a partir
+> del `TwinSnapshot` nadie vuelve al original.
+
+| Agente | Entrada | `Modality` | `Support` | Produce | Cerebro |
+|---|---|---|---|---|---|
+| `mesh-agent` | OBJ intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
+| `cbct-agent` | directorio de serie DICOM | `cbct` | volumétrico | `gaussian_field_ref` (campo σ semilla) | determinista |
+| `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH por FDI) | determinista (`rules`) · LLM opcional (`llm`) |
+
+**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+
+| Recurso | Permisos | Notas |
+|---|---|---|
+| Fichero crudo de la modalidad | read | Única lectura de datos crudos del sistema. |
+| `ArtifactStore` (`data/interim/artifacts/`) | write | Blobs pesados por hash SHA-256 del contenido; nunca embebidos en Pydantic. |
+| Directorio de cuarentena | write | Solo ruta + traceback del fallo; **nunca** el contenido clínico. |
+| API de Anthropic | red (solo `report-agent` con `backend="llm"`, **desactivado por defecto**) | Requiere `ANTHROPIC_API_KEY`; sin ella el agente falla declarando, no lanza. |
+
+**Outputs generados**
+
+```
+IngestionOutput
+  ├─ ingestion : ModalityIngestion (ok/missing/failed) — SIEMPRE presente
+  ├─ provenance: Provenance (source_file, modality, agent, confidence)
+  ├─ artifact_ref / n_primitives   (mesh, cbct)
+  ├─ regional  : list[RegionalObservation]  (report)
+  └─ latency_s, quarantine_ref
+```
+
+**Reglas de delegación**
+
+- No se delegan entre sí ni deciden nada: producen fragmentos de contrato. El
+  `agent-orchestrator` los dispara **en paralelo** (las tres modalidades son
+  independientes) y ensambla el `TwinSnapshot`.
+- **Fail-loud, nunca fail-fast**: un fichero corrupto devuelve
+  `status=FAILED` + `detail`; jamás propaga la excepción. Un fallo de una
+  modalidad no puede llevarse por delante las otras dos.
+- **Human-in-the-loop**: el agente **no** decide qué se persiste. Emite
+  `Provenance.confidence` y el orquestador aplica el umbral
+  (`DEFAULT_HITL_THRESHOLD = 0.7`); por debajo, el snapshot requiere revisión
+  humana antes de persistirse.
+- **Soberanía del dato**: el `cbct-agent` seudonimiza el `PatientID` del DICOM
+  (HMAC-SHA256 con sal de `ASH_PSEUDONYM_SALT`); ningún identificador directo
+  llega al contrato.
+
+**Reglas específicas por modalidad**
+
+- 🔒 `mesh-agent` — **guardarraíl de reversibilidad**: conserva la superficie de
+  origen sin pérdida (posiciones `float64` + topología completa), no una nube
+  remuestreada. Round-trip con error **cero** (test
+  `test_round_trip_de_superficie_sin_perdida`). El gris uniforme de Teeth3DS+ es
+  un *placeholder* del exportador: se trata como **ausencia** de color.
+- `cbct-agent` — **envuelve** la reconstrucción tipo RGS, no reimplementa su
+  algoritmo residual. Produce la semilla isótropa (σ normalizado, cuaternión
+  identidad) que un optimizador refinaría.
+- `report-agent` — valida cada valor contra la **ontología clínica mínima**
+  (`ingestion_agents/ontology.py`) antes de escribirlo en el contrato.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-07-22 | 0.1.0 | Registro inicial: los tres agentes de ingesta pasan de `planned` a `active`. Contrato común `IngestionOutput`, almacén por contenido, cuarentena, seudonimización, ontología mínima, generador de casos sintéticos y orquestación de la fase 1. |
+
+---
+
 ### Agentes de análisis (stubs `planned`)
 
 Agentes del pipeline clínico **aún no implementados**. Se registran aquí como
@@ -180,10 +267,11 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 > ficha completa (como `research-agent`) y, si toca, su ADR. Registrarlos ahora fija
 > su **rol y contrato**, no su implementación.
 
-**Agentes de ingesta previstos** (`planned`, regla «1 modalidad = 1 soporte = 1 agente»):
-`cbct-agent` (DICOM → densidad σ), `mesh-agent` (malla intraoral → color superficial),
-`report-agent` (PDF → pH regional), `image-agent` (foto 2D → previsualización 3D, PoC).
-Detalle en el [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
+**Agentes de ingesta:** `cbct-agent`, `mesh-agent` y `report-agent` ya están
+`active` — ficha completa en la [sección anterior](#agentes-de-ingesta--mesh-agent--cbct-agent--report-agent).
+Sigue `planned` el `image-agent` (foto 2D → previsualización 3D, PoC), fuera del
+hito de Semana 3-4. Detalle del contrato de ingesta en el
+[pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
 
 ---
 
