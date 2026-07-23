@@ -49,10 +49,15 @@ secrets/
 #     - data/processed/ = artefactos derivados (.ply, vistas, transforms.json)
 #                         -> los generan los notebooks/ al ejecutarse
 #     - data/external/  = terceros
+#     - data/interim/   = salidas de la ingesta (ArtifactStore .npz, cuarentena)
+#                         -> las genera apps/agent-orchestrator al ejecutarse
 # (3) licencia/soberanía del dato: no redistribuir datos clínicos vía el repo.
 data/raw/
 data/processed/
 data/external/
+# Solo el contenido: se conserva el .gitkeep para que el directorio exista.
+data/interim/*
+!data/interim/.gitkeep
 *.dcm
 *.nii
 *.nii.gz
