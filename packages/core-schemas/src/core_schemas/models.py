@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # Versión del contrato de datos (SemVer). Se serializa en cada `TwinSnapshot`
 # para que un JSON persistido declare bajo qué esquema se escribió y no quede
 # "huérfano" si el contrato (o el formato del campo gaussiano) evoluciona.
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +240,15 @@ class TwinSnapshot(BaseModel):
         description="Hash/URI del campo gaussiano en 3dgs-engine. Invariante fail-loud: "
         "al cargar/exportar hay que validar que el blob referenciado existe; una "
         "referencia colgante es un error, no un modelo vacío silencioso.",
+    )
+    surface_ref: str | None = Field(
+        default=None,
+        description="Hash/URI de la malla intraoral ingerida (posiciones, normales, "
+        "color por vértice). Existe porque el `mesh-agent` produce un artefacto "
+        "propio ANTES de la fusión geométrica: hasta que el color se transfiera a "
+        "las gaussianas de la banda ε, la superficie no tiene otro sitio donde "
+        "vivir dentro del contrato. Mismo invariante fail-loud que "
+        "`gaussian_field_ref`: una referencia colgante es un error.",
     )
     n_primitives: int | None = Field(default=None, ge=0)
     regional: list[RegionalObservation] = Field(default_factory=list)
