@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Agentic Smart Health - Monorepo raíz"
 requires-python = ">=3.13"
 dependencies = [
+    "agent-orchestrator",
     "core-schemas",
+    "ingestion-agents",
 ]
 
 [tool.uv.workspace]
@@ -16,6 +18,7 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.15",
     "pytest>=8.0",
+    "pytest-cov>=6.0",
     "vtk>=9.6.2",
     "numpy>=2.5.1",
     "jupyter>=1.1.1",
@@ -23,10 +26,12 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages"]
+testpaths = ["packages", "apps", "tests"]
 
 [tool.uv.sources]
+agent-orchestrator = { workspace = true }
 core-schemas = { workspace = true }
+ingestion-agents = { workspace = true }
 
 [tool.ruff]
 line-length = 100
@@ -38,7 +43,7 @@ extend-exclude = [".venv", "data", "notebooks"]
 select = ["E", "W", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = false
