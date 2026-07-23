@@ -172,6 +172,25 @@ def test_confianza_baja_dispara_el_gate(tmp_path: Path, case_dir: Path) -> None:
     assert any("confianza" in r for r in result.hitl_reasons)
 
 
+def test_un_hallazgo_descartado_del_informe_dispara_el_gate(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Cierre del diseño: el `report-agent` no decide nada, solo declara que
+    descartó algo bajando la confianza; es aquí donde eso para el flujo.
+
+    Sin esto, un pH mal tecleado por el clínico (`74` por `7.4`) desaparecería
+    del twin sin que nadie se enterara."""
+    informe = tmp_path / "informe.txt"
+    informe.write_text("Diente 16: pH 5.1\nDiente 47: pH 74\n", encoding="utf-8")
+    case = CaseInput.from_case_dir(case_dir)
+    case.report = informe
+
+    result = pipeline.run(case)
+
+    assert result.hitl_required
+    assert any("confianza" in r for r in result.hitl_reasons)
+
+
 def test_una_modalidad_fallida_dispara_el_gate(
     pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
 ) -> None:

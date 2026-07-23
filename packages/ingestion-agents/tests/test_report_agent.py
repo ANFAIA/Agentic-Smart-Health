@@ -17,61 +17,115 @@ from ingestion_agents.report_agent import (
 
 # --- extracción por reglas ------------------------------------------------- #
 def test_formato_tabulado() -> None:
-    assert extract_ph_by_rules("Diente 16: pH 5.4") == {"16": 5.4}
+    assert extract_ph_by_rules("Diente 16: pH 5.4").findings == {"16": 5.4}
 
 
 def test_coma_decimal() -> None:
     """Los informes en español escriben `5,4`."""
-    assert extract_ph_by_rules("Diente 26 — pH 5,9") == {"26": 5.9}
+    assert extract_ph_by_rules("Diente 26 — pH 5,9").findings == {"26": 5.9}
 
 
 def test_notacion_con_punto() -> None:
     """FDI también se escribe `1.6`; no debe confundirse con un decimal."""
-    assert extract_ph_by_rules("Diente 1.6 presenta pH 6.2") == {"16": 6.2}
+    assert extract_ph_by_rules("Diente 1.6 presenta pH 6.2").findings == {"16": 6.2}
 
 
 def test_orden_invertido() -> None:
-    assert extract_ph_by_rules("pH 6.1 en el diente 36") == {"36": 6.1}
+    assert extract_ph_by_rules("pH 6.1 en el diente 36").findings == {"36": 6.1}
 
 
 @pytest.mark.parametrize("sep", [":", "=", ""])
 def test_separadores(sep: str) -> None:
-    assert extract_ph_by_rules(f"Diente 21 pH{sep} 6.8") == {"21": 6.8}
+    assert extract_ph_by_rules(f"Diente 21 pH{sep} 6.8").findings == {"21": 6.8}
 
 
 def test_varias_lineas() -> None:
     texto = "Diente 16: pH 5.2\nDiente 21: pH 6.8\nDiente 26: pH 5.9\n"
-    assert extract_ph_by_rules(texto) == {"16": 5.2, "21": 6.8, "26": 5.9}
+    assert extract_ph_by_rules(texto).findings == {"16": 5.2, "21": 6.8, "26": 5.9}
 
 
 def test_cada_ph_se_empareja_con_el_diente_de_su_linea() -> None:
     """El fallo silencioso a evitar: colgar un pH del diente equivocado."""
     texto = "Diente 16: pH 5.2\nDiente 47: pH 7.0\n"
-    assert extract_ph_by_rules(texto) == {"16": 5.2, "47": 7.0}
+    assert extract_ph_by_rules(texto).findings == {"16": 5.2, "47": 7.0}
 
 
 def test_linea_sin_diente_se_descarta() -> None:
     """Mejor no ingerir que ingerir mal."""
-    assert extract_ph_by_rules("pH medio de la arcada: 6.4") == {}
+    assert extract_ph_by_rules("pH medio de la arcada: 6.4").findings == {}
 
 
 def test_linea_sin_ph_se_descarta() -> None:
-    assert extract_ph_by_rules("Diente 16 con restauración de composite.") == {}
+    assert extract_ph_by_rules("Diente 16 con restauración de composite.").findings == {}
 
 
 def test_valor_fuera_de_rango_se_descarta() -> None:
     """`7.4` mal leído como `74`: lo caza la ontología antes del contrato."""
-    assert extract_ph_by_rules("Diente 16: pH 74") == {}
-    assert extract_ph_by_rules("Diente 16: pH 1.2") == {}
+    assert extract_ph_by_rules("Diente 16: pH 74").findings == {}
+    assert extract_ph_by_rules("Diente 16: pH 1.2").findings == {}
 
 
 def test_codigo_fdi_inexistente_se_descarta() -> None:
-    assert extract_ph_by_rules("Diente 19: pH 6.0") == {}
+    assert extract_ph_by_rules("Diente 19: pH 6.0").findings == {}
 
 
 def test_los_digitos_del_ph_no_se_leen_como_diente() -> None:
     """`pH 5.4` no debe interpretarse como el diente 54."""
-    assert extract_ph_by_rules("pH 5.4") == {}
+    assert extract_ph_by_rules("pH 5.4").findings == {}
+
+
+# --- descartes: lo que se cae NO puede caerse en silencio ------------------- #
+def test_un_ph_fuera_de_rango_se_registra_como_descarte() -> None:
+    """El caso real: «pH 74» es un 7.4 mal tecleado. Rechazarlo está bien;
+    perderlo sin dejar rastro, no."""
+    discards = extract_ph_by_rules("Diente 47: pH 74").discards
+    assert len(discards) == 1
+    assert "fuera del rango plausible" in discards[0].reason
+    assert "Diente 47" in discards[0].line
+
+
+def test_un_fdi_inexistente_se_registra_como_descarte() -> None:
+    discards = extract_ph_by_rules("Diente 19: pH 6.0").discards
+    assert len(discards) == 1
+    assert "FDI inexistente" in discards[0].reason
+
+
+def test_un_ph_sin_diente_se_registra_como_descarte() -> None:
+    """Distinto motivo que el FDI inválido: aquí no había ningún diente."""
+    discards = extract_ph_by_rules("pH 6.4 de media en la arcada superior").discards
+    assert len(discards) == 1
+    assert "sin diente asociado" in discards[0].reason
+
+
+def test_un_ph_separado_de_su_etiqueta_no_se_detecta_siquiera() -> None:
+    """Límite conocido del backend `rules`: el patrón exige el valor pegado a
+    «pH». En «pH medio de la arcada: 6.4» el número queda demasiado lejos, así
+    que la línea no llega ni a considerarse candidata — no hay hallazgo, pero
+    tampoco descarte que declarar. Es justo el tipo de prosa que motiva el
+    backend LLM."""
+    extraction = extract_ph_by_rules("pH medio de la arcada: 6.4")
+    assert extraction.findings == {}
+    assert extraction.discards == []
+
+
+def test_un_diente_repetido_se_registra_como_descarte() -> None:
+    """Dos pH para el mismo diente: se conserva el primero y se declara el otro."""
+    extraction = extract_ph_by_rules("Diente 16: pH 5.4\nDiente 16: pH 6.9")
+    assert extraction.findings == {"16": 5.4}
+    assert len(extraction.discards) == 1
+    assert "ya tenía un pH" in extraction.discards[0].reason
+
+
+def test_una_linea_sin_ph_no_es_un_descarte() -> None:
+    """Solo es descarte lo que *parecía* un hallazgo; el texto normal, no."""
+    texto = "Revisión rutinaria. Diente 16 con restauración de composite."
+    assert extract_ph_by_rules(texto).discards == []
+
+
+def test_un_informe_limpio_no_descarta_nada() -> None:
+    extraction = extract_ph_by_rules("Diente 16: pH 5.2\nDiente 21: pH 6.8")
+    assert len(extraction.findings) == 2
+    assert extraction.discards == []
 
 
 # --- metadatos ------------------------------------------------------------- #
@@ -127,6 +181,34 @@ def test_sin_fecha_usa_la_de_respaldo(tmp_path: Path) -> None:
     fallback = datetime(2020, 1, 1, tzinfo=UTC)
     obs = ReportAgent(default_timestamp=fallback).ingest(path).regional[0]
     assert obs.timestamp == fallback
+
+
+def test_un_descarte_parcial_baja_la_confianza_y_lo_declara(tmp_path: Path) -> None:
+    """El fallo que esto corrige: antes el informe se ingería `ok` con confianza
+    0.9 y los hallazgos descartados desaparecían sin dejar rastro."""
+    path = tmp_path / "informe.txt"
+    path.write_text(
+        "Diente 16: pH 5.1\nDiente 19: pH 6.0\nDiente 47: pH 74\n", encoding="utf-8"
+    )
+
+    outcome = ReportAgent().ingest(path)
+
+    assert outcome.ok
+    assert {o.region_id for o in outcome.regional} == {"16"}
+    assert outcome.provenance is not None
+    # Por debajo del umbral del gate humano del orquestador (0.7).
+    assert outcome.provenance.confidence == 0.6
+    assert "2 hallazgos descartados" in (outcome.detail or "")
+    assert "Diente 19" in (outcome.detail or "")
+    assert "Diente 47" in (outcome.detail or "")
+
+
+def test_un_informe_limpio_conserva_la_confianza_alta(tmp_path: Path) -> None:
+    path = tmp_path / "informe.txt"
+    path.write_text("Diente 16: pH 5.1\nDiente 21: pH 6.8\n", encoding="utf-8")
+    outcome = ReportAgent().ingest(path)
+    assert outcome.provenance is not None and outcome.provenance.confidence == 0.9
+    assert outcome.detail is None
 
 
 def test_informe_sin_hallazgos_baja_la_confianza_a_cero(tmp_path: Path) -> None:
