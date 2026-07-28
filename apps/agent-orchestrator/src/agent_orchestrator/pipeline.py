@@ -1,4 +1,4 @@
-"""Orquestación de la fase de **ingesta**: los tres agentes → un `TwinSnapshot`.
+"""Orquestación de la fase de **ingesta**: los agentes → un `TwinSnapshot`.
 
 Este módulo es la Fase 1 del pipeline (`docs/architecture/multi-agent-pipeline.md`
 §6): dispara los agentes de ingesta, recoge sus `IngestionOutput` y **ensambla el
@@ -40,6 +40,7 @@ from core_schemas import (
 from ingestion_agents import (
     ArtifactStore,
     CBCTAgent,
+    ImageAgent,
     IngestionOutput,
     MeshAgent,
     ReportAgent,
@@ -65,20 +66,30 @@ class CaseInput:
     mesh: Path | None = None
     cbct: Path | None = None
     report: Path | None = None
+    # Varias fotos por adquisición (Bite2Text trae 5): 0..N, no exactamente una.
+    images: list[Path] = field(default_factory=list)
     timestamp: datetime | None = None
 
     @classmethod
     def from_case_dir(cls, root: Path, **kwargs: object) -> CaseInput:
-        """Descubre las modalidades en el layout que produce `synthetic.write_case`."""
+        """Descubre las modalidades en el layout que produce `synthetic.write_case`
+        (y en el de Bite2Text: fotos en `intraoral-photo/`)."""
         root = Path(root)
         objs = sorted(root.glob("*.obj"))
         reports = sorted(root.glob("*.txt")) + sorted(root.glob("*.pdf"))
         cbct = root / "cbct"
+        # JPG/PNG en la raíz o en un subdir de fotos. HEIC se omite: necesita el
+        # extra `heic`, así que no se descubre por defecto.
+        photos: list[Path] = []
+        for pattern in ("*.jpg", "*.jpeg", "*.png", "intraoral-photo/*"):
+            photos += [p for p in sorted(root.glob(pattern)) if p.suffix.lower() in
+                       {".jpg", ".jpeg", ".png"}]
         return cls(
             acquisition_id=kwargs.pop("acquisition_id", root.name),  # type: ignore[arg-type]
             mesh=objs[0] if objs else None,
             cbct=cbct if cbct.is_dir() else None,
             report=reports[0] if reports else None,
+            images=photos,
             **kwargs,  # type: ignore[arg-type]
         )
 
@@ -105,6 +116,11 @@ class PipelineResult:
     def outcome(self, modality: Modality) -> IngestionOutput | None:
         return next((o for o in self.outcomes if o.modality is modality), None)
 
+    @property
+    def image_outcomes(self) -> list[IngestionOutput]:
+        """Todas las fotos ingeridas (la imagen es 0..N, no una)."""
+        return [o for o in self.outcomes if o.modality is Modality.IMAGE]
+
 
 class IngestionPipeline:
     """Coordina los agentes de ingesta y ensambla el `TwinSnapshot`."""
@@ -127,38 +143,43 @@ class IngestionPipeline:
             Modality.REPORT: ReportAgent(
                 backend=report_backend, quarantine_dir=quarantine_dir
             ),
+            Modality.IMAGE: ImageAgent(store, quarantine_dir=quarantine_dir),
         }
 
     # --- ejecución ------------------------------------------------------- #
     def run(self, case: CaseInput) -> PipelineResult:
         started = time.perf_counter()
-        sources = {
+        single = {
             Modality.MESH: case.mesh,
             Modality.CBCT: case.cbct,
             Modality.REPORT: case.report,
         }
 
-        # Una modalidad no aportada no se le pasa al agente: se declara `missing`
-        # directamente. Así `missing` (no había fichero) y `failed` (lo había y no
-        # se pudo leer) no se confunden nunca.
-        pending = {m: p for m, p in sources.items() if p is not None}
-        outcomes: dict[Modality, IngestionOutput] = {
-            m: self._missing(m) for m, p in sources.items() if p is None
-        }
+        # Una tarea por modalidad *single* aportada + una por CADA foto: la imagen
+        # es 0..N, no exactamente una, así que cada foto es su propia ingesta.
+        tasks: list[tuple[Modality, Path]] = [
+            (m, p) for m, p in single.items() if p is not None
+        ]
+        tasks += [(Modality.IMAGE, p) for p in case.images]
 
-        if self.parallel and len(pending) > 1:
-            with ThreadPoolExecutor(max_workers=len(pending)) as pool:
-                futures = {
-                    modality: pool.submit(self.agents[modality].ingest, path)
-                    for modality, path in pending.items()
-                }
-                outcomes.update({m: f.result() for m, f in futures.items()})
+        if self.parallel and len(tasks) > 1:
+            with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+                futures = [(m, pool.submit(self.agents[m].ingest, p)) for m, p in tasks]
+                done = [(m, f.result()) for m, f in futures]
         else:
-            outcomes.update(
-                {m: self.agents[m].ingest(p) for m, p in pending.items()}
-            )
+            done = [(m, self.agents[m].ingest(p)) for m, p in tasks]
 
-        ordered = [outcomes[m] for m in (Modality.CBCT, Modality.MESH, Modality.REPORT)]
+        # Las single no aportadas se declaran MISSING (así `missing` = no había
+        # fichero, y `failed` = lo había y no se pudo leer, nunca se confunden).
+        by_mod = {m: o for m, o in done if m is not Modality.IMAGE}
+        for m in (Modality.MESH, Modality.CBCT, Modality.REPORT):
+            by_mod.setdefault(m, self._missing(m))
+        image_outcomes = [o for m, o in done if m is Modality.IMAGE]
+
+        ordered = [
+            by_mod[Modality.CBCT], by_mod[Modality.MESH], by_mod[Modality.REPORT],
+            *image_outcomes,
+        ]
         pseudonym = pseudonymize(case.patient_id)
         snapshot = self._assemble(case, ordered, pseudonym)
 
@@ -208,14 +229,23 @@ class IngestionPipeline:
 
         mesh = next(o for o in outcomes if o.modality is Modality.MESH)
         report = next(o for o in outcomes if o.modality is Modality.REPORT)
+        # Todas las fotos que se ingirieron bien → lista de referencias (apariencia
+        # pre-fusión). La comprobación de referencia colgante de arriba ya las validó.
+        image_refs = [
+            o.artifact_ref
+            for o in outcomes
+            if o.modality is Modality.IMAGE and o.ok and o.artifact_ref
+        ]
 
         return TwinSnapshot(
             acquisition_id=case.acquisition_id,
             timestamp=case.timestamp or datetime.now(UTC),
-            modalities=[o.modality for o in outcomes if o.ok],
+            # dedup: con N fotos, IMAGE aparecería N veces en la lista de outcomes.
+            modalities=list(dict.fromkeys(o.modality for o in outcomes if o.ok)),
             ingestion=[o.ingestion for o in outcomes],
             gaussian_field_ref=cbct.artifact_ref,
             surface_ref=mesh.artifact_ref if mesh.ok else None,
+            image_refs=image_refs,
             n_primitives=cbct.n_primitives,
             regional=list(report.regional),
             provenance=Provenance(
