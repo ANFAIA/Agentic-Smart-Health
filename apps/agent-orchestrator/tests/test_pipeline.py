@@ -258,3 +258,77 @@ def test_from_case_dir_descubre_las_modalidades(case_dir: Path) -> None:
 def test_from_case_dir_en_directorio_vacio(tmp_path: Path) -> None:
     case = CaseInput.from_case_dir(tmp_path)
     assert (case.mesh, case.cbct, case.report) == (None, None, None)
+
+
+# --- imagen: 0..N fotos → image_refs (lista) ------------------------------- #
+PIL = pytest.importorskip("PIL")
+from PIL import Image  # noqa: E402
+
+
+def _fotos(dir_: Path, n: int) -> list[Path]:
+    dir_.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i in range(n):
+        p = dir_ / f"intraoral_{i}.jpg"
+        Image.new("RGB", (48, 32), (10 * i, 100, 150)).save(p)
+        out.append(p)
+    return out
+
+
+def test_las_fotos_van_a_image_refs(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Con CBCT presente y N fotos, el snapshot lleva N image_refs."""
+    fotos = _fotos(tmp_path / "fotos", 3)
+    case = CaseInput.from_case_dir(case_dir)
+    case.images = fotos
+
+    result = pipeline.run(case)
+
+    assert result.snapshot is not None
+    assert len(result.snapshot.image_refs) == 3
+    assert all(ref.startswith("sha256:") for ref in result.snapshot.image_refs)
+    assert Modality.IMAGE in result.snapshot.modalities  # sin duplicar
+    assert len(result.image_outcomes) == 3 and all(o.ok for o in result.image_outcomes)
+
+
+def test_las_referencias_de_foto_resuelven(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    case = CaseInput.from_case_dir(case_dir)
+    case.images = _fotos(tmp_path / "fotos", 2)
+    snap = pipeline.run(case).snapshot
+    assert snap is not None
+    for ref in snap.image_refs:
+        assert pipeline.store.exists(ref)
+
+
+def test_sin_fotos_image_refs_vacio(pipeline: IngestionPipeline, case_dir: Path) -> None:
+    snap = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    assert snap is not None and snap.image_refs == []
+
+
+def test_from_case_dir_descubre_fotos(tmp_path: Path) -> None:
+    """Bite2Text guarda las fotos en `intraoral-photo/`."""
+    root = tmp_path / "F9999"
+    _fotos(root / "intraoral-photo", 4)
+    case = CaseInput.from_case_dir(root)
+    assert len(case.images) == 4
+
+
+def test_una_foto_rota_no_tumba_las_demas(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Fail-loud también por foto: una corrupta se declara, las buenas entran."""
+    buenas = _fotos(tmp_path / "fotos", 2)
+    rota = tmp_path / "fotos" / "rota.jpg"
+    rota.write_bytes(b"no soy un jpeg")
+    case = CaseInput.from_case_dir(case_dir)
+    case.images = [*buenas, rota]
+
+    result = pipeline.run(case)
+
+    assert result.snapshot is not None
+    assert len(result.snapshot.image_refs) == 2  # solo las buenas
+    assert any(o.status is ModalityStatus.FAILED for o in result.image_outcomes)
+    assert result.hitl_required  # la foto fallida dispara el gate
