@@ -21,6 +21,8 @@ aleatorias con semilla fija, en vez de una demo sobre un único escaneo.
 | **02** | Visor 3D interactivo de escritorio (VTK): malla, campo, nube de puntos, sobre cualquier caso | selector de los 600 | No |
 | **03** | Generar **vistas sintéticas + poses de cámara exactas** (input del 3DGS), sin COLMAP | **2 880 vistas** · 20 casos | No |
 | **04** | **3DGS moderno entrenado** (`gsplat`/GPU) evaluado en **vistas retenidas** → contrato | 8 casos entrenados | **Sí** |
+| **05** | Variante **densa** del 03: misma generación de vistas + poses con **rejilla más fina (528 vistas/caso)** · salida en `data/processed/teeth3ds-dense/` | 528 vistas · 20 casos | No |
+| **06** | Variante **densa** del 04: entrena sobre los paquetes de 528 vistas del **05**, con **semilla fija** · evalúa en vistas retenidas → contrato | 8 casos entrenados | **Sí** |
 | **exercise** | **Segmentación FDI por punto** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent` | 600 mallas | **Sí** |
 
 **No se ha probado (aún):** foto→3D con **fotos reales**, **fusión multimodal**
@@ -246,6 +248,35 @@ gaussianas entrenado — requiere pantalla; lánzalo con
 **Mejoras naturales:** densificación/poda (`gsplat` `DefaultStrategy`), color por
 armónicos esféricos (sin ellos el especular del render no se puede reproducir),
 SSIM, y export `.splat` para el visor web (**Issue 17**).
+
+---
+
+## `05-synthetic-views-dense.ipynb` y `06-train-3dgs-dense.ipynb` — corrida densa (par 03/04)
+
+Variante **densa** del par 03→04: el mismo pipeline (malla → vistas+poses → 3DGS
+entrenado → contrato) con una **rejilla de vistas más fina** — **528 vistas/caso**
+(48 azimuts × 11 elevaciones) frente a las 144 del 03. Se conservan como notebooks
+aparte, no como sustitución, porque **coexisten sin pisar** al 03/04:
+
+- El **05** escribe en `data/processed/teeth3ds-dense/` (el 03 usa
+  `data/processed/teeth3ds/`), así que las dos corridas no se sobrescriben en disco.
+- El **06** entrena sobre los paquetes del **05** y añade **semilla fija** en el
+  muestreo de vistas (el 04 no la tenía), lo que quita la fuente grande de varianza
+  entre ejecuciones — aunque **no** da reproducibilidad bit a bit (la densificación
+  usa kernels CUDA con atómicos no deterministas, ~0,3 dB de deriva residual).
+
+Cuál usar: el **03/04** es la línea canónica (más ligera, 2 880 vistas totales); el
+**05/06** es la corrida densa para medir cuánto mejora el 3DGS con ~3,7× más vistas.
+
+La ablación de la receta de entrenamiento (`L1` → densificación → SSIM → armónicos)
+vive en [`scripts/ablacion_recetas.py`](../scripts/ablacion_recetas.py), que consume
+un paquete de la corrida densa.
+
+```bash
+# ejecutar con el entorno dedicado (NO 'uv run')
+~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/05-synthetic-views-dense.ipynb
+~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/06-train-3dgs-dense.ipynb
+```
 
 ---
 
