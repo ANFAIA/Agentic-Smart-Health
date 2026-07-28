@@ -130,3 +130,9 @@ data/research-agent/.qdrant_data/
 *.pth
 *.safetensors
 .claude/settings.local.json
+
+# -----------------------------------------------------------------------------
+# experimento
+# -----------------------------------------------------------------------------
+experiments/
+notebooks/08-toothfairy-cbct-blender-3dgs.ipynb
