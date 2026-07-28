@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # Versión del contrato de datos (SemVer). Se serializa en cada `TwinSnapshot`
 # para que un JSON persistido declare bajo qué esquema se escribió y no quede
 # "huérfano" si el contrato (o el formato del campo gaussiano) evoluciona.
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -249,6 +249,15 @@ class TwinSnapshot(BaseModel):
         "las gaussianas de la banda ε, la superficie no tiene otro sitio donde "
         "vivir dentro del contrato. Mismo invariante fail-loud que "
         "`gaussian_field_ref`: una referencia colgante es un error.",
+    )
+    image_refs: list[str] = Field(
+        default_factory=list,
+        description="Hash/URI de las fotos intraorales ingeridas (píxeles RGB, sin EXIF). "
+        "Es una **lista** porque una adquisición trae varias fotos (p. ej. 5 en "
+        "Bite2Text). Como el `surface_ref`, es apariencia **pre-fusión**: la foto "
+        "existe en el contrato antes de que la fusión geométrica proyecte su color "
+        "sobre las gaussianas. Mismo invariante fail-loud: una referencia colgante "
+        "es un error.",
     )
     n_primitives: int | None = Field(default=None, ge=0)
     regional: list[RegionalObservation] = Field(default_factory=list)
