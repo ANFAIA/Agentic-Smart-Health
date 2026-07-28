@@ -10,12 +10,16 @@ dependencies = [
     # El informe clínico llega como PDF (entregable Semana 3-4): la lectura de PDF
     # es parte del camino por defecto del `report-agent`, no un extra opcional.
     "pypdf>=5.0",
+    # El `image-agent` decodifica la foto intraoral (JPG/PNG) y le quita el EXIF.
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
 # El `report-agent` solo necesita un LLM cuando se le pide el backend `llm`;
 # su backend por defecto (`rules`) es determinista y no requiere red ni clave.
 llm = ["anthropic>=0.40"]
+# HEIC (fotos de iPhone): el `image-agent` lee JPG/PNG sin esto; HEIC lo necesita.
+heic = ["pillow-heif>=0.16"]
 
 [build-system]
 requires = ["hatchling"]
