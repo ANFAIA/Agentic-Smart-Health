@@ -190,11 +190,74 @@ def test_color_real_mantiene_confianza_plena(tetraedro: Path, store: ArtifactSto
 
 
 def test_rechaza_otras_extensiones(tmp_path: Path, store: ArtifactStore) -> None:
-    path = tmp_path / "escaneo.stl"
-    path.write_bytes(b"solid\n")
+    path = tmp_path / "escaneo.ply"
+    path.write_bytes(b"ply\n")
     outcome = MeshAgent(store).ingest(path)
     assert outcome.status is ModalityStatus.FAILED
-    assert "solo ingiere OBJ" in (outcome.detail or "")
+    assert "OBJ o STL" in (outcome.detail or "")
+
+
+# --- STL (formato de Bite2Text) -------------------------------------------- #
+def _write_binary_stl(path: Path, triangles: np.ndarray) -> None:
+    """triangles: (T,3,3). Escribe un STL binario mínimo (normales a cero)."""
+    import struct
+    with path.open("wb") as fh:
+        fh.write(b" " * 80)
+        fh.write(struct.pack("<I", len(triangles)))
+        for tri in triangles:
+            fh.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+            for v in tri:
+                fh.write(struct.pack("<3f", *[float(x) for x in v]))
+            fh.write(struct.pack("<H", 0))
+
+
+@pytest.fixture
+def stl_tetraedro(tmp_path: Path) -> Path:
+    """Tetraedro como sopa de triángulos (4 caras), formato STL binario."""
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+    tris = np.array([v[[0, 2, 1]], v[[0, 1, 3]], v[[0, 3, 2]], v[[1, 2, 3]]])
+    path = tmp_path / "escaneo.stl"
+    _write_binary_stl(path, tris)
+    return path
+
+
+def test_stl_binario_deduplica_vertices(stl_tetraedro: Path) -> None:
+    """La sopa de 12 vértices (4 tri × 3) colapsa a los 4 únicos del tetraedro."""
+    from ingestion_agents.mesh_agent import parse_stl
+    mesh = parse_stl(stl_tetraedro)
+    assert mesh["positions"].shape == (4, 3)
+    assert mesh["faces"].shape == (4, 3)
+    assert mesh["faces"].max() == 3 and mesh["faces"].min() == 0
+    assert "colors" not in mesh  # el STL nunca trae color
+
+
+def test_stl_ascii(tmp_path: Path) -> None:
+    from ingestion_agents.mesh_agent import parse_stl
+    path = tmp_path / "a.stl"
+    path.write_text(
+        "solid t\nfacet normal 0 0 0\n outer loop\n"
+        "  vertex 0 0 0\n  vertex 1 0 0\n  vertex 0 1 0\n"
+        " endloop\nendfacet\nendsolid t\n"
+    )
+    mesh = parse_stl(path)
+    assert mesh["positions"].shape == (3, 3)
+    assert mesh["faces"].shape == (1, 3)
+
+
+def test_ingesta_stl_es_pelada_sin_color(stl_tetraedro: Path, store: ArtifactStore) -> None:
+    """STL = malla pelada → color_superficie None → confianza 0.5 (regla del ADR 004)."""
+    outcome = MeshAgent(store).ingest(stl_tetraedro)
+    assert outcome.status is ModalityStatus.OK
+    assert outcome.support is Support.SURFACE
+    arrays = store.load(outcome.artifact_ref or "")
+    assert "colors_rgb8" not in arrays
+    assert outcome.provenance is not None and outcome.provenance.confidence == 0.5
+
+
+def test_stl_ingesta_reproducible(stl_tetraedro: Path, store: ArtifactStore) -> None:
+    a = MeshAgent(store).ingest(stl_tetraedro)
+    b = MeshAgent(store).ingest(stl_tetraedro)
+    assert a.artifact_ref == b.artifact_ref
 
 
 def test_ingesta_reproducible(mesh_path: Path, store: ArtifactStore) -> None:
