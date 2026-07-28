@@ -62,6 +62,8 @@ def import_scan(path: str) -> bpy.types.Object:
         bpy.ops.wm.stl_import(filepath=path)
     elif ext == ".obj":
         bpy.ops.wm.obj_import(filepath=path)
+    elif ext == ".ply":
+        bpy.ops.wm.ply_import(filepath=path)
     else:
         raise SystemExit(f"Formato no soportado: {ext}")
     return bpy.context.selected_objects[0]
@@ -79,14 +81,22 @@ scale = 2.0 / max(dims.x, dims.y, dims.z)
 obj.scale = (scale, scale, scale)
 bpy.context.view_layer.update()
 
-# --- Material neutro (el STL es pelado; el OBJ de este dataset, también) ---- #
+# --- Material: color de vértice si la malla lo trae (PLY coloreado), si no,
+# marfil neutro (STL/OBJ pelados). El PLY coloreado lo produce el notebook 07 al
+# proyectar el color de las fotos sobre la malla (esmalte arriba, encía abajo). --- #
 mat = bpy.data.materials.new("scan")
 mat.use_nodes = True
-bsdf = mat.node_tree.nodes.get("Principled BSDF")
-if bsdf:
+nt = mat.node_tree
+bsdf = nt.nodes.get("Principled BSDF")
+if bsdf and "Roughness" in bsdf.inputs:
+    bsdf.inputs["Roughness"].default_value = 0.55
+if obj.data.color_attributes:
+    obj.data.color_attributes.active_color_index = 0
+    vc = nt.nodes.new("ShaderNodeVertexColor")
+    vc.layer_name = obj.data.color_attributes[0].name
+    nt.links.new(vc.outputs["Color"], bsdf.inputs["Base Color"])
+elif bsdf:
     bsdf.inputs["Base Color"].default_value = (0.85, 0.80, 0.72, 1.0)  # marfil
-    if "Roughness" in bsdf.inputs:
-        bsdf.inputs["Roughness"].default_value = 0.55
 obj.data.materials.clear()
 obj.data.materials.append(mat)
 
