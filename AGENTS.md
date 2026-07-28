@@ -186,7 +186,7 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 | Agente | Entrada | `Modality` | `Support` | Produce | Cerebro |
 |---|---|---|---|---|---|
-| `mesh-agent` | OBJ intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
+| `mesh-agent` | OBJ / STL intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
 | `cbct-agent` | directorio de serie DICOM | `cbct` | volumétrico | `gaussian_field_ref` (campo σ semilla) | determinista |
 | `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH por FDI) | determinista (`rules`) · LLM opcional (`llm`) |
 
@@ -231,8 +231,10 @@ IngestionOutput
 - 🔒 `mesh-agent` — **guardarraíl de reversibilidad**: conserva la superficie de
   origen sin pérdida (posiciones `float64` + topología completa), no una nube
   remuestreada. Round-trip con error **cero** (test
-  `test_round_trip_de_superficie_sin_perdida`). El gris uniforme de Teeth3DS+ es
-  un *placeholder* del exportador: se trata como **ausencia** de color.
+  `test_round_trip_de_superficie_sin_perdida`). Acepta **OBJ** (color por vértice,
+  Teeth3DS+) y **STL** (siempre pelado → `color=None`, Bite2Text); el gris uniforme
+  del OBJ de Teeth3DS+ es un *placeholder* del exportador y también se trata como
+  **ausencia** de color.
 - `cbct-agent` — **envuelve** la reconstrucción tipo RGS, no reimplementa su
   algoritmo residual. Produce la semilla isótropa (σ normalizado, cuaternión
   identidad) que un optimizador refinaría.
