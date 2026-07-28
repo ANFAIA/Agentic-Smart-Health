@@ -1,4 +1,4 @@
-"""`mesh-agent` — malla intraoral (OBJ) → soporte **superficial**.
+"""`mesh-agent` — malla intraoral (OBJ / STL) → soporte **superficial**.
 
 Modalidad `mesh`, soporte `SURFACE`. Es un worker **determinista**: la entrada ya
 tiene esquema (formato de fichero conocido), así que no hay nada que un LLM pueda
@@ -17,14 +17,20 @@ y la topología de caras completa—, no una versión remuestreada: el artefacto
 la malla es la copia fiel desde la que se reconstruye. El round-trip
 fichero → artefacto → fichero tiene error **cero**, no «pequeño».
 
-**Por qué un parser propio y no VTK.** El OBJ de un escáner intraoral es un
-subconjunto trivial (`v`/`vn`/`f`) y VTK son ~100 MB de dependencia binaria para
-una capa de ingesta que debe correr en CI. El notebook de investigación sí usa
-VTK; el agente de producción no lo necesita.
+**Por qué un parser propio y no VTK.** El OBJ/STL de un escáner intraoral es un
+formato trivial y VTK son ~100 MB de dependencia binaria para una capa de ingesta
+que debe correr en CI. El notebook de investigación sí usa VTK; el agente de
+producción no lo necesita.
+
+**OBJ vs STL.** El OBJ del escáner puede traer **color por vértice** (`v x y z r g b`);
+el **STL siempre es «pelado»** (solo geometría), así que su `color_superficie` es
+`None` por construcción — es la distinción que exige la regla del `mesh-agent`
+(ADR 004). Bite2Text entrega STL binario; Teeth3DS+, OBJ.
 """
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +98,65 @@ def parse_obj(path: Path) -> dict[str, np.ndarray]:
     return out
 
 
+def _dedup_triangle_soup(tri_verts: np.ndarray) -> dict[str, np.ndarray]:
+    """(3T, 3) vértices por triángulo → posiciones únicas + caras 0-indexadas.
+
+    El STL es una **sopa de triángulos**: repite cada vértice compartido. Se
+    deduplican con `np.unique` (que además da el índice inverso), reconstruyendo
+    la topología que el formato no guarda. Sin esto, las normales por vértice y
+    cualquier etiqueta posterior no podrían compartirse entre caras vecinas.
+    """
+    positions, inverse = np.unique(tri_verts, axis=0, return_inverse=True)
+    faces = inverse.reshape(-1, 3).astype(np.int32)
+    return {"positions": positions.astype(np.float64), "faces": faces}
+
+
+def parse_stl(path: Path) -> dict[str, np.ndarray]:
+    """Lee un STL (binario o ASCII) → posiciones únicas + caras. **Sin color.**
+
+    El STL no lleva color ni topología compartida: se reconstruye la topología
+    deduplicando vértices. Se detecta binario por el tamaño exacto que impone el
+    formato (cabecera 80 B + `uint32` de conteo + 50 B por triángulo); cualquier
+    otra cosa se trata como ASCII.
+    """
+    data = path.read_bytes()
+    if len(data) >= 84:
+        n_tri = struct.unpack_from("<I", data, 80)[0]
+        if len(data) == 84 + n_tri * 50:  # tamaño exacto ⇒ binario, sin ambigüedad
+            tri = np.frombuffer(
+                data,
+                dtype=np.dtype([("n", "<3f4"), ("v", "<3,3f4"), ("attr", "<u2")]),
+                count=n_tri,
+                offset=84,
+            )
+            return _dedup_triangle_soup(tri["v"].reshape(-1, 3))
+
+    # ASCII: líneas 'vertex x y z', cada 3 forman un triángulo.
+    verts: list[tuple[float, float, float]] = []
+    for raw in data.decode("utf-8", errors="replace").splitlines():
+        s = raw.strip()
+        if s.startswith("vertex"):
+            _, x, y, z = s.split()[:4]
+            verts.append((float(x), float(y), float(z)))
+    if not verts:
+        raise ValueError(f"El STL no contiene vértices (¿fichero corrupto?): {path}")
+    if len(verts) % 3 != 0:
+        raise ValueError(f"STL ASCII con vértices no múltiplos de 3: {path}")
+    return _dedup_triangle_soup(np.asarray(verts, dtype=np.float32))
+
+
+def read_mesh(path: Path) -> dict[str, np.ndarray]:
+    """Despacha por extensión: `.obj` → `parse_obj`, `.stl` → `parse_stl`."""
+    suffix = path.suffix.lower()
+    if suffix == ".obj":
+        return parse_obj(path)
+    if suffix == ".stl":
+        return parse_stl(path)
+    raise ValueError(
+        f"`mesh-agent` ingiere malla intraoral OBJ o STL, no {suffix!r}."
+    )
+
+
 def vertex_normals(positions: np.ndarray, faces: np.ndarray) -> np.ndarray:
     """Normales por vértice = media de las normales de cara ponderada por área.
 
@@ -128,12 +193,7 @@ class MeshAgent(BaseIngestionAgent):
         self.store = store
 
     def _ingest(self, source: Path) -> IngestionOutput:
-        if source.suffix.lower() != ".obj":
-            raise ValueError(
-                f"`mesh-agent` solo ingiere OBJ de malla intraoral, no {source.suffix!r}."
-            )
-
-        mesh = parse_obj(source)
+        mesh = read_mesh(source)  # valida la extensión (OBJ/STL) y lanza si no
         positions, faces = mesh["positions"], mesh["faces"]
         arrays: dict[str, np.ndarray] = {
             "positions": positions,
