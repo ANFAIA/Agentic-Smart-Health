@@ -913,14 +913,12 @@ dependencies = [
     { name = "core-schemas" },
     { name = "numpy" },
     { name = "pydicom" },
+    { name = "pypdf" },
 ]
 
 [package.optional-dependencies]
 llm = [
     { name = "anthropic" },
-]
-pdf = [
-    { name = "pypdf" },
 ]
 
 [package.metadata]
@@ -929,9 +927,9 @@ requires-dist = [
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pydicom", specifier = ">=3.0" },
-    { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5.0" },
+    { name = "pypdf", specifier = ">=5.0" },
 ]
-provides-extras = ["llm", "pdf"]
+provides-extras = ["llm"]
 
 [[package]]
 name = "iniconfig"
