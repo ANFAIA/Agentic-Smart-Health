@@ -189,6 +189,7 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 | `mesh-agent` | OBJ / STL intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
 | `cbct-agent` | directorio de serie DICOM | `cbct` | volumétrico | `gaussian_field_ref` (campo σ semilla) | determinista |
 | `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH por FDI) | determinista (`rules`) · LLM opcional (`llm`) |
+| `image-agent` (PoC) | foto JPG / PNG / HEIC | `image` | superficial | `artifact_ref` (píxeles RGB, **sin EXIF**) | determinista |
 
 **Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
 
@@ -271,8 +272,13 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 
 **Agentes de ingesta:** `cbct-agent`, `mesh-agent` y `report-agent` ya están
 `active` — ficha completa en la [sección anterior](#agentes-de-ingesta--mesh-agent--cbct-agent--report-agent).
-Sigue `planned` el `image-agent` (foto 2D → previsualización 3D, PoC), fuera del
-hito de Semana 3-4. Detalle del contrato de ingesta en el
+El `image-agent` (foto 2D) es la **4ª modalidad del `IngestionPipeline`**: ingiere
+JPG/PNG/HEIC, **descarta el EXIF** (privacidad) y guarda los píxeles como artefacto.
+Es la única modalidad **0..N** (una adquisición trae varias fotos, 5 en Bite2Text),
+así que el orquestador ingiere cada foto y el `TwinSnapshot` las recoge en
+**`image_refs: list[str]`** (apariencia pre-fusión, como el `surface_ref`). No
+reconstruye 3D de una foto —eso es fusión— pero deja la apariencia lista y trazable.
+Detalle del contrato de ingesta en el
 [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
 
 ---
