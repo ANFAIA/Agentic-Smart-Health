@@ -27,6 +27,51 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 > 📐 **Mapa completo de las 6 capas y el recorrido del dato** (pensado para quien
 > llega nuevo): [`docs/architecture/multi-agent-pipeline.md` §0](docs/architecture/multi-agent-pipeline.md#0-vista-de-conjunto-para-quien-llega-nuevo).
 
+## Estado actual (semanas 1–4)
+
+La **capa de ingesta está construida y probada**; la fusión, el análisis y la
+exportación son el trabajo de las semanas siguientes. Lo que ya funciona hoy:
+
+**Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
+`TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
+`surface_ref` (malla), `image_refs` (fotos, lista), `regional` (observaciones por
+diente FDI) y `provenance` por valor (trazabilidad raw→contrato).
+
+**Agentes de ingesta** — `packages/ingestion-agents`: **4 modalidades**, una por
+soporte, deterministas y *fail-loud* (nunca lanzan una excepción; devuelven estado +
+confianza y dejan la basura en cuarentena):
+
+| Agente | Entrada | Produce |
+|---|---|---|
+| `mesh-agent` | STL / OBJ (escáner intraoral) | superficie + normales |
+| `cbct-agent` | DICOM (CBCT) | volumen → campo de gaussianas |
+| `report-agent` | PDF / TXT (informe clínico) | pH por diente FDI (reglas o LLM) |
+| `image-agent` | JPG / PNG / HEIC (foto) | píxeles RGB **sin EXIF** |
+
+Diseño transversal: **Provenance** por valor, **ArtifactStore** direccionado por
+contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y
+**anonimización** (EXIF fuera, seudonimización HMAC — ver
+[`docs/architecture/anonymization-strategy.md`](docs/architecture/anonymization-strategy.md)).
+
+**Orquestador** — `agent-orchestrator` dispara los agentes en paralelo, ensambla el
+`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s.
+
+**Reconstrucción 3DGS** (en notebooks, ver más abajo): malla real → **Blender**
+(vistas con pose exacta, sin COLMAP) → **gsplat** → campo de gaussianas evaluable en
+vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://github.com/lgarbayo/dental-3dgs-viewer),
+repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
+(color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
+
+**Cobertura**: **166 tests** en verde.
+
+**Todavía no**: fusión multimodal (registrar y combinar CBCT + STL + foto), color
+**per-píxel** (registro foto↔malla — probado, no converge barato sin calibración),
+agentes de **análisis** (segmentación, patología) y **exportación reversible**. El
+paquete `3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks
++ `gsplat`.
+
+---
+
 ## Arquitectura del monorepo
 
 El repositorio está organizado como un **monorepo gestionado con [`uv` workspaces`](https://docs.astral.sh/uv/concepts/workspaces/)**. El archivo `pyproject.toml` raíz declara el workspace y agrupa automáticamente todos los miembros bajo `apps/` y `packages/`:
@@ -48,14 +93,15 @@ agentic-smart-health/          ← workspace root
 │   ├── research-agent/        ← agente de investigación (RAG + literatura científica)
 │   └── slicer-mcp-server/     ← servidor MCP para integración con 3D Slicer
 ├── packages/
-│   ├── core-schemas/          ← esquemas Pydantic compartidos
-│   └── 3dgs-engine/           ← motor de renderizado 3D Gaussian Splatting
+│   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
+│   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
+│   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
 │   └── research-agent/        ← knowledge base del agente de investigación
 ├── docs/                      ← documentación (ver nota más abajo)
-├── notebooks/                 ← experimentación y exploración
-├── tests/                     ← suite de pruebas global
-├── scripts/                   ← utilidades de CI (auditor de arquitectura de PRs)
+├── notebooks/                 ← experimentación y exploración (01–08)
+├── tests/                     ← suite de pruebas global (166 tests)
+├── scripts/                   ← utilidades: render Blender, auditor de PRs, fetch de datasets
 └── .github/
     └── workflows/             ← CI: agente de revisión de código (ai-code-reviewer)
 ```
@@ -66,14 +112,14 @@ agentic-smart-health/          ← workspace root
 
 ### `agent-orchestrator`
 
-Orquestador central del sistema multiagente. Coordina los agentes especializados en las distintas fases del pipeline:
+Orquestador central del sistema multiagente. Coordina los agentes de cada fase del pipeline:
 
-- **Ingesta**: lectura y normalización de STL, CBCT (DICOM) e informes clínicos en PDF.
-- **Fusión**: integración multimodal y temporal de los datos en el Digital Twin.
-- **Análisis**: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación**: regeneración reversible de ficheros STL e imágenes desde el Digital Twin.
+- **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
+- **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
+- **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
+- **Exportación** *(pendiente)*: regeneración reversible de ficheros STL e imágenes desde el Digital Twin.
 
-Depende de `core-schemas` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
+Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
 ### `slicer-mcp-server`
 
@@ -112,11 +158,15 @@ No depende de `core-schemas`; mantiene sus propios modelos internos para RAG.
 
 ### `core-schemas`
 
-Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones del workspace. Define los modelos de datos canónicos del sistema: estructuras del Digital Twin, representaciones de datos clínicos dentales, contratos entre agentes y formatos de exportación. Actúa como fuente única de verdad para los tipos de datos del proyecto.
+Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones del workspace. Define los modelos de datos canónicos del sistema: el `TwinSnapshot`, la `Provenance`, las observaciones regionales por diente FDI y los contratos entre agentes. Actúa como **fuente única de verdad** de los tipos de datos del proyecto (esquema versionado, hoy `1.2.0`).
+
+### `ingestion-agents`
+
+**Capa de ingesta** del pipeline: 4 agentes (`mesh` · `cbct` · `report` · `image`), uno por modalidad/soporte, que traducen los ficheros crudos al contrato. Cada agente es **determinista y fail-loud** (nunca lanza; devuelve estado + confianza y aísla en cuarentena), adjunta **Provenance** por valor y guarda los artefactos pesados (mallas, volúmenes, píxeles) en un **ArtifactStore direccionado por contenido** (SHA-256). El `image-agent` descarta el **EXIF** por construcción (privacidad). Guía para añadir o modificar un agente: skill `add-ingestion-agent`; ficha completa en [`AGENTS.md`](AGENTS.md).
 
 ### `3dgs-engine`
 
-Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implementa la representación neuronal del Digital Twin: cada punto/zona del espacio almacena atributos clínicos (color, densidad ósea, datos clínicos asociados, timestamp). Proporciona las primitivas necesarias para construir, actualizar y consultar el gemelo digital, así como para las operaciones de exportación reversible a STL e imágenes.
+**Placeholder.** Reservado para el motor de renderizado/procesamiento 3D Gaussian Splatting como paquete reutilizable. Hoy la reconstrucción 3DGS **no** vive aquí, sino en los [notebooks](notebooks/) (`gsplat` + Blender) y en el visor web. Se promoverá a paquete cuando la receta se estabilice y deje de ser experimental.
 
 ---
 
@@ -125,19 +175,26 @@ Motor de **renderizado y procesamiento 3D Gaussian Splatting** (3DGS). Implement
 El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
 (no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
 decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
-**Teeth3DS+ completo** (`data/raw/teeth3ds/`, 300 pacientes / 600 escaneos / ~70 M
-vértices etiquetados, gitignored).
+tres datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
+CC-BY), **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA) y **ToothFairy**
+(08, CBCT). Todos gitignored.
 
-| Notebook | Qué valida | Escala | GPU |
+| Notebook | Qué valida | Dataset | GPU |
 |---|---|---|---|
-| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato · caracterización del dataset | 600 escaneos · barrido de 24 | No |
-| `02` | Visor 3D interactivo de escritorio (VTK), sobre cualquier caso | selector de los 600 | No |
-| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | 2 880 vistas · 20 casos | No |
-| `04` | **3DGS moderno entrenado** (`gsplat`) evaluado en vistas retenidas → contrato | 8 casos · 21,0 dB PSNR | Sí |
+| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato · caracterización del dataset | Teeth3DS+ | No |
+| `02` | Visor 3D interactivo de escritorio (VTK), sobre cualquier caso | Teeth3DS+ | No |
+| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | Teeth3DS+ | No |
+| `04` | **3DGS moderno entrenado** (`gsplat`) evaluado en vistas retenidas → contrato | Teeth3DS+ | Sí |
+| `05` | Vistas sintéticas **densas** (528/caso) — rejilla más fina que `03` | Teeth3DS+ | No |
+| `06` | 3DGS **denso** con la receta de referencia (SSIM + densificación/poda, armónicos g2) | Teeth3DS+ | Sí |
+| `07` | **Escáner real → Blender (EEVEE) → 3DGS**, con **color de las fotos** (`image-agent`) y pérdida SSIM · 1600 vistas · holdout 31,5 dB | Bite2Text | Sí |
+| `08` | **CBCT → STL → Blender → 3DGS** (experimento aparte, con su muro de registro) | ToothFairy | Sí |
 
 Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
-Aún **no** cubierto: foto→3D con fotos reales, fusión multimodal (CBCT+STL) e
-integración como agentes.
+El notebook `07` es el que integra los **agentes de ingesta** (`mesh` + `report` +
+`image`) en el flujo de reconstrucción. **No** cubierto todavía: fusión multimodal
+real (CBCT + STL + foto en un mismo twin), **color per-píxel** (registro foto↔malla)
+y los agentes de **análisis**.
 
 ## Revisión de código y CI (`ai-code-reviewer`)
 
