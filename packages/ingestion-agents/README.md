@@ -6,7 +6,7 @@ Traducen **un** fichero clínico crudo a un fragmento del contrato de
 
 | Agente | Entrada | Soporte | Produce |
 |---|---|---|---|
-| `MeshAgent` | OBJ intraoral | superficial | `surface_ref` — posiciones `float64`, caras, normales, color |
+| `MeshAgent` | OBJ / STL intraoral | superficial | `surface_ref` — posiciones `float64`, caras, normales, color (el STL siempre va pelado) |
 | `CBCTAgent` | directorio de serie DICOM | volumétrico | `gaussian_field_ref` — campo σ semilla |
 | `ReportAgent` | PDF / TXT / MD | regional | `list[RegionalObservation]` — pH por FDI |
 
@@ -27,6 +27,198 @@ Demo de punta a punta con datos sintéticos (sin datos de paciente):
 ```bash
 uv run python apps/agent-orchestrator/main.py --demo
 ```
+
+---
+
+## Flujo de una ingesta
+
+### 1 · Vista de conjunto
+
+De los ficheros crudos al contrato. El orquestador reparte, los agentes traducen,
+el almacén guarda lo pesado y el contrato se ensambla al final.
+
+```mermaid
+flowchart LR
+  subgraph RAW["Ficheros crudos<br/>(única lectura de datos crudos del sistema)"]
+    direction TB
+    F1["scan.obj / scan.stl"]
+    F2["cbct/ · serie DICOM"]
+    F3["informe.pdf / .txt / .md"]
+  end
+
+  RAW --> ORQ["CaseInput.from_case_dir()<br/>IngestionPipeline.run()"]
+
+  ORQ -->|"paralelo · ThreadPoolExecutor"| A1
+  ORQ --> A2
+  ORQ --> A3
+
+  subgraph AG["Agentes · 1 modalidad = 1 soporte = 1 agente"]
+    direction TB
+    A1["mesh-agent<br/>superficial"]
+    A2["cbct-agent<br/>volumétrico"]
+    A3["report-agent<br/>regional"]
+  end
+
+  A1 -->|"positions · faces · normals · colors"| ST[("ArtifactStore<br/>sha256:&lt;contenido&gt;")]
+  A2 -->|"centers · scales · rotations · density"| ST
+  A1 --> OUT["3 × IngestionOutput"]
+  A2 --> OUT
+  A3 -->|"RegionalObservation (pH por FDI)"| OUT
+
+  OUT --> ASM["_assemble() + _hitl_reasons()"]
+  ST -.->|"exists(): ¿referencia colgante?"| ASM
+  ASM --> RES["PipelineResult<br/>snapshot · outcomes · hitl · latency_s"]
+
+  classDef file fill:#eef2f4,stroke:#6b7b83,color:#16232b;
+  classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
+  classDef out fill:#ece3f7,stroke:#7b4fc0,color:#5b3a94;
+  class F1,F2,F3,ST file;
+  class ORQ,A1,A2,A3,ASM proc;
+  class OUT,RES out;
+```
+
+Una modalidad **no aportada nunca llega al agente**: el orquestador la declara
+`MISSING` él mismo. Es lo que impide confundir «no había CBCT» con «el CBCT
+estaba roto» — dos situaciones con respuestas clínicas distintas.
+
+El paralelismo es con **hilos**, no procesos: el trabajo real es I/O de disco y
+numpy, que sueltan el GIL. Es lo que da margen al presupuesto de < 60 s del brief.
+
+### 2 · El envoltorio *fail-loud* (lo que comparten los tres)
+
+Ningún agente implementa esto: lo hereda de `BaseIngestionAgent.ingest()`. Las
+subclases solo escriben `_ingest()`, y **pueden lanzar** — el envoltorio lo captura.
+
+```mermaid
+flowchart TB
+  IN["ingest(source)<br/>started = perf_counter()"] --> EX{"¿existe el fichero?"}
+  EX -->|"no"| MISS["status = MISSING<br/>«no se aportó esta modalidad»"]
+  EX -->|"sí"| TRY["_ingest(source)<br/>lógica propia del agente"]
+  TRY -->|"excepción"| FAIL["status = FAILED + detail<br/>_quarantine(): ruta + traceback,<br/>NUNCA el contenido clínico"]
+  TRY -->|"traducido"| OK["status = OK<br/>+ Provenance(confidence)"]
+  MISS --> RET["IngestionOutput<br/>+ latency_s"]
+  FAIL --> RET
+  OK --> RET
+
+  classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
+  classDef bad fill:#fbe3e3,stroke:#b03a3a,color:#7d2020;
+  classDef good fill:#e3f0e5,stroke:#3f7d4c,color:#22532c;
+  classDef out fill:#ece3f7,stroke:#7b4fc0,color:#5b3a94;
+  class IN,TRY proc;
+  class MISS,FAIL bad;
+  class OK good;
+  class RET out;
+```
+
+**No hay canal de excepción hacia el orquestador.** Los tres caminos terminan en
+el mismo `IngestionOutput`; el fallo es un *dato* con motivo, no una excepción que
+se lleve por delante las otras dos modalidades ([decisión 1](#1-un-fallo-es-un-dato-no-una-excepción)).
+
+### 3 · Qué hace cada `_ingest()`
+
+Misma forma de entrada y de salida, tres traducciones distintas. Ninguno decide
+nada: solo traducen y declaran con qué confianza.
+
+```mermaid
+flowchart LR
+  subgraph MESH["mesh-agent · Support.SURFACE"]
+    direction TB
+    M1["read_mesh()<br/>.obj → parse_obj (color por vértice)<br/>.stl → parse_stl (binario/ASCII, pelado)"]
+    M2["dedup de la sopa de triángulos<br/>reconstruye la topología (STL)"]
+    M3["vertex_normals()<br/>media ponderada por área"]
+    M4["¿color real (std > 0)<br/>o placeholder constante?"]
+    M1 --> M2 --> M3 --> M4
+  end
+
+  subgraph CBCT["cbct-agent · Support.VOLUMETRIC"]
+    direction TB
+    C1["_read_series() · pydicom<br/>orden por ImagePositionPatient"]
+    C2["RescaleSlope/Intercept → Hounsfield"]
+    C3["umbral 300 HU<br/>+ submuestreo determinista"]
+    C4["gaussianas isótropas: σ del HU,<br/>escala ½ vóxel, cuaternión identidad"]
+    C1 --> C2 --> C3 --> C4
+  end
+
+  subgraph REP["report-agent · Support.REGIONAL"]
+    direction TB
+    R1["extract_text()<br/>.txt/.md directo · .pdf vía pypdf"]
+    R2["backend rules (regex línea a línea)<br/>o llm (Claude, tool forzada)"]
+    R3["validación contra ontology.py<br/>FDI existente · pH 3–9"]
+    R4["lo rechazado → Discard<br/>con motivo, nunca en silencio"]
+    R1 --> R2 --> R3 --> R4
+  end
+
+  M4 --> S[("store.put(**arrays)<br/>→ sha256:…")]
+  C4 --> S
+  R4 --> O["RegionalObservation[]<br/>(no pasa por el store)"]
+
+  classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
+  classDef file fill:#eef2f4,stroke:#6b7b83,color:#16232b;
+  classDef out fill:#ece3f7,stroke:#7b4fc0,color:#5b3a94;
+  class M1,M2,M3,M4,C1,C2,C3,C4,R1,R2,R3,R4 proc;
+  class S file;
+  class O out;
+```
+
+Detalles que el diagrama comprime y conviene no perder:
+
+- El **orden de los cortes DICOM** no se deja al azar: un orden equivocado deforma
+  el volumen **en silencio**.
+- El **submuestreo del CBCT** es de paso uniforme, no aleatorio: la ingesta tiene
+  que ser reproducible para poder medir la fiabilidad.
+- El `report-agent` procesa **línea a línea** porque un informe dental enumera un
+  hallazgo por línea; emparejar un pH con el diente de *su* línea evita colgar el
+  valor del diente equivocado.
+- El **campo gaussiano del CBCT es una semilla**, no una reconstrucción RGS: es la
+  inicialización que un optimizador refinaría después.
+
+### 4 · Del `IngestionOutput` al `TwinSnapshot`
+
+El ensamblado y el gate humano viven en el orquestador, no en los agentes.
+
+```mermaid
+flowchart TB
+  OUTS["3 × IngestionOutput<br/>(cbct · mesh · report)"] --> Q1{"¿CBCT ok<br/>y con artifact_ref?"}
+  Q1 -->|"no"| NIL["snapshot = None<br/>gaussian_field_ref es obligatorio:<br/>antes eso que degradar el contrato"]
+  Q1 -->|"sí"| Q2{"¿alguna referencia<br/>colgante en el store?"}
+  Q2 -->|"sí"| ERR["RuntimeError<br/>(único punto que sí revienta:<br/>no es un dato degradado,<br/>es una inconsistencia)"]
+  Q2 -->|"no"| SNAP["TwinSnapshot<br/>modalities = solo las ok<br/>ingestion = LAS TRES, con su estado<br/>Provenance.confidence = mín(las tres)"]
+
+  NIL --> GATE
+  SNAP --> GATE{"_hitl_reasons()"}
+  GATE -->|"sin motivos"| GO["persistible sin revisión"]
+  GATE -->|"failed · confianza &lt; 0.7 ·<br/>sin campo gaussiano"| STOP["⚠ requiere revisión humana"]
+
+  classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
+  classDef bad fill:#fbe3e3,stroke:#b03a3a,color:#7d2020;
+  classDef good fill:#e3f0e5,stroke:#3f7d4c,color:#22532c;
+  classDef out fill:#ece3f7,stroke:#7b4fc0,color:#5b3a94;
+  class OUTS,SNAP out;
+  class NIL,ERR,STOP bad;
+  class GO good;
+  class GATE proc;
+```
+
+`modalities` lleva **solo las que salieron bien**; `ingestion` lleva **las tres
+siempre**, con su estado. Es lo que hace que un snapshot parcial se declare
+parcial en vez de llegar callado a exportación.
+
+### Resumen: dónde vive cada responsabilidad
+
+| Paso | Quién | Fichero |
+|---|---|---|
+| Descubrir modalidades del caso | orquestador | `pipeline.py` · `CaseInput.from_case_dir` |
+| Declarar lo no aportado (`MISSING`) | orquestador | `pipeline.py` · `_missing` |
+| Disparar en paralelo | orquestador | `pipeline.py` · `run` |
+| Capturar fallos y poner en cuarentena | base compartida | `base.py` · `ingest` / `_quarantine` |
+| Traducir la modalidad al contrato | cada agente | `mesh_agent.py` · `cbct_agent.py` · `report_agent.py` |
+| Validar el vocabulario clínico | ontología | `ontology.py` |
+| Persistir lo pesado por hash | almacén | `store.py` · `ArtifactStore.put` |
+| Ensamblar el `TwinSnapshot` | orquestador | `pipeline.py` · `_assemble` |
+| Decidir si hace falta una persona | orquestador | `pipeline.py` · `_hitl_reasons` |
+
+La línea divisoria es siempre la misma: **los agentes traducen y declaran; el
+orquestador reparte y decide.**
 
 ---
 
