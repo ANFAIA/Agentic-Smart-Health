@@ -23,6 +23,7 @@ aleatorias con semilla fija, en vez de una demo sobre un único escaneo.
 | **04** | **3DGS moderno entrenado** (`gsplat`/GPU) evaluado en **vistas retenidas** → contrato | 8 casos entrenados | **Sí** |
 | **05** | Variante **densa** del 03: misma generación de vistas + poses con **rejilla más fina (528 vistas/caso)** · salida en `data/processed/teeth3ds-dense/` | 528 vistas · 20 casos | No |
 | **06** | Variante **densa** del 04: entrena sobre los paquetes de 528 vistas del **05**, con **semilla fija** · evalúa en vistas retenidas → contrato | 8 casos entrenados | **Sí** |
+| **07** | **Bite2Text**: escáner intraoral **STL** → `mesh-agent` → **Blender** (multivista, EEVEE) → **3DGS** → contrato. Motor de vistas Blender (no VTK) sobre datos reales | 1 caso (48 vistas) | **Sí** |
 | **exercise** | **Segmentación FDI por punto** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent` | 600 mallas | **Sí** |
 
 **No se ha probado (aún):** foto→3D con **fotos reales**, **fusión multimodal**
@@ -276,6 +277,40 @@ un paquete de la corrida densa.
 # ejecutar con el entorno dedicado (NO 'uv run')
 ~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/05-synthetic-views-dense.ipynb
 ~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/06-train-3dgs-dense.ipynb
+```
+
+---
+
+## `07-bite2text-blender-3dgs.ipynb` — escáner intraoral → Blender → 3DGS
+
+Experimento del flujo **STL de escáner → Blender (multivista) → 3D Gaussian
+Splatting** sobre el dataset **Bite2Text** (`~/anfaia/Bite2Text`, STL binario real),
+usando los **agentes de ingesta**. Difiere de los notebooks 03–06 en dos piezas
+fijadas por el encargo: el motor de vistas es **Blender** (EEVEE, sombreado real)
+en vez del *splatting* clásico de VTK, y la entrada es un **STL real**, no la malla
+sintética.
+
+Cadena: `mesh-agent` ingiere el STL al contrato (malla pelada → `color=None`,
+confianza 0.5) → [`scripts/blender_render_views.py`](../scripts/blender_render_views.py)
+renderiza N vistas con pose exacta (sin COLMAP) → `gsplat` entrena un campo de
+gaussianas sembrado desde la superficie ingerida → PSNR en vistas retenidas →
+`TwinSnapshot` (`surface_ref` del mesh-agent + `gaussian_field_ref` del 3DGS).
+
+| | |
+|---|---|
+| Ingesta | `mesh-agent` sobre **STL binario** (255k vértices) · `report-agent` sobre la prosa ortodóntica → 0 hallazgos, confianza 0 → HITL |
+| Render | Blender 5.1 EEVEE · 48 vistas · 400 px · ~4 s |
+| 3DGS | 40k gaussianas · 1500 iters · **PSNR holdout ~28,6 dB** · ~5 s |
+| Salida | `data/processed/bite2text/<caso>/` (gitignored) |
+
+**Hallazgo de contrato:** Bite2Text no trae CBCT, así que el `IngestionPipeline`
+—que exige `gaussian_field_ref` del CBCT para emitir snapshot— no aplica tal cual;
+aquí el campo gaussiano lo produce el **3DGS entrenado desde la malla**. Es una vía
+de twin **mesh-only** que el pipeline actual no contempla.
+
+```bash
+# kernel/venv GPU dedicado (Blender debe estar en el PATH)
+~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/07-bite2text-blender-3dgs.ipynb
 ```
 
 ---
