@@ -148,6 +148,64 @@ def test_extract_text_rechaza_formatos_desconocidos(tmp_path: Path) -> None:
         extract_text(path)
 
 
+# --- PDF (el informe clínico llega como PDF: entregable Semana 3-4) ---------- #
+def _make_pdf(text: str) -> bytes:
+    """PDF de una página con una línea de texto, sin dependencias de generación.
+
+    Construye los objetos mínimos (catálogo, páginas, página, contenido, fuente)
+    con la tabla xref de offsets correcta, para tener un PDF real y extraíble en
+    los tests sin arrastrar reportlab/fpdf.
+    """
+    objs = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]"
+        b"/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+        None,  # contenido (stream), se rellena abajo
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+    ]
+    stream = b"BT /F1 12 Tf 20 150 Td (" + text.encode("latin-1") + b") Tj ET"
+    objs[3] = b"<</Length " + str(len(stream)).encode() + b">>stream\n" + stream + b"\nendstream"
+    out = b"%PDF-1.4\n"
+    offsets: list[int] = []
+    for i, obj in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += str(i).encode() + b" 0 obj" + obj + b"endobj\n"  # type: ignore[operator]
+    xref_pos = len(out)
+    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += (
+        b"trailer<</Size " + str(len(objs) + 1).encode() + b"/Root 1 0 R>>\n"
+        b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    )
+    return out
+
+
+def test_extract_text_lee_pdf(tmp_path: Path) -> None:
+    path = tmp_path / "informe.pdf"
+    path.write_bytes(_make_pdf("Diente 16: pH 5.4 - riesgo"))
+    assert "pH 5.4" in extract_text(path)
+
+
+def test_ingesta_de_informe_pdf_extrae_ph(tmp_path: Path) -> None:
+    """El camino completo del entregable: informe clínico en PDF → RegionalObservation."""
+    path = tmp_path / "informe.pdf"
+    path.write_bytes(_make_pdf("Fecha: 2026-05-09 Diente 16: pH 5.4"))
+    outcome = ReportAgent().ingest(path)
+    assert outcome.status is ModalityStatus.OK
+    assert {o.region_id: o.attributes.ph for o in outcome.regional} == {"16": 5.4}
+    assert outcome.regional[0].timestamp == datetime(2026, 5, 9, tzinfo=UTC)
+
+
+def test_pdf_ilegible_falla_sin_lanzar(tmp_path: Path) -> None:
+    """Un PDF corrupto es fail-loud como cualquier otro fallo de ingesta."""
+    path = tmp_path / "roto.pdf"
+    path.write_bytes(b"%PDF-1.4 basura no es un pdf valido")
+    outcome = ReportAgent().ingest(path)
+    assert outcome.status is ModalityStatus.FAILED
+
+
 # --- agente ---------------------------------------------------------------- #
 def test_ingesta_del_informe_sintetico(report_path: Path) -> None:
     outcome = ReportAgent().ingest(report_path)

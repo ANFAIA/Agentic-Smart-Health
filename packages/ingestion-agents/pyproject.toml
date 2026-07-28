@@ -7,14 +7,15 @@ dependencies = [
     "core-schemas",
     "numpy>=2.0",
     "pydicom>=3.0",
+    # El informe clínico llega como PDF (entregable Semana 3-4): la lectura de PDF
+    # es parte del camino por defecto del `report-agent`, no un extra opcional.
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
 # El `report-agent` solo necesita un LLM cuando se le pide el backend `llm`;
 # su backend por defecto (`rules`) es determinista y no requiere red ni clave.
 llm = ["anthropic>=0.40"]
-# Lectura de PDF real; sin esto el `report-agent` solo ingiere informes .txt/.md.
-pdf = ["pypdf>=5.0"]
 
 [build-system]
 requires = ["hatchling"]
