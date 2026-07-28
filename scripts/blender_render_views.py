@@ -41,6 +41,7 @@ ap.add_argument("--views", type=int, default=72)
 ap.add_argument("--res", type=int, default=512)
 ap.add_argument("--samples", type=int, default=16)     # muestras EEVEE por píxel
 ap.add_argument("--elevations", type=int, default=3)   # anillos de la órbita
+ap.add_argument("--elev-max", type=float, default=60.0)  # ± grados del anillo más alto/bajo
 ap.add_argument("--fov-deg", type=float, default=40.0)
 args = ap.parse_args(argv)
 
@@ -138,14 +139,21 @@ radius = 4.0
 target = mathutils.Vector((0.0, 0.0, 0.0))
 n_rings = max(1, args.elevations)
 per_ring = max(1, args.views // n_rings)
-elev_angles = [30.0, 0.0, -30.0][:n_rings] or [0.0]
+# Anillos repartidos uniformemente entre +elev_max y -elev_max (para miles de
+# vistas hacen falta más de 3 anillos, así que se generan, no se hardcodean).
+if n_rings == 1:
+    elev_angles = [0.0]
+else:
+    step = 2.0 * args.elev_max / (n_rings - 1)
+    elev_angles = [args.elev_max - i * step for i in range(n_rings)]
 
 frames = []
 idx = 0
 for elev in elev_angles:
     phi = math.radians(elev)
     for a in range(per_ring):
-        theta = 2.0 * math.pi * a / per_ring
+        # desfase por anillo para que los azimuts no se apilen en la misma columna
+        theta = 2.0 * math.pi * (a / per_ring) + 0.5 * math.pi * (idx % 2)
         cam.location = mathutils.Vector((
             radius * math.cos(phi) * math.cos(theta),
             radius * math.cos(phi) * math.sin(theta),
@@ -154,7 +162,7 @@ for elev in elev_angles:
         look_at(cam, target)
         bpy.context.view_layer.update()
 
-        rel = f"images/r_{idx:03d}.png"
+        rel = f"images/r_{idx:05d}.png"  # 5 dígitos: miles de vistas ordenan bien
         scene.render.filepath = str(out / rel)
         bpy.ops.render.render(write_still=True)
 
