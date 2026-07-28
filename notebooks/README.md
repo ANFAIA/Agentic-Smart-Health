@@ -299,14 +299,22 @@ gaussianas sembrado desde la superficie ingerida → PSNR en vistas retenidas �
 | | |
 |---|---|
 | Ingesta | `mesh-agent` sobre **STL binario** (255k vértices) · `report-agent` sobre la prosa ortodóntica → 0 hallazgos, confianza 0 → HITL |
-| Render | Blender 5.1 EEVEE · 48 vistas · 400 px · ~4 s |
-| 3DGS | 40k gaussianas · 1500 iters · **PSNR holdout ~28,6 dB** · ~5 s |
+| Render | Blender 5.1 EEVEE · **1600 vistas · 1024 px** · ~3,5 min |
+| 3DGS | init 150k desde la malla · 6000 iters · **control adaptativo de densidad** (reset + poda) |
 | Salida | `data/processed/bite2text/<caso>/` (gitignored) |
 
 **Hallazgo de contrato:** Bite2Text no trae CBCT, así que el `IngestionPipeline`
 —que exige `gaussian_field_ref` del CBCT para emitir snapshot— no aplica tal cual;
 aquí el campo gaussiano lo produce el **3DGS entrenado desde la malla**. Es una vía
 de twin **mesh-only** que el pipeline actual no contempla.
+
+**Técnica de entrenamiento:** el 3DGS usa **control adaptativo de densidad**
+(`DefaultStrategy`) — densificación suave + poda + reset de opacidad. Explicación
+completa en [`docs/research/3dgs-adaptive-density-control.md`](../docs/research/3dgs-adaptive-density-control.md).
+⚠ **Medido:** en este caso (objeto mate, L1, fondo negro) reset+poda **no** suben la
+opacidad (mediana ~0,01; la baja opacidad es el óptimo real), así que el campo sigue
+«neblinoso» y el visor necesita umbral de alfa 0. Subirla pediría un regularizador
+de opacidad explícito, no la densidad adaptativa.
 
 ```bash
 # kernel/venv GPU dedicado (Blender debe estar en el PATH)
