@@ -151,6 +151,36 @@ eso y un agente, **reutilizando el modelo de A3 sin reentrenar**:
 Todo el análisis se corre para **los dos modelos de A3**: como A3 no consigue distinguirlos,
 reportar solo uno confundiría el método con la lotería de la semilla.
 
+### Reparto de papeles — qué hace la red y qué hace la agregación
+
+Conviene tenerlo claro porque marca la frontera entre el modelo y el agente: **el Point Transformer
+solo hace la mitad**.
+
+| | Point Transformer | agregación (`packages/tooth-aggregation`) |
+|---|---|---|
+| qué asigna a cada punto | una **categoría** (una de las 32 clases) | una **pertenencia a objeto** |
+| «este punto es un 36» | ✅ | |
+| «estos puntos son **el mismo** 36» | | ✅ |
+| aprendizaje | red de 4,59M parámetros | ninguno: geometría y combinatoria |
+
+La red hace segmentación **semántica**, no **de instancia**. Si pinta dos manchas separadas como
+`36`, no tiene forma de expresar si son un diente partido en dos o dos dientes distintos: esa
+pregunta no existe en su salida. El dataset trae `instances` en el nombre de la carpeta de etiquetas,
+pero aquí solo se lee `labels`, la parte semántica.
+
+**Pero la agregación no descubre los dientes por su cuenta.** Usa las etiquetas de la red como
+criterio de corte: construye el grafo kNN y **elimina las aristas cuyos extremos tienen etiqueta
+distinta**; lo que queda conectado es un objeto. Es decir, **la red dibuja las fronteras y la
+agregación las lee como objetos**. Un error de la red en el borde entre el `36` y el `37` se hereda
+tal cual — la agregación no mira la geometría por su cuenta, solo la conectividad.
+
+Y el **nombre** de cada instancia sale del voto mayoritario de las etiquetas de la red dentro del
+grupo. Así que la agregación decide **la agrupación**, no el código. Lo único que puede reescribir
+nombres es la **húngara**, y precisamente por eso viene desactivada por defecto: al tocar los
+códigos con instancias fragmentadas hacía más daño que bien.
+
+> En una frase: **la red dice qué es cada punto; la agregación dice quién va con quién.**
+
 ### El número que importa
 
 | modelo de A3 | por **punto** | **FDI por DIENTE** | mejor con fusión |
@@ -162,6 +192,12 @@ reportar solo uno confundiría el método con la lotería de la semilla.
 - **El acierto por punto subestima la identificación por diente** (0.85 vs 0.93): son métricas
   distintas y la ficha del agente debe declarar la segunda, no la primera. Esto sí se repite en
   todas las corridas.
+- **Qué valida y qué no ese 0.932.** Se calcula sobre los vértices del **diente real**
+  (`pred[y == c]`), así que responde a «dada la extensión verdadera del diente, ¿lo nombra bien?».
+  Mide **la mitad de nombrar**, no la de **delimitar**: no evalúa si la detección de instancias
+  encontró los dientes correctos. El otro número lo recuerda — quedan **15,8 instancias por arcada
+  frente a 13,2 dientes reales**. Es la pregunta correcta para de-arriesgar la decisión de
+  arquitectura, pero en producción, sin etiqueta real, la delimitación también contará.
 - **El modelo `CE+boundary+centroid` de esta corrida está DEGENERADO**, no es una variante peor:
   falla en distinguir maxilar de mandíbula. Acierta 0.789 en `upper` pero **0.193 en `lower`**, y
   sus confusiones dominantes son `42→22`, `44→24`, `41→21`, `43→23` — mapea sistemáticamente la
