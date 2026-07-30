@@ -266,6 +266,40 @@ Top confusiones: `36→37` (5), `46→47` (5), `17→16` (5), `46→45` (4), `31
   corridas del modelo sano): es un fallo poco frecuente en absoluto, así que su porcentaje sobre
   el total de errores es inestable.
 
+#### Por qué el fallo es el vecino: FDI es ordinal, no morfológico
+
+**Dónde ocurre.** No es un error en el *borde* entre dos dientes: es que **un diente entero recibe
+el número de su vecino**. El modelo lo detecta y lo delimita bien, y lo llama `45` cuando era `46`.
+La figura de A5 lo enseña en crudo — toda la arcada correcta y **un solo diente** marcado
+`45 (era 46)`.
+
+**Por qué.** El segundo dígito FDI es *cuántas posiciones llevas contando desde la línea media*
+(1 incisivo central … 8 cordal). Para decir «esto es un 46» hacen falta dos cosas: el **cuadrante**,
+y que sea **el sexto contando desde el centro**. Lo segundo es **contar**, y contar exige ver la
+secuencia entera.
+
+Pero el modelo mira **vecindarios locales** — es lo que le dan las normales, y es justo lo que le
+permite generalizar entre pacientes (ver §A2). El precio es que **un primer molar y un segundo molar
+son casi idénticos de forma**: localmente no hay nada que distinga un `46` de un `47`. El ordinal
+tiene que deducirlo de algo parecido a «cuán avanzado voy por el arco», y si esa estimación se
+desplaza **una casilla**, el número se desplaza una casilla. De ahí que el error sea casi siempre el
+**vecino inmediato** y casi nunca un diente lejano.
+
+Es el mismo mecanismo que la simetría entre arcadas (abajo), visto en el otro eje: **el modelo
+acierta *qué* es cada diente y falla en *dónde* está en la secuencia.**
+
+**Por qué empeora con piezas ausentes.** Si falta un diente, la referencia del conteo se rompe: lo
+que aprendió como «la sexta mancha del arco» pasa a ser la séptima pieza real. Eso es lo que mide el
+desglose (0.856 vs 0.975), y encaja con que en una corrida la confusión estrella fuera `37→38` —
+segundo molar contra cordal, la posición donde la presencia del cordal es más variable.
+
+> **Consecuencia práctica.** Un escaneo intraoral **no puede ver** un diente ausente ni uno incluido
+> sin erupcionar: solo captura superficie visible en boca, así que la referencia para contar **no
+> está en el dato**. Cualquier mejora sustancial de la numeración pasa por darle al modelo contexto
+> global de la arcada, no por afinar la geometría local. Ahí es donde una fuente que vea la dentición
+> completa —panorámica, CBCT, o el propio informe clínico (`fdi-consistency-agent`, ADR 003)— aporta
+> algo que la malla no tiene.
+
 #### El error entre arcadas es una simetría, no ruido
 
 La **matriz de confusión por diente** del notebook (un panel por modelo, escala `log1p`) enseña algo
