@@ -71,6 +71,38 @@ prediciéndola en todo. Con frecuencia inversa un diente pesa **~147×** más qu
 > independiente**. Que un gris derivado de la propia malla no añada nada es lo esperable —
 > afirmar que perjudica activamente era ir más allá del dato.
 
+### Por qué el eje real es «descriptor local», no «qué feature»
+
+Un **descriptor local** es un valor asociado a un punto que resume **cómo es la superficie a su
+alrededor**, calculado solo desde su vecindario. Su propiedad definitoria es que **no depende de la
+posición**: dos puntos con forma parecida alrededor reciben valores parecidos, estén donde estén.
+`(x, y, z)` no es un descriptor — no dice nada de la forma, solo de la ubicación.
+
+Con esa lente, las tres configuraciones dejan de ser tres features sueltas y forman una escala:
+
+| config | ¿descriptor local? | resultado |
+|---|---|---|
+| `pos-only` | **no**, solo posición | colapsa |
+| `normales` | sí — orientación de la superficie | funciona |
+| `gris sintético` | **sí, sin pretenderlo** | funciona casi igual |
+
+El gris se fabrica **voxelizando la propia malla y desenfocando** (`_synth_volume`), así que lo que
+acaba midiendo es **grosor y densidad local de la superficie**: es un descriptor local con otro
+envoltorio. Eso explica de golpe los dos resultados que si no parecen raros:
+
+- **por qué el gris SOLO ya funciona** (0.649, cerca de las normales) — es un descriptor local válido;
+- **por qué sumado a las normales no aporta** — ambos describen la **misma geometría local**, así que
+  el segundo canal es información que el modelo ya tenía.
+
+> **La conclusión de A2, en una frase:** *cualquier descriptor local decente sirve; lo que no sirve es
+> no tener ninguno.* Las normales se adoptan por ser **las más simples**, no por ser mejores.
+>
+> Esto también fija el listón para el CBCT real, y es más alto de lo que suele asumirse: no basta con
+> que «aporte información». Tiene que aportar algo que **no sea geometría local de la superficie** —
+> es decir, la **densidad interna** (esmalte/dentina/hueso), que un muestreo en la superficie
+> descarta por construcción. El mismo concepto reaparece en el registro de DDMF, que empareja
+> modalidades con **FPFH**, otro descriptor local.
+
 ---
 
 ## Resultados — A3 · boundary + centroid loss (estilo IOSNet/DDMF)
@@ -197,6 +229,23 @@ Top confusiones: `36→37` (5), `46→47` (5), `17→16` (5), `46→45` (4), `31
 - La proporción de confusiones **entre arcadas oscila mucho** entre ejecuciones (14% y 37% en dos
   corridas del modelo sano): es un fallo poco frecuente en absoluto, así que su porcentaje sobre
   el total de errores es inestable.
+
+#### El error entre arcadas es una simetría, no ruido
+
+La **matriz de confusión por diente** del notebook (un panel por modelo, escala `log1p`) enseña algo
+que las listas de confusiones no dejan ver como patrón: además de la diagonal principal y de las
+celdas contiguas —los errores de vecino— aparece **una segunda diagonal paralela y desplazada**.
+
+Corresponde a confusiones del tipo `31→11`, `42→22`, `44→24`, en las que **la posición se conserva y
+solo cambia el cuadrante** (3→1, 4→2). Es decir: el modelo identifica correctamente **qué** diente es
+y se equivoca en **dónde** está. Eso apunta a que lo que le falta es la **orientación global de la
+arcada**, no la forma local del diente — coherente con que las features sean descriptores locales,
+que por construcción son invariantes a la posición.
+
+**Y es el diagnóstico visual del modelo degenerado.** En el panel del modelo sano esa segunda
+diagonal es tenue; en el del `CE+boundary+centroid` de esta corrida sale **casi tan brillante como la
+principal**. Ahí se ve de un vistazo lo que las cifras dicen por separado (0.193 en `lower` frente a
+0.789 en `upper`): el modelo aprendió a numerar dientes pero nunca aprendió en qué mandíbula estaba.
 
 ---
 
