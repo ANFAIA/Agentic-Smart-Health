@@ -26,7 +26,7 @@ escáner/CBCT **reales**.
 | **06** | Variante **densa** del 04: entrena sobre los paquetes de 528 vistas del **05**, con **semilla fija** · evalúa en vistas retenidas → contrato | 8 casos entrenados | **Sí** |
 | **07** | **Bite2Text** (escáner real): **STL** → `mesh-agent` + **color de las fotos** (`image-agent`, sin EXIF) → **Blender** (EEVEE) → **3DGS** (SSIM) → `.ply` del visor | 1 caso · 1600 vistas · holdout 31,5 dB | **Sí** |
 | **08** | **ToothFairy** (CBCT): **DICOM → STL** (marching cubes) → Blender → 3DGS. Experimento aparte (`experiments/`), con su muro de registro | 1 cohorte | **Sí** |
-| **exercise** | **Segmentación FDI por punto** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent` | 600 mallas | **Sí** |
+| **exercise** | **Segmentación FDI por punto → por diente** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent`; ablación multi-semilla y agregación a instancias | 600 mallas · 3 semillas | **Sí** |
 
 **No se ha probado (aún):** **fusión multimodal** real (CBCT + STL + foto en un mismo
 twin), el **color per-píxel** (registro foto↔malla — en el `07` el color es
@@ -355,15 +355,36 @@ resultado cerrado.
 ## `exercise-point-transformer-teeth3ds.ipynb` — Segmentación de dientes (FDI) por punto
 
 Prototipo del **`segmentation-agent`**: nube de puntos del escaneo intraoral →
-etiqueta **FDI por punto**. Point Transformer (PyG) sobre **Teeth3DS+ completo**
-(300 pacientes / 600 mallas), con **loss ponderada por clase** y diagnóstico `tooth_acc`.
+etiqueta **FDI por punto**, y de ahí a **FDI por diente**. Point Transformer (PyG) sobre
+**Teeth3DS+ completo** (300 pacientes / 600 mallas), con **loss ponderada por clase**.
+Todas las cifras son **media ± desviación de 3 semillas**: la varianza entre corridas es del
+orden de los efectos medidos, y con una sola semilla el signo de las diferencias pequeñas no es
+reproducible.
 
-**Hallazgo (ablación de features, `tooth_acc` test):** `pos-only` no generaliza (**0.08**); basta
-**un descriptor local por punto** para arreglarlo — **normales 0.84**, gris CBCT sintético 0.79,
-y combinarlos **no suma** (redundantes). La palanca no es «más datos» ni «el CBCT», sino la
-geometría **local**. El gris real aporta por **fusión** (registro CBCT↔malla, estilo DDMF), no
-pintando gris por vértice.
+**Hallazgo 1 — la palanca es la geometría LOCAL.** `pos-only` no generaliza (se apoya en la
+posición absoluta, que no transfiere entre pacientes); basta **un descriptor local por punto**
+—las **normales**— para arreglarlo. El gris CBCT *sintético* no solo no suma: **añadirlo a las
+normales resta**, porque un canal sin información independiente las diluye.
 
-Detalle completo, ablación, referencia DDMF y reproducción:
+**Hallazgo 2 — el CBCT entra por FUSIÓN, no por vértice.** Pintar gris en los vértices exige
+**registro CBCT↔malla igual que la fusión**, así que no ahorra el bloqueo de no tener pares
+CBCT+IOS; y muestrear en superficie descarta la densidad interna, que es lo que el CBCT aporta.
+La fusión además **se descompone** (su rama CBCT admite datos no emparejados). Estilo DDMF.
+
+**Hallazgo 3 — el agente es construible ya, solo con geometría**, sin depender del `cbct-agent`
+ni de datos emparejados. El acierto **por punto subestima** la identificación **por diente**: la
+ficha del agente debe declarar la segunda. El error se concentra en el **desplazamiento del conteo
+posicional** y penaliza la **dentición incompleta** — ahí es donde va el humano en el bucle.
+
+**Resultado negativo útil:** imponer unicidad FDI con asignación húngara **sin fusionar fragmentos
+antes empeora**; fusionándolos se recupera casi todo, pero sigue sin superar al voto mayoritario
+simple. Y la receta de IOSNet (boundary+centroid) **no da efecto medible** a esta escala — corrige
+una conclusión anterior basada en una sola corrida.
+
+> **Las cifras viven solo en la ficha**, para que no haya dos copias que se desincronicen: la
+> varianza entre corridas obliga a re-medir, y cada re-medición tendría que replicarse aquí.
+
+Tablas, caveats, referencia DDMF y reproducción:
 [`exercise-point-transformer-teeth3ds.md`](exercise-point-transformer-teeth3ds.md). Requiere el
-kernel GPU **"Dental GPU (3DGS)"** (ver §04).
+kernel GPU **"Dental GPU (3DGS)"** (ver §04) y `scipy`. Para seguir un run largo:
+`tail -f notebooks/.run-progress.log`.
