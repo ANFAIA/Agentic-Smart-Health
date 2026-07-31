@@ -262,13 +262,23 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 | Agente | Estado | Fase | Rol previsto | Entrada → salida | Human-in-the-loop |
 |---|---|---|---|---|---|
 | `segmentation-agent` | `planned` | Análisis · segmentación | Asignar `region_id` (FDI) a las gaussianas (segmentación anatómica). Prerrequisito del ancla semántica de la fusión. | `TwinSnapshot` sin etiquetas → snapshot con `region_id` poblado | Revisión si afecta al diagnóstico |
-| `pathology-agent` | `planned` | Análisis · diagnóstico | Detectar patologías a partir de densidad (σ), color y geometría. | `TwinSnapshot` → `RegionalObservation` con hallazgos | **Sí** — decisión clínicamente sensible |
+| `pathology-agent` | `planned` | Análisis · hallazgos clínicos | Señalar posibles patologías (densidad σ, color, geometría) como **hallazgos candidatos para revisión clínica**. | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **Sí** — clínicamente sensible |
 | `clinical-poc-agent` | `planned` (PoC) | Análisis · prueba de concepto | Métrica visual básica: inflamación por color de encía y espacio encía-diente. | `TwinSnapshot` → reporte de texto (log) | Sí |
 
 > **Frontera de diseño:** estos stubs **no** tienen tools MCP, permisos ni reglas de
 > delegación definitivos todavía; se detallarán al implementarlos, cada uno con su
 > ficha completa (como `research-agent`) y, si toca, su ADR. Registrarlos ahora fija
 > su **rol y contrato**, no su implementación.
+
+> **Marco clínico y regulatorio (importante).** Los agentes de análisis con
+> Human-in-the-loop (`pathology-agent`, `clinical-poc-agent`, y cualquier medida
+> clínicamente sensible como el **fenotipo periodontal** encía↔hueso) producen
+> **hallazgos y medidas candidatos para revisión del clínico**, con `Provenance`
+> trazable — **no emiten diagnóstico** ni sustituyen la decisión clínica. Es un
+> **uso investigacional / demostrador**, y mantenerlo así deja el sistema **fuera**
+> de la categoría de producto sanitario (*Medical Device* / SaMD). En el momento en
+> que una salida se declare "diagnóstico" o el clínico se apoye en ella para tratar,
+> entra en el terreno regulado (UE **MDR** / **FDA**) — fuera del alcance de esta fase.
 
 **Agentes de ingesta:** `cbct-agent`, `mesh-agent` y `report-agent` ya están
 `active` — ficha completa en la [sección anterior](#agentes-de-ingesta--mesh-agent--cbct-agent--report-agent).
