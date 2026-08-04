@@ -29,16 +29,21 @@ Reconstruction", arXiv:2604.27552v1 (2026).
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Versión del contrato de datos (SemVer). Se serializa en cada `TwinSnapshot`
 # para que un JSON persistido declare bajo qué esquema se escribió y no quede
 # "huérfano" si el contrato (o el formato del campo gaussiano) evoluciona.
-SCHEMA_VERSION = "1.2.0"
+#
+# 1.3.0 — `Provenance.transform` (ADR 004): los agentes de fusión registran la
+#         transformación rígida que aplicaron, para que sea invertible. Aditivo y
+#         opcional: un JSON 1.2.0 sigue validando.
+SCHEMA_VERSION = "1.3.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +114,71 @@ class ModalityIngestion(BaseModel):
 # --------------------------------------------------------------------------- #
 # Trazabilidad (requisito de transparencia del proyecto: RGPD/HIPAA)
 # --------------------------------------------------------------------------- #
+class RigidTransform(BaseModel):
+    """Transformación **rígida** aplicada a un valor derivado (ADR 004 §2.2).
+
+    Rígida a propósito. El registro malla↔CBCT alinea dos medidas del **mismo
+    objeto físico**, ambas en milímetros reales, así que no hay escala ni cizalla
+    que representar. Una matriz 4×4 general sí podría codificarlas, y una escala
+    espuria metida por un ICP con un mal día rompería en silencio la garantía de
+    reversibilidad. Esta forma la hace **imposible de expresar**.
+
+    Además invertirla es exacto y barato —el conjugado del cuaternión más una
+    rotación de la traslación— sin el mal condicionamiento de invertir una 4×4.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rotation: tuple[float, float, float, float] = Field(
+        description="Cuaternión (w, x, y, z) normalizado; misma convención que GaussianPrimitive."
+    )
+    translation: tuple[float, float, float] = Field(description="Traslación en mm.")
+    rms_mm: float | None = Field(
+        None, ge=0.0, description="Residuo RMS del registro, en mm. Alimenta la confianza."
+    )
+
+    @field_validator("rotation")
+    @classmethod
+    def _cuaternion_normalizado(cls, v: tuple[float, float, float, float]):
+        """Un cuaternión sin normalizar codifica una escala encubierta."""
+        norma = math.sqrt(sum(c * c for c in v))
+        if not math.isclose(norma, 1.0, abs_tol=1e-6):
+            raise ValueError(f"el cuaternión debe estar normalizado (norma = {norma:.6f})")
+        return v
+
+    def inverse(self) -> RigidTransform:
+        """La transformación que deshace esta. Hace la reversibilidad auditable.
+
+        Para un cuaternión unitario la inversa es su conjugado, y la traslación
+        inversa es `-R⁻¹·t`.
+        """
+        w, x, y, z = self.rotation
+        conj = (w, -x, -y, -z)
+        rx, ry, rz = _rotar(conj, self.translation)
+        return RigidTransform(rotation=conj, translation=(-rx, -ry, -rz), rms_mm=self.rms_mm)
+
+
+def _rotar(
+    q: tuple[float, float, float, float], v: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    """Rota el vector `v` por el cuaternión unitario `q` = (w, x, y, z).
+
+    Fórmula estándar `v + 2w·(u×v) + 2·u×(u×v)` con `u` la parte vectorial: evita
+    construir la matriz de rotación y no necesita numpy (este paquete solo depende
+    de pydantic).
+    """
+    w, ux, uy, uz = q
+    vx, vy, vz = v
+    tx = 2 * (uy * vz - uz * vy)
+    ty = 2 * (uz * vx - ux * vz)
+    tz = 2 * (ux * vy - uy * vx)
+    return (
+        vx + w * tx + (uy * tz - uz * ty),
+        vy + w * ty + (uz * tx - ux * tz),
+        vz + w * tz + (ux * ty - uy * tx),
+    )
+
+
 class Provenance(BaseModel):
     """Procedencia de un valor: qué fichero, qué agente y con qué confianza.
 
@@ -123,6 +193,14 @@ class Provenance(BaseModel):
     agent: str = Field(description="Agente de ingesta que produjo el valor.")
     confidence: float = Field(1.0, ge=0.0, le=1.0)
     ingested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    transform: RigidTransform | None = Field(
+        None,
+        description=(
+            "Transformación rígida que el agente aplicó a este valor. `None` en ingesta "
+            "(no transforma nada); la pueblan los agentes de fusión para que el cambio "
+            "sea reversible. ADR 004 §2.2."
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #

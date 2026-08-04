@@ -16,6 +16,7 @@ from core_schemas.models import (
     PatientDigitalTwin,
     Provenance,
     RegionalObservation,
+    RigidTransform,
     Support,
     TwinSnapshot,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ModalityStatus",
     "PatientDigitalTwin",
     "Provenance",
+    "RigidTransform",
     "RegionalObservation",
     "Support",
     "TwinSnapshot",
