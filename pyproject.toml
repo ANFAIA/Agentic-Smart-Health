@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "agent-orchestrator",
     "core-schemas",
+    "fusion-agents",
     "ingestion-agents",
     "tooth-aggregation",
 ]
@@ -32,6 +33,7 @@ testpaths = ["packages", "apps", "tests"]
 [tool.uv.sources]
 agent-orchestrator = { workspace = true }
 core-schemas = { workspace = true }
+fusion-agents = { workspace = true }
 ingestion-agents = { workspace = true }
 tooth-aggregation = { workspace = true }
 
