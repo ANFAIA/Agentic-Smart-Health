@@ -119,6 +119,18 @@ def matrix_to_quaternion(rot: np.ndarray) -> tuple[float, float, float, float]:
     return (q[0] / norma, q[1] / norma, q[2] / norma, q[3] / norma)
 
 
+def quaternion_to_matrix(q: tuple[float, float, float, float]) -> np.ndarray:
+    """Cuaternión (w, x, y, z) → matriz de rotación 3×3. Inversa de `matrix_to_quaternion`."""
+    w, x, y, z = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
 def apply(rot: np.ndarray, trans: np.ndarray, points: np.ndarray) -> np.ndarray:
     return points @ rot.T + trans
 

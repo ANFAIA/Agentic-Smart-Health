@@ -276,7 +276,7 @@ IngestionOutput
 
 | Agente | Entrada | Qué produce | No hace | Cerebro |
 |---|---|---|---|---|
-| `geometric-fusion-agent` | `TwinSnapshot` + dos nubes `(N,3)` en mm | `Provenance.transform` (`RigidTransform` invertible) + confianza del residuo | no lee ni escribe `region_id`; **no transfiere color** | determinista |
+| `geometric-fusion-agent` | `TwinSnapshot` + dos nubes `(N,3)` en mm | `Provenance.transform` (`RigidTransform` invertible) + confianza del residuo + **color por gaussiana** desde la malla | no lee ni escribe `region_id`; no usa las fotos (error no-rígido) | determinista |
 | `semantic-fusion-agent` | `TwinSnapshot` + `detected: FDI → confianza` | `RegionalObservation` ancladas con la confianza propagada | no toca geometría ni transforma nada | determinista |
 
 **Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
@@ -325,9 +325,11 @@ FusionOutput
 - `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`).
   Implementada solo la etapa **fina** (ICP multiescala); la **gruesa** (RANSAC-FPFH)
   queda pendiente, así que **converge solo si la pose inicial ya está cerca**.
-  **No transfiere el color**: el pipeline se lo atribuye, pero su §6 declara que
-  «de dónde sale el color está sin asentar» — es una decisión abierta, no una pieza
-  pendiente de teclear.
+  **Transfiere el color desde la malla** (ADR 004 §2.8): cada gaussiana dentro de la
+  banda ε toma el de su vértice más cercano. Las **fotos quedan fuera** — el notebook 07
+  midió que el error foto↔malla es **no-rígido** (ICP estancado en IoU ≈ 0,55), así que
+  no es el mismo problema que el registro rígido. Con malla pelada o gris *placeholder*
+  el resultado es **ausencia de color**, que es respuesta válida y no un bug.
 - `semantic-fusion-agent` — la confianza es el **eslabón más débil**,
   `min(confianza_observación, confianza_FDI)`: anclar un pH a un diente no puede ser
   más fiable que saber qué diente es.

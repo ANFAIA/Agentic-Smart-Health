@@ -185,6 +185,40 @@ realidad, con la resolución y los artefactos del CBCT de por medio.
 Un agente que solo pasa el segundo no es auditable; uno que solo pasa el primero no está
 validado.
 
+### 2.8 El color sale de la malla; la foto es otro problema
+
+**Fuente canónica: el color por vértice de la malla intraoral.** No hay que registrarlo
+contra nada — *está* en la malla. Lo único que hace falta es lo que la fusión geométrica
+ya resuelve: llevar malla y campo al mismo sistema. Después, cada gaussiana **dentro de
+la banda ε** toma el color de su vértice más cercano. Es literalmente lo que el
+[ADR 001](001-digital-twin-core-schemas.md) describe: *«None si la gaussiana no cae en la
+banda ε de la superficie»*.
+
+**La ausencia es una respuesta válida.** Si la malla viene pelada (STL) o su color es un
+*placeholder* —el gris plano y uniforme de Teeth3DS+—, `color_superficie = None`.
+Declarado, no inventado. Hay precedente: el `mesh-agent` ya trata ese gris como
+**ausencia**.
+
+**El color desde fotos queda FUERA de este agente.** La razón está medida, no es una
+preferencia: el notebook 07 proyectó la foto oclusal sobre las coronas y el **ICP no baja
+de IoU ≈ 0,55**, porque el error residual es **no-rígido** —perspectiva de una foto
+intraoral sin calibrar, con retractor— y una transformación rígida no lo corrige.
+
+Es decir: **foto↔malla y CBCT↔malla no son el mismo problema.** Uno es rígido y el otro
+no. Meterlos en el mismo agente sería juntar dos cosas distintas bajo un nombre. La Vía B
+multi-vista del notebook 07 será el primer caso de quien lo aborde, con su propia decisión.
+
+> **Consecuencia práctica que conviene declarar.** Con los datos de hoy el resultado será
+> **`None` casi siempre**: Teeth3DS+ es gris plano y Bite2Text es STL pelado. La
+> transferencia existirá y estará testeada, pero solo se ejercitará de verdad cuando entre
+> un escáner que exporte color real por vértice. Ese `None` **no es un bug**.
+
+> **Dónde se persiste, que la issue #32 daba por hecho.** «Poblar `color_superficie` en el
+> snapshot» no es posible tal cual: ese campo vive en `GaussianPrimitive`, y el
+> `TwinSnapshot` solo guarda una **referencia por hash** al campo gaussiano. El agente
+> **calcula** los colores y quién sea dueño del `ArtifactStore` los materializa. Mantener
+> esa frontera es lo que evita que un agente de fusión acabe reescribiendo blobs pesados.
+
 ---
 
 ## 3. Alternativas consideradas

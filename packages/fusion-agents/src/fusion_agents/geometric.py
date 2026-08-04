@@ -4,10 +4,9 @@ Primera etapa de fusión, la que va **antes** de la segmentación. No usa FDI: s
 alinea dos medidas del mismo objeto físico y deja constancia **invertible** de la
 transformación que aplicó.
 
-**Lo que este agente NO hace: transferir el color.** El pipeline se lo atribuye,
-pero su §6 declara que *«de dónde sale el color está sin asentar»* — es una decisión
-abierta, no una pieza pendiente de teclear. Implementarla ahora sería fijar por la
-vía de los hechos algo que el propio documento deja explícitamente sin decidir.
+También **transfiere el color** de la malla a las gaussianas (§2.8): cada gaussiana
+dentro de la banda ε toma el de su vértice más cercano. La fuente es la malla, no las
+fotos — el error foto↔malla es **no-rígido** y por tanto otro problema.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 
 from fusion_agents.base import BaseFusionAgent, FusionOutput
+from fusion_agents.color import transfer_surface_color
 from fusion_agents.registration import DEFAULT_EPSILON_MM, Registrar, icp
 
 
@@ -95,4 +95,23 @@ class GeometricFusionAgent(BaseFusionAgent):
                 f"rms {resultado.rms_mm:.3f} mm en {resultado.iterations} iteraciones "
                 f"(converge={resultado.converged})."
             ),
+        )
+
+    def transfer_color(
+        self,
+        gaussians: np.ndarray,
+        mesh_points: np.ndarray,
+        mesh_colors: np.ndarray | None,
+        *,
+        transform: Any | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Color por gaussiana desde la malla, con la banda ε de este agente (§2.8).
+
+        Devuelve `(colors, has_color)` y **no persiste nada**: `color_superficie` vive
+        en `GaussianPrimitive`, y el `TwinSnapshot` solo guarda una referencia por hash
+        al campo. Materializarlo es de quien sea dueño del `ArtifactStore` — mantener
+        esa frontera evita que un agente de fusión acabe reescribiendo blobs pesados.
+        """
+        return transfer_surface_color(
+            gaussians, mesh_points, mesh_colors, epsilon_mm=self.epsilon_mm, transform=transform
         )

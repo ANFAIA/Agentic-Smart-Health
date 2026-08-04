@@ -63,9 +63,18 @@ por defecto (0.7) equivale a exigir `rms ≤ 0.3·ε`. Un registro fuera de band
 falla**: entrega con confianza baja y pide revisión. Es la diferencia entre un fallo
 declarado y uno silencioso.
 
-**Lo que este agente NO hace: transferir el color.** El pipeline se lo atribuye, pero
-su §6 declara que *«de dónde sale el color está sin asentar»*. Es una decisión
-abierta, no una pieza pendiente de teclear.
+## El color
+
+Sale de la **malla**, no de las fotos: cada gaussiana dentro de la banda ε toma el color
+de su vértice más cercano (`transfer_surface_color`). Las fotos quedan fuera porque el
+notebook 07 midió que el error foto↔malla es **no-rígido** —ICP estancado en IoU ≈ 0,55
+por la perspectiva de una foto sin calibrar— así que no es el mismo problema que el
+registro rígido CBCT↔malla.
+
+Con malla pelada (STL) o gris *placeholder* (Teeth3DS+) el resultado es **ausencia de
+color**: respuesta válida, no un bug. Y `transfer_color` **no persiste nada** —
+`color_superficie` vive en `GaussianPrimitive`, y el snapshot solo guarda una referencia
+por hash al campo; materializarlo es de quien sea dueño del `ArtifactStore`.
 
 ## Las tres decisiones del anclaje semántico
 
@@ -104,7 +113,7 @@ este agente sí deriva.
 uv run pytest packages/fusion-agents
 ```
 
-44 tests, cobertura 96%. Del registro cubren el **nivel unitario del ADR §2.7**:
+56 tests, cobertura 97%. Del registro cubren el **nivel unitario del ADR §2.7**:
 se aplica a una nube una transformación **conocida** y se exige recuperarla — la
 verdad de referencia es exacta porque se fabrica en el test, así que un fallo es del
 algoritmo y no del dato. Del anclaje semántico: la regla del eslabón más débil, el

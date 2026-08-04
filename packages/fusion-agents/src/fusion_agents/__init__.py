@@ -26,6 +26,7 @@ from fusion_agents.base import (
     FusionAgent,
     FusionOutput,
 )
+from fusion_agents.color import transfer_surface_color
 from fusion_agents.geometric import GeometricFusionAgent
 from fusion_agents.registration import (
     DEFAULT_EPSILON_MM,
@@ -47,5 +48,6 @@ __all__ = [
     "RegistrationResult",
     "SemanticFusionAgent",
     "icp",
+    "transfer_surface_color",
     "insert_snapshot",
 ]
