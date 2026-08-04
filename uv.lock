@@ -13,6 +13,7 @@ members = [
     "agent-orchestrator",
     "agentic-smart-health",
     "core-schemas",
+    "fusion-agents",
     "ingestion-agents",
     "research-agent",
     "slicer-mcp-server",
@@ -30,12 +31,14 @@ version = "0.1.0"
 source = { editable = "apps/agent-orchestrator" }
 dependencies = [
     { name = "core-schemas" },
+    { name = "fusion-agents" },
     { name = "ingestion-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
 ]
 
@@ -46,6 +49,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-orchestrator" },
     { name = "core-schemas" },
+    { name = "fusion-agents" },
     { name = "ingestion-agents" },
     { name = "tooth-aggregation" },
 ]
@@ -66,6 +70,7 @@ dev = [
 requires-dist = [
     { name = "agent-orchestrator", editable = "apps/agent-orchestrator" },
     { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
     { name = "tooth-aggregation", editable = "packages/tooth-aggregation" },
 ]
@@ -741,6 +746,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/10/a1/ae4e3e5003468d6391d2c77b6fa1cd73bd5d13511d81c642d7b28ac90ed4/fsspec-2026.6.0.tar.gz", hash = "sha256:f5bac145310fe30e16e1471bd6840b2d990d609e872251d7e674241822abf01a", size = 313646, upload-time = "2026-06-16T01:57:28.105Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/22/4222d7ddf3da30f363edaa98e329c2bce6c65497c9cb2810931c8b2c0fbc/fsspec-2026.6.0-py3-none-any.whl", hash = "sha256:02e0b71817df9b2169dc30a16832045764def1191b43dcff5bb85bdee212d2a1", size = 203949, upload-time = "2026-06-16T01:57:26.358Z" },
+]
+
+[[package]]
+name = "fusion-agents"
+version = "0.1.0"
+source = { editable = "packages/fusion-agents" }
+dependencies = [
+    { name = "core-schemas" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "scipy", specifier = ">=1.14" },
 ]
 
 [[package]]
