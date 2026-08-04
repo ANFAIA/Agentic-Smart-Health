@@ -250,6 +250,108 @@ IngestionOutput
 
 ---
 
+### Agentes de fusión — `geometric-fusion-agent` · `semantic-fusion-agent`
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 2 · Fusión geométrica **y** 4 · Fusión semántica (separadas por la segmentación) |
+| **Contrato común** | `FusionOutput` + `BaseFusionAgent` en `fusion_agents/base.py` |
+| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`) |
+| **Decisiones** | [ADR 004 — Fusión](docs/architecture/004-fusion.md) |
+
+> **Por qué son dos agentes y no uno:** entre ambos corre la **segmentación**, así
+> que uno solo tendría que invocarse dos veces con banderas y guardar estado entre
+> llamadas. Además tienen material y criterio de aceptación distintos: la semántica
+> se valida contra el informe, la geométrica contra pares CBCT+IOS.
+
+**Rol / Propósito**
+
+> Enriquecen un `TwinSnapshot` **ya ensamblado**: no tocan ficheros crudos ni
+> vuelven al original. La geométrica alinea dos medidas del mismo objeto físico y
+> deja constancia **invertible** de la transformación; la semántica cuelga las
+> observaciones del diente correcto y **marca lo que no cuadra** en vez de decidir.
+
+| Agente | Entrada | Qué produce | No hace | Cerebro |
+|---|---|---|---|---|
+| `geometric-fusion-agent` | `TwinSnapshot` + dos nubes `(N,3)` en mm | `Provenance.transform` (`RigidTransform` invertible) + confianza del residuo | no lee ni escribe `region_id`; **no transfiere color** | determinista |
+| `semantic-fusion-agent` | `TwinSnapshot` + `detected: FDI → confianza` | `RegionalObservation` ancladas con la confianza propagada | no toca geometría ni transforma nada | determinista |
+
+**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+
+| Recurso | Permisos | Notas |
+|---|---|---|
+| `TwinSnapshot` (en memoria) | read | **Nunca** vuelven al fichero crudo: la ingesta es la única frontera con el dato original. |
+| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** el contenido clínico (ni el pH). |
+
+> No usan `ArtifactStore`: `detected` se pasa **explícitamente** en vez de leer el
+> campo gaussiano del almacén. Son ~14 códigos FDI — cargar millones de primitivas
+> para obtenerlos sería absurdo, y así los agentes son testeables sin almacén ni GPU.
+
+**Outputs generados**
+
+```
+FusionOutput
+  ├─ status      : ModalityStatus (ok/missing/failed) — SIEMPRE presente
+  ├─ snapshot    : TwinSnapshot | None  — NUEVO, nunca el de entrada mutado
+  ├─ hitl_reasons: list[str]            — vacío = no hace falta revisión
+  └─ latency_s, quarantine_ref, detail
+```
+
+**Reglas de delegación**
+
+- **Fail-loud, nunca fail-fast**: el fallo se devuelve como `status=FAILED` +
+  `detail`; jamás propaga la excepción. El orquestador conserva el snapshot de la
+  ingesta — que la fusión falle no destruye lo que la ingesta sí consiguió.
+- **Human-in-the-loop**: el agente **no** decide qué se persiste. Emite
+  `hitl_reasons` y el orquestador aplica el umbral (`DEFAULT_HITL_THRESHOLD = 0.7`).
+- **Nunca mutan** el snapshot de entrada y **conservan el `acquisition_id`**: es la
+  identidad de visita, y es lo que hace que reejecutar la fusión **reemplace** en vez
+  de inflar el historial del paciente con visitas que no ocurrieron
+  (`insert_snapshot`, ADR 004 §2.5).
+
+**Reglas específicas por etapa**
+
+- 🔒 `geometric-fusion-agent` — **guardarraíl de reversibilidad**: la transformación
+  se guarda como `RigidTransform` (cuaternión + traslación), **no** como matriz 4×4.
+  Una 4×4 puede codificar escala y cizalla; si un ICP devolviera una escala espuria,
+  la reversibilidad se rompería en silencio. Esta forma la hace *imposible de
+  expresar*, y un validador rechaza el cuaternión no unitario. La confianza sale del
+  residuo, `clamp(1 − rms/ε, 0, 1)` con **ε = 0.5 mm** — que **no** es la métrica de
+  0.1 mm del brief: esa mide reversibilidad de *una* malla, esta el alineamiento
+  entre *dos* modalidades.
+- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`).
+  Implementada solo la etapa **fina** (ICP multiescala); la **gruesa** (RANSAC-FPFH)
+  queda pendiente, así que **converge solo si la pose inicial ya está cerca**.
+  **No transfiere el color**: el pipeline se lo atribuye, pero su §6 declara que
+  «de dónde sale el color está sin asentar» — es una decisión abierta, no una pieza
+  pendiente de teclear.
+- `semantic-fusion-agent` — la confianza es el **eslabón más débil**,
+  `min(confianza_observación, confianza_FDI)`: anclar un pH a un diente no puede ser
+  más fiable que saber qué diente es.
+- ⚠️ `semantic-fusion-agent` — **ante un conflicto FDI no elige ganador**. Si el
+  informe referencia un diente que la segmentación no encontró, conserva el FDI *del
+  informe* (fuente clínica), pone la confianza a **0.0** y con eso cae al gate y va a
+  revisión humana. El motivo está **medido**: el error dominante del modelo es el
+  desplazamiento al diente vecino ([experimento Point
+  Transformer](notebooks/exercise-point-transformer-teeth3ds.md)), así que ahí es la
+  parte menos fiable — pero el informe tampoco es infalible. Resolverlo en silencio
+  sería el fallo que el [ADR 003](docs/architecture/003-verification-fault-tolerance.md)
+  señala como el peor: silencioso e irreversible, sobre un dato clínico.
+- `semantic-fusion-agent` — la `Provenance` de cada observación **conserva la del
+  informe** (`source_file`, `modality`, `agent`); solo se reescribe `confidence`. El
+  valor sigue viniendo del PDF. Quién fusionó consta en la `Provenance` del snapshot.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-04 | 0.1.0 | Registro inicial. ADR 004; `RigidTransform` en `core-schemas` (contrato 1.3.0); fusión semántica completa; fusión geométrica con ICP multiescala (falta la etapa gruesa); inserción idempotente en la serie temporal; enganche en el orquestador. |
+
+---
+
 ### Agentes de análisis (stubs `planned`)
 
 Agentes del pipeline clínico **aún no implementados**. Se registran aquí como
@@ -261,7 +363,7 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 
 | Agente | Estado | Fase | Rol previsto | Entrada → salida | Human-in-the-loop |
 |---|---|---|---|---|---|
-| `segmentation-agent` | `planned` | Análisis · segmentación | Asignar `region_id` (FDI) a las gaussianas (segmentación anatómica). Prerrequisito del ancla semántica de la fusión. | `TwinSnapshot` sin etiquetas → snapshot con `region_id` poblado | Revisión si afecta al diagnóstico |
+| `segmentation-agent` | `planned` | Análisis · segmentación | Asignar `region_id` (FDI) a las gaussianas (segmentación anatómica). Prerrequisito del ancla semántica de la fusión. | `TwinSnapshot` sin etiquetas → snapshot con `region_id` poblado (y el mapa `FDI → confianza` que consume el `semantic-fusion-agent`) | Revisión si afecta al diagnóstico |
 | `pathology-agent` | `planned` | Análisis · hallazgos clínicos | Señalar posibles patologías (densidad σ, color, geometría) como **hallazgos candidatos para revisión clínica**. | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **Sí** — clínicamente sensible |
 | `clinical-poc-agent` | `planned` (PoC) | Análisis · prueba de concepto | Métrica visual básica: inflamación por color de encía y espacio encía-diente. | `TwinSnapshot` → reporte de texto (log) | Sí |
 
