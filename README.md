@@ -175,9 +175,8 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
 (no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
 decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
-tres datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
-CC-BY), **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA) y **ToothFairy**
-(08, CBCT). Todos gitignored.
+dos datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
+CC-BY) y **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA). Ambos gitignored.
 
 | Notebook | Qué valida | Dataset | GPU |
 |---|---|---|---|
@@ -188,7 +187,6 @@ CC-BY), **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA) y **ToothFairy
 | `05` | Vistas sintéticas **densas** (528/caso) — rejilla más fina que `03` | Teeth3DS+ | No |
 | `06` | 3DGS **denso** con la receta de referencia (SSIM + densificación/poda, armónicos g2) | Teeth3DS+ | Sí |
 | `07` | **Escáner real → Blender (EEVEE) → 3DGS**, con **color de las fotos** (`image-agent`) y pérdida SSIM · 1600 vistas · holdout 31,5 dB | Bite2Text | Sí |
-| `08` | **CBCT → STL → Blender → 3DGS** (experimento aparte, con su muro de registro) | ToothFairy | Sí |
 
 Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
 El notebook `07` es el que integra los **agentes de ingesta** (`mesh` + `report` +
