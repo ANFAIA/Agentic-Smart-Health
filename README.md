@@ -71,6 +71,14 @@ no copiar dato clínico a la cuarentena— lo verifica una **suite de conformida
 parametrizada sobre los cuatro agentes. Un agente nuevo entra en esa lista y queda
 sometido a las nueve reglas sin escribir un test.
 
+Y frente al caso que *sale bien* de `synthetic.py` hay un catálogo de **casos
+límite** ([`edge_cases.py`](packages/ingestion-agents/src/ingestion_agents/edge_cases.py)):
+cabecera DICOM truncada, resonancia etiquetada como CBCT, espaciado cero o negativo,
+`NaN` en la malla, PNG a medias, rutas con unicode, enlaces rotos. Cada caso declara
+**qué debe pasar y por qué**, porque no todos deben fallar: un pH imposible se
+descarta línea a línea y la ingesta sigue siendo válida. Encontró cuatro defectos
+reales el día que se escribió.
+
 **Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
 el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
 esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
