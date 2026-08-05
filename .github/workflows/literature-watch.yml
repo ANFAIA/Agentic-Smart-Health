@@ -9,8 +9,8 @@ name: literature watch
 # que exige criterio —¿aporta al proyecto?— se queda en la revisión de la PR.
 #
 # El agente NO mergea. Su salida es una rama y una PR que una persona aprueba o
-# cierra. Ningún PDF entra al repositorio: se bajan a un temporal del runner para
-# calcular `sha256` y se borran con él.
+# cierra. Ningún PDF llega a escribirse en el runner: se descargan a memoria para
+# calcular `sha256` y se liberan ahí mismo.
 
 on:
   schedule:

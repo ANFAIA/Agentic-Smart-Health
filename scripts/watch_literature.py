@@ -12,11 +12,11 @@ lo que ya está inventariado y averiguar bajo qué licencia se publicó— y dej
 juicio (¿es relevante para el proyecto?) donde tiene que estar: en una persona
 revisando una PR.
 
-**Ningún PDF entra al repositorio.** El binario se baja a un directorio temporal
+**Ningún PDF toca el disco, ni el repositorio.** El binario se descarga a memoria
 solo para calcular `sha256` y `bytes` —sin eso la entrada del manifiesto estaría
-incompleta— y se borra al terminar. Lo que se propone commitear son ~10 líneas de
-YAML. Descargar no es redistribuir: lo primero lo permite cualquier licencia de las
-que aparecen aquí; lo segundo es lo que costó la issue 45.
+incompleta— y se libera sin escribirse en ningún sitio. Lo que se propone commitear
+son ~10 líneas de YAML. Descargar no es redistribuir: lo primero lo permite
+cualquier licencia de las que aparecen aquí; lo segundo es lo que costó la issue 45.
 
 **La licencia se verifica en origen, no se supone.** Se lee del OAI-PMH de arXiv
 (`verb=GetRecord`, `metadataPrefix=arXiv`), que devuelve el URI exacto que declaró
@@ -35,7 +35,6 @@ import hashlib
 import json
 import re
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -173,21 +172,26 @@ def licencia_en_origen(base_id: str) -> tuple[str, bool]:
 
 
 def huella(url: str) -> tuple[str, int]:
-    """`sha256` y tamaño del PDF, bajándolo a un temporal que se borra siempre."""
-    with tempfile.TemporaryDirectory() as tmp:
-        destino = Path(tmp) / "doc.pdf"
-        peticion = urllib.request.Request(url, headers={"User-Agent": _UA})
-        with urllib.request.urlopen(peticion, timeout=_TIMEOUT) as respuesta:
-            anunciado = int(respuesta.headers.get("Content-Length") or 0)
-            if anunciado > _MAX_PDF_BYTES:
-                raise ValueError(f"{anunciado / 1048576:.0f} MiB, por encima del tope")
-            datos = respuesta.read(_MAX_PDF_BYTES + 1)
-        if len(datos) > _MAX_PDF_BYTES:
-            raise ValueError("por encima del tope de descarga")
-        if not datos.startswith(b"%PDF"):
-            raise ValueError("la respuesta no es un PDF")
-        destino.write_bytes(datos)
-        return hashlib.sha256(datos).hexdigest(), len(datos)
+    """`sha256` y tamaño del PDF **sin escribirlo en disco**.
+
+    El hash se calcula sobre los bytes de la respuesta, así que no hay ningún
+    motivo para materializar el fichero: el PDF vive en memoria mientras se mide y
+    se libera después. Es una garantía más fuerte que un temporal que se borra —no
+    hay nada que borrar, ni que se quede si matan el proceso a mitad—, y explica
+    el tope: lo que no cabe cómodamente en memoria, no se descarga.
+    """
+    peticion = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with urllib.request.urlopen(peticion, timeout=_TIMEOUT) as respuesta:
+        anunciado = int(respuesta.headers.get("Content-Length") or 0)
+        if anunciado > _MAX_PDF_BYTES:
+            raise ValueError(f"{anunciado / 1048576:.0f} MiB, por encima del tope")
+        # Un byte más que el tope: así se detecta el que miente en Content-Length.
+        datos = respuesta.read(_MAX_PDF_BYTES + 1)
+    if len(datos) > _MAX_PDF_BYTES:
+        raise ValueError("por encima del tope de descarga")
+    if not datos.startswith(b"%PDF"):
+        raise ValueError("la respuesta no es un PDF")
+    return hashlib.sha256(datos).hexdigest(), len(datos)
 
 
 def nombre_fichero(titulo: str, identificador: str) -> str:

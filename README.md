@@ -262,9 +262,9 @@ Reparto de trabajo deliberado: la máquina hace lo repetitivo y verificable —q
 nuevo, bajo qué licencia—, y la persona que revisa la PR decide lo único que exige
 criterio: si el artículo aporta algo al proyecto. **El agente no mergea nunca.**
 
-Ningún PDF entra al repositorio: se bajan a un temporal del runner para calcular
-`sha256` y `bytes`, y se borran con él. Lo que se propone commitear son diez líneas
-de YAML por artículo. Los ficheros se materializan después, en local, con
+Ningún PDF llega a escribirse: se descargan a memoria para calcular `sha256` y
+`bytes`, y se liberan ahí mismo. Lo que se propone commitear son diez líneas de
+YAML por artículo. Los ficheros se materializan después, en local, con
 `uv run python scripts/fetch_knowledge_base.py`.
 
 Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
