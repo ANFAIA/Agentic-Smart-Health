@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# pre-commit — mantiene al día los bloques generados de la documentación.
+#
+# Regenera lo que es copia mecánica del código (tablas de variables, scripts,
+# comandos de make, registro de agentes) y lo añade AL MISMO COMMIT. Así la
+# documentación viaja siempre con el cambio que la afecta, sin commits de bot ni
+# pasos que haya que recordar.
+#
+# Solo toca los bloques entre marcas: la prosa no se toca nunca.
+# Para saltárselo puntualmente: git commit --no-verify
+set -euo pipefail
+
+raiz="$(git rev-parse --show-toplevel)"
+cd "$raiz"
+
+antes="$(git diff --cached --name-only)"
+uv run python scripts/docs_sync.py --write >/dev/null 2>&1 || {
+  echo "pre-commit: docs_sync.py falló; se commitea igual y el CI lo dirá." >&2
+  exit 0
+}
+
+# Solo se añaden los documentos que el propio script haya cambiado.
+cambiados="$(git diff --name-only -- README.md AGENTS.md)"
+if [ -n "$cambiados" ]; then
+  # shellcheck disable=SC2086
+  git add $cambiados
+  echo "pre-commit: bloques generados actualizados y añadidos al commit:"
+  echo "$cambiados" | sed 's/^/  · /'
+fi

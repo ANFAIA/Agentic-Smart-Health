@@ -288,6 +288,14 @@ Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas 
 | `make lint` | `uv run ruff check` |
 <!-- /generado: make -->
 
+`make install` activa además los **hooks de git** del repositorio
+(`git config core.hooksPath .githooks`). El de `pre-commit` regenera los bloques
+generados de la documentación —tablas de variables, scripts, comandos y registro de
+agentes— y los **añade al mismo commit**, para que la documentación viaje siempre
+con el cambio que la afecta. Solo toca lo que hay entre marcas: la prosa nunca.
+Si alguna vez estorba, `git commit --no-verify` se lo salta, y el CI seguirá
+avisando en la PR.
+
 ### Activar el entorno (opcional)
 
 Si necesitas trabajar directamente en el entorno virtual:
