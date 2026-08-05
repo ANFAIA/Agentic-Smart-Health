@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# pre-commit — dos guardianes, con criterios distintos a propósito.
+#
+#   1. data_guard.py   BLOQUEA. Un dato ajeno que entra al commit ya está en la
+#      historia de git, y sacarlo obliga a reescribirla (issue 45: filter-repo +
+#      force-push por 156 MiB de PDF). Aquí es más barato que en ningún otro sitio.
+#
+#   2. docs_sync.py    NO bloquea. Regenera lo que es copia mecánica del código
+#      (tablas de variables, scripts, comandos de make, registro de agentes) y lo
+#      añade AL MISMO COMMIT, para que la documentación viaje con el cambio que la
+#      afecta. Si falla, avisa y deja commitear: el CI lo dirá en la PR. Un hook
+#      que impide trabajar por un problema de documentación acaba desinstalado.
+#
+# Solo toca los bloques entre marcas: la prosa no se toca nunca.
+# Para saltárselo puntualmente: git commit --no-verify
+set -euo pipefail
+
+raiz="$(git rev-parse --show-toplevel)"
+cd "$raiz"
+
+# --- 1. Datos y licencias -------------------------------------------------- #
+# Mira el índice (`git ls-files` ya ve lo que está en stage), así que el fichero
+# se caza antes de existir el commit.
+if ! salida="$(uv run python scripts/data_guard.py --quiet 2>&1)"; then
+  echo "$salida" >&2
+  echo >&2
+  echo "pre-commit: commit detenido. Lo de arriba entra en la historia de git y" >&2
+  echo "no se puede quitar sin reescribirla. Si de verdad tiene que ir, quita el" >&2
+  echo "fichero del stage o razona la excepción en scripts/data_guard.py." >&2
+  exit 1
+fi
+
+# --- 2. Bloques generados de la documentación ------------------------------ #
+uv run python scripts/docs_sync.py --write >/dev/null 2>&1 || {
+  echo "pre-commit: docs_sync.py falló; se commitea igual y el CI lo dirá." >&2
+  exit 0
+}
+
+# Solo se añaden los documentos que el propio script haya cambiado.
+cambiados="$(git diff --name-only -- README.md AGENTS.md)"
+if [ -n "$cambiados" ]; then
+  # shellcheck disable=SC2086
+  git add $cambiados
+  echo "pre-commit: bloques generados actualizados y añadidos al commit:"
+  echo "$cambiados" | sed 's/^/  · /'
+fi

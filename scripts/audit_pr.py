@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agente guardián de arquitectura — Agentic Smart Health.
+"""audit_pr.py — Guardián de las reglas de arquitectura del monorepo.
 
 Auditor estático (sin LLM) que se ejecuta en CI sobre cada Pull Request.
 Solo revisa los archivos Python *modificados* por el PR y aplica dos reglas

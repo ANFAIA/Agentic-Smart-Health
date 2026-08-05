@@ -80,13 +80,22 @@ def parse_obj(path: Path) -> dict[str, np.ndarray]:
     if not positions:
         raise ValueError(f"El OBJ no contiene vértices: {path}")
 
+    # `float("nan")` es un float perfectamente legal, así que un `v nan 0 0` entra
+    # sin que nadie proteste y contamina en silencio normales, caja envolvente y
+    # cualquier registro posterior: NaN se propaga y no lanza. Un fallo que no se
+    # nota es peor que uno ruidoso, y este solo aparecería al alinear modalidades.
+    coords = np.asarray(positions, dtype=np.float64)
+    if not np.isfinite(coords).all():
+        malos = int((~np.isfinite(coords).all(axis=1)).sum())
+        raise ValueError(f"El OBJ trae {malos} vértice(s) con coordenadas no finitas (NaN/inf).")
+
     out: dict[str, np.ndarray] = {
         # float64, NO float32: guardarraíl de reversibilidad. El OBJ escribe ~8
         # decimales; float64 los representa exactamente, así que el round-trip
         # fichero → artefacto → fichero tiene error CERO. Con float32 el error
         # sería de ~10⁻⁵ mm — despreciable frente a los 0,1 mm de la métrica, pero
         # es una pérdida gratuita en la única copia fiel de la superficie.
-        "positions": np.asarray(positions, dtype=np.float64),
+        "positions": coords,
         "faces": np.asarray(faces, dtype=np.int32).reshape(-1, 3),
     }
     if colors:

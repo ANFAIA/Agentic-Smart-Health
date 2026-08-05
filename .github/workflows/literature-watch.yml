@@ -1,0 +1,101 @@
+name: literature watch
+
+# Vigilancia semanal de literatura: propone entradas nuevas del manifiesto de la
+# knowledge base y abre una PR con ellas.
+#
+# Por qué existe: el `research-agent` sabe buscar, pero es un REPL — solo descubre
+# mientras alguien está delante. Lo que se repite cada semana (mirar novedades,
+# descartar lo ya inventariado, verificar la licencia en origen) lo hace esto; lo
+# que exige criterio —¿aporta al proyecto?— se queda en la revisión de la PR.
+#
+# El agente NO mergea. Su salida es una rama y una PR que una persona aprueba o
+# cierra. Ningún PDF llega a escribirse en el runner: se descargan a memoria para
+# calcular `sha256` y se liberan ahí mismo.
+
+on:
+  schedule:
+    # Lunes a las 06:00 UTC: la PR está esperando al empezar la semana.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Ventana de novedad en días"
+        default: "14"
+      max_nuevos:
+        description: "Tope de propuestas"
+        default: "5"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: literature-watch
+  cancel-in-progress: false
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Buscar novedades
+        run: |
+          uv run python scripts/watch_literature.py \
+            --write --resumen cuerpo-pr.md \
+            --dias "${{ inputs.dias || 14 }}" \
+            --max-nuevos "${{ inputs.max_nuevos || 5 }}"
+
+      - name: ¿Hay algo que proponer?
+        id: cambios
+        run: |
+          if git diff --quiet -- data/research-agent/knowledge_base/manifest.yaml; then
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+            echo "Semana sin novedades: no se abre PR."
+          else
+            echo "hay=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Los guardianes se ejecutan AQUÍ y no solo en la PR por una limitación de
+      # GitHub: una PR abierta con el GITHUB_TOKEN no dispara otros workflows, así
+      # que `ai-code-review` no correría sobre ella. Sin esto, la única PR del repo
+      # que nadie revisa automáticamente sería justo la que escribe una máquina.
+      - name: Guardianes (datos y documentación)
+        if: steps.cambios.outputs.hay == 'true'
+        run: |
+          uv run python scripts/data_guard.py --quiet
+          uv run python scripts/docs_sync.py --check
+
+      - name: Abrir PR
+        if: steps.cambios.outputs.hay == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rama="bot/literatura-$(date +%Y-%m-%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$rama"
+          git add data/research-agent/knowledge_base/manifest.yaml
+          git commit -m "chore(kb): propuestas de literatura del $(date +%F)"
+          git push -u origin "$rama"
+          gh pr create \
+            --base develop --head "$rama" \
+            --title "chore(kb): literatura nueva del $(date +%F)" \
+            --body-file cuerpo-pr.md

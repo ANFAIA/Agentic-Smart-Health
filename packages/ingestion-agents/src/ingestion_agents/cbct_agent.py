@@ -36,6 +36,12 @@ DEFAULT_HU_THRESHOLD = 300.0
 # HU a partir del cual σ satura a 1.0 (esmalte/metal). Normaliza el rango útil.
 HU_SATURATION = 2000.0
 
+# Modalidades DICOM cuyos valores SÍ son unidades Hounsfield. El estándar no tiene
+# un código propio para CBCT —los equipos dentales lo emiten como `CT`—, pero algún
+# fabricante escribe `CBCT`, así que se aceptan las dos. Todo lo demás (MR, PT, US,
+# DX) usa otra escala y no se puede leer como densidad.
+ACCEPTED_MODALITIES = frozenset({"CT", "CBCT"})
+
 _PSEUDONYM_SALT_ENV = "ASH_PSEUDONYM_SALT"
 
 
@@ -89,6 +95,17 @@ def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float
         intercept = float(getattr(ds, "RescaleIntercept", 0.0))
         volume[i] = arr * slope + intercept  # → unidades Hounsfield
 
+    # La modalidad no es un adorno: este agente interpreta los valores como
+    # unidades Hounsfield. Una resonancia con extensión `.dcm` se leería igual de
+    # bien y produciría densidades plausibles y falsas — el fallo caro, el que
+    # nadie mira dos veces porque el resultado *parece* un CBCT.
+    modality = str(getattr(first, "Modality", "") or "").upper()
+    if modality and modality not in ACCEPTED_MODALITIES:
+        raise ValueError(
+            f"Modalidad DICOM '{modality}': este agente solo ingiere "
+            f"{'/'.join(sorted(ACCEPTED_MODALITIES))}. Sus valores no son unidades Hounsfield."
+        )
+
     px = getattr(first, "PixelSpacing", [1.0, 1.0])
     dz = float(getattr(first, "SliceThickness", 1.0) or 1.0)
     if len(slices) > 1:
@@ -96,6 +113,15 @@ def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float
         if measured > 0:
             dz = measured  # el espaciado real manda sobre el declarado
     spacing = (float(px[1]), float(px[0]), dz)  # (x, y, z) en mm
+
+    # Un vóxel de tamaño cero no tiene coordenadas en mm (el campo saldría
+    # colapsado en un punto) y uno negativo **espeja el volumen**: intercambia
+    # izquierda y derecha del paciente sin avisar. Ninguno de los dos puede pasar
+    # por bueno en algo que va a acabar guiando una decisión clínica.
+    if not all(np.isfinite(s) and s > 0 for s in spacing):
+        raise ValueError(
+            f"Espaciado inválido {spacing} mm: cada eje tiene que ser finito y positivo."
+        )
 
     return volume, spacing, str(getattr(first, "PatientID", "") or "")
 

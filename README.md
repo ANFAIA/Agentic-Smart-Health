@@ -64,6 +64,21 @@ vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://gi
 repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
 (color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
 
+Lo que el contrato promete de **todos** los agentes por igual —los tres caminos
+(`OK`/`MISSING`/`FAILED`), no lanzar nunca, emitir `Provenance`, ser reproducible y
+no copiar dato clínico a la cuarentena— lo verifica una **suite de conformidad**
+([`test_conformidad.py`](packages/ingestion-agents/tests/test_conformidad.py))
+parametrizada sobre los cuatro agentes. Un agente nuevo entra en esa lista y queda
+sometido a las nueve reglas sin escribir un test.
+
+Y frente al caso que *sale bien* de `synthetic.py` hay un catálogo de **casos
+límite** ([`edge_cases.py`](packages/ingestion-agents/src/ingestion_agents/edge_cases.py)):
+cabecera DICOM truncada, resonancia etiquetada como CBCT, espaciado cero o negativo,
+`NaN` en la malla, PNG a medias, rutas con unicode, enlaces rotos. Cada caso declara
+**qué debe pasar y por qué**, porque no todos deben fallar: un pH imposible se
+descarta línea a línea y la ingesta sigue siendo válida. Encontró cuatro defectos
+reales el día que se escribió.
+
 **Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
 el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
 esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
@@ -102,6 +117,8 @@ agentic-smart-health/          ← workspace root
 ├── packages/
 │   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
+│   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
+│   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
 │   └── research-agent/        ← knowledge base del agente de investigación
@@ -229,6 +246,8 @@ Cada Pull Request pasa por un **agente guardián de revisión estática** ejecut
 | Estilo y formato | `ruff` | No — informativo (anotaciones inline) |
 | Tipos | `mypy` | No — informativo (anotaciones inline) |
 | **Arquitectura** | `scripts/audit_pr.py` | **Sí** — hace fallar el check |
+| **Coherencia documental** | `scripts/docs_sync.py` | **Sí** — hace fallar el check |
+| **Datos y licencias** | `scripts/data_guard.py` | **Sí** — hace fallar el check |
 
 **Reglas de arquitectura (bloqueantes):**
 
@@ -239,6 +258,52 @@ Cada Pull Request pasa por un **agente guardián de revisión estática** ejecut
 
 - `.github/workflows/ai-code-review.yml` — orquesta los chequeos, publica comentarios y decide el gate de merge.
 - `scripts/audit_pr.py` — auditor de arquitectura (AST, solo librería estándar).
+
+Dos de esos chequeos **bloquean el merge** y el resto solo comenta, por un motivo
+concreto: son los que producen daño que no se arregla con otro commit. La deriva
+documental (`docs_sync.py`) se convierte en verdad publicada en cuanto se mergea, y
+un dato ajeno (`data_guard.py`) entra en la historia de git y solo sale
+reescribiéndola — que es lo que costó la issue 45.
+
+### Vigilancia de literatura (`literature watch`)
+
+El único trabajo **programado** del repositorio: cada lunes,
+[`scripts/watch_literature.py`](scripts/watch_literature.py) busca en arXiv lo
+publicado esa semana, descarta lo que ya está en el manifiesto, **lee la licencia del
+OAI-PMH de arXiv** (no la supone) y abre una PR proponiendo las entradas nuevas.
+
+Siete consultas en dos ámbitos, con **puerta distinta cada uno**: las cuatro
+dentales (3DGS, segmentación CBCT, escaneo intraoral, gemelo digital) exigen un
+término del dominio en título o resumen; las tres de estándares (DICOM, FHIR/HL7,
+interoperabilidad en imagen médica) lo exigen **en el título**. La distinción está
+medida, no supuesta: un artículo de interoperabilidad clínica casi nunca dice
+«tooth», y uno que solo menciona DICOM de pasada no va sobre DICOM. El cupo de cada
+PR se reparte por turnos entre consultas, para que las de mayor volumen no dejen la
+propuesta sin un solo artículo dental.
+
+Reparto de trabajo deliberado: la máquina hace lo repetitivo y verificable —qué hay
+nuevo, bajo qué licencia—, y la persona que revisa la PR decide lo único que exige
+criterio: si el artículo aporta algo al proyecto. **El agente no mergea nunca.**
+
+Ningún PDF llega a escribirse: se descargan a memoria para calcular `sha256` y
+`bytes`, y se liberan ahí mismo. Lo que se propone commitear son diez líneas de
+YAML por artículo. Los ficheros se materializan después, en local, con
+`uv run python scripts/fetch_knowledge_base.py`.
+
+Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
+
+<!-- generado: scripts — no editar a mano -->
+| Script | Qué hace |
+|---|---|
+| [`scripts/ablacion_recetas.py`](scripts/ablacion_recetas.py) | Ablación de la receta de entrenamiento: qué aporta cada pieza. |
+| [`scripts/audit_pr.py`](scripts/audit_pr.py) | Guardián de las reglas de arquitectura del monorepo. |
+| [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
+| [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
+| [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
+| [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
+| [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+| [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
+<!-- /generado: scripts -->
 
 Las herramientas de desarrollo se instalan con `uv sync --group dev` (grupo `dev`: `ruff`, `mypy`). Ficha completa del agente en [`AGENTS.md`](AGENTS.md).
 
@@ -265,11 +330,29 @@ Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas 
 
 ### Comandos disponibles
 
-| Comando | Descripción |
+<!-- generado: make — no editar a mano -->
+| Comando | Ejecuta |
 |---|---|
-| `make install` | Sincroniza el entorno con `uv sync` |
-| `make test` | Ejecuta la suite de pruebas con `pytest` |
-| `make lint` | Analiza el código con `ruff check` |
+| `make install` | `uv sync` |
+| `make hooks` | `git config core.hooksPath .githooks` |
+| `make test` | `uv run pytest` |
+| `make lint` | `uv run ruff check` |
+| `make docs` | `uv run python scripts/docs_sync.py --write` |
+<!-- /generado: make -->
+
+`make install` activa además los **hooks de git** del repositorio
+(`git config core.hooksPath .githooks`), y el de `pre-commit` hace dos cosas:
+
+- **Detiene el commit** si `data_guard.py` encuentra un dato ajeno en el stage
+  (un PDF, una malla, un binario grande). Es el único sitio donde eso sale barato:
+  una vez commiteado, sacarlo obliga a reescribir la historia.
+- **Regenera los bloques generados** de la documentación —tablas de variables,
+  scripts, comandos y registro de agentes— y los **añade al mismo commit**, para
+  que la documentación viaje siempre con el cambio que la afecta. Solo toca lo que
+  hay entre marcas: la prosa nunca.
+
+Si alguna vez estorba, `git commit --no-verify` se lo salta, y el CI seguirá
+avisando en la PR.
 
 ### Activar el entorno (opcional)
 
@@ -296,15 +379,21 @@ cp .env.example .env
 ```
 
 `.env.example` documenta **solo las variables que el código lee de verdad**, con
-quién las usa y qué pasa si no se definen:
+quién las usa y qué pasa si no se definen. Esta tabla la genera
+[`scripts/docs_sync.py`](scripts/docs_sync.py) leyendo el código, y el CI falla si
+se desincroniza — por eso no se edita a mano. Un `—` en la última columna significa
+que la llamada no lleva valor por defecto (el módulo puede tener su propio respaldo):
 
-| Variable | Quién la lee | Sin definir |
+<!-- generado: env-vars — no editar a mano -->
+| Variable | Se lee en | Por defecto |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `research-agent` (modo Claude) y `report-agent` | esos modos no arrancan; el modo local con Ollama sí |
-| `RESEARCH_AGENT_MODEL` | `research-agent` | usa el modelo por defecto del CLI |
-| `RESEARCH_AGENT_LOCAL_MODEL` · `OLLAMA_HOST` | `research-agent` (modo local) | `qwen2.5:7b` en `http://localhost:11434` |
-| `QDRANT_PATH` | motor RAG del `research-agent` | `data/research-agent/.qdrant_data/` |
-| `ASH_PSEUDONYM_SALT` | `cbct-agent` (seudonimización) | **sal de desarrollo**, no apta para datos reales |
+| `ANTHROPIC_API_KEY` | `apps/research-agent/src/main.py` | — |
+| `ASH_PSEUDONYM_SALT` | `packages/ingestion-agents/src/ingestion_agents/cbct_agent.py` | `dev-salt-no-usar-en-produccion` |
+| `OLLAMA_HOST` | `apps/research-agent/src/main_local.py` | `http://localhost:11434` |
+| `QDRANT_PATH` | `apps/research-agent/src/rag.py` | — |
+| `RESEARCH_AGENT_LOCAL_MODEL` | `apps/research-agent/src/main_local.py` | `qwen2.5:7b` |
+| `RESEARCH_AGENT_MODEL` | `apps/research-agent/src/main.py` | `claude-opus-4-8` |
+<!-- /generado: env-vars -->
 
 Ninguna hace falta para ejecutar `make test`. La sal de seudónimo es la única que
 es un **secreto**: sin ella el pipeline funciona, pero los seudónimos que emite no

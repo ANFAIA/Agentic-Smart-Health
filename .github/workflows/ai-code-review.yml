@@ -80,6 +80,25 @@ jobs:
           PY
         continue-on-error: true
 
+      # --- Coherencia documental: que el README no le mienta al código ---
+      # Aquí y no en el workflow de tests a propósito: la deriva documental no
+      # rompe nada en ejecución, así que lo que hay que impedir es que llegue a la
+      # rama por defecto — y eso se decide en la PR, que es donde corre este job.
+      # Sin `continue-on-error`: esto SI bloquea. Un enlace roto o un agente sin
+      # ficha no rompen la ejecucion, pero se convierten en verdad publicada en
+      # cuanto se mergea, y desmentirlos despues cuesta mucho mas que arreglarlos
+      # ahora. `uv run python scripts/docs_sync.py --write` regenera lo generable.
+      - name: Docs drift check
+        run: uv run python scripts/docs_sync.py --check
+
+      # --- Datos y licencias: que no entre dato ajeno al repositorio ---
+      # Tampoco lleva `continue-on-error`, y por un motivo más fuerte que el
+      # anterior: un binario mergeado ya no se quita: se reescribe la historia. La
+      # issue 45 costó exactamente eso (`git filter-repo` + force-push) por 156 MiB
+      # de PDF que nadie vio entrar. Esta comprobación es la que la habría evitado.
+      - name: Data & licence guard
+        run: uv run python scripts/data_guard.py --quiet
+
       # --- Arquitectura: reglas específicas del monorepo (Pydantic v2 / cross-app) ---
       - name: Architecture audit
         id: audit
