@@ -80,6 +80,14 @@ jobs:
           PY
         continue-on-error: true
 
+      # --- Coherencia documental: que el README no le mienta al código ---
+      # Aquí y no en el workflow de tests a propósito: la deriva documental no
+      # rompe nada en ejecución, así que lo que hay que impedir es que llegue a la
+      # rama por defecto — y eso se decide en la PR, que es donde corre este job.
+      - name: Docs drift check
+        run: uv run python scripts/docs_sync.py --check
+        continue-on-error: true
+
       # --- Arquitectura: reglas específicas del monorepo (Pydantic v2 / cross-app) ---
       - name: Architecture audit
         id: audit

@@ -296,15 +296,21 @@ cp .env.example .env
 ```
 
 `.env.example` documenta **solo las variables que el código lee de verdad**, con
-quién las usa y qué pasa si no se definen:
+quién las usa y qué pasa si no se definen. Esta tabla la genera
+[`scripts/docs_sync.py`](scripts/docs_sync.py) leyendo el código, y el CI falla si
+se desincroniza — por eso no se edita a mano. Un `—` en la última columna significa
+que la llamada no lleva valor por defecto (el módulo puede tener su propio respaldo):
 
-| Variable | Quién la lee | Sin definir |
+<!-- generado: env-vars — no editar a mano -->
+| Variable | Se lee en | Por defecto |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `research-agent` (modo Claude) y `report-agent` | esos modos no arrancan; el modo local con Ollama sí |
-| `RESEARCH_AGENT_MODEL` | `research-agent` | usa el modelo por defecto del CLI |
-| `RESEARCH_AGENT_LOCAL_MODEL` · `OLLAMA_HOST` | `research-agent` (modo local) | `qwen2.5:7b` en `http://localhost:11434` |
-| `QDRANT_PATH` | motor RAG del `research-agent` | `data/research-agent/.qdrant_data/` |
-| `ASH_PSEUDONYM_SALT` | `cbct-agent` (seudonimización) | **sal de desarrollo**, no apta para datos reales |
+| `ANTHROPIC_API_KEY` | `apps/research-agent/src/main.py` | — |
+| `ASH_PSEUDONYM_SALT` | `packages/ingestion-agents/src/ingestion_agents/cbct_agent.py` | `dev-salt-no-usar-en-produccion` |
+| `OLLAMA_HOST` | `apps/research-agent/src/main_local.py` | `http://localhost:11434` |
+| `QDRANT_PATH` | `apps/research-agent/src/rag.py` | — |
+| `RESEARCH_AGENT_LOCAL_MODEL` | `apps/research-agent/src/main_local.py` | `qwen2.5:7b` |
+| `RESEARCH_AGENT_MODEL` | `apps/research-agent/src/main.py` | `claude-opus-4-8` |
+<!-- /generado: env-vars -->
 
 Ninguna hace falta para ejecutar `make test`. La sal de seudónimo es la única que
 es un **secreto**: sin ella el pipeline funciona, pero los seudónimos que emite no
