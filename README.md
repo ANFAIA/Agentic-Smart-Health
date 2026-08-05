@@ -242,14 +242,21 @@ Cada Pull Request pasa por un **agente guardián de revisión estática** ejecut
 - `.github/workflows/ai-code-review.yml` — orquesta los chequeos, publica comentarios y decide el gate de merge.
 - `scripts/audit_pr.py` — auditor de arquitectura (AST, solo librería estándar).
 
+Dos de esos chequeos **bloquean el merge** y el resto solo comenta, por un motivo
+concreto: son los que producen daño que no se arregla con otro commit. La deriva
+documental (`docs_sync.py`) se convierte en verdad publicada en cuanto se mergea, y
+un dato ajeno (`data_guard.py`) entra en la historia de git y solo sale
+reescribiéndola — que es lo que costó la issue 45.
+
 Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 
 <!-- generado: scripts — no editar a mano -->
 | Script | Qué hace |
 |---|---|
 | [`scripts/ablacion_recetas.py`](scripts/ablacion_recetas.py) | Ablación de la receta de entrenamiento: qué aporta cada pieza. |
-| [`scripts/audit_pr.py`](scripts/audit_pr.py) | Agentic Smart Health. |
+| [`scripts/audit_pr.py`](scripts/audit_pr.py) | Guardián de las reglas de arquitectura del monorepo. |
 | [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
+| [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
@@ -291,10 +298,16 @@ Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas 
 <!-- /generado: make -->
 
 `make install` activa además los **hooks de git** del repositorio
-(`git config core.hooksPath .githooks`). El de `pre-commit` regenera los bloques
-generados de la documentación —tablas de variables, scripts, comandos y registro de
-agentes— y los **añade al mismo commit**, para que la documentación viaje siempre
-con el cambio que la afecta. Solo toca lo que hay entre marcas: la prosa nunca.
+(`git config core.hooksPath .githooks`), y el de `pre-commit` hace dos cosas:
+
+- **Detiene el commit** si `data_guard.py` encuentra un dato ajeno en el stage
+  (un PDF, una malla, un binario grande). Es el único sitio donde eso sale barato:
+  una vez commiteado, sacarlo obliga a reescribir la historia.
+- **Regenera los bloques generados** de la documentación —tablas de variables,
+  scripts, comandos y registro de agentes— y los **añade al mismo commit**, para
+  que la documentación viaje siempre con el cambio que la afecta. Solo toca lo que
+  hay entre marcas: la prosa nunca.
+
 Si alguna vez estorba, `git commit --no-verify` se lo salta, y el CI seguirá
 avisando en la PR.
 

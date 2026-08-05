@@ -67,6 +67,13 @@ data/interim/*
 *.mnc
 *.img
 *.hdr
+# Mallas: las produce cualquier paso de Blender/VTK y son un derivado del dato
+# clínico igual que el volumen del que salen. `scripts/data_guard.py` comprueba
+# que estas reglas siguen vivas.
+*.stl
+*.obj
+*.glb
+*.gltf
 
 # -----------------------------------------------------------------------------
 # Jupyter Notebooks

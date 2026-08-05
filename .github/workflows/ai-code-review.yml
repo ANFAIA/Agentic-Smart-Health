@@ -91,6 +91,14 @@ jobs:
       - name: Docs drift check
         run: uv run python scripts/docs_sync.py --check
 
+      # --- Datos y licencias: que no entre dato ajeno al repositorio ---
+      # Tampoco lleva `continue-on-error`, y por un motivo más fuerte que el
+      # anterior: un binario mergeado ya no se quita: se reescribe la historia. La
+      # issue 45 costó exactamente eso (`git filter-repo` + force-push) por 156 MiB
+      # de PDF que nadie vio entrar. Esta comprobación es la que la habría evitado.
+      - name: Data & licence guard
+        run: uv run python scripts/data_guard.py --quiet
+
       # --- Arquitectura: reglas específicas del monorepo (Pydantic v2 / cross-app) ---
       - name: Architecture audit
         id: audit
