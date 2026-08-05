@@ -284,8 +284,10 @@ Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas 
 | Comando | Ejecuta |
 |---|---|
 | `make install` | `uv sync` |
+| `make hooks` | `git config core.hooksPath .githooks` |
 | `make test` | `uv run pytest` |
 | `make lint` | `uv run ruff check` |
+| `make docs` | `uv run python scripts/docs_sync.py --write` |
 <!-- /generado: make -->
 
 `make install` activa además los **hooks de git** del repositorio
