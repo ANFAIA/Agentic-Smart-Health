@@ -248,6 +248,41 @@ def revisar_agentes(ficheros: set[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# 4 · Lo que existe y nadie ha documentado (el sentido inverso)
+# --------------------------------------------------------------------------- #
+def revisar_inventario(ficheros: set[str]) -> list[str]:
+    """Que lo citado exista es media verdad; la otra media es que lo que existe se cite.
+
+    Un notebook nuevo que nadie añade al índice es invisible: quien llega al
+    repositorio no sabe que está ahí. Es la deriva contraria a la del enlace roto y
+    no la detecta ninguna de las comprobaciones anteriores.
+    """
+    problemas = []
+    indice = (REPO / "notebooks" / "README.md").read_text(encoding="utf-8")
+    for ruta in sorted(f for f in ficheros if f.startswith("notebooks/") and f.endswith(".ipynb")):
+        if Path(ruta).name not in indice:
+            problemas.append(
+                f"`{ruta}` existe y el índice de notebooks no lo menciona. "
+                "Un notebook sin entrada en el índice es un notebook que nadie encuentra."
+            )
+
+    # Vale con que esté documentado en ALGUNA página: `fetch_teeth3ds.sh` se explica
+    # en la nota de su dataset y no en el README, y eso es correcto.
+    documentacion = "\n".join(
+        (REPO / f).read_text(encoding="utf-8") for f in ficheros if f.endswith(".md")
+    )
+    for ruta in sorted(
+        f for f in ficheros if f.startswith("scripts/") and f.endswith((".py", ".sh"))
+    ):
+        if ruta not in documentacion:
+            problemas.append(
+                f"`{ruta}` existe y no se menciona en ninguna página de documentación. "
+                "Una utilidad que nadie documenta la acaba reescribiendo otro."
+            )
+    return problemas
+
+
+# --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -263,6 +298,7 @@ def main() -> int:
         ("variables de entorno", lambda: revisar_env(ficheros, args.write)),
         ("rutas citadas", lambda: revisar_rutas(ficheros)),
         ("registro de agentes", lambda: revisar_agentes(ficheros)),
+        ("inventario documentado", lambda: revisar_inventario(ficheros)),
     ):
         fallos = revision()
         estado = "✗" if fallos else "✓"

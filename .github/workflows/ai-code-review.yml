@@ -84,9 +84,12 @@ jobs:
       # Aquí y no en el workflow de tests a propósito: la deriva documental no
       # rompe nada en ejecución, así que lo que hay que impedir es que llegue a la
       # rama por defecto — y eso se decide en la PR, que es donde corre este job.
+      # Sin `continue-on-error`: esto SI bloquea. Un enlace roto o un agente sin
+      # ficha no rompen la ejecucion, pero se convierten en verdad publicada en
+      # cuanto se mergea, y desmentirlos despues cuesta mucho mas que arreglarlos
+      # ahora. `uv run python scripts/docs_sync.py --write` regenera lo generable.
       - name: Docs drift check
         run: uv run python scripts/docs_sync.py --check
-        continue-on-error: true
 
       # --- Arquitectura: reglas específicas del monorepo (Pydantic v2 / cross-app) ---
       - name: Architecture audit
