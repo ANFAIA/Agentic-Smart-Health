@@ -24,11 +24,12 @@ haría pasar en tu máquina algo que en CI falla.
 
 Tres comprobaciones, las tres derivadas de fallos que ya ocurrieron:
 
-| # | Comprueba | Fallo que habría cazado |
-|---|---|---|
-| `env` | variables leídas por el código ↔ `.env.example` ↔ README | `OPENAI_API_KEY` declarada y sin leer |
-| `rutas` | ficheros citados en la documentación ↔ ficheros versionados | el README citando el notebook 08 eliminado |
-| `agentes` | atributos `name` de las clases ↔ registro de `AGENTS.md` | un agente implementado y sin ficha |
+- `env`: variables leídas por el código ↔ `.env.example` ↔ README.
+  Habría cazado el `OPENAI_API_KEY` declarado que no leía nadie.
+- `rutas`: ficheros citados en la documentación ↔ ficheros versionados.
+  Habría cazado el README citando un notebook ya eliminado.
+- `agentes`: atributos `name` de las clases ↔ registro de `AGENTS.md`.
+  Habría cazado un agente implementado y sin ficha.
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ MARCA_FIN = "<!-- /generado: env-vars -->"
 
 
 def versionados() -> set[str]:
-    salida = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True,
-                            text=True, check=True).stdout
+    salida = subprocess.run(
+        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout
     return set(salida.splitlines())
 
 
@@ -67,8 +69,11 @@ def _constantes(arbol: ast.Module) -> dict[str, str]:
     """`_PSEUDONYM_SALT_ENV = "ASH_PSEUDONYM_SALT"` — para resolver la indirección."""
     fuera = {}
     for nodo in arbol.body:
-        if isinstance(nodo, ast.Assign) and isinstance(nodo.value, ast.Constant) \
-                and isinstance(nodo.value.value, str):
+        if (
+            isinstance(nodo, ast.Assign)
+            and isinstance(nodo.value, ast.Constant)
+            and isinstance(nodo.value.value, str)
+        ):
             for destino in nodo.targets:
                 if isinstance(destino, ast.Name):
                     fuera[destino.id] = nodo.value.value
@@ -97,8 +102,9 @@ def leidas_por_el_codigo(ficheros: set[str]) -> dict[str, tuple[str, str | None]
             if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Attribute):
                 atributo = nodo.func.attr
                 objetivo = ast.unparse(nodo.func.value)
-                if (atributo == "getenv" and objetivo == "os") or \
-                        (atributo == "get" and objetivo == "os.environ"):
+                if (atributo == "getenv" and objetivo == "os") or (
+                    atributo == "get" and objetivo == "os.environ"
+                ):
                     if nodo.args:
                         var = _nombre_var(nodo.args[0], constantes)
                     if len(nodo.args) > 1 and isinstance(nodo.args[1], ast.Constant):
@@ -131,12 +137,14 @@ def revisar_env(ficheros: set[str], escribir: bool) -> list[str]:
     for var in sorted(declaradas - set(leidas)):
         problemas.append(
             f".env.example declara `{var}` y no la lee nadie. "
-            "O la lee alguien y no lo hemos visto, o sobra en el fichero de ejemplo.")
+            "O la lee alguien y no lo hemos visto, o sobra en el fichero de ejemplo."
+        )
     for var, (fichero, _) in sorted(leidas.items()):
         if var not in declaradas:
             problemas.append(
                 f"`{fichero}` lee `{var}` y `.env.example` no la documenta. "
-                "Quien clone el repositorio no puede saber que existe.")
+                "Quien clone el repositorio no puede saber que existe."
+            )
 
     readme = REPO / "README.md"
     texto = readme.read_text(encoding="utf-8")
@@ -150,7 +158,8 @@ def revisar_env(ficheros: set[str], escribir: bool) -> list[str]:
             else:
                 problemas.append(
                     "La tabla de variables del README no coincide con el código. "
-                    "Regenérala: `uv run python scripts/docs_sync.py --write`")
+                    "Regenérala: `uv run python scripts/docs_sync.py --write`"
+                )
     return problemas
 
 
@@ -194,7 +203,8 @@ def revisar_rutas(ficheros: set[str]) -> list[str]:
                 if destino not in ficheros:
                     problemas.append(
                         f"{doc}:{numero} cita `{cita}`, que no está versionado. "
-                        "O se borró y la referencia quedó colgando, o falta añadirlo.")
+                        "O se borró y la referencia quedó colgando, o falta añadirlo."
+                    )
     return problemas
 
 
@@ -213,9 +223,13 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, str]:
             if not (isinstance(nodo, ast.ClassDef) and nodo.name.endswith("Agent")):
                 continue
             for cuerpo in nodo.body:
-                if isinstance(cuerpo, ast.Assign) and isinstance(cuerpo.value, ast.Constant) \
-                        and any(isinstance(t, ast.Name) and t.id == "name" for t in cuerpo.targets) \
-                        and isinstance(cuerpo.value.value, str):
+                if not (
+                    isinstance(cuerpo, ast.Assign)
+                    and isinstance(cuerpo.value, ast.Constant)
+                    and isinstance(cuerpo.value.value, str)
+                ):
+                    continue
+                if any(isinstance(t, ast.Name) and t.id == "name" for t in cuerpo.targets):
                     fuera[cuerpo.value.value] = ruta
     return fuera
 
@@ -228,14 +242,16 @@ def revisar_agentes(ficheros: set[str]) -> list[str]:
         if nombre not in registrados:
             problemas.append(
                 f"`{ruta}` implementa el agente `{nombre}` y AGENTS.md no lo registra. "
-                "El registro es el contrato: un agente sin ficha es invisible para el resto.")
+                "El registro es el contrato: un agente sin ficha es invisible para el resto."
+            )
     return problemas
 
 
 # --------------------------------------------------------------------------- #
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     modo = ap.add_mutually_exclusive_group(required=True)
     modo.add_argument("--check", action="store_true", help="Falla si hay deriva (para CI).")
     modo.add_argument("--write", action="store_true", help="Regenera los bloques generados.")
@@ -243,13 +259,14 @@ def main() -> int:
 
     ficheros = versionados()
     problemas: list[str] = []
-    for nombre, revision in (("variables de entorno", lambda: revisar_env(ficheros, args.write)),
-                             ("rutas citadas", lambda: revisar_rutas(ficheros)),
-                             ("registro de agentes", lambda: revisar_agentes(ficheros))):
+    for nombre, revision in (
+        ("variables de entorno", lambda: revisar_env(ficheros, args.write)),
+        ("rutas citadas", lambda: revisar_rutas(ficheros)),
+        ("registro de agentes", lambda: revisar_agentes(ficheros)),
+    ):
         fallos = revision()
         estado = "✗" if fallos else "✓"
-        print(f"{estado} {nombre}: {len(fallos) or 'sin deriva'}"
-              f"{' problema(s)' if fallos else ''}")
+        print(f"{estado} {nombre}: {len(fallos) or 'sin deriva'}{' problema(s)' if fallos else ''}")
         problemas += fallos
 
     if not problemas:
