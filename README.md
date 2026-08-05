@@ -2,6 +2,8 @@
 
 Sistema multiagente para la integración, análisis y representación de datos clínicos dentales heterogéneos sobre un **Digital Twin** del paciente, basado en Gaussian Splatting con atributos clínicos por punto/zona y soporte de series temporales.
 
+[![tests](https://github.com/ANFAIA/Agentic-Smart-Health/actions/workflows/tests.yml/badge.svg)](https://github.com/ANFAIA/Agentic-Smart-Health/actions/workflows/tests.yml)
+
 > Proyecto open source · Licencia Apache 2.0 · Python ≥ 3.13
 
 ---
@@ -62,7 +64,12 @@ vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://gi
 repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
 (color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
 
-**Cobertura**: **166 tests** en verde.
+**Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
+el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
+esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
+que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, así
+que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
+ningún número a mano: los recuentos manuales envejecen solos.
 
 **Todavía no**: fusión multimodal (registrar y combinar CBCT + STL + foto), color
 **per-píxel** (registro foto↔malla — probado, no converge barato sin calibración),
@@ -99,8 +106,8 @@ agentic-smart-health/          ← workspace root
 ├── data/
 │   └── research-agent/        ← knowledge base del agente de investigación
 ├── docs/                      ← documentación (ver nota más abajo)
-├── notebooks/                 ← experimentación y exploración (01–08)
-├── tests/                     ← suite de pruebas global (166 tests)
+├── notebooks/                 ← experimentación y exploración (01–07)
+├── tests/                     ← suite de pruebas global
 ├── scripts/                   ← utilidades: render Blender, auditor de PRs, fetch de datasets
 └── .github/
     └── workflows/             ← CI: agente de revisión de código (ai-code-reviewer)
@@ -288,7 +295,21 @@ Copia el archivo de ejemplo y configura las variables necesarias:
 cp .env.example .env
 ```
 
-Consulta `.env.example` para ver las variables requeridas (claves de API para modelos de IA, configuración de servicios, etc.).
+`.env.example` documenta **solo las variables que el código lee de verdad**, con
+quién las usa y qué pasa si no se definen:
+
+| Variable | Quién la lee | Sin definir |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `research-agent` (modo Claude) y `report-agent` | esos modos no arrancan; el modo local con Ollama sí |
+| `RESEARCH_AGENT_MODEL` | `research-agent` | usa el modelo por defecto del CLI |
+| `RESEARCH_AGENT_LOCAL_MODEL` · `OLLAMA_HOST` | `research-agent` (modo local) | `qwen2.5:7b` en `http://localhost:11434` |
+| `QDRANT_PATH` | motor RAG del `research-agent` | `data/research-agent/.qdrant_data/` |
+| `ASH_PSEUDONYM_SALT` | `cbct-agent` (seudonimización) | **sal de desarrollo**, no apta para datos reales |
+
+Ninguna hace falta para ejecutar `make test`. La sal de seudónimo es la única que
+es un **secreto**: sin ella el pipeline funciona, pero los seudónimos que emite no
+sirven para datos de pacientes — y si cambia después, dejan de coincidir con los ya
+emitidos.
 
 ---
 
