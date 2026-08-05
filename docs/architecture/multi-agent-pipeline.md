@@ -264,7 +264,7 @@ contrato y con `Provenance` propia. Se registran como **stubs `planned`** en
 | Agente (stub) | Rol | Entrada → salida | Human-in-the-loop |
 |---|---|---|---|
 | `segmentation-agent` | Segmentación anatómica: asigna `region_id` (FDI) a las gaussianas | `TwinSnapshot` geométricamente fusionado (sin etiquetas FDI) → snapshot con `region_id` poblado | revisión si afecta a diagnóstico |
-| `pathology-agent` | Detección de patologías a partir de densidad/color/geometría | `TwinSnapshot` → `RegionalObservation` con hallazgos | **sí** (decisión clínica sensible) |
+| `pathology-agent` | Señala posibles patologías (densidad/color/geometría) como hallazgos candidatos para revisión | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **sí** (clínicamente sensible) |
 | `clinical-poc-agent` (PoC) | Métrica visual básica: inflamación por color de encía y espacio encía-diente | `TwinSnapshot` → reporte de texto (log) | sí |
 
 > **`segmentation-agent` produce el ancla FDI que la fusión semántica necesita.** Lo
@@ -274,6 +274,14 @@ contrato y con `Provenance` propia. Se registran como **stubs `planned`** en
 > crítico —hoy sin asentar—, la segmentación podría correr directamente sobre el CBCT.
 > El resto de agentes de análisis (p. ej. `pathology-agent`) operan sobre el snapshot
 > ya fusionado.
+
+> **Marco clínico/regulatorio.** El `pathology-agent` —y cualquier medida clínicamente
+> sensible, p. ej. el **fenotipo periodontal** (distancia encía↔hueso) desde la fusión
+> escáner+CBCT— produce **hallazgos/medidas candidatos para revisión del clínico**, no
+> diagnósticos. Con Human-in-the-loop + `Provenance`, es **uso investigacional /
+> demostrador** y queda **fuera de producto sanitario** (MDR / FDA). Declararlo
+> "diagnóstico" o usarlo para la decisión clínica lo convertiría en dispositivo
+> regulado, fuera del alcance de esta fase.
 
 ---
 

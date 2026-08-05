@@ -12,9 +12,8 @@ Los **01–06** corren sobre **Teeth3DS+ completo** (`data/raw/teeth3ds/`, **300
 pacientes / 600 escaneos / ~70 M vértices etiquetados**, 7,3 GiB, gitignored — ver
 [nota del dataset](../docs/research/dataset-teeth3ds.md)): usan un caso de referencia
 fijo (`01A6GW4A_lower`) para reproducibilidad, pero **ejercitan además el dataset
-entero** (barridos con semilla fija). Los experimentos **07** (Bite2Text: escáner +
-fotos + informe) y **08** (ToothFairy: CBCT) corren sobre sus propios datasets, con
-escáner/CBCT **reales**.
+entero** (barridos con semilla fija). El experimento **07** (Bite2Text: escáner +
+fotos + informe) corre sobre su propio dataset, con escáner **real**.
 
 | Notebook | Qué se validó exactamente | Escala | GPU |
 |---|---|---|---|
@@ -25,7 +24,6 @@ escáner/CBCT **reales**.
 | **05** | Variante **densa** del 03: misma generación de vistas + poses con **rejilla más fina (528 vistas/caso)** · salida en `data/processed/teeth3ds-dense/` | 528 vistas · 20 casos | No |
 | **06** | Variante **densa** del 04: entrena sobre los paquetes de 528 vistas del **05**, con **semilla fija** · evalúa en vistas retenidas → contrato | 8 casos entrenados | **Sí** |
 | **07** | **Bite2Text** (escáner real): **STL** → `mesh-agent` + **color de las fotos** (`image-agent`, sin EXIF) → **Blender** (EEVEE) → **3DGS** (SSIM) → `.ply` del visor | 1 caso · 1600 vistas · holdout 31,5 dB | **Sí** |
-| **08** | **ToothFairy** (CBCT): **DICOM → STL** (marching cubes) → Blender → 3DGS. Experimento aparte (`experiments/`), con su muro de registro | 1 cohorte | **Sí** |
 | **exercise** | **Segmentación FDI por punto → por diente** (Point Transformer/PyG) sobre Teeth3DS+ completo — prototipo del `segmentation-agent`; ablación multi-semilla y agregación a instancias | 600 mallas · 3 semillas | **Sí** |
 
 **No se ha probado (aún):** **fusión multimodal** real (CBCT + STL + foto en un mismo
@@ -330,24 +328,6 @@ densidad: [`docs/research/3dgs-adaptive-density-control.md`](../docs/research/3d
 ```bash
 # kernel/venv GPU dedicado (Blender debe estar en el PATH)
 ~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/07-bite2text-blender-3dgs.ipynb
-```
-
----
-
-## `08-toothfairy-cbct-blender-3dgs.ipynb` — CBCT → STL → Blender → 3DGS
-
-Experimento **aparte del sistema** (vive en `experiments/`, gitignored; ningún `app`
-lo importa, no está en `AGENTS.md`). Explora la otra modalidad: **CBCT** (cohorte
-**ToothFairy**) → superficie **STL** por *marching cubes* → Blender → 3DGS — la vía
-CBCT→campo que en el `07` falta (Bite2Text no trae CBCT).
-
-Estado honesto: es un **spike inconcluso**. Se topó con dos muros documentados en el
-README del propio experimento — el **registro** de las anotaciones de ToothFairy y un
-**bug de `packed` en `gsplat` 1.5.3**. Queda como exploración de la vía CBCT, no como
-resultado cerrado.
-
-```bash
-~/.venvs/dental-gpu/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/08-toothfairy-cbct-blender-3dgs.ipynb
 ```
 
 ---

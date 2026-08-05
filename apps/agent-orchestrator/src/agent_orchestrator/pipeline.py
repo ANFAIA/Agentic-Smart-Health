@@ -25,10 +25,12 @@ el GIL. Es lo que da margen al presupuesto de <60 s del brief.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from core_schemas import (
     Modality,
@@ -36,6 +38,12 @@ from core_schemas import (
     PatientDigitalTwin,
     Provenance,
     TwinSnapshot,
+)
+from fusion_agents import (
+    FusionOutput,
+    GeometricFusionAgent,
+    SemanticFusionAgent,
+    insert_snapshot,
 )
 from ingestion_agents import (
     ArtifactStore,
@@ -100,6 +108,7 @@ class PipelineResult:
 
     snapshot: TwinSnapshot | None
     outcomes: list[IngestionOutput] = field(default_factory=list)
+    fusion: list[FusionOutput] = field(default_factory=list)
     hitl_reasons: list[str] = field(default_factory=list)
     latency_s: float = 0.0
     patient_pseudonym: str = ""
@@ -145,6 +154,14 @@ class IngestionPipeline:
             ),
             Modality.IMAGE: ImageAgent(store, quarantine_dir=quarantine_dir),
         }
+        # La fusión no es una modalidad: son etapas posteriores que enriquecen el
+        # snapshot ya ensamblado (ADR 004). Por eso viven aparte del dict de ingesta.
+        self.geometric_fusion = GeometricFusionAgent(
+            hitl_threshold=hitl_threshold, quarantine_dir=quarantine_dir
+        )
+        self.semantic_fusion = SemanticFusionAgent(
+            hitl_threshold=hitl_threshold, quarantine_dir=quarantine_dir
+        )
 
     # --- ejecución ------------------------------------------------------- #
     def run(self, case: CaseInput) -> PipelineResult:
@@ -191,11 +208,73 @@ class IngestionPipeline:
             patient_pseudonym=pseudonym,
         )
 
+    # --- fusión (ADR 004) ------------------------------------------------ #
+    def fuse(
+        self,
+        result: PipelineResult,
+        *,
+        registration: tuple[Any, Any] | None = None,
+        detected: Mapping[str, float] | None = None,
+    ) -> PipelineResult:
+        """Aplica las etapas de fusión sobre un resultado de ingesta.
+
+        Cada etapa corre **solo si se le da su entrada**, y en el orden del pipeline:
+        geométrica (registro malla↔CBCT) antes que semántica (anclaje al FDI). Entre
+        ambas va la segmentación, que todavía no existe como agente — por eso
+        `detected` se pasa desde fuera en vez de calcularse aquí. Cuando el
+        `segmentation-agent` esté, este es el punto donde se enchufa.
+
+        Devuelve un `PipelineResult` **nuevo**: ni muta el de entrada ni el snapshot.
+
+        Si una etapa falla, se registra su `FusionOutput`, se añade el motivo a
+        `hitl_reasons` y **se conserva el último snapshot bueno**. La fusión
+        enriquece; que falle no debe destruir lo que la ingesta sí consiguió.
+        """
+        snapshot, salidas, motivos = result.snapshot, [], []
+
+        if snapshot is not None and registration is not None:
+            origen, destino = registration
+            out = self.geometric_fusion.fuse(snapshot, source=origen, target=destino)
+            salidas.append(out)
+            motivos += self._fusion_reasons(out)
+            snapshot = out.snapshot or snapshot
+
+        if snapshot is not None and detected is not None:
+            out = self.semantic_fusion.fuse(snapshot, detected=detected)
+            salidas.append(out)
+            motivos += self._fusion_reasons(out)
+            snapshot = out.snapshot or snapshot
+
+        return replace(
+            result,
+            snapshot=snapshot,
+            fusion=[*result.fusion, *salidas],
+            hitl_reasons=[*result.hitl_reasons, *motivos],
+        )
+
+    def _fusion_reasons(self, out: FusionOutput) -> list[str]:
+        """Los motivos del agente, más el de que la etapa no llegara a hacerse.
+
+        Igual que en ingesta: el agente reporta, la decisión de parar vive aquí.
+        """
+        if out.status is ModalityStatus.FAILED:
+            return [f"{out.agent} falló: {out.detail}"]
+        if out.status is ModalityStatus.MISSING:
+            return [f"{out.agent} no pudo fusionar: {out.detail}"]
+        return list(out.hitl_reasons)
+
     def run_into_twin(
-        self, case: CaseInput, twin: PatientDigitalTwin | None = None
+        self,
+        case: CaseInput,
+        twin: PatientDigitalTwin | None = None,
+        *,
+        registration: tuple[Any, Any] | None = None,
+        detected: Mapping[str, float] | None = None,
     ) -> tuple[PatientDigitalTwin, PipelineResult]:
-        """Ingiere y añade el snapshot a la serie temporal del paciente."""
+        """Ingiere, fusiona si hay con qué, y encaja el snapshot en la serie."""
         result = self.run(case)
+        if registration is not None or detected is not None:
+            result = self.fuse(result, registration=registration, detected=detected)
         if twin is None:
             twin = PatientDigitalTwin(patient_id=result.patient_pseudonym)
         if twin.patient_id != result.patient_pseudonym:
@@ -204,7 +283,11 @@ class IngestionPipeline:
                 f"{result.patient_pseudonym} != {twin.patient_id}"
             )
         if result.snapshot is not None:
-            twin.snapshots.append(result.snapshot)
+            # `insert_snapshot` y no `append`: la identidad de visita es el
+            # `acquisition_id`, así que reprocesar la misma adquisición REEMPLAZA.
+            # Con `append`, cada reejecución inflaba el historial clínico con una
+            # visita que nunca ocurrió (ADR 004 §2.5 · issue #33).
+            twin = insert_snapshot(twin, result.snapshot)
         return twin, result
 
     # --- ensamblado del contrato ----------------------------------------- #

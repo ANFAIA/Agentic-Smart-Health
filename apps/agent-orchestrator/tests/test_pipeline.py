@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 from agent_orchestrator import LATENCY_BUDGET_S, CaseInput, IngestionPipeline
 from core_schemas import Modality, ModalityStatus, PatientDigitalTwin, TwinSnapshot
@@ -332,3 +333,116 @@ def test_una_foto_rota_no_tumba_las_demas(
     assert len(result.snapshot.image_refs) == 2  # solo las buenas
     assert any(o.status is ModalityStatus.FAILED for o in result.image_outcomes)
     assert result.hitl_required  # la foto fallida dispara el gate
+
+
+# --- fusión enganchada al orquestador (ADR 004) ----------------------------- #
+def _nube(n: int = 200) -> np.ndarray:
+    rng = np.random.default_rng(0)
+    return rng.normal(0.0, 10.0, (n, 3)) * np.array([1.0, 0.6, 0.3])
+
+
+def test_sin_entradas_de_fusion_el_resultado_no_cambia(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`run()` sigue siendo solo ingesta: la fusión no se cuela sin pedirla."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    assert result.fusion == []
+    assert result.snapshot.provenance.transform is None
+
+
+def test_la_fusion_geometrica_deja_la_transformacion(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    nube = _nube()
+    fusionado = pipeline.fuse(result, registration=(nube, nube))
+
+    assert len(fusionado.fusion) == 1
+    assert fusionado.snapshot.provenance.transform is not None
+    assert fusionado.snapshot.provenance.confidence == pytest.approx(1.0)
+
+
+def test_la_fusion_semantica_ancla_las_observaciones(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fdi = {o.region_id: 0.95 for o in result.snapshot.regional}
+    fusionado = pipeline.fuse(result, detected=fdi)
+
+    assert fusionado.snapshot.provenance.agent.startswith("semantic-fusion-agent")
+    assert not fusionado.hitl_required
+
+
+def test_el_conflicto_de_fdi_llega_al_gate_del_orquestador(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """La cadena completa: el agente marca con confianza 0 y el orquestador lo eleva."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, detected={"99": 0.9})  # ningún FDI del informe
+
+    assert fusionado.hitl_required
+    assert any("segmentación no lo encontró" in m for m in fusionado.hitl_reasons)
+
+
+def test_las_dos_etapas_corren_en_el_orden_del_pipeline(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    nube = _nube()
+    fdi = {o.region_id: 0.95 for o in result.snapshot.regional}
+    fusionado = pipeline.fuse(result, registration=(nube, nube), detected=fdi)
+
+    agentes = [o.agent for o in fusionado.fusion]
+    assert agentes[0].startswith("geometric-fusion-agent")
+    assert agentes[1].startswith("semantic-fusion-agent")
+    # La transformación de la etapa 1 sobrevive a la etapa 2.
+    assert fusionado.snapshot.provenance.transform is not None
+
+
+def test_fuse_no_muta_el_resultado_de_entrada(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    antes = result.snapshot.model_dump_json()
+    pipeline.fuse(result, registration=(_nube(), _nube()))
+    assert result.fusion == []
+    assert result.snapshot.model_dump_json() == antes
+
+
+def test_un_fallo_de_fusion_conserva_el_snapshot_de_ingesta(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """La fusión enriquece: que falle no destruye lo que la ingesta sí consiguió."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+
+    def registrador_roto(source, target):
+        raise RuntimeError("boom")
+
+    pipeline.geometric_fusion.registrar = registrador_roto
+    fusionado = pipeline.fuse(result, registration=(_nube(), _nube()))
+
+    assert fusionado.snapshot is not None
+    assert fusionado.hitl_required
+    assert any("falló" in m for m in fusionado.hitl_reasons)
+
+
+def test_reprocesar_la_misma_adquisicion_no_duplica_la_visita(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """ADR 004 §2.5 · issue #33: la identidad de visita es el `acquisition_id`."""
+    caso = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    twin, _ = pipeline.run_into_twin(caso)
+    twin, _ = pipeline.run_into_twin(
+        CaseInput.from_case_dir(case_dir, patient_id="PAC-001"), twin
+    )
+    assert len(twin.snapshots) == 1
+
+
+def test_run_into_twin_acepta_las_entradas_de_fusion(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    caso = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    nube = _nube()
+    twin, result = pipeline.run_into_twin(caso, registration=(nube, nube))
+    assert twin.snapshots[0].provenance.transform is not None
+    assert len(result.fusion) == 1

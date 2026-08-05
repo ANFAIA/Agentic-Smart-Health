@@ -141,6 +141,23 @@ Agente de investigación autónomo que busca, ingerir y resume literatura cient�
 - `uv run python -m src.main` — Claude con tool calling nativo (requiere API key)
 - `uv run python -m src.main_local` — Ollama local (gratis, 100% privado)
 
+**Corpus de partida.** Los PDF de referencia **no están en el repositorio**: son
+binarios de terceros y la licencia de buena parte de ellos no permite
+redistribuirlos. Lo que se versiona es el inventario
+([`manifest.yaml`](data/research-agent/knowledge_base/manifest.yaml): título, DOI o
+arXiv ID, URL y licencia verificada en origen de cada documento). Para
+materializarlos:
+
+```bash
+uv run python scripts/fetch_knowledge_base.py          # baja lo que falte
+uv run python scripts/fetch_knowledge_base.py --check  # solo comprueba
+```
+
+Un par de editores (Wiley, AAAI) no sirven el PDF a un script: esos quedan como
+descarga manual y el comando imprime el enlace. El agente funciona sin corpus —
+`search_references` descubre literatura nueva—, pero `read_directory` e `index`
+no encontrarán nada hasta que se ejecute.
+
 **Estructura:**
 - `src/main.py` — Orquestador CLI con Claude
 - `src/main_local.py` — Variante local con Ollama
@@ -175,9 +192,8 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
 (no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
 decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
-tres datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
-CC-BY), **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA) y **ToothFairy**
-(08, CBCT). Todos gitignored.
+dos datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
+CC-BY) y **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA). Ambos gitignored.
 
 | Notebook | Qué valida | Dataset | GPU |
 |---|---|---|---|
@@ -188,7 +204,6 @@ CC-BY), **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA) y **ToothFairy
 | `05` | Vistas sintéticas **densas** (528/caso) — rejilla más fina que `03` | Teeth3DS+ | No |
 | `06` | 3DGS **denso** con la receta de referencia (SSIM + densificación/poda, armónicos g2) | Teeth3DS+ | Sí |
 | `07` | **Escáner real → Blender (EEVEE) → 3DGS**, con **color de las fotos** (`image-agent`) y pérdida SSIM · 1600 vistas · holdout 31,5 dB | Bite2Text | Sí |
-| `08` | **CBCT → STL → Blender → 3DGS** (experimento aparte, con su muro de registro) | ToothFairy | Sí |
 
 Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
 El notebook `07` es el que integra los **agentes de ingesta** (`mesh` + `report` +

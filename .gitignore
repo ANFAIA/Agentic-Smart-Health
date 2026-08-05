@@ -118,6 +118,14 @@ temp/
 # -----------------------------------------------------------------------------
 # Qdrant vector database (research-agent)
 # -----------------------------------------------------------------------------
+# La knowledge base del research-agent: PDF de terceros. 156 MiB, y 9 de los 17
+# con licencia que NO permite redistribuirlos (arXiv perpetual, actas de AAAI,
+# CC BY-NC-ND, informes sin licencia). Lo que se versiona es el inventario
+# (`manifest.yaml`); los ficheros se materializan con
+# `uv run python scripts/fetch_knowledge_base.py`.
+data/research-agent/knowledge_base/*
+!data/research-agent/knowledge_base/.gitkeep
+!data/research-agent/knowledge_base/manifest.yaml
 data/research-agent/.qdrant_data/
 
 # -----------------------------------------------------------------------------
@@ -132,7 +140,12 @@ data/research-agent/.qdrant_data/
 .claude/settings.local.json
 
 # -----------------------------------------------------------------------------
-# experimento
+# Trabajo exploratorio que NO se publica
 # -----------------------------------------------------------------------------
+# Estas reglas tienen que quedarse aunque no haya nada en el arbol: son lo que
+# impide que un `git add .` suba material derivado de datasets cuya licencia no
+# permite redistribuirlo (o cuya descarga exige aceptar un acuerdo de uso). Los
+# hallazgos que sí son publicables viven en docs/research/, escritos como texto.
 experiments/
-notebooks/08-toothfairy-cbct-blender-3dgs.ipynb
+notebooks/08-*.ipynb
+.gstack/
