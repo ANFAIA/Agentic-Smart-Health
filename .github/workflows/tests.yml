@@ -1,0 +1,86 @@
+name: tests
+
+# Ejecuta la suite completa y exige el umbral de cobertura del proyecto.
+#
+# Existe para que el estado de las pruebas sea un hecho verificable y no un
+# numero escrito a mano en el README: el badge lo publica esta ejecucion, asi que
+# si la suite se rompe el README lo dice solo. El umbral (`fail_under`) vive en
+# `pyproject.toml` para que `uv run pytest --cov` mida en local lo mismo que aqui.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Un push nuevo sobre la misma rama cancela la ejecucion anterior: el resultado
+  # que importa es el del ultimo commit, no el de una carrera ya obsoleta.
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # `--cov` sin argumentos toma `source`, `omit` y `fail_under` de
+      # pyproject.toml. Si la cobertura cae por debajo del umbral, pytest sale con
+      # codigo distinto de cero y el job falla: es una puerta, no un informe.
+      - name: Run tests with coverage
+        run: uv run pytest --cov --cov-report=term --cov-report=xml
+
+      # El resumen queda en la pestaña del run, sin tener que abrir los logs.
+      - name: Coverage summary
+        if: always()
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          fichero = Path("coverage.xml")
+          if not fichero.exists():
+              print("La suite no llego a generar informe de cobertura.")
+              raise SystemExit(0)
+
+          raiz = ET.parse(fichero).getroot()
+          total = float(raiz.get("line-rate", 0)) * 100
+          print(f"## Cobertura: {total:.1f}%\n")
+          print("| Fichero | Cobertura |")
+          print("|---|---:|")
+          filas = [
+              (clase.get("filename"), float(clase.get("line-rate", 0)) * 100)
+              for paquete in raiz.iter("package")
+              for clase in paquete.iter("class")
+          ]
+          for nombre, pct in sorted(filas, key=lambda f: f[1])[:10]:
+              print(f"| `{nombre}` | {pct:.0f}% |")
+          if len(filas) > 10:
+              print(f"\n_Los 10 con menos cobertura, de {len(filas)} ficheros._")
+          PY
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore

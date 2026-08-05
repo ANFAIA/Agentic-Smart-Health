@@ -2,6 +2,8 @@
 
 Sistema multiagente para la integración, análisis y representación de datos clínicos dentales heterogéneos sobre un **Digital Twin** del paciente, basado en Gaussian Splatting con atributos clínicos por punto/zona y soporte de series temporales.
 
+[![tests](https://github.com/ANFAIA/Agentic-Smart-Health/actions/workflows/tests.yml/badge.svg)](https://github.com/ANFAIA/Agentic-Smart-Health/actions/workflows/tests.yml)
+
 > Proyecto open source · Licencia Apache 2.0 · Python ≥ 3.13
 
 ---
@@ -62,8 +64,12 @@ vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://gi
 repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
 (color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
 
-**Cobertura**: la suite completa en verde (`make test`). El número exacto no se
-fija aquí a propósito: se saca del CI, que es el que no se queda viejo.
+**Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
+el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
+esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
+que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, así
+que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
+ningún número a mano: los recuentos manuales envejecen solos.
 
 **Todavía no**: fusión multimodal (registrar y combinar CBCT + STL + foto), color
 **per-píxel** (registro foto↔malla — probado, no converge barato sin calibración),

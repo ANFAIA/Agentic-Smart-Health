@@ -30,6 +30,32 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["packages", "apps", "tests"]
 
+# --- Cobertura ------------------------------------------------------------- #
+# La configuracion vive aqui y NO en la linea de comandos del workflow, para que
+# `uv run pytest --cov` mida en local exactamente lo mismo que mide el CI. Un
+# umbral que solo existe en el CI es un umbral que se descubre cuando ya falla.
+[tool.coverage.run]
+source = [
+    "packages/core-schemas/src",
+    "packages/ingestion-agents/src",
+    "packages/fusion-agents/src",
+    "packages/tooth-aggregation/src",
+    "apps/agent-orchestrator/src",
+]
+# `research-agent` queda fuera a proposito y conviene que se sepa: es un CLI que
+# habla con un LLM y con Qdrant, no tiene pruebas hoy, e incluirlo hundiria el
+# porcentaje sin decir nada util sobre la calidad de los agentes y el pipeline
+# -- que es lo que el README se compromete a mantener por encima del 80%.
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+# El criterio de exito del proyecto (README): >80% en agentes y pipeline. Hoy la
+# medida real es del 96%, asi que este liston protege contra un desplome, no
+# contra un descuido. Subirlo a 90 es cambiar este numero y nada mas.
+fail_under = 80
+show_missing = true
+skip_covered = true
+
 [tool.uv.sources]
 agent-orchestrator = { workspace = true }
 core-schemas = { workspace = true }
