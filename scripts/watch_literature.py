@@ -60,35 +60,17 @@ _MAX_PDF_BYTES = 30 * 1024 * 1024
 # un cliente educado y uno bloqueado.
 _ESPERA = 3.0
 
-# Las consultas van aquí, en el código, y no en un fichero de configuración: son
-# cuatro líneas que se revisan en una PR como cualquier otro cambio de criterio.
-CONSULTAS: tuple[dict, ...] = (
-    {
-        "consulta": 'all:"Gaussian Splatting"',
-        "por_que": "El núcleo técnico del proyecto: 3DGS aplicado a la boca.",
-    },
-    {
-        "consulta": 'all:"CBCT" AND all:"segmentation"',
-        "por_que": "Segmentación de CBCT: alimenta el cbct-agent y la fusión.",
-    },
-    {
-        "consulta": 'all:"intraoral scan"',
-        "por_que": "Escaneo intraoral: entrada del mesh-agent y del registro malla↔volumen.",
-    },
-    {
-        "consulta": 'all:"digital twin" AND all:"patient"',
-        "por_que": "Gemelo digital del paciente: el marco del proyecto entero.",
-    },
-)
-
-# El filtro que hace esto usable: además de la consulta, título o resumen tienen que
-# nombrar el dominio. Sin esta puerta, «digital twin AND patient» propone modelos de
-# amígdala y gemelos cardiovasculares —medidos, no supuestos: fue el resultado de la
-# primera ejecución— y «Gaussian Splatting» trae conducción autónoma cada semana.
+# --------------------------------------------------------------------------- #
+# Las dos puertas
+# --------------------------------------------------------------------------- #
+# Filtrar solo por la consulta no basta: además, título o resumen tienen que nombrar
+# el ámbito. Sin puerta, «digital twin AND patient» propone modelos de amígdala y
+# gemelos cardiovasculares —medido, fue el resultado de la primera ejecución— y
+# «Gaussian Splatting» trae conducción autónoma cada semana.
 #
 # Con límites de palabra a propósito: buscar la subcadena "oral" acepta "temporal" y
 # "behavioral", que es la mitad de los abstracts de medicina.
-_DOMINIO = re.compile(
+_DENTAL = re.compile(
     r"\b(dental|dentist\w*|dentition|tooth|teeth|oral|intraoral|cbct|"
     r"maxillofacial|maxilla\w*|mandib\w*|orthodont\w*|periodont\w*|endodont\w*|"
     # `occlusal` sí, `occlusion` no: en visión por computador "occlusion-aware" está
@@ -97,6 +79,94 @@ _DOMINIO = re.compile(
     r"caries|gingiv\w*|occlusal|craniofacial|jaw|jaws)\b",
     re.IGNORECASE,
 )
+
+# La puerta de los estándares y la interoperabilidad, que NO puede ser la dental: un
+# artículo sobre perfiles FHIR o sobre preparación de datos DICOM casi nunca dice
+# «tooth». Medido el 2026-08-05 sobre 85 resultados de las tres consultas de abajo:
+# **cero** pasaban la puerta dental. Lo que se exige aquí es que el artículo hable del
+# formato o del estándar en sí, no de una patología que use ese formato.
+#
+# Se aplica **solo al título** (`ambito: "titulo"`), y eso no es un matiz: buscando
+# también en el resumen entraban un dataset de mieloma espinal, una herramienta de
+# planificación de válvula aórtica y un benchmark de MRI cerebral —todos mencionan
+# DICOM de pasada—. Un artículo que *va sobre* el estándar lo dice en el título.
+# Medido el 2026-08-05: con la puerta en el resumen entraban 5 de 12 falsos
+# positivos; con la puerta en el título, ninguno.
+#
+# `metadata` se dejó fuera a propósito: en un título de ML es demasiado común
+# («Metadata Supervised MRI Representations») y no implica estándar.
+_INTEROPERABILIDAD = re.compile(
+    r"\b(dicom|fhir|hl7|ihe|pacs|snomed|loinc|nifti|"
+    r"interoperab\w*|standard\w*|ontolog\w*|terminolog\w*|"
+    r"schema\w*|provenance|de-?identif\w*)\b",
+    re.IGNORECASE,
+)
+
+# Las consultas van aquí, en el código, y no en un fichero de configuración: son
+# siete entradas que se revisan en una PR como cualquier otro cambio de criterio.
+#
+# `puerta` es por consulta y no global. Lo fue, se simplificó a una puerta dental
+# única, y esa simplificación es exactamente lo que impedía cubrir los estándares:
+# el brief pide vigilar «Gaussian Splatting, DICOM, STL, interoperabilidad clínica»
+# y solo el primero es un tema dental.
+CONSULTAS: tuple[dict, ...] = (
+    {
+        "consulta": 'all:"Gaussian Splatting"',
+        "puerta": _DENTAL,
+        "ambito": "todo",
+        "por_que": "El núcleo técnico del proyecto: 3DGS aplicado a la boca.",
+    },
+    {
+        "consulta": 'all:"CBCT" AND all:"segmentation"',
+        "puerta": _DENTAL,
+        "ambito": "todo",
+        "por_que": "Segmentación de CBCT: alimenta el cbct-agent y la fusión.",
+    },
+    {
+        "consulta": 'all:"intraoral scan"',
+        "puerta": _DENTAL,
+        "ambito": "todo",
+        "por_que": "Escaneo intraoral: entrada del mesh-agent y del registro "
+        "malla↔volumen. Es también la vía por la que llegan los "
+        "artículos de mallas STL del dominio (ver nota al pie).",
+    },
+    {
+        "consulta": 'all:"digital twin" AND all:"patient"',
+        "puerta": _DENTAL,
+        "ambito": "todo",
+        "por_que": "Gemelo digital del paciente: el marco del proyecto entero.",
+    },
+    {
+        "consulta": 'all:"DICOM"',
+        "puerta": _INTEROPERABILIDAD,
+        "ambito": "titulo",
+        "por_que": "El formato de entrada del cbct-agent. Interesa lo que se "
+        "publica sobre el estándar y sobre preparación de datos, no "
+        "cada estudio clínico que lo use.",
+    },
+    {
+        "consulta": 'all:"FHIR" OR all:"HL7"',
+        "puerta": _INTEROPERABILIDAD,
+        "ambito": "titulo",
+        "por_que": "Interoperabilidad clínica: cómo viaja el dato del paciente "
+        "entre sistemas, que es el problema de silos que ataca el proyecto.",
+    },
+    {
+        "consulta": 'all:"medical imaging" AND all:"interoperability"',
+        "puerta": _INTEROPERABILIDAD,
+        "ambito": "titulo",
+        "por_que": "Interoperabilidad específica de imagen médica.",
+    },
+)
+
+# **Por qué NO hay una consulta de STL**, aunque el brief lo nombre. Se midió el
+# 2026-08-05: `all:"STL" AND all:"mesh"` devuelve 11 resultados y solo 1 es dental —
+# el resto es automoción y Lattice Boltzmann, porque STL es un acrónimo polisémico
+# (*Spatio-Temporal Learning*, *Standard Template Library*, estereolitografía
+# industrial). Y `all:"intraoral scan" AND all:"STL"` devuelve **0**. Los artículos
+# de mallas dentales llegan por la consulta de escaneo intraoral, que sí funciona.
+# Una consulta de STL metería ruido de otras disciplinas sin aportar un solo
+# artículo del dominio.
 
 # URI de licencia -> (nombre legible, se puede redistribuir). Los nombres coinciden
 # con los que ya usa el manifiesto para no inventar un vocabulario paralelo.
@@ -265,7 +335,12 @@ def main() -> int:
         for art in resultados:
             if art["base"] in conocidos or art["base"] in vistos:
                 continue
-            if not _DOMINIO.search(f"{art['titulo']} {art['resumen']}"):
+            ambito = (
+                art["titulo"]
+                if busqueda["ambito"] == "titulo"
+                else f"{art['titulo']} {art['resumen']}"
+            )
+            if not busqueda["puerta"].search(ambito):
                 continue
             try:
                 fecha = datetime.fromisoformat(art["publicado"].replace("Z", "+00:00"))
@@ -281,8 +356,25 @@ def main() -> int:
             pasan += 1
         print(f"· {busqueda['consulta']}: {len(resultados)} resultados, {pasan} nuevos y del tema")
 
+    # Reparto por consulta, no «los N más nuevos». Las consultas de estándares dan
+    # mucho más volumen que las dentales (medido: 13 y 8 frente a 5 y 1), así que
+    # ordenar por fecha y cortar dejaba una PR entera sin un solo artículo dental —
+    # justo el tema principal del proyecto. Se recorre por turnos: cada consulta
+    # aporta su más reciente, luego el segundo, hasta llenar el cupo.
+    por_consulta: dict[str, list[dict]] = {}
+    for art in sorted(candidatos, key=lambda a: a["publicado"], reverse=True):
+        por_consulta.setdefault(art["consulta"], []).append(art)
+
+    turnos, candidatos = list(por_consulta.values()), []
+    while turnos and len(candidatos) < args.max_nuevos:
+        for cola in list(turnos):
+            if not cola:
+                turnos.remove(cola)
+                continue
+            candidatos.append(cola.pop(0))
+            if len(candidatos) >= args.max_nuevos:
+                break
     candidatos.sort(key=lambda a: a["publicado"], reverse=True)
-    candidatos = candidatos[: args.max_nuevos]
 
     if not candidatos:
         print("\nNada nuevo que proponer.")

@@ -269,9 +269,17 @@ reescribiéndola — que es lo que costó la issue 45.
 
 El único trabajo **programado** del repositorio: cada lunes,
 [`scripts/watch_literature.py`](scripts/watch_literature.py) busca en arXiv lo
-publicado esa semana sobre 3DGS, CBCT, escaneo intraoral y gemelo digital, descarta
-lo que ya está en el manifiesto, **lee la licencia del OAI-PMH de arXiv** (no la
-supone) y abre una PR proponiendo las entradas nuevas.
+publicado esa semana, descarta lo que ya está en el manifiesto, **lee la licencia del
+OAI-PMH de arXiv** (no la supone) y abre una PR proponiendo las entradas nuevas.
+
+Siete consultas en dos ámbitos, con **puerta distinta cada uno**: las cuatro
+dentales (3DGS, segmentación CBCT, escaneo intraoral, gemelo digital) exigen un
+término del dominio en título o resumen; las tres de estándares (DICOM, FHIR/HL7,
+interoperabilidad en imagen médica) lo exigen **en el título**. La distinción está
+medida, no supuesta: un artículo de interoperabilidad clínica casi nunca dice
+«tooth», y uno que solo menciona DICOM de pasada no va sobre DICOM. El cupo de cada
+PR se reparte por turnos entre consultas, para que las de mayor volumen no dejen la
+propuesta sin un solo artículo dental.
 
 Reparto de trabajo deliberado: la máquina hace lo repetitivo y verificable —qué hay
 nuevo, bajo qué licencia—, y la persona que revisa la PR decide lo único que exige
