@@ -64,6 +64,13 @@ vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://gi
 repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
 (color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
 
+Lo que el contrato promete de **todos** los agentes por igual —los tres caminos
+(`OK`/`MISSING`/`FAILED`), no lanzar nunca, emitir `Provenance`, ser reproducible y
+no copiar dato clínico a la cuarentena— lo verifica una **suite de conformidad**
+([`test_conformidad.py`](packages/ingestion-agents/tests/test_conformidad.py))
+parametrizada sobre los cuatro agentes. Un agente nuevo entra en esa lista y queda
+sometido a las nueve reglas sin escribir un test.
+
 **Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
 el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
 esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
