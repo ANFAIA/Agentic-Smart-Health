@@ -63,6 +63,8 @@ Consulta en lenguaje natural del usuario (CLI interactivo), p. ej.:
   "Busca literatura reciente sobre 3DGS en imagen dental y resúmela."
 Corpus de partida (opcional): ficheros .pdf/.md/.txt en
   data/research-agent/knowledge_base/
+  Los PDF NO estan versionados (licencia de terceros): se materializan con
+  `uv run python scripts/fetch_knowledge_base.py` a partir de manifest.yaml
 ```
 
 **Outputs generados**

@@ -1,0 +1,194 @@
+# Knowledge base del research-agent — inventario, no almacen
+#
+# Los PDF NO viven en el repositorio: 156 MiB de binarios cuya licencia, en 8 de
+# los 17 casos, NO permite redistribuirlos (ver `redistribuible: false`). Aqui va
+# lo que si es nuestro y si se puede versionar: QUE documento es, DONDE esta el
+# original y BAJO QUE licencia. Para materializarlos:
+#
+#     uv run python scripts/fetch_knowledge_base.py
+#
+# `sha256` es el del ejemplar con el que se trabajo. Si el editor resube el PDF el
+# hash cambia sin que el documento cambie: el script avisa, no falla.
+#
+# Licencias verificadas en origen (arXiv OAI-PMH y Crossref), no supuestas.
+version: 1
+directorio: data/research-agent/knowledge_base
+documentos:
+  - fichero: "11525-AAAI26.DaiH-CV.pdf"
+    titulo: "DentalGS: Pose-Free 3D Gaussian Splatting from Five Intraoral Images for Novel View Synthesis"
+    anio: 2026
+    fuente: aaai
+    id: "AAAI-26 (paper 11525)"
+    url: "https://aaai.org/proceedings/"
+    licencia: "propietaria (AAAI)"
+    redistribuible: false
+    sha256: 75bcd8954bd0e2bdc6442cce862e682df9971ce9995504dafda2c8a14ecf1322
+    bytes: 9963878
+    nota: "Actas de AAAI: sin licencia abierta. Descarga manual desde la biblioteca de AAAI."
+  - fichero: "A Comprehensive Survey of Self-Evolving AI Agents_ A New Paradigm Bridging Foundation Models and Lifelong Agentic Systems - 2508.07407v2.pdf"
+    titulo: "A Comprehensive Survey of Self-Evolving AI Agents"
+    anio: 2025
+    fuente: arxiv
+    id: "2508.07407v2"
+    url: "https://arxiv.org/pdf/2508.07407v2"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 3934386b7f3c74bf46a8e8a719ca6109a1d03471ab6b5b97d301345a0896e268
+    bytes: 2153092
+  - fichero: "AI_in_Clear_Aligners_Research_Highlights.pdf"
+    titulo: "NTIRE 2026 Challenge on Robust AI-Generated Image Detection in the Wild"
+    anio: 2026
+    fuente: arxiv
+    id: "2604.11487v1"
+    url: "https://arxiv.org/pdf/2604.11487v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 4ff41fde7893abe625cb84aeae29a5ea1e78d4140a190aaff48791cbb4a010f1
+    bytes: 1547484
+    nota: "EL NOMBRE DEL FICHERO NO CORRESPONDE AL CONTENIDO: se llama 'AI in Clear Aligners' pero es el challenge NTIRE de deteccion de imagen generada. Nada que ver con ortodoncia."
+  - fichero: "AutoScientists_ Self-Organizing Agent Teams for Long-Running Scientific Experimentation - 2605.28655v1.pdf"
+    titulo: "AutoScientists: Self-Organizing Agent Teams for Long-Running Scientific Experimentation"
+    anio: 2026
+    fuente: arxiv
+    id: "2605.28655v1"
+    url: "https://arxiv.org/pdf/2605.28655v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: b3d7dbfaeb489db4254ac4e063d730f7dffaaf69808a871e4ba1e3907f53d997
+    bytes: 1387979
+  - fichero: "Current progress of digital twin construction using medical imaging.pdf"
+    titulo: "Current progress of digital twin construction using medical imaging"
+    anio: 2025
+    fuente: doi
+    id: "10.1002/acm2.70226"
+    url: "https://doi.org/10.1002/acm2.70226"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 761e9161b971056274cb99c5868119d71e8d3f2fa6779eff945170d14cdb2fef
+    bytes: 28424468
+    nota: "J. Applied Clinical Medical Physics. Wiley bloquea la descarga automatica (403): manual."
+  - fichero: "DentalSplat_ Dental Occlusion Novel View Synthesis from Sparse Intra-Oral Photographs - 2511.03099v1.pdf"
+    titulo: "DentalSplat: Dental Occlusion Novel View Synthesis from Sparse Intra-Oral Photographs"
+    anio: 2025
+    fuente: arxiv
+    id: "2511.03099v1"
+    url: "https://arxiv.org/pdf/2511.03099v1"
+    licencia: "CC BY-NC-ND 4.0"
+    redistribuible: false
+    sha256: c3e4a5d9bbd55146dcb40de28a0e92a6956a24cfaa85d3acae6cb1af97938a3f
+    bytes: 2543632
+    nota: "No comercial y SIN OBRAS DERIVADAS. Se descarga, no se redistribuye desde aqui."
+  - fichero: "Integration of Digital Twin Technology in Orthodontics_ A Scoping Review.pdf"
+    titulo: "Integration of Digital Twin Technology in Orthodontics: A Scoping Review"
+    anio: 2026
+    fuente: doi
+    id: "10.1155/ijod/3347380"
+    url: "https://doi.org/10.1155/ijod/3347380"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 899ebf79e4cd06617876017a46865f735bd1130ca3b2aa9a5ebada90a30c18a6
+    bytes: 16465590
+    nota: "International Journal of Dentistry. Wiley bloquea la descarga automatica (403): manual."
+  - fichero: "Multi-Agent Design_ Optimizing Agents with Better Prompts and Topologies - 2502.02533v2.pdf"
+    titulo: "Multi-Agent Design: Optimizing Agents with Better Prompts and Topologies"
+    anio: 2025
+    fuente: arxiv
+    id: "2502.02533v2"
+    url: "https://arxiv.org/pdf/2502.02533v2"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: a797d6f9f380763ce2fc08014a052095990ff3a0d64708aa49d37ff66a12744e
+    bytes: 1572330
+  - fichero: "Residual Gaussian Splatting for Ultra Sparse-View CBCT Reconstruction - 2604.27552v1.pdf"
+    titulo: "Residual Gaussian Splatting for Ultra Sparse-View CBCT Reconstruction"
+    anio: 2026
+    fuente: arxiv
+    id: "2604.27552v1"
+    url: "https://arxiv.org/pdf/2604.27552v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: f554e0a6b7e26c8efb2b677c8a930d4ba2441849322a0938c7d9862f8ea6df8d
+    bytes: 4325568
+    nota: "Referencia directa del ADR 001 7.1 (RGS: sigma >= 0, sin armonicos)."
+  - fichero: "faith_in_ai_2026.pdf"
+    titulo: "Faith in AI can narrow the futures individuals consider"
+    anio: 2026
+    fuente: arxiv
+    id: "2603.28944v2"
+    url: "https://arxiv.org/pdf/2603.28944v2"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 4cd16a2106bb143c3e1980c370bb8cf880724f2bf6c3296ad21b099bd177d85b
+    bytes: 19522708
+  - fichero: "ji2025_shape_preserving_tooth_cbct.pdf"
+    titulo: "Shape-preserving Tooth Segmentation from CBCT Images with Semantic and Shape Awareness"
+    anio: 2025
+    fuente: arxiv
+    id: "2511.16936v1"
+    url: "https://arxiv.org/pdf/2511.16936v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 5209983961ae149fc99ad1d2b0658dbc891946ad0906ba617f8bd13a80357ade
+    bytes: 1354058
+  - fichero: "liu2023_toothsegnet_cbct.pdf"
+    titulo: "ToothSegNet: Image Degradation meets Tooth Segmentation in CBCT Images"
+    anio: 2023
+    fuente: arxiv
+    id: "2307.01979v1"
+    url: "https://arxiv.org/pdf/2307.01979v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: eb2a99793e06a85c646672d5d00230c2a5591dd87ef358f538e54fd35134e441
+    bytes: 47089519
+  - fichero: "ma2024_px2tooth_panoramic_reconstruction.pdf"
+    titulo: "PX2Tooth: Reconstructing the 3D Point Cloud Teeth from a Single Panoramic X-ray"
+    anio: 2024
+    fuente: arxiv
+    id: "2411.03725v1"
+    url: "https://arxiv.org/pdf/2411.03725v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 791803a11012a0368545ea2c240832ed4b4aa02291d5145e2b1b40a4bf04a228
+    bytes: 2020936
+  - fichero: "practices-for-governing-agentic-ai-systems.pdf"
+    titulo: "Practices for Governing Agentic AI Systems"
+    anio: 2023
+    fuente: url
+    id: "https://cdn.openai.com/papers/practices-for-governing-agentic-ai-systems.pdf"
+    url: "https://cdn.openai.com/papers/practices-for-governing-agentic-ai-systems.pdf"
+    licencia: "sin licencia declarada (OpenAI)"
+    redistribuible: false
+    sha256: 22b3a8607ed781a848b82b0bfe8e638b16cd027aac90a19b2aecf236063d0e7c
+    bytes: 221739
+    nota: "Informe tecnico, no articulo revisado."
+  - fichero: "wang2024_multistage_3d_tooth_cbct.pdf"
+    titulo: "A Multi-Stage Framework for 3D Individual Tooth Segmentation in Dental CBCT"
+    anio: 2024
+    fuente: arxiv
+    id: "2407.10433v1"
+    url: "https://arxiv.org/pdf/2407.10433v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 2443feda9a2c765ad290a7e848f2adcdfb3c6661d12e3dfd0e40670bd47cb568
+    bytes: 2431113
+  - fichero: "weekley2025_intraoral_scan_resolution_segmentation.pdf"
+    titulo: "Evaluating the Suitability of Different Intraoral Scan Resolutions for Deep Learning-Based Tooth Segmentation"
+    anio: 2025
+    fuente: arxiv
+    id: "2502.19515v1"
+    url: "https://arxiv.org/pdf/2502.19515v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: a3609969cfb2f990c7c58bc23d1b8029e0d3a8e1517fc29637ad18ec0d3fba41
+    bytes: 20183489
+  - fichero: "wu2021_mesh_tooth_segmentation_intraoral.pdf"
+    titulo: "Two-Stage Mesh Deep Learning for Automated Tooth Segmentation and Landmark Localization"
+    anio: 2021
+    fuente: arxiv
+    id: "2109.11941v4"
+    url: "https://arxiv.org/pdf/2109.11941v4"
+    licencia: "CC BY-SA 4.0"
+    redistribuible: true
+    sha256: 3f54f9d3c2b06fedf7d449932234b2e56880fc6530921e7cf01f7fc62e84087f
+    bytes: 2218215
+    nota: "Compartir-igual: cualquier derivado hereda la licencia."

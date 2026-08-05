@@ -118,6 +118,14 @@ temp/
 # -----------------------------------------------------------------------------
 # Qdrant vector database (research-agent)
 # -----------------------------------------------------------------------------
+# La knowledge base del research-agent: PDF de terceros. 156 MiB, y 9 de los 17
+# con licencia que NO permite redistribuirlos (arXiv perpetual, actas de AAAI,
+# CC BY-NC-ND, informes sin licencia). Lo que se versiona es el inventario
+# (`manifest.yaml`); los ficheros se materializan con
+# `uv run python scripts/fetch_knowledge_base.py`.
+data/research-agent/knowledge_base/*
+!data/research-agent/knowledge_base/.gitkeep
+!data/research-agent/knowledge_base/manifest.yaml
 data/research-agent/.qdrant_data/
 
 # -----------------------------------------------------------------------------

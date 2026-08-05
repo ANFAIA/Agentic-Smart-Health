@@ -141,6 +141,23 @@ Agente de investigación autónomo que busca, ingerir y resume literatura cient�
 - `uv run python -m src.main` — Claude con tool calling nativo (requiere API key)
 - `uv run python -m src.main_local` — Ollama local (gratis, 100% privado)
 
+**Corpus de partida.** Los PDF de referencia **no están en el repositorio**: son
+binarios de terceros y la licencia de buena parte de ellos no permite
+redistribuirlos. Lo que se versiona es el inventario
+([`manifest.yaml`](data/research-agent/knowledge_base/manifest.yaml): título, DOI o
+arXiv ID, URL y licencia verificada en origen de cada documento). Para
+materializarlos:
+
+```bash
+uv run python scripts/fetch_knowledge_base.py          # baja lo que falte
+uv run python scripts/fetch_knowledge_base.py --check  # solo comprueba
+```
+
+Un par de editores (Wiley, AAAI) no sirven el PDF a un script: esos quedan como
+descarga manual y el comando imprime el enlace. El agente funciona sin corpus —
+`search_references` descubre literatura nueva—, pero `read_directory` e `index`
+no encontrarán nada hasta que se ejecute.
+
 **Estructura:**
 - `src/main.py` — Orquestador CLI con Claude
 - `src/main_local.py` — Variante local con Ollama
