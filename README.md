@@ -231,6 +231,8 @@ Cada Pull Request pasa por un **agente guardián de revisión estática** ejecut
 | Estilo y formato | `ruff` | No — informativo (anotaciones inline) |
 | Tipos | `mypy` | No — informativo (anotaciones inline) |
 | **Arquitectura** | `scripts/audit_pr.py` | **Sí** — hace fallar el check |
+| **Coherencia documental** | `scripts/docs_sync.py` | **Sí** — hace fallar el check |
+| **Datos y licencias** | `scripts/data_guard.py` | **Sí** — hace fallar el check |
 
 **Reglas de arquitectura (bloqueantes):**
 
@@ -248,6 +250,23 @@ documental (`docs_sync.py`) se convierte en verdad publicada en cuanto se mergea
 un dato ajeno (`data_guard.py`) entra en la historia de git y solo sale
 reescribiéndola — que es lo que costó la issue 45.
 
+### Vigilancia de literatura (`literature watch`)
+
+El único trabajo **programado** del repositorio: cada lunes,
+[`scripts/watch_literature.py`](scripts/watch_literature.py) busca en arXiv lo
+publicado esa semana sobre 3DGS, CBCT, escaneo intraoral y gemelo digital, descarta
+lo que ya está en el manifiesto, **lee la licencia del OAI-PMH de arXiv** (no la
+supone) y abre una PR proponiendo las entradas nuevas.
+
+Reparto de trabajo deliberado: la máquina hace lo repetitivo y verificable —qué hay
+nuevo, bajo qué licencia—, y la persona que revisa la PR decide lo único que exige
+criterio: si el artículo aporta algo al proyecto. **El agente no mergea nunca.**
+
+Ningún PDF entra al repositorio: se bajan a un temporal del runner para calcular
+`sha256` y `bytes`, y se borran con él. Lo que se propone commitear son diez líneas
+de YAML por artículo. Los ficheros se materializan después, en local, con
+`uv run python scripts/fetch_knowledge_base.py`.
+
 Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 
 <!-- generado: scripts — no editar a mano -->
@@ -260,6 +279,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+| [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
 <!-- /generado: scripts -->
 
 Las herramientas de desarrollo se instalan con `uv sync --group dev` (grupo `dev`: `ruff`, `mypy`). Ficha completa del agente en [`AGENTS.md`](AGENTS.md).
