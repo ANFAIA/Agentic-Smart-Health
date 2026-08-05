@@ -18,6 +18,21 @@ Actualiza este archivo siempre que añadas, modifiques o retires un agente. Las 
 
 ## Registro de agentes
 
+Resumen generado desde el código — las fichas de abajo, no: inputs, outputs y
+herramientas son prosa y se escriben a mano.
+
+<!-- generado: agentes — no editar a mano -->
+| Agente | Implementado en |
+|---|---|
+| `cbct-agent` | [`packages/ingestion-agents/src/ingestion_agents/cbct_agent.py`](packages/ingestion-agents/src/ingestion_agents/cbct_agent.py) |
+| `geometric-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/geometric.py`](packages/fusion-agents/src/fusion_agents/geometric.py) |
+| `image-agent` | [`packages/ingestion-agents/src/ingestion_agents/image_agent.py`](packages/ingestion-agents/src/ingestion_agents/image_agent.py) |
+| `mesh-agent` | [`packages/ingestion-agents/src/ingestion_agents/mesh_agent.py`](packages/ingestion-agents/src/ingestion_agents/mesh_agent.py) |
+| `report-agent` | [`packages/ingestion-agents/src/ingestion_agents/report_agent.py`](packages/ingestion-agents/src/ingestion_agents/report_agent.py) |
+| `semantic-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/semantic.py`](packages/fusion-agents/src/fusion_agents/semantic.py) |
+<!-- /generado: agentes -->
+
+
 ### `research-agent` — Agente de investigación
 
 | Campo | Valor |

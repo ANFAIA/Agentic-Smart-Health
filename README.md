@@ -102,6 +102,8 @@ agentic-smart-health/          ← workspace root
 ├── packages/
 │   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
+│   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
+│   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
 │   └── research-agent/        ← knowledge base del agente de investigación
@@ -240,6 +242,19 @@ Cada Pull Request pasa por un **agente guardián de revisión estática** ejecut
 - `.github/workflows/ai-code-review.yml` — orquesta los chequeos, publica comentarios y decide el gate de merge.
 - `scripts/audit_pr.py` — auditor de arquitectura (AST, solo librería estándar).
 
+Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
+
+<!-- generado: scripts — no editar a mano -->
+| Script | Qué hace |
+|---|---|
+| [`scripts/ablacion_recetas.py`](scripts/ablacion_recetas.py) | Ablación de la receta de entrenamiento: qué aporta cada pieza. |
+| [`scripts/audit_pr.py`](scripts/audit_pr.py) | Agentic Smart Health. |
+| [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
+| [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
+| [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
+| [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+<!-- /generado: scripts -->
+
 Las herramientas de desarrollo se instalan con `uv sync --group dev` (grupo `dev`: `ruff`, `mypy`). Ficha completa del agente en [`AGENTS.md`](AGENTS.md).
 
 ---
@@ -265,11 +280,13 @@ Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas 
 
 ### Comandos disponibles
 
-| Comando | Descripción |
+<!-- generado: make — no editar a mano -->
+| Comando | Ejecuta |
 |---|---|
-| `make install` | Sincroniza el entorno con `uv sync` |
-| `make test` | Ejecuta la suite de pruebas con `pytest` |
-| `make lint` | Analiza el código con `ruff check` |
+| `make install` | `uv sync` |
+| `make test` | `uv run pytest` |
+| `make lint` | `uv run ruff check` |
+<!-- /generado: make -->
 
 ### Activar el entorno (opcional)
 

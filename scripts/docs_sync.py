@@ -63,6 +63,96 @@ def versionados() -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Bloques generados: lo que es copia mecanica de una fuente de verdad
+# --------------------------------------------------------------------------- #
+def _sincronizar(doc: Path, ident: str, contenido: str, escribir: bool) -> str | None:
+    """Deja el bloque `ident` de `doc` igual a `contenido`, o explica que no lo esta.
+
+    El bloque es opcional: si el documento no lo declara, no se inventa. Poner las
+    marcas es una decision editorial de quien escribe la pagina.
+    """
+    inicio, fin = f"<!-- generado: {ident} — no editar a mano -->", f"<!-- /generado: {ident} -->"
+    texto = doc.read_text(encoding="utf-8")
+    if inicio not in texto:
+        return None
+    patron = re.compile(re.escape(inicio) + r".*?" + re.escape(fin), re.S)
+    esperado = f"{inicio}\n{contenido}\n{fin}"
+    if patron.search(texto).group(0) == esperado:
+        return None
+    if escribir:
+        doc.write_text(patron.sub(lambda _: esperado, texto), encoding="utf-8")
+        print(f"  · {doc.name}: bloque `{ident}` regenerado")
+        return None
+    return (
+        f"El bloque `{ident}` de {doc.relative_to(REPO)} no coincide con el codigo. "
+        "Regeneralo: `uv run python scripts/docs_sync.py --write`"
+    )
+
+
+def _primera_linea_doc(ruta: str) -> str:
+    """Docstring del modulo, o primer comentario util de un script de shell."""
+    texto = (REPO / ruta).read_text(encoding="utf-8")
+    if ruta.endswith(".py"):
+        try:
+            doc = ast.get_docstring(ast.parse(texto)) or ""
+        except SyntaxError:
+            doc = ""
+        primera = doc.strip().splitlines()[0] if doc.strip() else ""
+        return primera.split("—", 1)[-1].strip() if "—" in primera else primera
+    for linea in texto.splitlines():
+        if linea.startswith("#") and not linea.startswith("#!"):
+            limpia = linea.lstrip("# ").strip()
+            if limpia:
+                return limpia.split("—", 1)[-1].strip() if "—" in limpia else limpia
+    return ""
+
+
+def tabla_scripts(ficheros: set[str]) -> str:
+    filas = ["| Script | Qué hace |", "|---|---|"]
+    for ruta in sorted(
+        f for f in ficheros if f.startswith("scripts/") and f.endswith((".py", ".sh"))
+    ):
+        filas.append(f"| [`{ruta}`]({ruta}) | {_primera_linea_doc(ruta) or '—'} |")
+    return "\n".join(filas)
+
+
+def tabla_make() -> str:
+    """Objetivo -> receta real. Mas honesto que una descripcion a mano."""
+    filas = ["| Comando | Ejecuta |", "|---|---|"]
+    objetivo = None
+    recetas: dict[str, list[str]] = {}
+    for linea in (REPO / "Makefile").read_text(encoding="utf-8").splitlines():
+        if re.match(r"^[a-zA-Z][\w-]*:", linea):
+            objetivo = linea.split(":", 1)[0]
+            if objetivo != ".PHONY":
+                recetas.setdefault(objetivo, [])
+        elif linea.startswith("\t") and objetivo in recetas:
+            recetas[objetivo].append(linea.strip())
+    for objetivo, ordenes in recetas.items():
+        filas.append(f"| `make {objetivo}` | `{' && '.join(ordenes) or '—'}` |")
+    return "\n".join(filas)
+
+
+def tabla_agentes(ficheros: set[str]) -> str:
+    """Resumen, NO las fichas: inputs, outputs y herramientas son prosa."""
+    filas = ["| Agente | Implementado en |", "|---|---|"]
+    for nombre, ruta in sorted(agentes_implementados(ficheros).items()):
+        filas.append(f"| `{nombre}` | [`{ruta}`]({ruta}) |")
+    return "\n".join(filas)
+
+
+def sincronizar_bloques(ficheros: set[str], escribir: bool) -> list[str]:
+    leidas = leidas_por_el_codigo(ficheros)
+    bloques = (
+        (REPO / "README.md", "env-vars", tabla_env(leidas)),
+        (REPO / "README.md", "scripts", tabla_scripts(ficheros)),
+        (REPO / "README.md", "make", tabla_make()),
+        (REPO / "AGENTS.md", "agentes", tabla_agentes(ficheros)),
+    )
+    return [p for p in (_sincronizar(*b, escribir) for b in bloques) if p]
+
+
+# --------------------------------------------------------------------------- #
 # 1 · Variables de entorno
 # --------------------------------------------------------------------------- #
 def _constantes(arbol: ast.Module) -> dict[str, str]:
@@ -146,20 +236,6 @@ def revisar_env(ficheros: set[str], escribir: bool) -> list[str]:
                 "Quien clone el repositorio no puede saber que existe."
             )
 
-    readme = REPO / "README.md"
-    texto = readme.read_text(encoding="utf-8")
-    if MARCA_INICIO in texto:
-        patron = re.compile(re.escape(MARCA_INICIO) + r".*?" + re.escape(MARCA_FIN), re.S)
-        esperado = f"{MARCA_INICIO}\n{tabla_env(leidas)}\n{MARCA_FIN}"
-        if patron.search(texto).group(0) != esperado:
-            if escribir:
-                readme.write_text(patron.sub(lambda _: esperado, texto), encoding="utf-8")
-                print("  · README: tabla de variables regenerada")
-            else:
-                problemas.append(
-                    "La tabla de variables del README no coincide con el código. "
-                    "Regenérala: `uv run python scripts/docs_sync.py --write`"
-                )
     return problemas
 
 
@@ -196,7 +272,14 @@ def revisar_rutas(ficheros: set[str]) -> list[str]:
                     if not cita.startswith(PREFIJOS_VERSIONADOS):
                         continue
                     destino = os.path.normpath(cita)
-                if destino.startswith("..") or destino.startswith("data/"):
+                if destino.startswith(".."):
+                    if es_enlace:
+                        problemas.append(
+                            f"{doc}:{numero} enlaza a `{cita}`, que sale del repositorio. "
+                            "Un enlace relativo de mas es un enlace roto."
+                        )
+                    continue
+                if destino.startswith("data/"):
                     continue
                 if not destino.startswith(PREFIJOS_VERSIONADOS) and "/" in destino:
                     continue
@@ -282,6 +365,44 @@ def revisar_inventario(ficheros: set[str]) -> list[str]:
     return problemas
 
 
+def revisar_arbol(ficheros: set[str]) -> list[str]:
+    """El arbol del README frente a los directorios que existen de verdad.
+
+    No se genera: cada linea lleva una anotacion escrita a mano que explica para
+    que sirve la carpeta, y eso es prosa. Pero si se puede comprobar que no anuncia
+    carpetas que ya no estan ni se calla las nuevas.
+    """
+    texto = (REPO / "README.md").read_text(encoding="utf-8")
+    # Las carpetas ocultas (.github, .claude) quedan fuera por los dos lados: el
+    # arbol las menciona como contexto, no como inventario.
+    anunciados = {
+        d for d in re.findall(r"[│├└]──\s+([a-z0-9._-]+)/", texto) if not d.startswith(".")
+    }
+    # Dos conjuntos distintos, porque las dos direcciones no piden lo mismo:
+    #  - `esperados`: lo que el arbol DEBE enumerar (primer nivel, y los paquetes
+    #    y apps, que es donde vive el trabajo).
+    #  - `existentes`: cualquier directorio del repositorio, a cualquier
+    #    profundidad. Anunciar algo que no existe siempre es mentira; no enumerar
+    #    un subdirectorio de tercer nivel, no.
+    esperados = {f.split("/")[0] for f in ficheros if "/" in f and not f.startswith(".")}
+    for padre in ("apps", "packages"):
+        esperados |= {f.split("/")[1] for f in ficheros if f.startswith(f"{padre}/")}
+    existentes = {
+        parte for f in ficheros for parte in Path(f).parent.parts if not parte.startswith(".")
+    }
+    problemas = []
+    for falta in sorted(esperados - anunciados):
+        problemas.append(
+            f"El arbol del README no menciona `{falta}/`, que existe. "
+            "Quien lea la estructura no sabra que esta ahi."
+        )
+    for sobra in sorted(anunciados - existentes):
+        problemas.append(
+            f"El arbol del README anuncia `{sobra}/`, que ya no existe en el repositorio."
+        )
+    return problemas
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -299,6 +420,8 @@ def main() -> int:
         ("rutas citadas", lambda: revisar_rutas(ficheros)),
         ("registro de agentes", lambda: revisar_agentes(ficheros)),
         ("inventario documentado", lambda: revisar_inventario(ficheros)),
+        ("arbol del README", lambda: revisar_arbol(ficheros)),
+        ("bloques generados", lambda: sincronizar_bloques(ficheros, args.write)),
     ):
         fallos = revision()
         estado = "✗" if fallos else "✓"
