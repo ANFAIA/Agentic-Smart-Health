@@ -29,6 +29,7 @@ herramientas son prosa y se escriben a mano.
 | `image-agent` | [`packages/ingestion-agents/src/ingestion_agents/image_agent.py`](packages/ingestion-agents/src/ingestion_agents/image_agent.py) |
 | `mesh-agent` | [`packages/ingestion-agents/src/ingestion_agents/mesh_agent.py`](packages/ingestion-agents/src/ingestion_agents/mesh_agent.py) |
 | `report-agent` | [`packages/ingestion-agents/src/ingestion_agents/report_agent.py`](packages/ingestion-agents/src/ingestion_agents/report_agent.py) |
+| `segmentation-agent` | [`packages/analysis-agents/src/analysis_agents/segmentation.py`](packages/analysis-agents/src/analysis_agents/segmentation.py) |
 | `semantic-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/semantic.py`](packages/fusion-agents/src/fusion_agents/semantic.py) |
 <!-- /generado: agentes -->
 
@@ -371,6 +372,96 @@ FusionOutput
 
 ---
 
+### `segmentation-agent` — Agente de segmentación anatómica
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/analysis-agents/` (`segmentation.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 3 · Análisis · segmentación (**entre** las dos etapas de fusión) |
+| **Contrato común** | `AnalysisOutput` + `BaseAnalysisAgent` en `analysis_agents/base.py` |
+| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`, etapa 2 de 3) |
+| **Agregación punto → diente** | `packages/tooth-aggregation` |
+
+**Rol / Propósito**
+
+> Pone **nombre de diente** a cada gaussiana. Es el **ancla semántica** del
+> pipeline: sin `region_id`, la fusión semántica no tiene contra qué validar el
+> diente que cita el informe, y la capa regional (pH y demás) queda colgando de un
+> código que nadie ha confirmado que exista en esa boca.
+
+| Entrada | Qué produce | No hace | Cerebro |
+|---|---|---|---|
+| `TwinSnapshot` + el campo gaussiano que referencia | `region_id` (FDI) por gaussiana en un artefacto **nuevo** + `detected: FDI → confianza` + motivos de revisión | no corrige el informe ni al revés (eso lo declara la fusión semántica); no entrena ni ejecuta el modelo | modelo de segmentación de nubes de puntos, **inyectado** |
+
+**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+
+| Recurso | Permisos | Notas |
+|---|---|---|
+| `TwinSnapshot` (en memoria) | read | Nunca vuelve al fichero crudo: la ingesta es la única frontera con el dato original. |
+| Almacén de artefactos | read + write | Vía el `Protocol` `GaussianStore`, **no** vía `ArtifactStore`: el almacén es un *seam* que se sustituirá por `3dgs-engine`. |
+| Modelo de segmentación | call | Vía el `Protocol` `Segmenter`. **Sin valor por defecto**: un modelo de juguete por omisión produciría etiquetas anatómicas inventadas con toda la pinta de ser buenas. |
+| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** coordenadas ni contenido clínico. |
+
+**Outputs generados**
+
+```
+SegmentationOutput
+  ├─ status              : ModalityStatus (ok/missing/failed) — SIEMPRE presente
+  ├─ snapshot            : TwinSnapshot | None  — NUEVO, con gaussian_field_ref etiquetado
+  ├─ detected            : {FDI: confianza}     — entrada exacta del semantic-fusion-agent
+  ├─ n_teeth             : int
+  ├─ unassigned_fraction : float                — fragmentación descartada por tamaño
+  ├─ hitl_reasons        : list[str]            — vacío = no hace falta revisión
+  └─ latency_s, quarantine_ref, detail
+```
+
+**Reglas de delegación**
+
+- **Fail-loud, nunca fail-fast**: el fallo se devuelve como `status=FAILED` +
+  `detail`. Si la segmentación falla, el orquestador **no ancla** el informe contra
+  un ancla que no existe: la fusión semántica sencillamente no corre.
+- **Human-in-the-loop**: `detected` pasado a mano al orquestador **manda sobre el
+  modelo** y la etapa ni se ejecuta. Es por donde entran las etiquetas revisadas por
+  un clínico; sin esa puerta, el gate de revisión no serviría de nada.
+- **Nunca muta** el snapshot de entrada y **conserva el `acquisition_id`**.
+
+**Reglas específicas**
+
+- 🔒 **La etiqueta es aditiva.** El artefacto nuevo lleva los mismos
+  `centers`/`scales`/`rotations`/`density` **byte a byte** más un array `region_id`
+  (`0` = sin asignar). El blob anterior sigue en el almacén, así que segmentar no
+  puede degradar la geometría ni romper la reversibilidad. Como el almacén
+  direcciona por contenido, volver a segmentar el mismo campo con el mismo modelo
+  devuelve **la misma referencia**.
+- ⚠️ **Se comprueba que el modelo devuelve log-probabilidades, no logits.** Un logit
+  tiene la misma forma y el mismo `argmax`: las etiquetas saldrían bien y las
+  **confianzas** serían falsas, sin que nada chille. Es el mismo modo de fallo caro
+  que la modalidad DICOM en el `cbct-agent`, y se cierra igual — verificando la
+  premisa (`∑ⱼ exp(logprob) = 1`) en vez de confiar en ella.
+- **La confianza de un diente es la media geométrica de la probabilidad por punto**
+  (`exp` de la log-probabilidad media de la instancia), en `[0, 1]` y comparable con
+  el umbral de HITL y con el resto del pipeline.
+- **La métrica honesta es el acierto por DIENTE, no por punto** — está medido que el
+  acierto por punto *subestima* la identificación por diente ([experimento Point
+  Transformer](notebooks/exercise-point-transformer-teeth3ds.md)).
+- **`enforce_unique` viene desactivado a propósito.** Imponer «un FDI por arcada»
+  sobre instancias fragmentadas *inventa* errores: la restricción presupone «una
+  instancia = un diente», y con fragmentos esa premisa es falsa (medido).
+- **Cuatro cosas van a revisión humana** en vez de resolverse solas: confianza bajo
+  el umbral, el mismo FDI en dos instancias, una clase sin código FDI en el mapeo, y
+  más de un 10% de los puntos de diente descartados por fragmentación — que la
+  agregación se los coma **en silencio** es el riesgo, no que se los coma.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-06 | 0.1.0 | Registro inicial. Paquete `analysis-agents` con su contrato base; agregación punto → diente sobre `tooth-aggregation`; `region_id` persistido como artefacto aditivo; enganche en `IngestionPipeline.fuse()` entre las dos etapas de fusión. |
+
+---
+
 ### Agentes de análisis (stubs `planned`)
 
 Agentes del pipeline clínico **aún no implementados**. Se registran aquí como
@@ -382,7 +473,6 @@ Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-sc
 
 | Agente | Estado | Fase | Rol previsto | Entrada → salida | Human-in-the-loop |
 |---|---|---|---|---|---|
-| `segmentation-agent` | `planned` | Análisis · segmentación | Asignar `region_id` (FDI) a las gaussianas (segmentación anatómica). Prerrequisito del ancla semántica de la fusión. | `TwinSnapshot` sin etiquetas → snapshot con `region_id` poblado (y el mapa `FDI → confianza` que consume el `semantic-fusion-agent`) | Revisión si afecta al diagnóstico |
 | `pathology-agent` | `planned` | Análisis · hallazgos clínicos | Señalar posibles patologías (densidad σ, color, geometría) como **hallazgos candidatos para revisión clínica**. | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **Sí** — clínicamente sensible |
 | `clinical-poc-agent` | `planned` (PoC) | Análisis · prueba de concepto | Métrica visual básica: inflamación por color de encía y espacio encía-diente. | `TwinSnapshot` → reporte de texto (log) | Sí |
 

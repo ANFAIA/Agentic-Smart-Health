@@ -1,0 +1,27 @@
+[project]
+name = "analysis-agents"
+version = "0.1.0"
+description = "Agentes de análisis del Digital Twin dental: segmentación anatómica (region_id FDI)"
+requires-python = ">=3.11"
+dependencies = [
+    "core-schemas",
+    # La ontología FDI (`ingestion_agents.ontology`) es **vocabulario compartido**,
+    # no código de ingesta: es la fuente única de qué códigos existen. El almacén
+    # de artefactos, en cambio, NO se importa: se toma como `Protocol`
+    # (`GaussianStore`) para no atar el análisis a la implementación de la ingesta.
+    "ingestion-agents",
+    "tooth-aggregation",
+    "numpy>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/analysis_agents"]
+
+[tool.uv.sources]
+core-schemas = { workspace = true }
+ingestion-agents = { workspace = true }
+tooth-aggregation = { workspace = true }

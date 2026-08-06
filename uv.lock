@@ -12,6 +12,7 @@ members = [
     "3dgs-engine",
     "agent-orchestrator",
     "agentic-smart-health",
+    "analysis-agents",
     "core-schemas",
     "fusion-agents",
     "ingestion-agents",
@@ -30,6 +31,7 @@ name = "agent-orchestrator"
 version = "0.1.0"
 source = { editable = "apps/agent-orchestrator" }
 dependencies = [
+    { name = "analysis-agents" },
     { name = "core-schemas" },
     { name = "fusion-agents" },
     { name = "ingestion-agents" },
@@ -37,6 +39,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "analysis-agents", editable = "packages/analysis-agents" },
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
@@ -48,6 +51,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-orchestrator" },
+    { name = "analysis-agents" },
     { name = "core-schemas" },
     { name = "fusion-agents" },
     { name = "ingestion-agents" },
@@ -69,6 +73,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-orchestrator", editable = "apps/agent-orchestrator" },
+    { name = "analysis-agents", editable = "packages/analysis-agents" },
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
@@ -85,6 +90,25 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.9" },
     { name = "vtk", specifier = ">=9.6.2" },
+]
+
+[[package]]
+name = "analysis-agents"
+version = "0.1.0"
+source = { editable = "packages/analysis-agents" }
+dependencies = [
+    { name = "core-schemas" },
+    { name = "ingestion-agents" },
+    { name = "numpy" },
+    { name = "tooth-aggregation" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "ingestion-agents", editable = "packages/ingestion-agents" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "tooth-aggregation", editable = "packages/tooth-aggregation" },
 ]
 
 [[package]]

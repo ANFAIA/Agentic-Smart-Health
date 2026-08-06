@@ -5,6 +5,7 @@ description = "Agentic Smart Health - Monorepo raíz"
 requires-python = ">=3.13"
 dependencies = [
     "agent-orchestrator",
+    "analysis-agents",
     "core-schemas",
     "fusion-agents",
     "ingestion-agents",
@@ -39,6 +40,7 @@ source = [
     "packages/core-schemas/src",
     "packages/ingestion-agents/src",
     "packages/fusion-agents/src",
+    "packages/analysis-agents/src",
     "packages/tooth-aggregation/src",
     "apps/agent-orchestrator/src",
 ]
@@ -58,6 +60,7 @@ skip_covered = true
 
 [tool.uv.sources]
 agent-orchestrator = { workspace = true }
+analysis-agents = { workspace = true }
 core-schemas = { workspace = true }
 fusion-agents = { workspace = true }
 ingestion-agents = { workspace = true }

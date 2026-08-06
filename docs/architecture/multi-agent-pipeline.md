@@ -245,7 +245,7 @@ flowchart TB
 |---|---|---|
 | Algoritmo de registro concreto (ICP, rígido, feature-based) | naturaleza real del dataset | PoC MVP 1 (VTK) → futuro ADR de fusión |
 | Grosor de la banda ε | densidad del campo gaussiano | mismo spike |
-| Origen de las etiquetas FDI (manual, segmentación, DentalGS) | [`segmentation-agent`](#4-tarea-3--agentes-de-análisis) | Tarea 3 |
+| ~~Origen de las etiquetas FDI (manual, segmentación, DentalGS)~~ **resuelto** | — | [`segmentation-agent`](#4-tarea-3--agentes-de-análisis): el modelo entra por el `Protocol` `Segmenter` y las etiquetas revisadas a mano entran por `detected`, que manda sobre él |
 
 > **Alcance honesto.** El registro malla↔CBCT era un prerequisito «aún no diseñado»
 > en el ADR 001 §6. Este documento lo **esboza** (mecanismo, entradas, salida,
@@ -258,12 +258,17 @@ flowchart TB
 
 Los agentes de análisis **consumen** un `TwinSnapshot` ya fusionado y lo
 **enriquecen** (nuevas observaciones, etiquetas, métricas), siempre a través del
-contrato y con `Provenance` propia. Se registran como **stubs `planned`** en
-[`AGENTS.md`](../../AGENTS.md) (fichas placeholder, sin implementación).
+contrato y con `Provenance` propia.
+
+| Agente | Estado | Rol | Entrada → salida | Human-in-the-loop |
+|---|---|---|---|---|
+| `segmentation-agent` | **implementado** (`packages/analysis-agents`, ficha completa en [`AGENTS.md`](../../AGENTS.md)) | Segmentación anatómica: asigna `region_id` (FDI) a las gaussianas | `TwinSnapshot` geométricamente fusionado (sin etiquetas FDI) → snapshot con `region_id` poblado + `detected: FDI → confianza` | revisión si afecta a diagnóstico |
+
+Los dos que siguen son **stubs `planned`** en [`AGENTS.md`](../../AGENTS.md)
+(fichas placeholder, sin implementación):
 
 | Agente (stub) | Rol | Entrada → salida | Human-in-the-loop |
 |---|---|---|---|
-| `segmentation-agent` | Segmentación anatómica: asigna `region_id` (FDI) a las gaussianas | `TwinSnapshot` geométricamente fusionado (sin etiquetas FDI) → snapshot con `region_id` poblado | revisión si afecta a diagnóstico |
 | `pathology-agent` | Señala posibles patologías (densidad/color/geometría) como hallazgos candidatos para revisión | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **sí** (clínicamente sensible) |
 | `clinical-poc-agent` (PoC) | Métrica visual básica: inflamación por color de encía y espacio encía-diente | `TwinSnapshot` → reporte de texto (log) | sí |
 

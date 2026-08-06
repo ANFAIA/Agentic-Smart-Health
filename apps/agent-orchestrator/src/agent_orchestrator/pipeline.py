@@ -2,7 +2,9 @@
 
 Este módulo es la Fase 1 del pipeline (`docs/architecture/multi-agent-pipeline.md`
 §6): dispara los agentes de ingesta, recoge sus `IngestionOutput` y **ensambla el
-contrato**. No hace fusión, ni segmentación, ni análisis.
+contrato**. `fuse()` encadena después las etapas que enriquecen ese snapshot
+—fusión geométrica → segmentación → fusión semántica—, cada una solo si se le da
+su entrada. El análisis clínico (patología) sigue fuera.
 
 **Sobre el framework de agentes.** El brief pide elegir y justificar uno
 (LangGraph / CrewAI / MCP / …). Aquí la elección es deliberadamente **ninguno
@@ -32,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from analysis_agents import AnalysisOutput, SegmentationAgent, Segmenter
 from core_schemas import (
     Modality,
     ModalityStatus,
@@ -109,6 +112,10 @@ class PipelineResult:
     snapshot: TwinSnapshot | None
     outcomes: list[IngestionOutput] = field(default_factory=list)
     fusion: list[FusionOutput] = field(default_factory=list)
+    # La segmentación no es fusión: corre entre las dos etapas y devuelve además lo
+    # que ha inferido (el mapa FDI → confianza). Lista aparte para que `fusion` siga
+    # significando exactamente lo que dice.
+    analysis: list[AnalysisOutput] = field(default_factory=list)
     hitl_reasons: list[str] = field(default_factory=list)
     latency_s: float = 0.0
     patient_pseudonym: str = ""
@@ -142,6 +149,7 @@ class IngestionPipeline:
         hitl_threshold: float = DEFAULT_HITL_THRESHOLD,
         report_backend: str = "rules",
         parallel: bool = True,
+        segmenter: Segmenter | None = None,
     ) -> None:
         self.store = store
         self.hitl_threshold = hitl_threshold
@@ -161,6 +169,19 @@ class IngestionPipeline:
         )
         self.semantic_fusion = SemanticFusionAgent(
             hitl_threshold=hitl_threshold, quarantine_dir=quarantine_dir
+        )
+        # La segmentación necesita un modelo, y no hay uno por defecto a propósito
+        # (ver `SegmentationAgent`): sin `segmenter` la etapa sencillamente no corre
+        # y el ancla FDI se pasa a mano, como hasta ahora.
+        self.segmentation = (
+            None
+            if segmenter is None
+            else SegmentationAgent(
+                store,
+                segmenter=segmenter,
+                hitl_threshold=hitl_threshold,
+                quarantine_dir=quarantine_dir,
+            )
         )
 
     # --- ejecución ------------------------------------------------------- #
@@ -219,40 +240,54 @@ class IngestionPipeline:
         """Aplica las etapas de fusión sobre un resultado de ingesta.
 
         Cada etapa corre **solo si se le da su entrada**, y en el orden del pipeline:
-        geométrica (registro malla↔CBCT) antes que semántica (anclaje al FDI). Entre
-        ambas va la segmentación, que todavía no existe como agente — por eso
-        `detected` se pasa desde fuera en vez de calcularse aquí. Cuando el
-        `segmentation-agent` esté, este es el punto donde se enchufa.
+        geométrica (registro malla↔CBCT) → **segmentación** (puebla `region_id`) →
+        semántica (anclaje al FDI).
+
+        `detected` sigue siendo un parámetro y **manda sobre la segmentación**: es
+        por donde entran las etiquetas revisadas por un clínico. Human-in-the-loop
+        sin esta puerta sería un adorno — si la corrección humana no pudiera
+        sustituir a la del modelo, no habría nada que revisar.
 
         Devuelve un `PipelineResult` **nuevo**: ni muta el de entrada ni el snapshot.
 
-        Si una etapa falla, se registra su `FusionOutput`, se añade el motivo a
-        `hitl_reasons` y **se conserva el último snapshot bueno**. La fusión
-        enriquece; que falle no debe destruir lo que la ingesta sí consiguió.
+        Si una etapa falla, se registra su salida, se añade el motivo a
+        `hitl_reasons` y **se conserva el último snapshot bueno**. Estas etapas
+        enriquecen; que fallen no debe destruir lo que la ingesta sí consiguió.
         """
-        snapshot, salidas, motivos = result.snapshot, [], []
+        snapshot, salidas, analisis, motivos = result.snapshot, [], [], []
 
         if snapshot is not None and registration is not None:
             origen, destino = registration
             out = self.geometric_fusion.fuse(snapshot, source=origen, target=destino)
             salidas.append(out)
-            motivos += self._fusion_reasons(out)
+            motivos += self._stage_reasons(out)
             snapshot = out.snapshot or snapshot
+
+        if snapshot is not None and detected is None and self.segmentation is not None:
+            seg = self.segmentation.analyze(snapshot)
+            analisis.append(seg)
+            motivos += self._stage_reasons(seg)
+            snapshot = seg.snapshot or snapshot
+            # Solo se ancla contra lo que la segmentación encontró de verdad: si
+            # falló, `detected` sigue vacío y la fusión semántica se declarará
+            # MISSING en vez de anclar el informe contra un ancla que no existe.
+            detected = seg.detected or None
 
         if snapshot is not None and detected is not None:
             out = self.semantic_fusion.fuse(snapshot, detected=detected)
             salidas.append(out)
-            motivos += self._fusion_reasons(out)
+            motivos += self._stage_reasons(out)
             snapshot = out.snapshot or snapshot
 
         return replace(
             result,
             snapshot=snapshot,
             fusion=[*result.fusion, *salidas],
+            analysis=[*result.analysis, *analisis],
             hitl_reasons=[*result.hitl_reasons, *motivos],
         )
 
-    def _fusion_reasons(self, out: FusionOutput) -> list[str]:
+    def _stage_reasons(self, out: FusionOutput | AnalysisOutput) -> list[str]:
         """Los motivos del agente, más el de que la etapa no llegara a hacerse.
 
         Igual que en ingesta: el agente reporta, la decisión de parar vive aquí.
@@ -271,9 +306,9 @@ class IngestionPipeline:
         registration: tuple[Any, Any] | None = None,
         detected: Mapping[str, float] | None = None,
     ) -> tuple[PatientDigitalTwin, PipelineResult]:
-        """Ingiere, fusiona si hay con qué, y encaja el snapshot en la serie."""
+        """Ingiere, fusiona/segmenta si hay con qué, y encaja el snapshot en la serie."""
         result = self.run(case)
-        if registration is not None or detected is not None:
+        if registration is not None or detected is not None or self.segmentation is not None:
             result = self.fuse(result, registration=registration, detected=detected)
         if twin is None:
             twin = PatientDigitalTwin(patient_id=result.patient_pseudonym)

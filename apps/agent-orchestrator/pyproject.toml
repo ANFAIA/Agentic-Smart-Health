@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Orquestador de agentes para Agentic Smart Health"
 requires-python = ">=3.11"
 dependencies = [
+    "analysis-agents",
     "core-schemas",
     "fusion-agents",
     "ingestion-agents",
@@ -17,6 +18,7 @@ build-backend = "hatchling.build"
 packages = ["src/agent_orchestrator"]
 
 [tool.uv.sources]
+analysis-agents = { workspace = true }
 fusion-agents = { workspace = true }
 core-schemas = { workspace = true }
 ingestion-agents = { workspace = true }
