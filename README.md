@@ -118,6 +118,7 @@ agentic-smart-health/          ← workspace root
 │   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
+│   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/

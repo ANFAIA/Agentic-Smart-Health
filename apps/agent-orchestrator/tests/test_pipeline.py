@@ -8,8 +8,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from agent_orchestrator import LATENCY_BUDGET_S, CaseInput, IngestionPipeline
+from analysis_agents import DEFAULT_CODES
 from core_schemas import Modality, ModalityStatus, PatientDigitalTwin, TwinSnapshot
 from ingestion_agents import ArtifactStore, synthetic
+from ingestion_agents.ontology import all_fdi_codes
 
 
 @pytest.fixture(scope="session")
@@ -446,3 +448,125 @@ def test_run_into_twin_acepta_las_entradas_de_fusion(
     twin, result = pipeline.run_into_twin(caso, registration=(nube, nube))
     assert twin.snapshots[0].provenance.transform is not None
     assert len(result.fusion) == 1
+
+
+# --- segmentación enganchada entre las dos fusiones ------------------------- #
+def _segmentador(fdis: list[str], *, prob: float = 0.99):
+    """Modelo de juguete: parte el campo en tantas zonas como códigos FDI se pidan.
+
+    Se corta por `x` ordenado para que cada zona salga **conexa** —si no, la
+    agregación la partiría en trozos y el agente tendría razón al quejarse—. El
+    índice de clase sale del convenio de `DEFAULT_CODES` (0 = encía, 1..32 =
+    dentición permanente), que es el que el agente asume si no le pasan otro.
+    """
+    codigos = [all_fdi_codes().index(f) + 1 for f in fdis]
+    n_clases = len(DEFAULT_CODES) + 1
+
+    def segmentar(points: np.ndarray) -> np.ndarray:
+        clases = np.zeros(len(points), dtype=int)
+        for codigo, zona in zip(
+            codigos, np.array_split(np.argsort(points[:, 0]), len(codigos)), strict=True
+        ):
+            clases[zona] = codigo
+        p = np.full((len(points), n_clases), (1.0 - prob) / (n_clases - 1))
+        p[np.arange(len(points)), clases] = prob
+        return np.log(p)
+
+    return segmentar
+
+
+@pytest.fixture
+def con_segmentacion(tmp_path: Path, case_dir: Path):
+    """Pipeline con modelo de segmentación, ya ingerido.
+
+    El modelo de juguete encuentra **exactamente** los dientes que cita el informe:
+    así el camino limpio se distingue del conflicto, que tiene su propio test.
+    """
+    base = IngestionPipeline(
+        ArtifactStore(tmp_path / "artifacts"), quarantine_dir=tmp_path / "quarantine"
+    )
+    result = base.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fdis = sorted({o.region_id for o in result.snapshot.regional})
+    pipeline = IngestionPipeline(
+        base.store, quarantine_dir=tmp_path / "quarantine", segmenter=_segmentador(fdis)
+    )
+    return pipeline, result, fdis
+
+
+def test_la_segmentacion_produce_el_ancla_sin_pasarla_a_mano(con_segmentacion) -> None:
+    """Lo que antes era un `detected` inventado desde fuera ahora lo calcula el agente."""
+    pipeline, result, fdis = con_segmentacion
+    salida = pipeline.fuse(result)
+
+    assert len(salida.analysis) == 1
+    assert sorted(salida.analysis[0].detected) == fdis
+    assert salida.snapshot.provenance.agent.startswith("semantic-fusion-agent")
+    assert not salida.hitl_required
+
+
+def test_el_diente_que_el_modelo_no_encuentra_llega_al_gate(con_segmentacion) -> None:
+    """El informe cita cuatro dientes y el modelo encuentra otros: nadie decide solo."""
+    pipeline, result, fdis = con_segmentacion
+    pipeline.segmentation.segmenter = _segmentador(["48"])  # ninguno de los del informe
+    salida = pipeline.fuse(result)
+
+    assert salida.hitl_required
+    assert all(
+        any(f"FDI {fdi}" in m for m in salida.hitl_reasons) for fdi in fdis
+    )
+
+
+def test_las_etiquetas_revisadas_mandan_sobre_el_modelo(con_segmentacion) -> None:
+    """El gate humano solo sirve para algo si la corrección sustituye al modelo."""
+    pipeline, result, fdis = con_segmentacion
+    salida = pipeline.fuse(result, detected={fdi: 0.95 for fdi in fdis})
+
+    assert salida.analysis == []  # la segmentación ni se ejecuta
+    assert salida.snapshot.gaussian_field_ref == result.snapshot.gaussian_field_ref
+
+
+def test_las_tres_etapas_corren_en_el_orden_del_pipeline(con_segmentacion) -> None:
+    pipeline, result, _fdis = con_segmentacion
+    nube = _nube()
+    salida = pipeline.fuse(result, registration=(nube, nube))
+
+    assert [o.agent.split("@")[0] for o in salida.fusion] == [
+        "geometric-fusion-agent",
+        "semantic-fusion-agent",
+    ]
+    assert salida.analysis[0].agent.startswith("segmentation-agent")
+    # La segmentación etiquetó el campo y la etapa siguiente conserva esa referencia.
+    assert salida.snapshot.gaussian_field_ref != result.snapshot.gaussian_field_ref
+    assert "region_id" in pipeline.store.load(salida.snapshot.gaussian_field_ref)
+
+
+def test_sin_segmenter_la_etapa_no_existe(pipeline: IngestionPipeline, case_dir: Path) -> None:
+    """Retrocompatible: sin modelo, el ancla sigue entrando a mano."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    salida = pipeline.fuse(result)
+
+    assert pipeline.segmentation is None
+    assert salida.analysis == []
+    assert salida.fusion == []
+
+
+def test_si_la_segmentacion_falla_no_se_ancla_contra_un_ancla_inexistente(
+    tmp_path: Path, case_dir: Path
+) -> None:
+    """El peor final sería anclar el informe a dientes que nadie ha confirmado."""
+
+    def revienta(points: np.ndarray) -> np.ndarray:
+        raise RuntimeError("CUDA out of memory")
+
+    pipeline = IngestionPipeline(
+        ArtifactStore(tmp_path / "artifacts"),
+        quarantine_dir=tmp_path / "quarantine",
+        segmenter=revienta,
+    )
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    salida = pipeline.fuse(result)
+
+    assert salida.analysis[0].status is ModalityStatus.FAILED
+    assert salida.fusion == []  # la fusión semántica no llega a correr
+    assert salida.snapshot is not None  # y la ingesta sobrevive
+    assert any("falló" in m for m in salida.hitl_reasons)
