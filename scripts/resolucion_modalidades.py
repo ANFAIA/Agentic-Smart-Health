@@ -14,11 +14,11 @@ modela explícitamente (PSF gaussiana → muestreo al paso de la modalidad → r
 de modo que el panel de 3DGS salga de **los mismos datos** que el de CBCT y se vea
 que la suavidad no añade información.
 
-**Qué es supuesto y qué es derivado.** La PSF (FWHM 0,35 mm ≈ 1,5 pl/mm) y el ruido
-(200 HU) son supuestos plausibles de un CBCT dental, **no calibrados** contra un
-equipo concreto: cámbialos aquí si tienes medidas de fantoma. El contraste que
-sobrevive, en cambio, es forma cerrada — el valor central de una esfera
-convolucionada con una gaussiana— y no depende de ningún ajuste.
+**Qué es medido y qué es derivado.** La PSF (FWHM 0,425 mm ≈ 1,18 pl/mm) y el ruido
+(47 HU) están **medidos sobre el CBCT real** de `data/raw/histora` — un Carestream
+CS 9600 — así que la simulación describe un equipo concreto y no un CBCT genérico.
+El contraste que sobrevive es forma cerrada: el valor central de una esfera
+convolucionada con una gaussiana, sin ningún ajuste.
 
 El muestreo de 0,23 mm del IOS sale de las mallas reales de Teeth3DS+ (mediana de
 116 k vértices sobre ~6000 mm² de arcada), no de la ficha del fabricante.
@@ -40,7 +40,19 @@ from scipy.special import erf  # noqa: E402
 DESTINO = Path(__file__).resolve().parent.parent / "docs" / "research"
 
 FINO, LADO = 0.01, 9.0  # mm/px de la verdad-terreno · lado del parche
-PSF_CBCT, RUIDO_CBCT = 0.35, 200.0  # FWHM en mm · desviación típica en HU
+
+# PSF y ruido **medidos** sobre el CBCT real de `data/raw/histora` (Carestream
+# CS 9600, 578 cortes, vóxel 0,30 mm) — ya no son supuestos. La PSF sale de ajustar
+# una erf a ~800 perfiles perpendiculares a bordes de alto contraste; el ruido, de
+# la desviación robusta entre vóxeles vecinos dentro de tejido homogéneo.
+#
+# Se toma la ventana de **bajo contraste** (tejido↔hueso) como PSF del sistema: las
+# de esmalte y metal salen peores (0,567 y 0,611 mm) porque llevan endurecimiento de
+# haz dentro, que es artefacto y no óptica. Y el ruido de hueso trabecular en vez del
+# de tejido blando (14,7 HU) porque es el tejido que rodea a los dientes.
+PSF_CBCT, RUIDO_CBCT = 0.425, 47.0  # FWHM en mm · desviación típica en HU
+PSF_MEDIDAS = {"tejido↔hueso": 0.425, "aire↔esmalte": 0.567, "metal": 0.611}
+RUIDO_MEDIDO = {"tejido blando": 14.7, "hueso trabecular": 47.2}
 RUIDO_ALETA = 60.0
 
 # Superficies de referencia para traducir pt/mm² a cifras que signifiquen algo:
@@ -143,7 +155,8 @@ def figura_paneles(destino: Path) -> None:
     ca, ka = muestrear(dens, 0.033, fwhm=0.033, ruido=RUIDO_ALETA, semilla=2)
 
     paneles = [
-        ("CBCT · y el STL que sale de él", "0,30 mm · PSF 0,35 · ruido 200 HU", "11 pt/mm²",
+        ("CBCT · y el STL que sale de él",
+         "0,30 mm · PSF 425 µm · ruido 47 HU (medidos)", "11 pt/mm²",
          _expandir(_gris(c30), k30), "#b9482e"),
         # Mismos datos que el panel de arriba, solo que interpolados: es la
         # demostración de que suavizar no añade información.
@@ -304,6 +317,27 @@ def tabla_puntos() -> None:
     print(f"  y en ambos casos, {capas} capas más hacia dentro que ninguna malla tiene.")
 
 
+def tabla_resolucion_cbct() -> None:
+    """Lo que el CBCT muestrea frente a lo que de verdad resuelve.
+
+    En mm y micras, que es como se mide la resolución — no en puntos. Son dos
+    magnitudes distintas: el **vóxel** es el paso de muestreo, elegido al
+    reconstruir; la **FWHM** es lo que la óptica del equipo puede separar. El
+    CS 9600 muestrea más fino de lo que resuelve, que es buena práctica contra el
+    *aliasing*, pero significa que el vóxel sobrestima lo que el equipo mide.
+    """
+    voxel = MODALIDADES[0][3]
+    print(f"\n{'':<34}{'mm':>8}{'µm':>8}{'pl/mm':>9}")
+    print("-" * 59)
+    print(f"{'MUESTREA (vóxel del CS 9600)':<34}{voxel:>8.3f}{voxel * 1000:>8.0f}"
+          f"{1 / (2 * voxel):>9.2f}")
+    for nombre, fwhm in PSF_MEDIDAS.items():
+        print(f"{'RESUELVE · ' + nombre:<34}{fwhm:>8.3f}{fwhm * 1000:>8.0f}"
+              f"{1 / (2 * fwhm):>9.2f}")
+    print(f"\n  la resolución real es {PSF_CBCT / voxel:.2f}× más gruesa que el vóxel")
+    print("  ruido medido: " + " · ".join(f"{k} {v} HU" for k, v in RUIDO_MEDIDO.items()))
+
+
 def tabla_marching_cubes(voxeles: tuple[float, ...] = (0.40, 0.30, 0.20, 0.10)) -> None:
     """Qué espaciado de puntos da un STL extraído del CBCT con marching cubes.
 
@@ -334,7 +368,8 @@ def tabla_marching_cubes(voxeles: tuple[float, ...] = (0.40, 0.30, 0.20, 0.10)) 
         V = ns.vtk_to_numpy(poly.GetPoints().GetData())
         F = ns.vtk_to_numpy(poly.GetPolys().GetConnectivityArray()).reshape(-1, 3)
         t = V[F]
-        area = float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
+        cruz = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+        area = float(np.linalg.norm(cruz, axis=1).sum() / 2)
         e = np.vstack([V[F[:, 0]] - V[F[:, 1]], V[F[:, 1]] - V[F[:, 2]], V[F[:, 2]] - V[F[:, 0]]])
         L = np.linalg.norm(e, axis=1)
         print(f"{v:>7.2f}{len(V):>11,}{area:>11,.0f}{np.median(L[L > 0]):>15.3f} mm")
@@ -346,6 +381,7 @@ def main() -> None:
     figura_curva(DESTINO / "resolucion-modalidades-curva.png")
     print(f"Figuras escritas en {DESTINO}")
     tabla_puntos()
+    tabla_resolucion_cbct()
     tabla_marching_cubes()
     tabla()
 
