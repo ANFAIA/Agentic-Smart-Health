@@ -30,7 +30,42 @@ Cada modalidad se simula con su cadena física: **PSF gaussiana → muestreo a s
 
 ![Seis paneles: la misma superficie por seis cadenas de adquisición](resolucion-modalidades-paneles.png)
 
-## 2. Lo que enseña el panel de 3DGS
+## 2. Qué resolución tiene el CBCT de verdad
+
+Medido sobre el CBCT de `data/raw/histora`: un **Carestream CS 9600**, 578 cortes de
+535 × 535, vóxel 0,30 mm isótropo, 120 kVp, 5 mA. La PSF sale de ajustar una función
+error a ~800 perfiles perpendiculares a bordes de alto contraste; el ruido, de la
+desviación robusta entre vóxeles vecinos en tejido homogéneo.
+
+| | mm | µm | pl/mm |
+|---|---|---|---|
+| **Muestrea** (vóxel) | 0,300 | 300 | 1,67 |
+| **Resuelve** · tejido↔hueso | **0,425** | **425** | **1,18** |
+| Resuelve · aire↔esmalte | 0,567 | 567 | 0,88 |
+| Resuelve · metal | 0,611 | 611 | 0,82 |
+
+**Vóxel y resolución no son lo mismo.** El vóxel es el paso de muestreo, que se elige
+al reconstruir; la FWHM es lo que la óptica puede separar. Aquí la resolución real es
+**1,42× más gruesa que el vóxel**: el equipo escribe más muestras de las que mide.
+
+Eso no es un defecto — muestrear justo en el límite de Nyquist produce *aliasing*, y
+un margen del 40 % lo evita. Lo que no se puede es leer el vóxel como si fuera la
+resolución, que es el error más común al hablar de estos equipos.
+
+**Y resuelve peor cuanto más contraste tiene el borde.** La PSF geométrica no depende
+del contraste, así que ese empeoramiento —de 425 µm en hueso a 567 µm en esmalte— no
+es óptica sino **endurecimiento del haz**. La consecuencia clínica es incómoda: el
+equipo pierde precisión justo en los bordes del esmalte, que es donde más interesaría
+medirla. Por eso se toma la ventana de bajo contraste como PSF del sistema: las otras
+dos llevan artefacto dentro.
+
+**Ruido medido:** 14,7 HU en tejido blando y 47,2 HU en hueso trabecular. Se usa el
+segundo porque es el tejido que rodea a los dientes. El primero es un **límite
+inferior**: si la reconstrucción aplica reducción de ruido —y un CS 9600 moderno
+seguramente lo hace— el ruido queda correlacionado entre vóxeles y un estimador por
+diferencias lo subestima.
+
+## 3. Lo que enseña el panel de 3DGS
 
 Es el resultado central. El panel de «3DGS desde ese CBCT» sale **suave, sin
 escalones y visualmente mejor** que el del CBCT — y contiene **exactamente la misma
@@ -40,16 +75,16 @@ Es la demostración de que **suavidad no es información**, y es la respuesta cu
 alguien pregunte si con Gaussian Splatting se vería mejor una caries.
 
 Concuerda con lo ya medido en [`3dgs-volumetrico-cbct.md`](3dgs-volumetrico-cbct.md)
-§3: doblar la resolución de render de 400 a 800 px **no mejora** la rama volumétrica
+§3 de esa ficha: doblar la resolución de render de 400 a 800 px **no mejora** la rama volumétrica
 (43,1 dB en ambas) y **empeora** la fotométrica en 1,3 dB.
 
-## 3. Contraste que sobrevive, por modalidad
+## 4. Contraste que sobrevive, por modalidad
 
 ![Curvas de contraste retenido frente al tamaño del detalle](resolucion-modalidades-curva.png)
 
 | Modalidad | Muestreo | pt/mm² | 0,15 mm | 0,30 mm | 0,60 mm | 1,00 mm |
 |---|---|---|---|---|---|---|
-| CBCT · y el STL que sale de él | 0,300 mm | 11 | 3 % | 20 % | 75 % | 99 % |
+| CBCT · y el STL que sale de él | 0,300 mm | 11 | 2 % | 12 % | 57 % | 95 % |
 | IOS Teeth3DS+ como lo tenemos | 0,230 mm | 19 | 10 % | 50 % | 98 % | 100 % |
 | IOS comercial medido (Trios) | 0,156 mm | 41 | 27 % | 84 % | 100 % | 100 % |
 | Aleta de mordida | 0,033 mm | 918 | 100 % | 100 % | 100 % | 100 % |
@@ -57,7 +92,7 @@ Concuerda con lo ya medido en [`3dgs-volumetrico-cbct.md`](3dgs-volumetrico-cbct
 Retener contraste es condición **necesaria, no suficiente**: aún hay que superar el
 ruido.
 
-## 4. Cuántos puntos da cada una
+## 5. Cuántos puntos da cada una
 
 La otra mitad de la pregunta: no qué detalle sobrevive, sino **cuántos datos hay**.
 En píxeles, que es la unidad que sí se intuye — si desenrollaras la superficie y la
@@ -66,13 +101,13 @@ guardaras como imagen:
 | | Paso | pt/mm² | ×CBCT | Cara oclusal (9×9 mm) | Arcada entera | MP | Resuelve |
 |---|---|---|---|---|---|---|---|
 | **Miden** | | | | | | | |
-| CBCT | 0,300 mm | 11 | 1× | **30 × 30 px** | 258 × 258 px | 0,07 | 0,35 mm |
-| **STL por marching cubes desde el CBCT** | 0,300 mm | 11 | 1× | 30 × 30 px | 258 × 258 px | 0,07 | 0,35 mm |
+| CBCT | 0,300 mm | 11 | 1× | **30 × 30 px** | 258 × 258 px | 0,07 | **0,425 mm** |
+| **STL por marching cubes desde el CBCT** | 0,306 mm | **17,7** | 1,6× | 38 × 38 px | 326 × 326 px | 0,11 | 0,425 mm |
 | IOS Teeth3DS+ como lo tenemos | 0,230 mm | 19 | 2× | 39 × 39 px | 337 × 337 px | 0,11 | 0,23 mm |
 | IOS comercial medido (Trios) | 0,156 mm | 41 | 4× | 58 × 58 px | 497 × 497 px | 0,25 | 0,16 mm |
 | Aleta de mordida | 0,033 mm | 918 | 83× | 273 × 273 px | 2347 × 2347 px | 5,51 | 0,03 mm |
 | **Hereda** | | | | | | | |
-| 3DGS · hoy, sembrado del CBCT | *0,300 mm* | *11* | *1×* | *30 × 30 px* | *258 × 258 px* | *0,07* | *0,35 mm* |
+| 3DGS · hoy, sembrado del CBCT | *0,300 mm* | *11* | *1×* | *30 × 30 px* | *258 × 258 px* | *0,07* | *0,425 mm* |
 | 3DGS · tras fusionar la malla | *0,156 mm* | *41* | *4×* | *58 × 58 px* | *497 × 497 px* | *0,25* | *0,16 mm* |
 
 Las dos últimas filas van **en cursiva y separadas** a propósito: 3DGS no mide nada,
@@ -85,7 +120,7 @@ molar son **30 × 30 píxeles**, un icono.
 
 **Crece con el cuadrado del paso.** Afinar a la mitad multiplica los puntos por
 cuatro; de 0,156 a 0,033 mm hay 4,7× de paso pero **22× de puntos**. En la cuenta de
-la §9 el exponente es tres, no dos, y por eso allí los números explotan.
+la §10 el exponente es tres, no dos, y por eso allí los números explotan.
 
 | Salto entre escalones consecutivos | Puntos | Resolución |
 |---|---|---|
@@ -121,31 +156,49 @@ formato de esta ficha que puede llevar las dos a la vez.
 geométrica todavía no ha densificado la cáscara: de implementación, no de método —
 pero está ahí.
 
-## 5. El STL que sale del CBCT (marching cubes)
+## 6. El STL que sale del CBCT (marching cubes)
 
 Marching cubes coloca los vértices sobre las **aristas de la rejilla**, así que la
-distancia entre puntos del STL *es* el vóxel del CBCT. Medido sobre el fantoma
-sintético del repo a cuatro resoluciones:
+distancia entre puntos del STL *es* el vóxel del CBCT. Medido sobre el volumen real
+de `histora` (recorte de arcada, 42 × 90 × 90 mm, isovalor 1200 HU):
 
-| Vóxel del CBCT | Vértices | Área extraída | Arista mediana |
-|---|---|---|---|
-| 0,40 mm | 20 760 | 2 491 mm² | **0,400 mm** |
-| 0,30 mm | 36 980 | 2 483 mm² | **0,300 mm** |
-| 0,20 mm | 83 980 | 2 492 mm² | **0,200 mm** |
-| 0,10 mm | 336 494 | 2 485 mm² | **0,100 mm** |
+| Vóxel | Vértices | Área | Arista mediana | pt/mm² |
+|---|---|---|---|---|
+| 0,60 mm | 25 539 | 5 741 mm² | **0,610 mm** | 4,4 |
+| **0,30 mm** (nativo) | **131 479** | **7 433 mm²** | **0,306 mm** | **17,7** |
+| 0,15 mm (rejilla sobremuestreada ×2) | 462 781 | 6 938 mm² | **0,154 mm** | 66,7 |
 
-No aproximadamente: **exactamente**. Y el área extraída se mantiene en ~2 485 mm² en
-las cuatro filas, que es la comprobación de que se está midiendo la misma superficie
-y solo cambia la teselación.
+La arista sigue al vóxel con una fidelidad que no admite discusión. En el fantoma
+sintético sale igual a cuatro resoluciones (0,400 / 0,300 / 0,200 / 0,100 mm).
 
-**La consecuencia incómoda:** puedes bajar el vóxel a 0,10 mm y obtener un STL con
-puntos cada 0,10 mm, pero la resolución del CBCT sigue siendo 0,3–0,5 mm. Esos
-336 000 vértices describen **interpolación, no medida**. Un STL denso sacado de un
-CBCT es una malla suave, no una malla precisa — y es exactamente el error que
-cometería quien intente cumplir el presupuesto de 0,1 mm subiendo la resolución de
-reconstrucción.
+**Matiz de densidad:** aunque la arista sea el vóxel, los puntos **no** caen en una
+rejilla cuadrada —los vértices viven en las aristas del cubo—, así que la densidad
+real es ~1,6× la de `1/v²`: **17,7 pt/mm²** medidos frente a los 11 que daría la
+cuenta ingenua.
 
-## 6. Qué resolución dan los escáneres intraorales de verdad
+**Y aquí está el resultado que zanja la tarea 2.** Sobremuestrear la rejijla a la
+mitad del vóxel da **3,5× más vértices** — de 131 k a 463 k — mientras la resolución
+del equipo sigue siendo **425 µm**, medida en la §2. Esos 463 000 vértices describen
+**interpolación, no medida**. Un STL denso sacado de un CBCT es una malla suave, no
+una malla precisa, y es el error que cometería quien intente cumplir el presupuesto
+de 0,1 mm subiendo la resolución de reconstrucción.
+
+**Un detalle que solo aparece con dato real:** el área extraída **no** es constante
+—7 433 mm² a 0,30 mm frente a 5 741 a 0,60— porque a resolución nativa la
+isosuperficie recoge la rugosidad del ruido y la infla. En el fantoma sintético, sin
+ruido, el área se mantenía en ~2 485 mm² en las cuatro resoluciones.
+
+### La comparación que mejor resume todo
+
+| | pt/mm² | Resolución |
+|---|---|---|
+| STL desde el CBCT | 17,7 | **425 µm** |
+| Escáner intraoral de `histora` | 25 | **~200 µm** |
+
+**Densidades de punto casi iguales, resolución que difiere en más del doble.** Es la
+demostración más limpia de que contar puntos no mide información.
+
+## 7. Qué resolución dan los escáneres intraorales de verdad
 
 Medido sobre arcada completa, con la misma definición que usamos aquí (número de
 puntos ÷ superficie):
@@ -184,25 +237,32 @@ propiedad del dataset, no del aparato.
 Fuentes: [Nedelcu et al., resolución y exactitud de cuatro escáneres](https://pmc.ncbi.nlm.nih.gov/articles/PMC5937957/) ·
 [exactitud in vivo de cinco escáneres](https://pmc.ncbi.nlm.nih.gov/articles/PMC7940805/)
 
-## 7. Las dos fronteras, que no son la misma
+## 8. Las dos fronteras, que no son la misma
 
 Aquí está la respuesta a «cómo se mide la calidad de un CBCT»: no es un número,
 son cuatro ejes que se miden con fantomas distintos, y **fallan en regímenes
 distintos**.
 
-- Un detalle de **1 mm conserva el 99 %** de su contraste y aun así puede no verse:
-  693 HU sobre un ruido de 200 HU dan CNR 3,5, por debajo del umbral de Rose.
-  **Falla el ruido**, y se arregla con dosis.
-- Un detalle de **0,15 mm conserva el 3 %**. **Falla la resolución**, y no hay dosis
-  que lo arregle: la información se perdió al emborronarse.
+- Un detalle de **1 mm conserva el 95 %** de su contraste: 663 HU sobre un ruido
+  medido de 47 HU dan **CNR 14**, muy por encima del umbral de Rose. Se ve.
+- Un detalle de **0,15 mm conserva el 2 %**: 5 HU, **CNR 0,1**. **Falla la
+  resolución**, y no hay dosis que lo arregle — la información se perdió al
+  emborronarse.
 
-La frontera entre ambos regímenes cae alrededor de **0,6 mm**.
+La frontera entre ambos regímenes cae alrededor de **0,6 mm**, donde el CNR baja
+a 6 y la detección pasa a depender del caso.
+
+Con los supuestos que teníamos antes de medir (ruido 200 HU) la lesión de 1 mm salía
+como no detectable. **El equipo real es cuatro veces más silencioso**, así que ve
+bastante más de lo que la simulación anticipaba: la frontera de detección baja de
+~1,5 mm a ~0,6 mm. Lo que no cambia es el otro lado — por debajo de 0,3 mm sigue sin
+haber nada que hacer.
 
 Corolario clínico, que conviene decirle al partner: **que algo no salga en la imagen
 no significa que no esté.** Una cortical más fina que la resolución desaparece del
 reconstruido y se lee como dehiscencia.
 
-## 8. Dos hallazgos laterales
+## 9. Dos hallazgos laterales
 
 **El aliasing depende de la orientación.** A 0,23 mm —el muestreo real de nuestras
 mallas— la fisura de 0,15 mm se rompe en trozos inconexos, pero su tramo recto, que
@@ -213,7 +273,7 @@ según cómo esté girado.
 resolución: está bajo esmalte intacto y un escáner óptico no lo atraviesa. Es la
 justificación más limpia de por qué el gemelo necesita las dos ramas.
 
-## 9. Entonces, por qué 3DGS
+## 10. Entonces, por qué 3DGS
 
 No por resolución. Por **asignación adaptativa de capacidad**: fino en la superficie
 que mide el escáner, basto en el interior que solo mide el CBCT. Una rejilla de
@@ -252,7 +312,7 @@ que las gaussianas añaden por encima son las otras dos propiedades del
 mismo primitivo** (σ volumétrico, color superficial, `region_id` semántico) y ser
 **diferenciable**.
 
-## 10. Y para el caso de la caries
+## 11. Y para el caso de la caries
 
 El valor del gemelo no es ver mejor, sino **correlacionar señales débiles de
 soportes distintos sobre el mismo diente**:
@@ -281,12 +341,17 @@ mordida trabaja a ~15 pl/mm frente a 1–2 pl/mm del CBCT: un orden de magnitud.
 | Coste de representación | **Derivado** — aritmética sobre geometría medida |
 | 127 037 primitivas del `cbct-agent` | **Medido** en el caso sintético del repo |
 | Muestreo de 0,23 mm del IOS | **Medido** — 116 k vértices de Teeth3DS+ sobre ~6000 mm² |
-| PSF 0,35 mm y ruido 200 HU | ⚠️ **Supuestos plausibles, no calibrados** contra equipo |
+| PSF 0,425 mm y ruido 47 HU | **Medidos** sobre el CS 9600 de `histora` |
+| Resolución por ventana de contraste | **Medida** — 425 / 567 / 611 µm |
+| Arista del STL = vóxel del CBCT | **Medido** en cuatro resoluciones |
+| Resolución de escáneres comerciales | **Medida**, de literatura revisada |
 | Superficie de arcada 6000 mm² | ⚠️ **Estimada** — medirla sobre Teeth3DS+ está pendiente |
-| Resolución efectiva 0,3–0,5 mm | ⚠️ **Rango de literatura**, verificar por equipo |
+| Ruido de tejido blando (14,7 HU) | ⚠️ **Límite inferior**: la reducción de ruido de la reconstrucción correlaciona vóxeles vecinos |
 
-La forma de las curvas es robusta frente a los supuestos; los valores absolutos
-habría que calibrarlos con un fantoma real antes de citarlos en la memoria.
+Los dos parámetros que antes iban en amarillo —PSF y ruido— **ya no son supuestos**:
+salen del CBCT real. Lo que sigue sin medirse es la superficie de arcada (estimada en
+6000 mm²) y la generalización a otros equipos: todo lo de aquí describe **un**
+Carestream CS 9600, no el CBCT dental en abstracto.
 
 ## Pendiente
 
