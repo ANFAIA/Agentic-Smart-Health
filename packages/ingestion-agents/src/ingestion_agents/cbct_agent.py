@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +45,13 @@ ACCEPTED_MODALITIES = frozenset({"CT", "CBCT"})
 
 _PSEUDONYM_SALT_ENV = "ASH_PSEUDONYM_SALT"
 
+# Lo que una exportación clínica deja junto a los cortes y no pretende ser uno:
+# informes, miniaturas, visores. Todo lo demás se trata como candidato a corte.
+_EXTENSIONES_ACCESORIAS = frozenset(
+    {".txt", ".xml", ".json", ".html", ".htm", ".csv", ".log", ".ini", ".md",
+     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".pdf", ".exe", ".bat", ".dll"}
+)
+
 
 def pseudonymize(patient_id: str, *, salt: str | None = None) -> str:
     """Seudónimo estable y no reversible de un identificador de paciente.
@@ -60,8 +68,42 @@ def pseudonymize(patient_id: str, *, salt: str | None = None) -> str:
     return hmac.new(key, patient_id.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
-def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float], str]:
-    """Lee una serie DICOM y devuelve (volumen HU, espaciado mm (x,y,z), patient_id crudo)."""
+def _es_dicom(path: Path) -> bool:
+    """¿Es este fichero un DICOM? Se mira la **firma**, no el nombre.
+
+    El estándar reserva un preámbulo de 128 bytes seguido de la marca `DICM`, y esa
+    es la única forma fiable de reconocerlo. Filtrar por la extensión `.dcm` deja
+    fuera series enteras: los exportadores clínicos escriben a menudo los cortes sin
+    extensión (`i0000567`, `IM_0001`), y con 578 ficheros así el agente veía un
+    directorio vacío y declaraba un fallo que no era del dato sino nuestro.
+
+    Encontrado sobre CBCT real (Carestream CS 9600) — ver `edge_cases.py`.
+    """
+    try:
+        with path.open("rb") as fh:
+            return fh.read(132)[128:] == b"DICM"
+    except OSError:
+        return False
+
+
+@dataclass(frozen=True)
+class Serie:
+    """Una serie DICOM ya leída y ordenada."""
+
+    volume: np.ndarray
+    """`(n_cortes, filas, columnas)` en unidades Hounsfield."""
+    spacing: tuple[float, float, float]
+    """Tamaño de vóxel `(x, y, z)` en mm. El de z es el **nominal**."""
+    patient_id: str
+    z: np.ndarray
+    """Posición real de cada corte en mm. **No** se asume `índice × espaciado`: un
+    corte ausente desplazaría todo lo que hay por encima."""
+    huecos: int
+    """Cortes que faltan en la serie, deducidos del espaciado."""
+
+
+def _read_series(directory: Path) -> Serie:
+    """Lee una serie DICOM, la ordena y comprueba que no tenga agujeros."""
     try:
         import pydicom
     except ImportError as exc:  # pragma: no cover - entorno sin la dependencia
@@ -69,9 +111,29 @@ def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float
             "El `cbct-agent` necesita `pydicom` (dependencia de `ingestion-agents`)."
         ) from exc
 
-    files = sorted(p for p in directory.iterdir() if p.suffix.lower() == ".dcm")
+    # Todo lo que no sea claramente accesorio se considera candidato a corte, y un
+    # candidato que no supere la firma es un fallo, no algo que saltarse. El defecto
+    # por omisión es **sospechar**: si se ignorase en silencio, un corte truncado
+    # desaparecería de la serie y el volumen saldría con medio maxilar de menos.
+    candidatos = [
+        p
+        for p in sorted(directory.iterdir())
+        if p.is_file() and p.suffix.lower() not in _EXTENSIONES_ACCESORIAS
+        and p.name.upper() != "DICOMDIR"
+    ]
+    files = [p for p in candidatos if _es_dicom(p)]
+    ilegibles = [p.name for p in candidatos if p not in set(files)]
+    if ilegibles:
+        raise ValueError(
+            f"{len(ilegibles)} fichero(s) del directorio no son DICOM legible: "
+            f"{', '.join(ilegibles[:5])}{'…' if len(ilegibles) > 5 else ''}. "
+            "Un corte que no se puede leer no se ignora: dejaría un agujero en el volumen."
+        )
     if not files:
-        raise ValueError(f"No hay ficheros .dcm en {directory}")
+        raise ValueError(
+            f"No hay ficheros DICOM en {directory}: ninguno lleva la firma `DICM` "
+            "en el byte 128 (se comprueba el contenido, no la extensión)."
+        )
 
     slices = [pydicom.dcmread(str(p)) for p in files]
     # Orden por posición física si está; si no, por número de instancia. Un orden
@@ -84,13 +146,37 @@ def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float
 
     slices.sort(key=_z)
 
+    # Cuántos cortes faltan, deducido del espaciado. No es fatal —una exportación
+    # clínica real puede perder alguno— pero sí tiene que constar: baja la confianza
+    # y el orquestador decide. Lo que no se hace es fingir que la serie está
+    # completa, que es lo que pasaría si nadie mirase.
+    posiciones = np.asarray([_z(ds) for ds in slices], dtype=np.float64)
+    huecos = 0
+    if len(posiciones) > 2:
+        pasos = np.diff(posiciones)
+        paso = float(np.median(pasos))
+        if paso > 0:
+            anchos = pasos[pasos > paso * 1.5]
+            huecos = int(round(float((anchos / paso).sum()) - len(anchos)))
+
     first = slices[0]
     rows, cols = int(first.Rows), int(first.Columns)
     volume = np.empty((len(slices), rows, cols), dtype=np.float32)
     for i, ds in enumerate(slices):
         if int(ds.Rows) != rows or int(ds.Columns) != cols:
             raise ValueError("Cortes de tamaño heterogéneo: la serie no es un volumen único.")
-        arr = ds.pixel_array.astype(np.float32)
+        try:
+            arr = ds.pixel_array.astype(np.float32)
+        except RuntimeError as exc:
+            # `pydicom` no descomprime solo: necesita un plugin por sintaxis de
+            # transferencia. El mensaje suyo habla de plugins genéricos; aquí se
+            # nombra la sintaxis concreta, que es lo que dice qué instalar.
+            sintaxis = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+            raise ValueError(
+                f"Píxeles comprimidos que no se pueden descomprimir "
+                f"({getattr(sintaxis, 'name', sintaxis)}): falta el decodificador. "
+                f"JPEG → `pylibjpeg-libjpeg`; JPEG 2000 → `pylibjpeg-openjpeg`."
+            ) from exc
         slope = float(getattr(ds, "RescaleSlope", 1.0))
         intercept = float(getattr(ds, "RescaleIntercept", 0.0))
         volume[i] = arr * slope + intercept  # → unidades Hounsfield
@@ -123,7 +209,13 @@ def _read_series(directory: Path) -> tuple[np.ndarray, tuple[float, float, float
             f"Espaciado inválido {spacing} mm: cada eje tiene que ser finito y positivo."
         )
 
-    return volume, spacing, str(getattr(first, "PatientID", "") or "")
+    return Serie(
+        volume=volume,
+        spacing=spacing,
+        patient_id=str(getattr(first, "PatientID", "") or ""),
+        z=posiciones,
+        huecos=huecos,
+    )
 
 
 class CBCTAgent(BaseIngestionAgent):
@@ -154,8 +246,9 @@ class CBCTAgent(BaseIngestionAgent):
                 "`cbct-agent` ingiere el **directorio** de una serie DICOM, no un corte suelto."
             )
 
-        volume, spacing, raw_patient_id = _read_series(source)
-        self.patient_pseudonym = pseudonymize(raw_patient_id) if raw_patient_id else None
+        serie = _read_series(source)
+        volume, spacing = serie.volume, serie.spacing
+        self.patient_pseudonym = pseudonymize(serie.patient_id) if serie.patient_id else None
 
         occupied = np.argwhere(volume >= self.hu_threshold)  # (M, 3) índices (z, y, x)
         if occupied.size == 0:
@@ -172,12 +265,20 @@ class CBCTAgent(BaseIngestionAgent):
             occupied = occupied[::step]
             confidence = 0.9  # el campo es una submuestra, no el volumen completo
 
-        sx, sy, sz = spacing
+        # Una serie con cortes ausentes se ingiere, pero no se da por completa: la
+        # confianza cae y el gate de human-in-the-loop del orquestador la ve.
+        if serie.huecos:
+            confidence = min(confidence, 0.8)
+
+        sx, sy, _ = spacing
+        # La z sale de la **posición real** de cada corte, no de `índice × espaciado`:
+        # con un corte ausente, multiplicar por el índice desplazaría todo lo que hay
+        # por encima del hueco. Es un error silencioso de 0,3 mm por corte perdido.
         centers = np.column_stack(
             [
                 occupied[:, 2] * sx,
                 occupied[:, 1] * sy,
-                occupied[:, 0] * sz,
+                serie.z[occupied[:, 0]],
             ]
         ).astype(np.float32)
         centers -= centers.mean(axis=0)  # centrado en el origen, como el 3DGS estándar
@@ -190,7 +291,7 @@ class CBCTAgent(BaseIngestionAgent):
         # Gaussianas isótropas del tamaño del vóxel (½ arista): la semilla no
         # inventa anisotropía que el CBCT no midió; eso lo aprende el optimizador.
         scales = np.tile(
-            np.asarray([sx, sy, sz], dtype=np.float32) * 0.5, (centers.shape[0], 1)
+            np.asarray(spacing, dtype=np.float32) * 0.5, (centers.shape[0], 1)
         )
         # Cuaternión identidad (w, x, y, z) — sin rotación en la semilla.
         rotations = np.tile(

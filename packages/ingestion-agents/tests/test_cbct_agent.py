@@ -115,7 +115,7 @@ def test_directorio_sin_dicom(tmp_path: Path, store: ArtifactStore) -> None:
     vacio.mkdir()
     outcome = CBCTAgent(store).ingest(vacio)
     assert outcome.status is ModalityStatus.FAILED
-    assert ".dcm" in (outcome.detail or "")
+    assert "DICOM" in (outcome.detail or "")
 
 
 def test_ingesta_reproducible(cbct_dir: Path, store: ArtifactStore) -> None:
