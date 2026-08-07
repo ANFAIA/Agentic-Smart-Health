@@ -43,13 +43,29 @@ FINO, LADO = 0.01, 9.0  # mm/px de la verdad-terreno · lado del parche
 PSF_CBCT, RUIDO_CBCT = 0.35, 200.0  # FWHM en mm · desviación típica en HU
 RUIDO_ALETA = 60.0
 
+# Superficies de referencia para traducir pt/mm² a cifras que signifiquen algo:
+# la cara oclusal simulada (9 × 9 mm) y una arcada completa.
+OCLUSAL_MM2, ARCADA_MM2 = LADO * LADO, 6000.0
+# Alto de una arcada con hueso alveolar: da cuántas capas tiene el CBCT hacia dentro,
+# que es justo lo que ninguna malla de superficie posee.
+PROFUNDIDAD_MM = 40.0
+
 # (nombre, FWHM mm, color, paso de muestreo mm)
+#
+# El paso del IOS comercial NO es su *trueness*: son magnitudes distintas y
+# confundirlas es fácil. La trueness (32-98 um) dice cuánto se desvía la superficie
+# de la verdad; el paso dice cada cuánto hay un punto. Medido sobre arcada completa,
+# los escáneres entregan 34-80 pt/mm² -> 0,112-0,171 mm. Se toma Trios (41,21 pt/mm²)
+# como representativo. Ref.: Nedelcu et al., PMC5937957.
 MODALIDADES = [
-    ("CBCT / 3DGS desde CBCT", PSF_CBCT, "#b9482e", 0.30),
-    ("IOS como se entrega (0,23 mm)", 0.23, "#a06a12", 0.23),
-    ("IOS al límite (0,05 mm)", 0.05, "#2c7a4b", 0.05),
-    ("Aleta de mordida (0,033 mm)", 0.033, "#2c5f8a", 0.033),
+    ("CBCT · y STL por marching cubes", PSF_CBCT, "#b9482e", 0.30),
+    ("IOS Teeth3DS+ como lo tenemos", 0.23, "#a06a12", 0.23),
+    ("IOS comercial medido (Trios)", 0.156, "#2c7a4b", 0.156),
+    ("Aleta de mordida", 0.033, "#2c5f8a", 0.033),
 ]
+
+# Resolución medida de escáneres reales sobre arcada completa (pt/mm²).
+IOS_MEDIDOS = {"Omnicam": 79.82, "True Definition": 54.68, "Trios": 41.21, "iTero": 34.20}
 
 # (etiqueta, diámetro mm, ΔHU real) — los tres hallazgos, cada uno en otro soporte
 HALLAZGOS = [
@@ -123,11 +139,11 @@ def figura_paneles(destino: Path) -> None:
 
     c30, k30 = muestrear(dens, 0.30, fwhm=PSF_CBCT, ruido=RUIDO_CBCT, semilla=1)
     ci, ki = muestrear(color, 0.23)
-    ct, kt = muestrear(color, 0.05)
+    ct, kt = muestrear(color, 0.156)
     ca, ka = muestrear(dens, 0.033, fwhm=0.033, ruido=RUIDO_ALETA, semilla=2)
 
     paneles = [
-        ("CBCT", "0,30 mm · PSF 0,35 · ruido 200 HU", "11 pt/mm²",
+        ("CBCT · y el STL que sale de él", "0,30 mm · PSF 0,35 · ruido 200 HU", "11 pt/mm²",
          _expandir(_gris(c30), k30), "#b9482e"),
         # Mismos datos que el panel de arriba, solo que interpolados: es la
         # demostración de que suavizar no añade información.
@@ -135,7 +151,7 @@ def figura_paneles(destino: Path) -> None:
          _expandir(_gris(c30), k30, 1), "#b9482e"),
         ("IOS como se entrega", "malla 0,23 mm · color, sin densidad", "19 pt/mm²",
          _expandir(ci, ki), "#a06a12"),
-        ("IOS al limite del escaner", "0,05 mm · color, sin densidad", "400 pt/mm²",
+        ("IOS comercial (medido)", "0,156 mm · Trios, 41 pt/mm²", "41 pt/mm²",
          _expandir(ct, kt), "#2c7a4b"),
         ("Aleta de mordida (referencia)", "0,033 mm · ~15 pl/mm", "918 pt/mm²",
          _expandir(_gris(ca), ka), "#2c5f8a"),
@@ -234,11 +250,103 @@ def tabla() -> None:
               f"  {'detectable' if cnr >= 4 else 'NO detectable'}")
 
 
+def _lado(puntos: float) -> str:
+    """Los mismos puntos, expresados como imagen cuadrada: la unidad que sí se intuye."""
+    n = int(round(puntos**0.5))
+    return f"{n}×{n}"
+
+
+def tabla_puntos() -> None:
+    """Densidad de muestreo **de las modalidades**, en puntos y en píxeles.
+
+    3DGS queda deliberadamente fuera de esta tabla y se trata aparte: no es una
+    modalidad, es un contenedor **sin resolución propia** — hereda la de aquello con
+    lo que se entrene. Mezclarlo aquí hace leer «11 pt/mm²» como un techo suyo cuando
+    es el de la fuente que hoy le damos.
+
+    `pt/mm²` y `resuelve` dicen cosas distintas: cuántos datos hay, y qué detalle
+    sobrevive. Un render de más píxeles no mueve ninguna de las dos.
+    """
+    base = 1 / MODALIDADES[0][3] ** 2
+    print(
+        f"\n{'modalidad':<26}{'paso':>7}{'pt/mm²':>8}{'×CBCT':>7}"
+        f"{'oclusal':>12}{'arcada':>13}{'MP':>7}{'resuelve':>11}"
+    )
+    print("-" * 91)
+    for nombre, fwhm, _, paso in MODALIDADES:
+        d = 1 / paso**2
+        etiqueta = nombre.split(" (")[0]
+        print(
+            f"{etiqueta:<26}{paso:>6.3f} {d:>7.0f} {d / base:>6.0f}× "
+            f"{_lado(d * OCLUSAL_MM2):>11} {_lado(d * ARCADA_MM2):>12} "
+            f"{d * ARCADA_MM2 / 1e6:>6.2f} {fwhm:>9.2f} mm"
+        )
+
+    print("\nSaltos entre escalones consecutivos:")
+    for (n1, f1, _, h1), (n2, f2, _, h2) in zip(MODALIDADES, MODALIDADES[1:], strict=False):
+        e1, e2 = (n.split(" (")[0] for n in (n1, n2))
+        print(f"  {e1:<26} → {e2:<26} {(h1 / h2) ** 2:>5.1f}× puntos  {f1 / f2:>4.1f}× resolución")
+
+    # --- 3DGS aparte: lo que hereda hoy y lo que debería heredar tras fusionar --- #
+    capas = int(PROFUNDIDAD_MM / MODALIDADES[0][3])
+    print("\nEscáneres intraorales medidos sobre arcada completa (Nedelcu et al.):")
+    for nombre, pt in sorted(IOS_MEDIDOS.items(), key=lambda kv: -kv[1]):
+        print(f"  {nombre:<20} {pt:>6.2f} pt/mm²  paso {1 / pt**0.5:>6.3f} mm")
+
+    print(f"\n3DGS no tiene resolución propia. En la cáscara de una arcada ({ARCADA_MM2:.0f} mm²):")
+    for etiqueta, paso, nota in (
+        ("hoy, sembrado del CBCT", MODALIDADES[0][3], "una gaussiana por vóxel ocupado"),
+        ("tras fusionar la malla", MODALIDADES[2][3], "la banda ε toma el detalle del IOS"),
+    ):
+        d = 1 / paso**2
+        print(f"  {etiqueta:<26} {d:>7.0f} pt/mm²  {_lado(d * ARCADA_MM2):>11} px"
+              f"  {d * ARCADA_MM2 / 1e6:>6.2f} MP   ({nota})")
+    print(f"  y en ambos casos, {capas} capas más hacia dentro que ninguna malla tiene.")
+
+
+def tabla_marching_cubes(voxeles: tuple[float, ...] = (0.40, 0.30, 0.20, 0.10)) -> None:
+    """Qué espaciado de puntos da un STL extraído del CBCT con marching cubes.
+
+    La respuesta es que la arista mediana **es** el vóxel, exactamente, porque MC
+    coloca los vértices sobre las aristas de la rejilla. Eso significa que un STL
+    denso sacado de un CBCT describe interpolación, no medida: bajar el vóxel
+    multiplica los vértices sin añadir un solo dato nuevo.
+    """
+    import vtk
+    from ingestion_agents import synthetic
+    from vtk.util import numpy_support as ns
+
+    print(f"\n{'vóxel':>7}{'vértices':>11}{'área mm²':>11}{'arista mediana':>16}")
+    print("-" * 45)
+    for v in voxeles:
+        vol, esp = synthetic.build_volume(spacing=v)
+        img = vtk.vtkImageData()
+        img.SetDimensions(vol.shape[2], vol.shape[1], vol.shape[0])
+        img.SetSpacing(*esp)
+        img.GetPointData().SetScalars(
+            ns.numpy_to_vtk(vol.ravel(order="C").astype(np.float32), deep=True)
+        )
+        mc = vtk.vtkFlyingEdges3D()
+        mc.SetInputData(img)
+        mc.SetValue(0, 300.0)
+        mc.Update()
+        poly = mc.GetOutput()
+        V = ns.vtk_to_numpy(poly.GetPoints().GetData())
+        F = ns.vtk_to_numpy(poly.GetPolys().GetConnectivityArray()).reshape(-1, 3)
+        t = V[F]
+        area = float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
+        e = np.vstack([V[F[:, 0]] - V[F[:, 1]], V[F[:, 1]] - V[F[:, 2]], V[F[:, 2]] - V[F[:, 0]]])
+        L = np.linalg.norm(e, axis=1)
+        print(f"{v:>7.2f}{len(V):>11,}{area:>11,.0f}{np.median(L[L > 0]):>15.3f} mm")
+
+
 def main() -> None:
     DESTINO.mkdir(parents=True, exist_ok=True)
     figura_paneles(DESTINO / "resolucion-modalidades-paneles.png")
     figura_curva(DESTINO / "resolucion-modalidades-curva.png")
     print(f"Figuras escritas en {DESTINO}")
+    tabla_puntos()
+    tabla_marching_cubes()
     tabla()
 
 
