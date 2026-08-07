@@ -183,10 +183,39 @@ del equipo sigue siendo **425 µm**, medida en la §2. Esos 463 000 vértices de
 una malla precisa, y es el error que cometería quien intente cumplir el presupuesto
 de 0,1 mm subiendo la resolución de reconstrucción.
 
-**Un detalle que solo aparece con dato real:** el área extraída **no** es constante
-—7 433 mm² a 0,30 mm frente a 5 741 a 0,60— porque a resolución nativa la
-isosuperficie recoge la rugosidad del ruido y la infla. En el fantoma sintético, sin
-ruido, el área se mantenía en ~2 485 mm² en las cuatro resoluciones.
+### Por qué el área extraída no es constante
+
+Con dato real, el área depende de la resolución: 7 433 mm² a 0,30 mm frente a 5 741 a
+0,60. En el fantoma sintético se mantenía plana. **Mi primera explicación —que era el
+ruido— resultó falsa**, y el control lo dice sin ambigüedad: inyectar al fantoma el
+ruido medido de 47 HU infla su área **1,00×**. Ni con 100 HU pasa de 1,04×.
+
+Lo que manda es el **gradiente en la isosuperficie**:
+
+| Isovalor | Qué separa | Área cruda | Tras suavizar | Cae a | Dimensión | \|grad\| |
+|---|---|---|---|---|---|---|
+| −500 | aire ↔ piel | 12 274 mm² | 8 049 | 66 % | 2,23 | 27 HU/vóxel |
+| 300 | tejido ↔ hueso | **50 210 mm²** | 26 266 | 52 % | **2,44** | 80 |
+| 1200 | hueso ↔ cortical | 7 433 mm² | 3 531 | 48 % | 2,45 | 60 |
+| **2000** | **esmalte** | **2 200 mm²** | 1 836 | **83 %** | **2,10** | **364** |
+
+**Es la paradoja de la costa.** Una isosuperficie que cruza un borde nítido —el
+esmalte, con 364 HU/vóxel de gradiente— está bien definida: dimensión 2,10, casi una
+superficie lisa, y su área apenas cambia al medirla a otra escala. Una que atraviesa
+una **textura** —el hueso trabecular, 60–80 HU/vóxel— es fractal: dimensión 2,45, y
+su área **no existe** como magnitud, depende de con qué regla la midas.
+
+El caso de 300 HU lo enseña de golpe: **50 210 mm², veinte veces la superficie del
+esmalte**, porque la isosuperficie se pasea por toda la trabécula.
+
+**La regla práctica, y afecta al `export-agent`:** solo tiene sentido extraer malla
+donde el gradiente sea fuerte. El esmalte se puede mallar y medir; el hueso
+trabecular no — y el umbral de 300 HU que usa hoy el `cbct-agent` para sembrar
+gaussianas es justo el peor isovalor posible si algún día se usa para mallar.
+
+Y tiene consecuencias para la métrica del brief: **«error de malla < 0,1 mm» solo
+está bien definido sobre superficies de gradiente alto.** Sobre hueso trabecular la
+pregunta no tiene respuesta, porque no hay una superficie única que aproximar.
 
 ### La comparación que mejor resume todo
 
@@ -345,6 +374,8 @@ mordida trabaja a ~15 pl/mm frente a 1–2 pl/mm del CBCT: un orden de magnitud.
 | Resolución por ventana de contraste | **Medida** — 425 / 567 / 611 µm |
 | Arista del STL = vóxel del CBCT | **Medido** en cuatro resoluciones |
 | Resolución de escáneres comerciales | **Medida**, de literatura revisada |
+| Dimensión fractal 2,10–2,45 por isovalor | **Medida** — ley de potencias sobre 5 escalas |
+| Que el ruido NO explica el área | **Medido** — control de inyección sobre el fantoma |
 | Superficie de arcada 6000 mm² | ⚠️ **Estimada** — medirla sobre Teeth3DS+ está pendiente |
 | Ruido de tejido blando (14,7 HU) | ⚠️ **Límite inferior**: la reducción de ruido de la reconstrucción correlaciona vóxeles vecinos |
 
