@@ -136,6 +136,27 @@ Dicho de otro modo: en densidad de puntos sobre una superficie, CBCT, STL y esc�
 intraoral **juegan todos en la misma liga**. Lo que cambia radicalmente entre ellos
 no es cuántos puntos dan, sino **qué miden**: geometría, densidad o color.
 
+### La misma boca, por las dos vías
+
+Todo lo anterior compara modalidades con números de fuentes distintas. Esto no: sale
+del **mismo paciente**, con su CBCT y su escáner intraoral.
+
+| | pt/mm² | Resolución | Arcada |
+|---|---|---|---|
+| CBCT · isosuperficie cortical | **26,3** | **425 µm** | 329 × 329 px |
+| IOS · `PREVIO UpperJawScan` | **26,9** | **211 µm** | 332 × 332 px |
+
+**Densidad de puntos prácticamente idéntica y resolución que difiere en el doble.**
+Es la demostración más limpia de toda la ficha de que contar puntos no mide
+información — y no depende de ninguna estimación: misma boca, mismo día, dos
+aparatos.
+
+Un aviso sobre los ficheros `Visualization_DigitalModelUnsectioned_*`: tienen
+11 186 mm² con una caja envolvente casi igual a la del escaneo de 4 109 mm². Casi
+tres veces la superficie en el mismo volumen solo se explica si son **modelos sólidos
+cerrados**, con superficie interior además de exterior. No sirven como referencia de
+lo que entrega el escáner.
+
 ### Qué significan las dos filas de 3DGS
 
 **Hoy** el campo se siembra del CBCT: una gaussiana por vóxel ocupado, 127 037
@@ -302,44 +323,67 @@ según cómo esté girado.
 resolución: está bajo esmalte intacto y un escáner óptico no lo atraviesa. Es la
 justificación más limpia de por qué el gemelo necesita las dos ramas.
 
-## 10. Entonces, por qué 3DGS
+## 10. Entonces, ¿está justificado 3DGS?
 
-No por resolución. Por **asignación adaptativa de capacidad**: fino en la superficie
-que mide el escáner, basto en el interior que solo mide el CBCT. Una rejilla de
-vóxeles está obligada a elegir una única resolución para todo el volumen.
+**Por comprimir, no.** Ése era el argumento que traíamos —asignación adaptativa de
+capacidad: fino donde mide el escáner, basto donde solo mide el CBCT— y los números
+medidos lo dejan flojo.
 
-Coste de representación a fidelidad equivalente (arcada de 70 × 55 × 40 mm,
-superficie 6000 mm², ocupación 20 %, interior siempre a 0,30 mm):
+Coste de representación a fidelidad equivalente (arcada de 70 × 55 × 40 mm, ocupación
+20 %, superficie **medida** de 4 109 mm², interior siempre a 0,30 mm):
 
 | Fidelidad de superficie | Rejilla uniforme | Rejilla dispersa | Campo adaptativo | Ventaja |
 |---|---|---|---|---|
-| 0,10 mm — presupuesto del brief | 154,0 M | 30,8 M | 1,74 M | **17,7×** |
-| 0,156 mm — IOS comercial medido | 40,6 M | 8,1 M | 1,39 M | 5,8× |
-| 0,23 mm — nuestras mallas Teeth3DS+ | 12,7 M | 2,5 M | 1,25 M | 2,0× |
-| 0,30 mm — resolución del CBCT | 5,7 M | 1,1 M | 1,21 M | **0,9×** |
+| 0,10 mm — presupuesto del brief | 154,0 M | 30,8 M | 1,55 M | **19,8×** |
+| 0,156 mm — IOS comercial | 40,6 M | 8,1 M | 1,31 M | 6,2× |
+| **0,211 mm — el escáner de `histora`** | 16,4 M | 3,3 M | 1,23 M | **2,7×** |
+| 0,30 mm — resolución del CBCT | 5,7 M | 1,1 M | 1,19 M | **1,0×** |
 
-**La ventaja es del requisito, no de la representación.** A resolución de CBCT el
-campo gaussiano *pierde* contra una rejilla dispersa. Toda la ganancia aparece al
-exigir detalle de superficie más fino que el vóxel, y el cruce está en ≈ 0,25 mm.
+**Con los datos que realmente tenemos, la ventaja es 2,7×.** A resolución de CBCT es
+exactamente 1,0: ninguna. Si la compresión fuera el único argumento, 3DGS no se
+sostendría, y conviene decirlo antes de que lo diga otro.
 
-Dos consecuencias incómodas y honestas:
+**Todo el peso está en una decisión que no es nuestra.** El 19,8× aparece solo si el
+presupuesto de 0,1 mm del brief es un requisito real del partner. Si es negociable,
+este argumento se cae. Es la pregunta más rentable que se le puede hacer, porque
+decide la arquitectura — y conviene notar que **ningún escáner del mercado entrega
+0,1 mm de muestreo**: ese número es de *exactitud* (trueness 32–98 µm), que es otra
+magnitud.
 
-- **Nuestros datos no ejercitan hoy esa ventaja.** Las mallas de Teeth3DS+ muestrean
-  a ~0,23 mm, casi igual de basto que el CBCT, y ahí la ventaja es 2×. Ni siquiera
-  con un escáner comercial (0,156 mm) pasa de 5,8×.
-- **Estamos 14× por debajo.** El `cbct-agent` produce hoy 127 037 primitivas
-  (resolución de CBCT, una gaussiana por vóxel ocupado); honrar el presupuesto de
-  0,1 mm pediría ~1,74 M.
-- **Y el 17,7× depende del presupuesto del brief, no de ningún aparato.** Ningún
-  escáner del mercado entrega 0,1 mm de muestreo: el requisito es de *exactitud*
-  (trueness 32–98 µm), que es otra magnitud.
+### Lo que la tabla no captura, y es donde está la justificación real
 
-**Objeción que hay que anticipar:** un octree o hash-grid multirresolución capturaría
-buena parte de esta ventaja. Lo que gana es la **adaptividad**, no «gaussianas». Lo
-que las gaussianas añaden por encima son las otras dos propiedades del
-[ADR 001](../architecture/001-digital-twin-core-schemas.md): **tres soportes en un
-mismo primitivo** (σ volumétrico, color superficial, `region_id` semántico) y ser
-**diferenciable**.
+**Un primitivo, tres soportes.** Una gaussiana lleva σ volumétrico, color superficial
+y `region_id` semántico en el mismo objeto. Está medido en esta ficha que el CBCT
+aporta **133 capas de profundidad** y el escáner **211 µm de superficie**: ningún
+otro formato de la tabla lleva las dos cosas.
+
+**Es diferenciable.** Se puede optimizar el registro y la fusión *a través* de la
+representación. Una malla o una rejilla, no.
+
+### Y las concesiones, que también son resultado
+
+- **Un octree o hash-grid multirresolución** capturaría buena parte de la ventaja de
+  capacidad. Lo que gana ahí es la **adaptividad**, no «gaussianas».
+- **Se podría mantener una malla y una rejilla por separado**, con una correspondencia
+  entre ambas, y tener los dos soportes. La ventaja de la gaussiana es que esa
+  correspondencia es *intrínseca* en vez de algo que hay que mantener sincronizado.
+  Es ventaja de ingeniería, no un imposible.
+- **En reversibilidad juega en contra.** Extraer una malla limpia de gaussianas es
+  difícil —el propio brief lo admite con su «o equivalente»— y la §6 mide que sobre
+  hueso trabecular ni siquiera está bien definido a qué superficie habría que
+  parecerse.
+- **Estamos 14× por debajo de usarlo.** El `cbct-agent` produce hoy 127 037
+  primitivas, a resolución de CBCT; honrar el 0,1 mm pediría ~1,55 M.
+
+### La lectura honesta
+
+3DGS **no está justificado por comprimir**. Lo está —si lo está— por ser el único
+sitio donde conviven densidad volumétrica, color de superficie y semántica por diente
+sobre el mismo objeto, y por poder optimizar a través de él.
+
+Con los datos de hoy eso es **una apuesta de diseño razonable, no un resultado
+demostrado**. Lo que sí está demostrado es lo contrario de lo que se suele suponer:
+que el argumento de la capacidad es **débil a nuestra resolución actual**.
 
 ## 11. Y para el caso de la caries
 
@@ -376,13 +420,14 @@ mordida trabaja a ~15 pl/mm frente a 1–2 pl/mm del CBCT: un orden de magnitud.
 | Resolución de escáneres comerciales | **Medida**, de literatura revisada |
 | Dimensión fractal 2,10–2,45 por isovalor | **Medida** — ley de potencias sobre 5 escalas |
 | Que el ruido NO explica el área | **Medido** — control de inyección sobre el fantoma |
-| Superficie de arcada 6000 mm² | ⚠️ **Estimada** — medirla sobre Teeth3DS+ está pendiente |
+| Superficie de arcada 4 109 mm² | **Medida** sobre `PREVIO UpperJawScan` de `histora` |
 | Ruido de tejido blando (14,7 HU) | ⚠️ **Límite inferior**: la reducción de ruido de la reconstrucción correlaciona vóxeles vecinos |
 
 Los dos parámetros que antes iban en amarillo —PSF y ruido— **ya no son supuestos**:
-salen del CBCT real. Lo que sigue sin medirse es la superficie de arcada (estimada en
-6000 mm²) y la generalización a otros equipos: todo lo de aquí describe **un**
-Carestream CS 9600, no el CBCT dental en abstracto.
+salen del CBCT real. La superficie de arcada tampoco es ya una estimación: 4 109 mm² medidos sobre el
+escaneo del mismo paciente. Lo que sigue sin comprobarse es la **generalización**:
+todo lo de aquí describe **un** Carestream CS 9600 y **un** escáner, no el CBCT
+dental en abstracto.
 
 ## Pendiente
 
