@@ -7,6 +7,13 @@ dependencies = [
     "core-schemas",
     "numpy>=2.0",
     "pydicom>=3.0",
+    # `pydicom` solo descomprime los píxeles si hay un decodificador instalado, y el
+    # CBCT clínico real llega comprimido: el Carestream CS 9600 de `histora` emite
+    # JPEG Lossless (1.2.840.10008.1.2.4.70). Sin esto la ingesta falla en el último
+    # paso, con el volumen ya localizado y ordenado — así que es camino por defecto,
+    # no extra. (Para JPEG 2000 haría falta además `pylibjpeg-openjpeg`.)
+    "pylibjpeg>=2.0",
+    "pylibjpeg-libjpeg>=2.1",
     # El informe clínico llega como PDF (entregable Semana 3-4): la lectura de PDF
     # es parte del camino por defecto del `report-agent`, no un extra opcional.
     "pypdf>=5.0",
