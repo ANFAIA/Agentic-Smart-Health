@@ -22,7 +22,7 @@ mensaje que dice qué línea miente y cómo arreglarla.
 `git ls-files`, no contra el disco: si no, un fichero ignorado que existe en local
 haría pasar en tu máquina algo que en CI falla.
 
-Tres comprobaciones, las tres derivadas de fallos que ya ocurrieron:
+Las comprobaciones, todas derivadas de fallos que ya ocurrieron:
 
 - `env`: variables leídas por el código ↔ `.env.example` ↔ README.
   Habría cazado el `OPENAI_API_KEY` declarado que no leía nadie.
@@ -30,6 +30,17 @@ Tres comprobaciones, las tres derivadas de fallos que ya ocurrieron:
   Habría cazado el README citando un notebook ya eliminado.
 - `agentes`: atributos `name` de las clases ↔ registro de `AGENTS.md`.
   Habría cazado un agente implementado y sin ficha.
+- `versiones`: atributo `version` de la clase ↔ la fila **Versión** de su ficha.
+  Habría cazado el `geometric-fusion-agent` subido a 0.2.0 el 2026-08-10 con la
+  ficha describiendo todavía el comportamiento de la 0.1.0.
+- `inventario` y `árbol`: que lo que existe esté citado, no solo que lo citado exista.
+
+**Lo que sigue sin cubrirse, y conviene saberlo.** Ninguna comprobación detecta que
+una afirmación *en prosa* se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm»
+y «la etapa gruesa queda pendiente»: las dos eran verdad hasta que dejaron de serlo, y
+este script habría pasado en verde. Lo que sí se puede mecanizar —una constante
+numérica citada en la documentación contra su valor en el código— está pendiente y es
+la extensión natural de `versiones`.
 """
 
 from __future__ import annotations
@@ -136,7 +147,7 @@ def tabla_make() -> str:
 def tabla_agentes(ficheros: set[str]) -> str:
     """Resumen, NO las fichas: inputs, outputs y herramientas son prosa."""
     filas = ["| Agente | Implementado en |", "|---|---|"]
-    for nombre, ruta in sorted(agentes_implementados(ficheros).items()):
+    for nombre, (ruta, _) in sorted(agentes_implementados(ficheros).items()):
         filas.append(f"| `{nombre}` | [`{ruta}`]({ruta}) |")
     return "\n".join(filas)
 
@@ -294,9 +305,9 @@ def revisar_rutas(ficheros: set[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 # 3 · Agentes implementados frente a los registrados
 # --------------------------------------------------------------------------- #
-def agentes_implementados(ficheros: set[str]) -> dict[str, str]:
-    """{nombre: fichero} leyendo el atributo `name` de las clases *Agent."""
-    fuera: dict[str, str] = {}
+def agentes_implementados(ficheros: set[str]) -> dict[str, tuple[str, str]]:
+    """{nombre: (fichero, versión)} leyendo `name` y `version` de las clases *Agent."""
+    fuera: dict[str, tuple[str, str]] = {}
     for ruta in sorted(f for f in ficheros if f.endswith(".py") and "/src/" in f):
         try:
             arbol = ast.parse((REPO / ruta).read_text(encoding="utf-8"))
@@ -305,6 +316,7 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, str]:
         for nodo in ast.walk(arbol):
             if not (isinstance(nodo, ast.ClassDef) and nodo.name.endswith("Agent")):
                 continue
+            atributos: dict[str, str] = {}
             for cuerpo in nodo.body:
                 if not (
                     isinstance(cuerpo, ast.Assign)
@@ -312,16 +324,77 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, str]:
                     and isinstance(cuerpo.value.value, str)
                 ):
                     continue
-                if any(isinstance(t, ast.Name) and t.id == "name" for t in cuerpo.targets):
-                    fuera[cuerpo.value.value] = ruta
+                for objetivo in cuerpo.targets:
+                    if isinstance(objetivo, ast.Name) and objetivo.id in ("name", "version"):
+                        atributos[objetivo.id] = cuerpo.value.value
+            if "name" in atributos:
+                fuera[atributos["name"]] = (ruta, atributos.get("version", ""))
     return fuera
+
+
+def _ficha_de(texto: str, nombre: str) -> str | None:
+    """La ficha de `nombre`: el bloque `###` que lo menciona y declara versión."""
+    for seccion in re.split(r"\n(?=### )", texto):
+        if f"`{nombre}`" in seccion and "**Versión**" in seccion:
+            return seccion
+    return None
+
+
+def _version_declarada(ficha: str, nombre: str) -> str | None:
+    """El texto de la fila `**Versión**`, acotado a este agente si la comparte.
+
+    Una ficha puede documentar varios agentes con versiones distintas (los de fusión).
+    Cuando la fila los nombra, se recorta desde la mención de este agente hasta la del
+    siguiente, para no dar por buena la versión del vecino.
+    """
+    fila = re.search(r"\|\s*\*\*Versión\*\*\s*\|(.+?)\|\s*$", ficha, re.M)
+    if fila is None:
+        return None
+    celda = fila.group(1)
+    marca = f"`{nombre}`"
+    if marca in celda:
+        resto = celda.split(marca, 1)[1]
+        siguiente = re.search(r"`[a-z0-9-]+`", resto)
+        celda = resto[: siguiente.start()] if siguiente else resto
+    return celda
+
+
+def revisar_versiones(agentes: dict[str, tuple[str, str]], texto: str) -> list[str]:
+    """Que la versión que declara la clase sea la que dice su ficha.
+
+    Es la misma clase de deriva que el recuento de tests que decía 166 cuando eran
+    265: un número que fue verdad, dejó de serlo, y nadie recibe un error rojo por
+    ello. Subir `version` en el código y olvidar la ficha deja el historial de
+    cambios describiendo un agente que ya no existe.
+
+    **Limitación honesta:** solo comprueba fichas que declaran versión, y solo que la
+    cadena aparezca en su celda. No detecta una ficha sin fila de versión —eso sería
+    exigir un formato que hoy no todas siguen— ni que el *historial de cambios* se
+    haya quedado corto.
+    """
+    problemas = []
+    for nombre, (ruta, version) in sorted(agentes.items()):
+        if not version:
+            continue
+        ficha = _ficha_de(texto, nombre)
+        if ficha is None:
+            continue  # sin ficha: ya lo canta `revisar_agentes`
+        celda = _version_declarada(ficha, nombre)
+        if celda is None or version in celda:
+            continue
+        problemas.append(
+            f"`{ruta}` declara `{nombre}` en la version {version} y su ficha de "
+            f"AGENTS.md dice «{celda.strip()}». Si el cambio de version es real, la "
+            "ficha necesita ademas una fila en su historial de cambios."
+        )
+    return problemas
 
 
 def revisar_agentes(ficheros: set[str]) -> list[str]:
     texto = (REPO / "AGENTS.md").read_text(encoding="utf-8")
     registrados = set(re.findall(r"`([a-z0-9]+(?:-[a-z0-9]+)+)`", texto))
     problemas = []
-    for nombre, ruta in sorted(agentes_implementados(ficheros).items()):
+    for nombre, (ruta, _) in sorted(agentes_implementados(ficheros).items()):
         if nombre not in registrados:
             problemas.append(
                 f"`{ruta}` implementa el agente `{nombre}` y AGENTS.md no lo registra. "
@@ -419,6 +492,13 @@ def main() -> int:
         ("variables de entorno", lambda: revisar_env(ficheros, args.write)),
         ("rutas citadas", lambda: revisar_rutas(ficheros)),
         ("registro de agentes", lambda: revisar_agentes(ficheros)),
+        (
+            "versiones de los agentes",
+            lambda: revisar_versiones(
+                agentes_implementados(ficheros),
+                (REPO / "AGENTS.md").read_text(encoding="utf-8"),
+            ),
+        ),
         ("inventario documentado", lambda: revisar_inventario(ficheros)),
         ("arbol del README", lambda: revisar_arbol(ficheros)),
         ("bloques generados", lambda: sincronizar_bloques(ficheros, args.write)),
