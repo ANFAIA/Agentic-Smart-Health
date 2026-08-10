@@ -31,8 +31,8 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 
 ## Estado actual (semanas 1–4)
 
-La **capa de ingesta está construida y probada**; la fusión, el análisis y la
-exportación son el trabajo de las semanas siguientes. Lo que ya funciona hoy:
+La **ingesta, la fusión y la segmentación están construidas y probadas**; la
+exportación reversible es el trabajo pendiente. Lo que ya funciona hoy:
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -86,11 +86,16 @@ que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, a
 que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
 ningún número a mano: los recuentos manuales envejecen solos.
 
-**Todavía no**: fusión multimodal (registrar y combinar CBCT + STL + foto), color
-**per-píxel** (registro foto↔malla — probado, no converge barato sin calibración),
-agentes de **análisis** (segmentación, patología) y **exportación reversible**. El
-paquete `3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks
-+ `gsplat`.
+**Fusión y segmentación** — `fusion-agents` (registro geométrico + anclaje semántico
+al FDI, ADR 004) y `analysis-agents` (`segmentation-agent`: `region_id` por gaussiana
+y el mapa `FDI → confianza` que consume la fusión semántica). El registro
+CBCT↔intraoral está **medido sobre un paciente real**
+([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
+población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
+
+**Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
+sin calibración), `pathology-agent` y **exportación reversible**. El paquete
+`3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks + `gsplat`.
 
 ---
 

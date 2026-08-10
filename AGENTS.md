@@ -273,7 +273,7 @@ IngestionOutput
 | Campo | Valor |
 |---|---|
 | **Ubicación** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
-| **Versión** | `0.1.0` |
+| **Versión** | `geometric-fusion-agent` **0.2.0** · `semantic-fusion-agent` `0.1.0` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 2 · Fusión geométrica **y** 4 · Fusión semántica (separadas por la segmentación) |
 | **Contrato común** | `FusionOutput` + `BaseFusionAgent` en `fusion_agents/base.py` |
@@ -336,13 +336,31 @@ FusionOutput
   se guarda como `RigidTransform` (cuaternión + traslación), **no** como matriz 4×4.
   Una 4×4 puede codificar escala y cizalla; si un ICP devolviera una escala espuria,
   la reversibilidad se rompería en silencio. Esta forma la hace *imposible de
-  expresar*, y un validador rechaza el cuaternión no unitario. La confianza sale del
-  residuo, `clamp(1 − rms/ε, 0, 1)` con **ε = 0.5 mm** — que **no** es la métrica de
-  0.1 mm del brief: esa mide reversibilidad de *una* malla, esta el alineamiento
-  entre *dos* modalidades.
-- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`).
-  Implementada solo la etapa **fina** (ICP multiescala); la **gruesa** (RANSAC-FPFH)
-  queda pendiente, así que **converge solo si la pose inicial ya está cerca**.
+  expresar*, y un validador rechaza el cuaternión no unitario.
+- ⚠️ `geometric-fusion-agent` — **la confianza sale del residuo de la población
+  solapada**, no del de la nube completa: `clamp(1 − rms_solapado/ε, 0, 1)`. Medido
+  sobre un paciente real con CBCT y escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)):
+  **4,98 mm** sobre la nube entera frente a **0,452 mm** sobre los puntos que sí tienen
+  contrapartida, para el mismo registro. El primero no mide el registro, mide qué
+  fracción del escaneo es paladar. Y por debajo de `min_overlap` (20 %) la confianza
+  es **0**: con cuatro puntos emparejados siempre hay una pose que los acerca.
+- ⚠️ `geometric-fusion-agent` — **ε es por par de modalidades**, no una constante.
+  `clamp(1 − rms/ε) ≥ 0,7` equivale a `rms ≤ 0,3·ε`, o sea 0,15 mm con ε = 0,5 — por
+  debajo del suelo físico de un CBCT de vóxel 0,30 mm y PSF 425 µm, así que con ese
+  valor la fusión intraoral↔CBCT **no podría pasar el gate nunca**. ε se lee como *el
+  error a partir del cual el resultado deja de servir*: **0,5 mm** para una malla
+  derivada del propio volumen, **1,5 mm** (`EPSILON_IOS_CBCT_MM`) para intraoral↔CBCT.
+  Ninguno de los dos es la métrica de 0,1 mm del brief: esa mide reversibilidad de
+  *una* malla, estas el alineamiento entre *dos* modalidades.
+- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`), con
+  dos implementaciones: `icp` (etapa **fina**, con recorte opcional de atípicos) e
+  `icp_global` (etapa **gruesa**, barrido de SO(3)). La gruesa cierra el hueco que el
+  ADR 004 dejaba para RANSAC-FPFH, por fuerza bruta y sin arrastrar Open3D. Sin ella
+  el ICP fino **no revienta**: converge a un mínimo local de ~0,43 mm —una cifra que
+  parece un buen registro— con una pose equivocada. Es un fallo que hay que ir a
+  buscar. **Recortar y buscar se pelean**: un recorte agresivo hace que una pose mala
+  puntúe bien, así que se criba flojo y se refina fuerte.
+- `geometric-fusion-agent` —
   **Transfiere el color desde la malla** (ADR 004 §2.8): cada gaussiana dentro de la
   banda ε toma el de su vértice más cercano. Las **fotos quedan fuera** — el notebook 07
   midió que el error foto↔malla es **no-rígido** (ICP estancado en IoU ≈ 0,55), así que
@@ -369,6 +387,7 @@ FusionOutput
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Registro inicial. ADR 004; `RigidTransform` en `core-schemas` (contrato 1.3.0); fusión semántica completa; fusión geométrica con ICP multiescala (falta la etapa gruesa); inserción idempotente en la serie temporal; enganche en el orquestador. |
+| 2026-08-10 | 0.2.0 (geométrica) | Medido el registro contra un paciente real con CBCT + escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). La confianza pasa a salir de la **población solapada**, ε pasa a ser **por par de modalidades** (0,5 mm derivada de volumen · 1,5 mm intraoral↔CBCT), se añade la puerta por **solapamiento mínimo**, y se implementa la **etapa gruesa** (`icp_global`) que el ADR 004 dejaba pendiente. Aditivo: un registrador que no mide solapamiento se comporta igual que antes. |
 
 ---
 
