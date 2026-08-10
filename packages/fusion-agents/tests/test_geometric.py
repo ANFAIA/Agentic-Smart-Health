@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import numpy as np
 import pytest
 from core_schemas import Modality, ModalityStatus, Provenance, TwinSnapshot
-from fusion_agents import GeometricFusionAgent, RegistrationResult, icp
+from fusion_agents import GeometricFusionAgent, RegistrationResult, icp, icp_global
 from fusion_agents.registration import apply, kabsch, matrix_to_quaternion
 
 
@@ -194,3 +194,97 @@ def test_el_fallo_del_registrador_no_se_propaga(tmp_path):
     assert out.status is ModalityStatus.FAILED
     assert "SVD no converge" in out.detail
     assert out.quarantine_ref is not None
+
+
+# --- solapamiento parcial y etapa gruesa (medido en histora, 2026-08-10) ---- #
+def _superficie(n: int = 800, semilla: int = 0) -> np.ndarray:
+    """Nube con curvatura: una silla de montar no tiene simetrías que confundan al ICP."""
+    rng = np.random.default_rng(semilla)
+    xy = rng.uniform(-10, 10, (n, 2))
+    z = 0.04 * (xy[:, 0] ** 2 - xy[:, 1] ** 2)
+    return np.column_stack([xy, z])
+
+
+def _girar(p: np.ndarray, grados: tuple[float, float, float], t: np.ndarray) -> np.ndarray:
+    a, b, c = np.radians(grados)
+    rx = np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+    ry = np.array([[np.cos(b), 0, np.sin(b)], [0, 1, 0], [-np.sin(b), 0, np.cos(b)]])
+    rz = np.array([[np.cos(c), -np.sin(c), 0], [np.sin(c), np.cos(c), 0], [0, 0, 1]])
+    return p @ (rz @ ry @ rx).T + t
+
+
+def test_icp_mide_la_fraccion_solapada():
+    destino = _superficie()
+    # La mitad de `origen` son puntos lejanos sin contrapartida posible.
+    origen = np.vstack([destino[:400], destino[:400] + np.array([0.0, 0.0, 50.0])])
+    res = icp(origen, destino, trim=0.5)
+    assert res.overlap_fraction == pytest.approx(0.5, abs=0.05)
+
+
+def test_el_rms_completo_no_describe_un_registro_con_solapamiento_parcial():
+    """El hallazgo de histora: 4,98 mm de nube completa frente a 0,452 mm reales."""
+    destino = _superficie()
+    origen = np.vstack([destino[:400], destino[:400] + np.array([0.0, 0.0, 50.0])])
+    res = icp(origen, destino, trim=0.5)
+    assert res.rms_mm > 10.0            # lo que hoy alimentaba la confianza
+    assert res.rms_overlap_mm < 0.1     # lo que de verdad mide el registro
+    assert res.rms_efectivo_mm == res.rms_overlap_mm
+
+
+def test_sin_medir_solapamiento_el_rms_efectivo_es_el_de_siempre():
+    """Retrocompatible: un registrador que no mide solapamiento se comporta igual."""
+    res = RegistrationResult((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.25, 1, True)
+    assert res.rms_efectivo_mm == 0.25
+    assert res.to_rigid_transform().rms_mm == pytest.approx(0.25)
+
+
+def test_la_procedencia_guarda_el_rms_efectivo():
+    """Es lo que alguien leerá dentro de un año para juzgar ese registro."""
+    res = RegistrationResult(
+        (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 9.9, 1, True,
+        rms_overlap_mm=0.4, overlap_fraction=0.3,
+    )
+    assert res.to_rigid_transform().rms_mm == pytest.approx(0.4)
+
+
+def test_solapamiento_escaso_anula_la_confianza():
+    """Con cuatro puntos emparejados siempre hay una pose que los acerca."""
+    def registrador(source, target):
+        return RegistrationResult(
+            (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 8.0, 1, True,
+            rms_overlap_mm=0.01, overlap_fraction=0.02,  # rms buenísimo, casi sin medir
+        )
+
+    agente = GeometricFusionAgent(registrar=registrador, min_overlap=0.20)
+    out = agente.fuse(_snap(), source=_nube(), target=_nube())
+    assert out.snapshot.provenance.confidence == 0.0
+    assert any("tiene contrapartida" in m for m in out.hitl_reasons)
+
+
+def test_min_overlap_invalido_se_rechaza_al_construir():
+    with pytest.raises(ValueError, match="min_overlap"):
+        GeometricFusionAgent(min_overlap=1.5)
+
+
+@pytest.mark.parametrize(
+    "giro",
+    [(70.0, -50.0, 110.0), (180.0, 0.0, 0.0), (150.0, 120.0, 90.0), (120.0, 160.0, 200.0)],
+    ids=["oblicuo", "medio-giro", "compuesto", "invertido"],
+)
+def test_la_etapa_gruesa_encuentra_la_pose_que_el_icp_fino_solo_aproxima(giro):
+    """El hueco declarado del ADR 004, y por qué su ausencia era peligrosa.
+
+    Ojo al modo de fallo: el ICP fino **no revienta**. Se queda en un mínimo local a
+    ~0,4 mm —una cifra que parece un buen registro— y devuelve una pose que no es la
+    correcta. Un fallo ruidoso se ve; éste hay que ir a buscarlo.
+    """
+    destino = _superficie()
+    origen = _girar(destino, giro, np.array([40.0, -25.0, 15.0]))
+
+    fino = icp(origen, destino)
+    grueso = icp_global(
+        origen, destino, poses=120, criba=300, fino=800, trim=1.0, trim_criba=1.0
+    )
+
+    assert fino.rms_efectivo_mm > 0.2    # plausible, y equivocado
+    assert grueso.rms_efectivo_mm < 0.01  # la transformación exacta
