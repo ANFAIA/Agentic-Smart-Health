@@ -82,7 +82,17 @@ jobs:
           uv run python scripts/data_guard.py --quiet
           uv run python scripts/docs_sync.py --check
 
-      - name: Abrir PR
+      # La PR automática puede estar prohibida por política de la organización
+      # (ANFAIA lo está: `GitHub Actions is not permitted to create or approve pull
+      # requests`). Eso NO es un fallo del vigilante: la rama con las propuestas ya
+      # está subida y el trabajo hecho. Por eso el `gh pr create` es tolerante — un
+      # run rojo cada lunes por una casilla de configuración enseña a ignorar el CI,
+      # y el día que falle de verdad no lo miraría nadie.
+      #
+      # El cuerpo de la PR (el porqué de cada artículo, su licencia y su hash) se
+      # vuelca SIEMPRE al resumen del run: si la abre una persona a mano, ese texto
+      # es justo lo que no puede reconstruir, porque muere con el runner.
+      - name: Proponer la literatura (rama + PR si se permite)
         if: steps.cambios.outputs.hay == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,7 +105,22 @@ jobs:
           git add data/research-agent/knowledge_base/manifest.yaml
           git commit -m "chore(kb): propuestas de literatura del $(date +%F)"
           git push -u origin "$rama"
+
+          comparar="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/develop...$rama?expand=1"
+          {
+            echo "## Propuestas de literatura del $(date +%F)"
+            echo
+            echo "Rama subida: \`$rama\`"
+            echo
+            echo "**[→ Abrir la PR]($comparar)** y pegar como descripción el texto de abajo."
+            echo
+            echo '```markdown'
+            cat cuerpo-pr.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
           gh pr create \
             --base develop --head "$rama" \
             --title "chore(kb): literatura nueva del $(date +%F)" \
-            --body-file cuerpo-pr.md
+            --body-file cuerpo-pr.md \
+          || echo "::notice::PR automática bloqueada por política de la organización. La rama \`$rama\` está subida; ábrela desde el resumen de este run, que lleva el cuerpo listo para pegar."
