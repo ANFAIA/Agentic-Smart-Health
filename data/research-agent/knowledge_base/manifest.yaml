@@ -192,3 +192,25 @@ documentos:
     sha256: 3f54f9d3c2b06fedf7d449932234b2e56880fc6530921e7cf01f7fc62e84087f
     bytes: 2218215
     nota: "Compartir-igual: cualquier derivado hereda la licencia."
+  - fichero: "Anticipatory Digital Twins for Online Head-and-Neck Adaptive Proton Therapy via Foundation-Model Registration - 2608.00831v1.pdf"
+    titulo: "Anticipatory Digital Twins for Online Head-and-Neck Adaptive Proton Therapy via Foundation-Model Registration"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.00831v1"
+    url: "https://arxiv.org/pdf/2608.00831v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: ee36493a4faf55b346a2b2a0349a7d92fad367bc8fa2c41944a6cca31db510c3
+    bytes: 5465625
+    nota: "Descubierto por watch_literature.py el 2026-08-10 (consulta: all:\"digital twin\" AND all:\"patient\"). Relevancia sin revisar."
+  - fichero: "Closed-Loop Validation-Repair for Healthcare Interoperability_ A Multi-Model Study of Schema Compliance in Cli - 2607.24371v1.pdf"
+    titulo: "Closed-Loop Validation-Repair for Healthcare Interoperability: A Multi-Model Study of Schema Compliance in Clinical LLMs"
+    anio: 2026
+    fuente: arxiv
+    id: "2607.24371v1"
+    url: "https://arxiv.org/pdf/2607.24371v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 99913750a5d90d2949c4f9d426363b39fce2cf73999548675fb2d06f4c2a9475
+    bytes: 4730953
+    nota: "Descubierto por watch_literature.py el 2026-08-10 (consulta: all:\"FHIR\" OR all:\"HL7\"). Relevancia sin revisar."
