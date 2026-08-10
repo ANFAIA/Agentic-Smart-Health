@@ -13,7 +13,7 @@ El pipeline separa la fusión en **dos etapas, con la segmentación en medio**:
 | Agente | Etapa | Estado |
 |---|---|---|
 | `SemanticFusionAgent` | anclaje al FDI | implementado |
-| `GeometricFusionAgent` | registro malla↔CBCT | implementado (etapa fina) |
+| `GeometricFusionAgent` | registro malla↔CBCT | implementado (fina + gruesa) |
 
 Son dos agentes y no uno porque entre ambos corre otra etapa, y porque tienen
 material y criterio de aceptación distintos: la semántica se valida contra el
@@ -27,18 +27,24 @@ from fusion_agents.base import (
     FusionOutput,
 )
 from fusion_agents.color import transfer_surface_color
-from fusion_agents.geometric import GeometricFusionAgent
+from fusion_agents.geometric import DEFAULT_MIN_OVERLAP, GeometricFusionAgent
 from fusion_agents.registration import (
     DEFAULT_EPSILON_MM,
+    DEFAULT_OVERLAP_MM,
+    EPSILON_IOS_CBCT_MM,
     Registrar,
     RegistrationResult,
     icp,
+    icp_global,
 )
 from fusion_agents.semantic import SemanticFusionAgent
 from fusion_agents.twin import insert_snapshot
 
 __all__ = [
     "DEFAULT_EPSILON_MM",
+    "DEFAULT_MIN_OVERLAP",
+    "DEFAULT_OVERLAP_MM",
+    "EPSILON_IOS_CBCT_MM",
     "DEFAULT_HITL_THRESHOLD",
     "BaseFusionAgent",
     "FusionAgent",
@@ -48,6 +54,7 @@ __all__ = [
     "RegistrationResult",
     "SemanticFusionAgent",
     "icp",
+    "icp_global",
     "transfer_surface_color",
     "insert_snapshot",
 ]
