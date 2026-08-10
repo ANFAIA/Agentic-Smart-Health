@@ -32,16 +32,36 @@ if ! salida="$(uv run python scripts/data_guard.py --quiet 2>&1)"; then
 fi
 
 # --- 2. Bloques generados de la documentación ------------------------------ #
+#
+# Se fotografía el contenido ANTES de regenerar y se comparan las huellas después:
+# así se añade solo lo que docs_sync haya tocado DURANTE esta ejecución.
+#
+# La versión anterior usaba `git diff --name-only -- README.md AGENTS.md`, que lista
+# lo modificado respecto al índice **por cualquier motivo**. El 2026-08-10 eso se
+# tragó ediciones de prosa que iban a otro commit: una tanda de nueve quedó en siete,
+# con la documentación adelantada al código que describía. El comentario de entonces
+# ya prometía «solo los que el script haya cambiado»; el código no lo cumplía.
+DOCS_GENERADOS=(README.md AGENTS.md)
+
+declare -A huella_previa
+for doc in "${DOCS_GENERADOS[@]}"; do
+  huella_previa["$doc"]="$(git hash-object "$doc")"
+done
+
 uv run python scripts/docs_sync.py --write >/dev/null 2>&1 || {
   echo "pre-commit: docs_sync.py falló; se commitea igual y el CI lo dirá." >&2
   exit 0
 }
 
-# Solo se añaden los documentos que el propio script haya cambiado.
-cambiados="$(git diff --name-only -- README.md AGENTS.md)"
-if [ -n "$cambiados" ]; then
-  # shellcheck disable=SC2086
-  git add $cambiados
+regenerados=()
+for doc in "${DOCS_GENERADOS[@]}"; do
+  if [ "$(git hash-object "$doc")" != "${huella_previa["$doc"]}" ]; then
+    regenerados+=("$doc")
+  fi
+done
+
+if [ ${#regenerados[@]} -gt 0 ]; then
+  git add "${regenerados[@]}"
   echo "pre-commit: bloques generados actualizados y añadidos al commit:"
-  echo "$cambiados" | sed 's/^/  · /'
+  printf '  · %s\n' "${regenerados[@]}"
 fi
