@@ -98,19 +98,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          rama="bot/literatura-$(date +%Y-%m-%d)"
+
+          # Relanzar a mano el mismo día que ya corrió el cron chocaría: la rama por
+          # fecha existe y su historia diverge, así que el push saldría rechazado. Se
+          # sufija con el número de run, que es único y ordenable.
+          rama="bot/literatura-$(date +%F)"
+          if git ls-remote --exit-code --heads origin "$rama" >/dev/null 2>&1; then
+            rama="$rama-r${GITHUB_RUN_NUMBER}"
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$rama"
           git add data/research-agent/knowledge_base/manifest.yaml
           git commit -m "chore(kb): propuestas de literatura del $(date +%F)"
-          git push -u origin "$rama"
 
+          # El resumen se escribe ANTES de tocar el remoto. Es lo único que una
+          # persona no puede reconstruir si algo falla más abajo, así que no puede
+          # quedar colgando de que el push y la PR salgan bien.
           comparar="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/develop...$rama?expand=1"
           {
             echo "## Propuestas de literatura del $(date +%F)"
             echo
-            echo "Rama subida: \`$rama\`"
+            echo "Rama: \`$rama\`"
             echo
             echo "**[→ Abrir la PR]($comparar)** y pegar como descripción el texto de abajo."
             echo
@@ -118,6 +128,8 @@ jobs:
             cat cuerpo-pr.md
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          git push -u origin "$rama"
 
           gh pr create \
             --base develop --head "$rama" \
