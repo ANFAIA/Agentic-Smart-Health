@@ -134,3 +134,78 @@ def test_un_script_que_solo_se_lanza_a_mano_no_es_un_agente():
     autonomos = ds.guardianes_autonomos(ds.versionados())
     assert "scripts/resolucion_modalidades.py" not in autonomos
     assert "scripts/watch_literature.py" in autonomos
+
+
+# --- qué comprueba un guardián: el sustituto de versionarlos ----------------- #
+FICHA_CON_TABLA = """
+### `docs-guardian` — Guardián
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
+
+| Comprobación | Qué caza |
+|---|---|
+| `env` | variables leídas por el código |
+| `inventario` y `arbol` | las dos direcciones de la cita |
+
+**Reglas de delegación**
+
+- `algo` que no es una comprobación y va fuera de la tabla.
+"""
+
+
+def test_lee_los_identificadores_del_registro_del_codigo():
+    """Contra el script de verdad: los identificadores salen de `COMPROBACIONES`."""
+    registradas = ds.comprobaciones_del_codigo("scripts/docs_sync.py")
+    assert "comprobaciones" in registradas
+    assert len(registradas) == len(set(registradas))  # sin duplicados
+
+
+def test_una_fila_puede_documentar_dos_comprobaciones():
+    """`inventario` y `arbol` comparten fila, y contar por separado no aportaría nada."""
+    assert ds.comprobaciones_de_la_ficha(FICHA_CON_TABLA) == {"env", "inventario", "arbol"}
+
+
+def test_solo_se_leen_los_identificadores_de_la_tabla():
+    """Lo de fuera es prosa: un `algo` suelto no es una comprobación declarada."""
+    assert "algo" not in ds.comprobaciones_de_la_ficha(FICHA_CON_TABLA)
+
+
+def test_sin_tabla_de_comprobaciones_no_hay_identificadores():
+    assert ds.comprobaciones_de_la_ficha(FICHA_SIMPLE) == set()
+
+
+def test_un_script_sin_registro_queda_fuera():
+    """Declarar `COMPROBACIONES` es voluntario: `audit_pr.py` delega el criterio en un
+    modelo y no tiene una lista de comprobaciones que enumerar."""
+    assert ds.comprobaciones_del_codigo("scripts/audit_pr.py") == []
+    assert ds.revisar_comprobaciones({"scripts/audit_pr.py"}, "sin ficha ninguna") == []
+
+
+def test_el_repositorio_documenta_hoy_lo_que_comprueba():
+    """El guardián aplicado a sí mismo, una vez más."""
+    texto = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(encoding="utf-8")
+    assert ds.revisar_comprobaciones(ds.versionados(), texto) == []
+
+
+def test_una_comprobacion_sin_documentar_se_declara():
+    """El caso que justifica todo esto: añadir una comprobación y olvidar la ficha."""
+    ficha = FICHA_CON_TABLA.replace("| `env` | variables leídas por el código |\n", "")
+    problemas = ds.revisar_comprobaciones({"scripts/docs_sync.py", ".githooks/pre-commit"}, ficha)
+    assert any("`env`" in p and "no la documenta" in p for p in problemas)
+
+
+def test_una_comprobacion_anunciada_y_no_hecha_se_declara():
+    """La deriva contraria: la ficha promete una vigilancia que ya no existe."""
+    ficha = FICHA_CON_TABLA.replace("| `env` |", "| `fantasma` |")
+    problemas = ds.revisar_comprobaciones({"scripts/docs_sync.py", ".githooks/pre-commit"}, ficha)
+    assert any("`fantasma`" in p and "ya no hace" in p for p in problemas)
+
+
+def test_una_ficha_sin_tabla_no_pasa_por_defecto():
+    """Borrar la tabla no puede ser la forma de aprobar: el registro existe, luego se enumera."""
+    ficha = "### `docs-guardian`\n\n| Campo | Valor |\n|---|---|\n| **Ubicación** | `scripts/docs_sync.py` |\n"  # noqa: E501
+    problemas = ds.revisar_comprobaciones({"scripts/docs_sync.py", ".githooks/pre-commit"}, ficha)
+    assert len(problemas) == 1
+    assert "no las enumera" in problemas[0]
