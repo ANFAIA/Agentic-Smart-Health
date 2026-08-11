@@ -197,16 +197,20 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 > Ocurrió (issue 45: 156 MiB de PDF, `filter-repo` y `force-push`). Aquí es más barato
 > que en ningún otro sitio.
 
-**Qué comprueba** (seis, todas nacidas de un fallo real)
+**Qué comprueba** (todas nacidas de un fallo real)
 
 | Comprobación | Qué caza |
 |---|---|
-| extensiones vetadas | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
-| tamaño | cualquier fichero versionado por encima de 2 MiB |
-| reglas de ignore vivas | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
-| manifiesto de la KB | que las entradas de `manifest.yaml` estén completas y parseen |
-| procedencia de notebooks | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
-| fichas de dataset | que cada dataset usado tenga la suya |
+| `extensiones` | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
+| `tamano` | cualquier fichero versionado por encima de 2 MiB |
+| `ignore` | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
+| `manifiesto` | que las entradas de `manifest.yaml` estén completas y parseen |
+| `procedencia` | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
+| `fichas` | que cada dataset usado tenga la suya |
+
+> Los identificadores no son decorativos: salen del registro `COMPROBACIONES` del
+> script, y el `docs-guardian` compara esta tabla con él. Añadir una comprobación y no
+> documentarla aquí —o quitarla y dejarla anunciada— falla en el CI.
 
 **Reglas de delegación**
 
@@ -225,6 +229,7 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-05 | 0.1.0 | Registro inicial: seis comprobaciones, rutas sonda para las reglas de ignore, enganche en el hook y en los dos workflows. |
+| 2026-08-11 | 0.1.1 | Sin cambio de comportamiento: las comprobaciones pasan a declararse en un registro con identificador estable, y esta ficha a reproducirlo. |
 
 ---
 
@@ -233,7 +238,7 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 | Campo | Valor |
 |---|---|
 | **Nombre** | `docs-guardian` |
-| **Versión** | `0.2.0` |
+| **Versión** | `0.3.0` |
 | **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Estado** | `active` |
 | **Disparo** | Hook `pre-commit` (**no bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -262,8 +267,20 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 | `agentes` | atributo `name` de las clases ↔ registro de `AGENTS.md` |
 | `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
 | `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
-| `inventario` y `árbol` | que lo que existe esté citado, no solo que lo citado exista |
-| `bloques generados` | que las tablas generadas coincidan con el código |
+| `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
+| `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
+| `bloques` | que las tablas generadas coincidan con el código |
+
+> **Por qué los guardianes no se versionan.** Se planteó darles `__version__` y
+> comparar, como se hace con las clases `*Agent`. No se hizo, y por tres motivos. El
+> `version` de un agente **se usa**: viaja en `qualified` dentro de `provenance`, así
+> que una fusión guardada dice con qué fórmula se calculó. En un script no lo leería
+> nadie, y la comprobación quedaría comparando dos constantes que nadie tiene motivo
+> para tocar: verde permanente, peor que no comprobar. Además obligaría a cada
+> guardián a tener ficha propia con fila de versión, cuando `audit_pr.py` vive
+> —correctamente— dentro de la del `ai-code-reviewer`. Y SemVer sin nadie que importe
+> el módulo no significa nada. Lo que sí cambia y le importa a quien lo lea es **qué
+> comprueba**, y eso es lo que se compara.
 
 **Reglas de delegación**
 
@@ -284,6 +301,7 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Registro inicial: env, rutas, agentes, inventario, árbol y bloques generados. |
 | 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
+| 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
 
 ---
 
