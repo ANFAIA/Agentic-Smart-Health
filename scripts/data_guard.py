@@ -16,12 +16,14 @@ la regla, ni la regla que alguien borra en un merge. Este guardián comprueba el
 resultado —lo que git *sigue de verdad*— y además verifica que las reglas siguen
 vivas, preguntándoselo a git en vez de leyendo el fichero.
 
-**Seis comprobaciones, todas nacidas de un fallo real de este repositorio:**
+**Las comprobaciones, todas nacidas de un fallo real de este repositorio** (el
+registro vivo es `COMPROBACIONES`, ahí abajo; `docs_sync` compara sus identificadores
+con la tabla de la ficha, así que añadir una y olvidar documentarla se cae en el CI):
 
 - `extensiones`: ningún binario de datos versionado. Es la que habría cazado la 45.
-- `tamaño`: nada por encima del límite. Un dataset entra por peso antes que por
+- `tamano`: nada por encima del límite. Un dataset entra por peso antes que por
   extensión, y la historia de git no olvida.
-- `reglas de ignore`: las rutas protegidas siguen ignorándose. Si alguien borra una
+- `ignore`: las rutas protegidas siguen ignorándose. Si alguien borra una
   línea del `.gitignore`, salta aquí y no tres meses después.
 - `manifiesto`: el inventario de la knowledge base está completo, con licencia
   declarada y sin apuntar a ficheros que estén versionados.
@@ -42,6 +44,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -230,6 +233,22 @@ def revisar_fichas() -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# El registro: identificador, título para la persona que lo lee, y la función.
+#
+# El identificador va aparte del título a propósito. El título se escribe para quien
+# mira la salida y puede reformularse sin consecuencias; el identificador es el que
+# aparece en la ficha de `AGENTS.md` y el que compara `docs_sync`, así que es un
+# nombre estable y sin acentos, no una frase.
+COMPROBACIONES: tuple[tuple[str, str, Callable[[dict[str, int]], list[str]]], ...] = (
+    ("extensiones", "extensiones vetadas", revisar_extensiones),
+    ("tamano", "tamaño de los ficheros", revisar_tamano),
+    ("ignore", "reglas de ignore vivas", lambda _: revisar_reglas_ignore()),
+    ("manifiesto", "manifiesto de la knowledge base", revisar_manifiesto),
+    ("procedencia", "procedencia de los notebooks", revisar_procedencia),
+    ("fichas", "fichas de dataset", lambda _: revisar_fichas()),
+)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -239,15 +258,8 @@ def main() -> int:
 
     ficheros = versionados()
     problemas: list[str] = []
-    for nombre, revision in (
-        ("extensiones vetadas", lambda: revisar_extensiones(ficheros)),
-        ("tamaño de los ficheros", lambda: revisar_tamano(ficheros)),
-        ("reglas de ignore vivas", revisar_reglas_ignore),
-        ("manifiesto de la knowledge base", lambda: revisar_manifiesto(ficheros)),
-        ("procedencia de los notebooks", lambda: revisar_procedencia(ficheros)),
-        ("fichas de dataset", revisar_fichas),
-    ):
-        fallos = revision()
+    for _, nombre, revision in COMPROBACIONES:
+        fallos = revision(ficheros)
         if not args.quiet or fallos:
             estado = "✗" if fallos else "✓"
             detalle = f"{len(fallos)} problema(s)" if fallos else "limpio"
