@@ -35,7 +35,10 @@ Las comprobaciones, todas derivadas de fallos que ya ocurrieron:
   ficha describiendo todavía el comportamiento de la 0.1.0.
 - `guardianes`: scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md`.
   Habría cazado los tres guardianes que bloqueaban commits y abrían PRs sin ficha.
-- `inventario` y `árbol`: que lo que existe esté citado, no solo que lo citado exista.
+- `comprobaciones`: el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su
+  ficha. Es lo que sustituye a versionar los guardianes: de un guardián no importa su
+  número de versión —que nadie lee— sino qué vigila, y eso sí se desincroniza.
+- `inventario` y `arbol`: que lo que existe esté citado, no solo que lo citado exista.
 
 **Lo que sigue sin cubrirse, y conviene saberlo.** Ninguna comprobación detecta que
 una afirmación *en prosa* se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm»
@@ -53,6 +56,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -232,7 +236,7 @@ def tabla_env(leidas: dict[str, tuple[str, str | None]]) -> str:
     return "\n".join(filas)
 
 
-def revisar_env(ficheros: set[str], escribir: bool) -> list[str]:
+def revisar_env(ficheros: set[str]) -> list[str]:
     leidas = leidas_por_el_codigo(ficheros)
     declaradas = declaradas_en_ejemplo()
     problemas = []
@@ -409,6 +413,110 @@ def revisar_guardianes(ficheros: set[str], texto: str) -> list[str]:
     return problemas
 
 
+def comprobaciones_del_codigo(ruta: str) -> list[str]:
+    """Los identificadores del registro `COMPROBACIONES` de un guardián.
+
+    Se lee con `ast` y no importando el módulo: `scripts/` no es un paquete instalado,
+    y aunque lo fuera, importar un script para inspeccionarlo ejecuta su cuerpo.
+
+    Declarar el registro es voluntario. Un guardián que no lo tenga —`audit_pr.py`, que
+    delega el criterio en un modelo— devuelve la lista vacía y queda fuera de la
+    comprobación, en vez de obligar a todos a la misma forma.
+    """
+    try:
+        arbol = ast.parse((REPO / ruta).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    for nodo in arbol.body:
+        if isinstance(nodo, ast.AnnAssign) and isinstance(nodo.target, ast.Name):
+            nombre, valor = nodo.target.id, nodo.value
+        elif isinstance(nodo, ast.Assign) and isinstance(nodo.targets[0], ast.Name):
+            nombre, valor = nodo.targets[0].id, nodo.value
+        else:
+            continue
+        if nombre != "COMPROBACIONES" or not isinstance(valor, ast.Tuple):
+            continue
+        return [
+            entrada.elts[0].value
+            for entrada in valor.elts
+            if isinstance(entrada, ast.Tuple)
+            and entrada.elts
+            and isinstance(entrada.elts[0], ast.Constant)
+            and isinstance(entrada.elts[0].value, str)
+        ]
+    return []
+
+
+_ENCABEZADO_COMPROBACIONES = re.compile(r"^\|\s*Comprobación\s*\|")
+
+
+def comprobaciones_de_la_ficha(ficha: str) -> set[str]:
+    """Los identificadores entre comillas de la primera columna de la tabla.
+
+    Se leen todos los de la celda, no el primero: una fila puede documentar dos
+    comprobaciones juntas cuando contar por separado no aporta nada.
+    """
+    lineas = ficha.splitlines()
+    for i, linea in enumerate(lineas):
+        if not _ENCABEZADO_COMPROBACIONES.match(linea):
+            continue
+        fuera: set[str] = set()
+        for fila in lineas[i + 2 :]:  # +2: el encabezado y su separador `|---|---|`
+            if not fila.startswith("|"):
+                break
+            fuera |= set(re.findall(r"`([^`]+)`", fila.split("|")[1]))
+        return fuera
+    return set()
+
+
+def _ficha_por_ruta(texto: str, ruta: str) -> str | None:
+    """La ficha —bloque `###`— de un guardián, localizada por su ruta."""
+    for seccion in re.split(r"\n(?=### )", texto):
+        if seccion.startswith("### ") and ruta in seccion:
+            return seccion
+    return None
+
+
+def revisar_comprobaciones(ficheros: set[str], texto: str) -> list[str]:
+    """Que las comprobaciones que hace un guardián sean las que dice su ficha.
+
+    Es la alternativa a versionar los guardianes con SemVer, que se descartó: un
+    `__version__` en un script no lo lee nadie —el `version` de un agente sí viaja
+    dentro de `provenance`— y comparar dos constantes que nadie tiene motivo para
+    tocar da un verde permanente, que es peor que no comprobar nada. Lo que sí cambia
+    de verdad en un guardián, y le importa a quien lo lea, es **qué comprueba**.
+
+    Falla por un motivo real: añadir una comprobación al registro y olvidar la tabla.
+    """
+    problemas = []
+    for script in sorted(guardianes_autonomos(ficheros)):
+        registradas = comprobaciones_del_codigo(script)
+        if not registradas:
+            continue  # no declara registro: no hay nada que comparar
+        ficha = _ficha_por_ruta(texto, script)
+        if ficha is None:
+            continue  # sin ficha: ya lo canta `revisar_guardianes`
+        documentadas = comprobaciones_de_la_ficha(ficha)
+        if not documentadas:
+            problemas.append(
+                f"`{script}` declara {len(registradas)} comprobaciones en `COMPROBACIONES` "
+                "y su ficha no las enumera. Hace falta una tabla con la columna "
+                "«Comprobación» y el identificador de cada una entre comillas."
+            )
+            continue
+        for falta in sorted(set(registradas) - documentadas):
+            problemas.append(
+                f"`{script}` hace la comprobación `{falta}` y su ficha de AGENTS.md no la "
+                "documenta. Quien lea la ficha creerá que ese caso no se vigila."
+            )
+        for sobra in sorted(documentadas - set(registradas)):
+            problemas.append(
+                f"La ficha de `{script}` anuncia la comprobación `{sobra}`, que el script ya "
+                "no hace. Prometer una vigilancia que no existe es peor que no prometerla."
+            )
+    return problemas
+
+
 def revisar_versiones(agentes: dict[str, tuple[str, str]], texto: str) -> list[str]:
     """Que la versión que declara la clase sea la que dice su ficha.
 
@@ -527,6 +635,30 @@ def revisar_arbol(ficheros: set[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+def _agentes_md() -> str:
+    return (REPO / "AGENTS.md").read_text(encoding="utf-8")
+
+
+# El registro: identificador, título para quien lee la salida, y la función.
+#
+# El identificador va aparte del título a propósito. El título se reformula sin
+# consecuencias; el identificador es el que aparece en la ficha de `AGENTS.md`, así que
+# es un nombre estable y sin acentos. Este script se compara a sí mismo con su ficha.
+COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ...] = (
+    ("env", "variables de entorno", lambda f, _: revisar_env(f)),
+    ("rutas", "rutas citadas", lambda f, _: revisar_rutas(f)),
+    ("agentes", "registro de agentes", lambda f, _: revisar_agentes(f)),
+    ("versiones", "versiones de los agentes",
+     lambda f, _: revisar_versiones(agentes_implementados(f), _agentes_md())),
+    ("guardianes", "guardianes registrados", lambda f, _: revisar_guardianes(f, _agentes_md())),
+    ("comprobaciones", "comprobaciones documentadas",
+     lambda f, _: revisar_comprobaciones(f, _agentes_md())),
+    ("inventario", "inventario documentado", lambda f, _: revisar_inventario(f)),
+    ("arbol", "arbol del README", lambda f, _: revisar_arbol(f)),
+    ("bloques", "bloques generados", sincronizar_bloques),
+)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -538,28 +670,8 @@ def main() -> int:
 
     ficheros = versionados()
     problemas: list[str] = []
-    for nombre, revision in (
-        ("variables de entorno", lambda: revisar_env(ficheros, args.write)),
-        ("rutas citadas", lambda: revisar_rutas(ficheros)),
-        ("registro de agentes", lambda: revisar_agentes(ficheros)),
-        (
-            "versiones de los agentes",
-            lambda: revisar_versiones(
-                agentes_implementados(ficheros),
-                (REPO / "AGENTS.md").read_text(encoding="utf-8"),
-            ),
-        ),
-        (
-            "guardianes registrados",
-            lambda: revisar_guardianes(
-                ficheros, (REPO / "AGENTS.md").read_text(encoding="utf-8")
-            ),
-        ),
-        ("inventario documentado", lambda: revisar_inventario(ficheros)),
-        ("arbol del README", lambda: revisar_arbol(ficheros)),
-        ("bloques generados", lambda: sincronizar_bloques(ficheros, args.write)),
-    ):
-        fallos = revision()
+    for _, nombre, revision in COMPROBACIONES:
+        fallos = revision(ficheros, args.write)
         estado = "✗" if fallos else "✓"
         print(f"{estado} {nombre}: {len(fallos) or 'sin deriva'}{' problema(s)' if fallos else ''}")
         problemas += fallos
