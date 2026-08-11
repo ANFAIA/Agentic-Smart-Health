@@ -101,3 +101,36 @@ def test_el_repositorio_esta_sincronizado_ahora_mismo():
     """El guardián aplicado a sí mismo: hoy no hay deriva de versiones."""
     texto = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(encoding="utf-8")
     assert ds.revisar_versiones(ds.agentes_implementados(ds.versionados()), texto) == []
+
+
+# --- guardianes: lo que corre sin que nadie lo pida -------------------------- #
+def test_los_guardianes_del_repositorio_estan_registrados():
+    """El guardián aplicado a sí mismo, otra vez."""
+    texto = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(encoding="utf-8")
+    assert ds.revisar_guardianes(ds.versionados(), texto) == []
+
+
+def test_un_guardian_sin_ficha_se_declara():
+    """El hueco real: tres scripts bloqueando commits y abriendo PRs sin registrar."""
+    problemas = ds.revisar_guardianes(ds.versionados(), "AGENTS.md sin una sola ruta")
+    citados = " ".join(problemas)
+    for script in ("data_guard.py", "docs_sync.py", "watch_literature.py"):
+        assert script in citados
+
+
+def test_compartir_ficha_con_otro_agente_vale():
+    """`audit_pr.py` vive dentro de la ficha del `ai-code-reviewer`, y está bien así.
+
+    Exigir sección propia sería imponer un formato; lo que se comprueba es un hecho:
+    que el documento lo mencione.
+    """
+    solo_uno = "menciona `scripts/audit_pr.py` y nada más"
+    problemas = ds.revisar_guardianes(ds.versionados(), solo_uno)
+    assert not any("audit_pr" in p for p in problemas)
+
+
+def test_un_script_que_solo_se_lanza_a_mano_no_es_un_agente():
+    """La frontera: `resolucion_modalidades.py` lo teclea una persona, no un disparador."""
+    autonomos = ds.guardianes_autonomos(ds.versionados())
+    assert "scripts/resolucion_modalidades.py" not in autonomos
+    assert "scripts/watch_literature.py" in autonomos

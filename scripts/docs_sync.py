@@ -33,6 +33,8 @@ Las comprobaciones, todas derivadas de fallos que ya ocurrieron:
 - `versiones`: atributo `version` de la clase ↔ la fila **Versión** de su ficha.
   Habría cazado el `geometric-fusion-agent` subido a 0.2.0 el 2026-08-10 con la
   ficha describiendo todavía el comportamiento de la 0.1.0.
+- `guardianes`: scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md`.
+  Habría cazado los tres guardianes que bloqueaban commits y abrían PRs sin ficha.
 - `inventario` y `árbol`: que lo que existe esté citado, no solo que lo citado exista.
 
 **Lo que sigue sin cubrirse, y conviene saberlo.** Ninguna comprobación detecta que
@@ -359,6 +361,54 @@ def _version_declarada(ficha: str, nombre: str) -> str | None:
     return celda
 
 
+def guardianes_autonomos(ficheros: set[str]) -> dict[str, list[str]]:
+    """{script: [quién lo dispara]} para lo que corre **sin que nadie lo pida**.
+
+    La definición operativa de «agente» que se usa aquí: un script que ejecutan los
+    workflows o los hooks corre sin que una persona lo teclee, así que actúa solo y
+    necesita ficha. Uno que solo se lanza a mano —`resolucion_modalidades.py`,
+    `blender_render_views.py`— es una herramienta, y no la necesita.
+    """
+    disparadores = sorted(
+        f for f in ficheros if f.startswith((".github/workflows/", ".githooks/"))
+    )
+    fuera: dict[str, list[str]] = {}
+    for disparador in disparadores:
+        try:
+            texto = (REPO / disparador).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for script in sorted(set(re.findall(r"scripts/[\w-]+\.(?:py|sh)", texto))):
+            if script in ficheros:
+                fuera.setdefault(script, []).append(disparador)
+    return fuera
+
+
+def revisar_guardianes(ficheros: set[str], texto: str) -> list[str]:
+    """Que todo script que corre solo esté registrado en `AGENTS.md`.
+
+    El hueco que cerró: `data_guard.py`, `docs_sync.py` y `watch_literature.py` llevaban
+    semanas bloqueando commits, verificando documentación y abriendo pull requests **sin
+    ficha**, mientras la cabecera de `AGENTS.md` pedía registrar «cada agente autónomo o
+    semi-autónomo». No lo cazaba nadie porque `revisar_agentes` solo mira clases con
+    atributo `name`, y a un script suelto se le escapa.
+
+    Basta con que la ruta aparezca en el documento: un agente puede compartir ficha con
+    otro —`audit_pr.py` vive dentro de la del `ai-code-reviewer`— y exigirle sección
+    propia sería imponer un formato, no comprobar un hecho.
+    """
+    problemas = []
+    for script, disparadores in sorted(guardianes_autonomos(ficheros).items()):
+        if script in texto:
+            continue
+        quien = ", ".join(disparadores)
+        problemas.append(
+            f"`{script}` lo ejecuta {quien} —o sea que corre sin que nadie lo pida— y "
+            "AGENTS.md no lo registra. Un agente sin ficha es invisible para el resto."
+        )
+    return problemas
+
+
 def revisar_versiones(agentes: dict[str, tuple[str, str]], texto: str) -> list[str]:
     """Que la versión que declara la clase sea la que dice su ficha.
 
@@ -497,6 +547,12 @@ def main() -> int:
             lambda: revisar_versiones(
                 agentes_implementados(ficheros),
                 (REPO / "AGENTS.md").read_text(encoding="utf-8"),
+            ),
+        ),
+        (
+            "guardianes registrados",
+            lambda: revisar_guardianes(
+                ficheros, (REPO / "AGENTS.md").read_text(encoding="utf-8")
             ),
         ),
         ("inventario documentado", lambda: revisar_inventario(ficheros)),

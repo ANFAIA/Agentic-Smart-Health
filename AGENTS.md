@@ -178,6 +178,168 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 ---
 
+### `data-guardian` — Guardián de datos y licencias
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `data-guardian` |
+| **Versión** | `0.1.0` |
+| **Ubicación** | [`scripts/data_guard.py`](scripts/data_guard.py) |
+| **Estado** | `active` |
+| **Disparo** | Hook `pre-commit` (**bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Tecnología** | Código tipado, **sin LLM** |
+
+**Rol / Propósito**
+
+> Impide que un dato ajeno —de terceros, de licencia incompatible o clínico— entre en
+> la historia de git. Es el único guardián que **detiene el commit**, y la asimetría es
+> deliberada: un fichero que ya está en la historia no se quita sin reescribirla.
+> Ocurrió (issue 45: 156 MiB de PDF, `filter-repo` y `force-push`). Aquí es más barato
+> que en ningún otro sitio.
+
+**Qué comprueba** (seis, todas nacidas de un fallo real)
+
+| Comprobación | Qué caza |
+|---|---|
+| extensiones vetadas | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
+| tamaño | cualquier fichero versionado por encima de 2 MiB |
+| reglas de ignore vivas | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
+| manifiesto de la KB | que las entradas de `manifest.yaml` estén completas y parseen |
+| procedencia de notebooks | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
+| fichas de dataset | que cada dataset usado tenga la suya |
+
+**Reglas de delegación**
+
+- **Bloquea, no avisa**: sale con código ≠ 0 y el commit no ocurre. Para saltárselo hay
+  que escribir `--no-verify` a mano, que deja rastro de intención.
+- No decide sobre licencias dudosas: veta por extensión y tamaño, que son criterios
+  mecánicos. El juicio sobre si una licencia permite redistribuir es humano.
+
+> ⚠️ **Punto ciego conocido (2026-08-09, sin cerrar).** Veta `.stl`, `.ply` y `.obj`,
+> pero un `.html` con esa misma geometría embebida en base64 le pasa por delante: la
+> única barrera es el límite de 2 MiB, que no es el criterio correcto. Se detectó al
+> construir un visor con geometría real de paciente. El repositorio es público.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-05 | 0.1.0 | Registro inicial: seis comprobaciones, rutas sonda para las reglas de ignore, enganche en el hook y en los dos workflows. |
+
+---
+
+### `docs-guardian` — Guardián de coherencia documentación ↔ código
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `docs-guardian` |
+| **Versión** | `0.2.0` |
+| **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
+| **Estado** | `active` |
+| **Disparo** | Hook `pre-commit` (**no bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Tecnología** | Código tipado + `ast`, **sin LLM** |
+
+**Rol / Propósito**
+
+> La documentación se desincroniza en silencio: nadie recibe un error rojo por escribir
+> un número que dejó de ser cierto. Este agente lo convierte en un fallo visible.
+> Casos reales de este repositorio: un recuento de tests que decía 166 cuando eran 265,
+> un `.env.example` con cinco variables que no leía nadie, y el árbol del README
+> anunciando un notebook ya eliminado.
+
+**Comprueba, no redacta** — es su regla de diseño y su frontera
+
+> Solo **genera** lo que es copia mecánica de una fuente de verdad (las tablas entre
+> marcas `<!-- generado: … -->`). Todo lo demás lo **verifica**. Un agente que
+> "arreglase" la documentación por su cuenta haría que el documento se adapte al código
+> **incluso cuando el que está mal es el código**: el 166 se habría convertido en 265
+> sin que nadie se enterase de que llevaba meses mintiendo.
+
+| Comprobación | Qué caza |
+|---|---|
+| `env` | variables leídas por el código ↔ `.env.example` ↔ README |
+| `rutas` | ficheros citados en la documentación ↔ ficheros versionados |
+| `agentes` | atributo `name` de las clases ↔ registro de `AGENTS.md` |
+| `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
+| `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
+| `inventario` y `árbol` | que lo que existe esté citado, no solo que lo citado exista |
+| `bloques generados` | que las tablas generadas coincidan con el código |
+
+**Reglas de delegación**
+
+- **No bloquea el commit.** Un hook que impide trabajar por un problema de
+  documentación acaba desinstalado; si falla, avisa y el CI lo dice en la PR.
+- **Fuente de verdad = `git ls-files`**, no el disco: si no, un fichero ignorado que
+  existe en local haría pasar en tu máquina algo que en CI falla.
+
+> ⚠️ **Lo que no cubre.** Ninguna comprobación detecta que una afirmación **en prosa**
+> se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm» y «la etapa gruesa queda
+> pendiente»: las dos eran verdad hasta que dejaron de serlo, y este agente habría
+> pasado en verde. La extensión natural —constantes numéricas citadas en la
+> documentación contra su valor en el código— está pendiente.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-04 | 0.1.0 | Registro inicial: env, rutas, agentes, inventario, árbol y bloques generados. |
+| 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
+
+---
+
+### `literature-watcher` — Vigilante de literatura científica
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `literature-watcher` |
+| **Versión** | `0.2.0` |
+| **Ubicación** | [`scripts/watch_literature.py`](scripts/watch_literature.py) + [`.github/workflows/literature-watch.yml`](.github/workflows/literature-watch.yml) |
+| **Estado** | `active` |
+| **Disparo** | `cron` lunes 06:00 UTC · `workflow_dispatch` |
+| **Tecnología** | Código tipado contra la API y el OAI-PMH de arXiv, **sin LLM** |
+
+**Rol / Propósito**
+
+> El `research-agent` ya sabe buscar literatura, pero es un REPL: solo descubre
+> mientras alguien está sentado delante. Este agente hace la parte que se repite —mirar
+> qué ha salido, descartar lo ya inventariado y averiguar bajo qué licencia se
+> publicó— y deja el juicio *(¿es relevante?)* donde debe estar: en una persona
+> revisando una PR.
+
+**Qué hace, y sus fronteras**
+
+- **Siete consultas** con puerta temática por consulta: cuatro dentales (3DGS, CBCT +
+  segmentación, escáner intraoral, gemelo digital) y tres de estándares (DICOM,
+  FHIR/HL7, interoperabilidad) — estas últimas filtradas **solo por título**, porque
+  con el resumen se colaban falsos positivos.
+- **Cupo por turnos**, no «los N más nuevos»: las consultas de estándares dan mucho más
+  volumen, y ordenar por fecha dejaba PRs sin un solo artículo dental.
+- **Ningún PDF toca el disco ni el repositorio.** Se descarga a memoria para calcular
+  `sha256` y tamaño, y se libera. Descargar no es redistribuir.
+- **La licencia se verifica en origen** (OAI-PMH, `verb=GetRecord`), no se supone. Una
+  licencia adivinada por el título es peor que ninguna, porque parece un dato.
+
+**Reglas de delegación**
+
+- **No mergea.** Su salida es una rama y una PR; la decisión es humana, y esa PR pasa
+  por los mismos guardianes que cualquier otra.
+- **«No hay nada» y «no contestó nadie» son desenlaces distintos**, con código de
+  salida distinto (`0` y `2`). Un vigilante que existe para que nadie tenga que
+  acordarse de mirar no puede avisar de que está roto callándose.
+- Reintenta solo lo transitorio (429, 5xx, cortes de red): un 400 por consulta mal
+  formada no se cura esperando, y darle tres pasadas solo retrasa el diagnóstico.
+- Si la organización prohíbe que Actions abra PRs, **no falla**: deja la rama subida y
+  el cuerpo de la PR en el resumen del run, listo para pegar.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-05 | 0.1.0 | Registro inicial: consultas con puerta temática, verificación de licencia en origen, cupo por turnos y apertura de PR. |
+| 2026-08-10 | 0.2.0 | Primer disparo real del cron. Reintentos con espera creciente, distinción entre «sin novedades» y «ninguna consulta respondió», declaración de fallos parciales en la PR, y tolerancia a que la organización bloquee la PR automática. |
+
+---
+
 ### Agentes de ingesta — `mesh-agent` · `cbct-agent` · `report-agent`
 
 | Campo | Valor |
