@@ -96,9 +96,10 @@ población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implemen
 
 **Exportación reversible** — `export-agents` (`export-agent`): regenera el **STL desde
 el twin** a partir de `surface_ref` y **mide** el error releyendo el fichero, en vez de
-prometerlo. Sobre coordenadas de arcada la desviación es la que impone el `float32` del
-formato (~10⁻⁶ mm), cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del
-brief. Exporta en el sistema del escáner o en el del twin (aplicando la
+prometerlo. Medido sobre un escaneo real de Teeth3DS+ (110.804 vértices · 221.515
+caras, arcada de 86 mm): **3,8·10⁻⁶ mm** de desviación máxima en 0,07 s — la que impone
+el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm**
+del brief. Exporta en el sistema del escáner o en el del twin (aplicando la
 `RigidTransform` de la fusión), y un snapshot parcial lo declara en `hitl_reasons` **y
 en la cabecera del propio fichero**.
 
