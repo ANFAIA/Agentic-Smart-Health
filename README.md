@@ -31,8 +31,9 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 
 ## Estado actual (semanas 1–4)
 
-La **ingesta, la fusión y la segmentación están construidas y probadas**; la
-exportación reversible es el trabajo pendiente. Lo que ya funciona hoy:
+La **ingesta, la fusión, la segmentación y la exportación de la malla están
+construidas y probadas**; lo que queda del camino es el canal del campo gaussiano y
+el análisis clínico. Lo que ya funciona hoy:
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -93,8 +94,17 @@ CBCT↔intraoral está **medido sobre un paciente real**
 ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
 población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
 
+**Exportación reversible** — `export-agents` (`export-agent`): regenera el **STL desde
+el twin** a partir de `surface_ref` y **mide** el error releyendo el fichero, en vez de
+prometerlo. Sobre coordenadas de arcada la desviación es la que impone el `float32` del
+formato (~10⁻⁶ mm), cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del
+brief. Exporta en el sistema del escáner o en el del twin (aplicando la
+`RigidTransform` de la fusión), y un snapshot parcial lo declara en `hitl_reasons` **y
+en la cabecera del propio fichero**.
+
 **Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
-sin calibración), `pathology-agent` y **exportación reversible**. El paquete
+sin calibración), `pathology-agent` y el canal de **exportación del campo gaussiano**
+(`.ply`/`.splat`, formato pendiente del ADR de motor de render). El paquete
 `3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks + `gsplat`.
 
 ---
@@ -124,6 +134,7 @@ agentic-smart-health/          ← workspace root
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
 │   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
+│   ├── export-agents/         ← regeneración del STL desde el twin, con el error medido
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
@@ -147,7 +158,7 @@ Orquestador central del sistema multiagente. Coordina los agentes de cada fase d
 - **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
 - **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
 - **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación** *(pendiente)*: regeneración reversible de ficheros STL e imágenes desde el Digital Twin.
+- **Exportación** ✅ *(malla)*: `export-agents` regenera el STL desde el `TwinSnapshot` con el error de reconstrucción medido; se invoca directamente (`ExportAgent(store).export(snapshot, destino)`), sin pasar todavía por el orquestador. Pendientes el canal del campo gaussiano (`.ply`/`.splat`) y el de las imágenes.
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
@@ -210,6 +221,10 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 ### `ingestion-agents`
 
 **Capa de ingesta** del pipeline: 4 agentes (`mesh` · `cbct` · `report` · `image`), uno por modalidad/soporte, que traducen los ficheros crudos al contrato. Cada agente es **determinista y fail-loud** (nunca lanza; devuelve estado + confianza y aísla en cuarentena), adjunta **Provenance** por valor y guarda los artefactos pesados (mallas, volúmenes, píxeles) en un **ArtifactStore direccionado por contenido** (SHA-256). El `image-agent` descarta el **EXIF** por construcción (privacidad). Guía para añadir o modificar un agente: skill `add-ingestion-agent`; ficha completa en [`AGENTS.md`](AGENTS.md).
+
+### `export-agents`
+
+**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. El `export-agent` regenera la **malla en STL binario** desde `surface_ref` y devuelve la desviación máxima **medida releyendo el fichero** — la métrica de reversibilidad del brief comprobada en cada ejecución, no estimada. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`. Ficha completa en [`AGENTS.md`](AGENTS.md).
 
 ### `3dgs-engine`
 

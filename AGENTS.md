@@ -25,6 +25,7 @@ herramientas son prosa y se escriben a mano.
 | Agente | Implementado en |
 |---|---|
 | `cbct-agent` | [`packages/ingestion-agents/src/ingestion_agents/cbct_agent.py`](packages/ingestion-agents/src/ingestion_agents/cbct_agent.py) |
+| `export-agent` | [`packages/export-agents/src/export_agents/stl.py`](packages/export-agents/src/export_agents/stl.py) |
 | `geometric-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/geometric.py`](packages/fusion-agents/src/fusion_agents/geometric.py) |
 | `image-agent` | [`packages/ingestion-agents/src/ingestion_agents/image_agent.py`](packages/ingestion-agents/src/ingestion_agents/image_agent.py) |
 | `mesh-agent` | [`packages/ingestion-agents/src/ingestion_agents/mesh_agent.py`](packages/ingestion-agents/src/ingestion_agents/mesh_agent.py) |
@@ -700,6 +701,113 @@ así que el orquestador ingiere cada foto y el `TwinSnapshot` las recoge en
 reconstruye 3D de una foto —eso es fusión— pero deja la apariencia lista y trazable.
 Detalle del contrato de ingesta en el
 [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
+
+---
+
+### `export-agent` — Agente de exportación (regeneración de la malla)
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`stl.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` en `export_agents/base.py` |
+| **Orquestador** | ninguno todavía: se invoca directamente (`ExportAgent(store).export(snapshot, destino)`) |
+| **Decisiones** | [Pipeline §5](docs/architecture/multi-agent-pipeline.md#5-tarea-4--formato-y-pipeline-de-exportación) · [ADR 001](docs/architecture/001-digital-twin-core-schemas.md) (refs *fail-loud*) · [ADR 004 §2.2](docs/architecture/004-fusion.md) (`transform` invertible) |
+
+> **Por qué es una cuarta familia y no una función suelta.** Es la **única** que
+> escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de
+> entrada. Y su salida no encaja en las otras: `FusionOutput` y `AnalysisOutput`
+> devuelven un `TwinSnapshot` enriquecido, y un exportador **no enriquece nada** —
+> devuelve un fichero y la medida de cuánto se parece a lo que entró.
+
+**Rol / Propósito**
+
+> Cierra el círculo de la **reversibilidad**: la ingesta convirtió la malla del
+> escáner en contrato y este agente la devuelve a un fichero, con el **error de
+> reconstrucción medido** en vez de prometido. Es la fase que convierte la métrica
+> del brief («error de malla < 0,1 mm») en algo que se comprueba en cada ejecución.
+
+| Agente | Entrada | Qué produce | No hace | Cerebro |
+|---|---|---|---|---|
+| `export-agent` | `TwinSnapshot` + ruta de salida | **STL binario** desde `surface_ref` + `max_deviation_mm` medida releyendo el fichero | no malla el campo gaussiano; no modifica el twin; no escribe en el almacén | determinista |
+| `field-export-agent` | `TwinSnapshot` | `.ply` / `.splat` desde `gaussian_field_ref` | — | `planned` — el formato binario depende del motor de render (futuro ADR) |
+
+> El **canal de metadatos** (el `TwinSnapshot` a JSON) no tiene agente a propósito:
+> es `model_dump()` de Pydantic. Envolver una llamada de una línea en un contrato de
+> fallos que no puede fallar sería ceremonia, no diseño.
+
+**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+
+| Recurso | Permisos | Notas |
+|---|---|---|
+| `TwinSnapshot` (en memoria) | read | Nunca vuelve al fichero crudo. |
+| Almacén de artefactos | **read** | Vía el `Protocol` `SurfaceStore`, que **solo declara `load`**: que un exportador no escriba en el almacén no es una promesa en prosa, es algo que el tipo no permite expresar. |
+| Fichero de salida (STL) | write | Escritura **atómica** (temporal + `replace`): un STL a medio escribir no debe quedar donde alguien lo confunda con el bueno. |
+| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** geometría ni contenido clínico. |
+
+**Outputs generados**
+
+```
+ExportOutput
+  ├─ status          : ModalityStatus (ok/missing/failed) — SIEMPRE presente
+  ├─ path            : Path | None      — fichero escrito
+  ├─ format · frame  : 'stl' · 'source' | 'twin'
+  ├─ n_vertices · n_faces
+  ├─ max_deviation_mm: float | None     — MEDIDA, releyendo el fichero (métrica del brief)
+  ├─ hitl_reasons    : list[str]        — vacío = no hace falta revisión
+  └─ latency_s, quarantine_ref, detail
+```
+
+**Reglas de delegación**
+
+- **Fail-loud, nunca fail-fast**: igual que las otras tres familias, no lanza. Una
+  referencia colgante, una cara fuera de rango o un destino imposible se devuelven
+  como `status=FAILED` + `detail` y van a cuarentena.
+- **Human-in-the-loop**: el agente **no** decide si el fichero se entrega. Emite
+  `hitl_reasons` (`DEFAULT_HITL_THRESHOLD = 0.7`) y quien llama decide.
+- **Solo lectura sobre el gemelo**: no muta el snapshot ni reescribe artefactos. Si
+  un export pudiera reescribir el blob que exporta, la copia fiel de la superficie
+  —el guardarraíl del `mesh-agent`— dejaría de ser fiel al primer round-trip.
+
+**Reglas específicas**
+
+- 🔒 **La geometría sale de `surface_ref`, nunca del campo gaussiano.** El
+  `mesh-agent` guarda la superficie de origen tal cual (`float64` + topología
+  completa) para que exista una copia fiel; el único error del round-trip es el que
+  impone el **formato** (`float32`). Medido sobre un escaneo real de Teeth3DS+
+  (110.804 vértices, arcada de 86 mm): **3,8·10⁻⁶ mm**, cuatro órdenes de magnitud
+  bajo el presupuesto, con la exportación en 0,07 s. Sacar la malla del volumen por *marching
+  cubes* sería **otra cosa**: está medido
+  ([`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py)) que la
+  isosuperficie solo está bien definida donde el gradiente es fuerte —esmalte, 364
+  HU/vóxel— y que sobre hueso trabecular el área **no existe** como magnitud. Un
+  snapshot sin malla se declara `MISSING`; no se «rescata» interpolando.
+- ⚠️ **La desviación se mide releyendo el fichero, no estimando.** Una estimación
+  del error de `float32` sobrevive intacta a un bug de endianness o de orden de
+  vértices; una relectura, no. Y sin medida `within_budget` es `False`: un
+  exportador que no verifica no puede afirmar que cumple los 0,1 mm.
+- **Dos sistemas de referencia, explícitos.** `frame="source"` (por defecto) escribe
+  la malla como entró —es el que mide la reversibilidad—; `frame="twin"` aplica la
+  `RigidTransform` que registró la fusión geométrica para superponer con el CBCT.
+  Pedir `twin` sobre un snapshot que nunca pasó por fusión **falla declarando**: la
+  alternativa sería entregar la malla en el sistema del escáner haciéndola pasar por
+  la del CBCT.
+- **Un snapshot parcial no llega callado a exportación** (ADR 001). El exportador es
+  el último punto donde eso se puede decir, y lo dice dos veces: en `hitl_reasons` y
+  **dentro del propio fichero**, estampando `PARCIAL` en la cabecera de 80 bytes del
+  STL junto al `acquisition_id`. Es trazabilidad que sobrevive a que alguien copie el
+  fichero fuera del sistema, donde ya no hay `Provenance` que consultar.
+- **Lo que el formato no puede llevar se declara, no se finge.** El STL es «pelado»:
+  sin color por vértice, sin normales por vértice y sin topología compartida. El
+  `color_superficie` del twin no cabe en el fichero y sigue vivo en `surface_ref`.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-13 | 0.1.0 | Registro inicial. Paquete `export-agents` con su contrato base (`ExportOutput` · `BaseExportAgent` · `SurfaceStore`), regeneración de la malla a STL binario desde `surface_ref`, verificación por relectura contra el presupuesto de 0,1 mm, exportación en el sistema del escáner o en el del twin, y declaración de snapshot parcial en la cabecera del fichero. |
 
 ---
 
