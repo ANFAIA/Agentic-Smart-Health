@@ -210,13 +210,39 @@ class SegmentadorGingival:
 _C0 = 0.28209479177387814  # armónico esférico de grado 0
 
 
-# Marfil plano, el mismo que el resto de casos del visor que no traen color
-# fotométrico. Se descartó pintar el campo con un mapa divergente del
-# desplazamiento: la medida es **una cifra en milímetros sobre la anatomía**, como
-# en la referencia de Overjet, y un mapa de calor no dice cuánto se movió nada — solo
-# insinúa. Además reutilizaba el rojo, que en este proyecto ya significa «pérdida
-# establecida» (`lac_cresta_cbct.py`), para un cambio que es normal tras una higiene.
-COLOR_MALLA = (0.94, 0.90, 0.84)
+# Color del PROPIO PACIENTE, muestreado de sus fotos clínicas intraorales (Canon EOS
+# 6D Mark II + EF 100 mm macro, misma sesión que los escaneos) y aplicado por región:
+# esmalte en las coronas, encía por debajo del margen.
+#
+# Se descartó pintar el campo con un mapa divergente del desplazamiento: la medida es
+# **una cifra en milímetros sobre la anatomía**, como en la referencia de Overjet, y un
+# mapa de calor no dice cuánto se movió nada — solo insinúa. Además reutilizaba el rojo,
+# que en este proyecto ya significa «pérdida establecida», para un cambio que es normal
+# tras una higiene. El desplazamiento lo llevan las cotas; el color es anatomía.
+#
+# Cómo se obtuvieron, porque tiene tres trampas y las tres están medidas:
+#
+#   1. Las fotos NO son sRGB. El EXIF lo dice dos veces —`InteropIndex = R03` y el guion
+#      bajo inicial del nombre (`_MG_`), que es la convención DCF de Canon para Adobe
+#      RGB— y no llevan perfil ICC embebido, así que nada avisa al decodificar.
+#      Leyéndolas como sRGB la encía salía un 11 % menos roja de lo que es.
+#   2. El balance de blancos estaba en automático, pero convergió al mismo punto en las
+#      cuatro tomas (R/G 2,20 · B/G 1,53 · 5969–6131 K del MakerNote), así que no hubo
+#      nada que corregir.
+#   3. El brillo SÍ varía —31 puntos de L\* entre la oclusal y la frontal— y eso el EXIF
+#      no lo explica: la exposición es idéntica en las cuatro (1/100, f/16, ISO 125) y
+#      la caída es del flash con la distancia. Por eso el color se ancla en la **razón
+#      encía/esmalte**, que sí es estable entre tomas (0,82–0,91 · 0,58–0,70).
+#
+# ⚠️ El esmalte sale sesgado a claro: la máscara se queda con el 8 % más luminoso, o sea
+# con los brillos especulares. Separarlos del color difuso pediría RAW o un polarizador.
+# Y sin una referencia física en el encuadre —carta gris, o una guía Vita— esto es color
+# *estimado*, no colorimetría.
+#
+# De las fotos no sale nada más que estos dos tríos: el `image-agent` les quita el EXIF
+# al ingerir, que en unas imágenes con cara importa.
+COLOR_ESMALTE = (0.847, 0.749, 0.635)  # sRGB (216, 191, 162)
+COLOR_ENCIA = (0.725, 0.451, 0.388)  # sRGB (185, 115, 99)
 
 # Sombreado horneado. Un campo de gaussianas NO tiene luces: el color guardado *es*
 # la apariencia final. Los otros casos del visor parecen tridimensionales porque el
@@ -234,15 +260,39 @@ AMBIENTE = 0.28
 PESO_RELLENO = 0.35
 
 
-def sombrea(normales: np.ndarray, color: tuple[float, float, float]) -> np.ndarray:
-    """Color por vértice = color base × intensidad Lambert de dos luces."""
+def sombrea(normales: np.ndarray, color: np.ndarray | tuple[float, ...]) -> np.ndarray:
+    """Color por vértice = color base × intensidad Lambert de dos luces.
+
+    `color` admite un trío constante o ya un color por vértice `(N,3)`, que es como se
+    usa aquí: el campo lleva esmalte y encía mezclados por la probabilidad del
+    segmentador.
+    """
     def difusa(luz: np.ndarray) -> np.ndarray:
-        return np.clip(normales @ (luz / np.linalg.norm(luz)), 0.0, None)
+        # Difusa ENVOLVENTE (*half-Lambert*), no Lambert crudo. Con Lambert la mitad de
+        # la malla que no mira a la luz cae a cero y el ambiente es lo único que queda:
+        # medido, la intensidad mediana era 0,52, o sea que el color se oscurecía a la
+        # mitad. Daba igual mientras el color era marfil inventado; ahora es el color
+        # medido del paciente y el sombreado tiene que MODULARLO, no sustituirlo.
+        # Envolver es además lo habitual para piel y encía, que dispersan bajo la
+        # superficie y no tienen un terminador duro.
+        return 0.5 * (normales @ (luz / np.linalg.norm(luz))) + 0.5
 
     intensidad = AMBIENTE + (1.0 - AMBIENTE) * np.clip(
         difusa(LUZ_PRINCIPAL) + PESO_RELLENO * difusa(LUZ_RELLENO), 0.0, 1.0
     )
-    return np.clip(np.array(color)[None, :] * intensidad[:, None], 0.0, 1.0)
+    base = np.atleast_2d(np.asarray(color, dtype=float))
+    return np.clip(base * intensidad[:, None], 0.0, 1.0)
+
+
+def color_por_region(p_corona: np.ndarray) -> np.ndarray:
+    """Mezcla esmalte y encía con la probabilidad del segmentador, sin frontera dura.
+
+    Se usa la probabilidad y no la clase porque el margen gingival **no es una arista**:
+    hay una franja de encía marginal que se adelgaza sobre el esmalte. Un corte duro
+    dibujaría un borde recto que la anatomía no tiene y que el ojo lee como artefacto.
+    """
+    w = p_corona[:, None]
+    return w * np.array(COLOR_ESMALTE) + (1.0 - w) * np.array(COLOR_ENCIA)
 
 
 def escala_del_campo(puntos: np.ndarray) -> float:
@@ -324,7 +374,8 @@ def main() -> int:
         # --- 2 · encía frente a diente (ver la nota de arquitectura arriba) --- #
         logp = segmentador(puntos)
         corona = logp.argmax(1) == 1
-        nubes[etiqueta] = (puntos, corona)
+        # La probabilidad, no solo la clase: el color la usa para mezclar sin frontera.
+        nubes[etiqueta] = (puntos, corona, np.exp(logp[:, 1]))
         print(f"{etiqueta:8} {len(puntos):>7,} puntos · corona {corona.sum():>7,} "
               f"({corona.mean():.0%}) · encía {(~corona).sum():>7,}")
 
@@ -406,16 +457,18 @@ def main() -> int:
 
     if args.ply:
         # El campo se dibuja sobre el escaneo POSTERIOR, que es el estado actual del
-        # paciente; el color es cuánto se movió el margen para llegar hasta aquí.
+        # paciente. El color es su anatomía —esmalte y encía—, no la medida: la medida
+        # va en las cotas, en milímetros.
         V_post = mallas["despues"]["positions"].astype(np.float64)
         P = (V_post - plano["centro_mundo"]) @ plano["ejes"].T
         # Las normales se giran con los mismos ejes que las posiciones: el marco es
         # una rotación, así que basta con la misma matriz y sin la traslación.
         N = vertex_normals(V_post, mallas["despues"]["faces"]) @ plano["ejes"].T
-        color = sombrea(N, COLOR_MALLA)
+        color = sombrea(N, color_por_region(nubes["despues"][2]))
         sigma = escala_del_campo(P)
         escribe_campo(P.astype(np.float32), color, args.ply, escala_mm=sigma)
-        print(f"→ {args.ply}  ({len(P):,} gaussianas · σ {sigma:.3f} mm)")
+        print(f"→ {args.ply}  ({len(P):,} gaussianas · σ {sigma:.3f} mm · "
+              f"corona {nubes['despues'][1].mean():.0%})")
         cotas = args.ply.with_name(args.ply.stem + "_cotas.json")
         cotas.write_text(json.dumps(
             {"unidad": "mm",
