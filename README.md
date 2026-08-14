@@ -323,6 +323,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
 | [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
+| [`scripts/entrenar_3dgs.py`](scripts/entrenar_3dgs.py) | EXPERIMENTO con resultado NEGATIVO: 3DGS entrenado de una arcada. |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
 | [`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py) | mide si el escáner intraoral y el CBCT se pueden alinear. |
