@@ -295,29 +295,100 @@ def color_por_region(p_corona: np.ndarray) -> np.ndarray:
     return w * np.array(COLOR_ESMALTE) + (1.0 - w) * np.array(COLOR_ENCIA)
 
 
-def escala_del_campo(puntos: np.ndarray) -> float:
-    """σ de las gaussianas, deducida del espaciado real de la nube.
+def escala_del_campo(puntos: np.ndarray, por_vertice: bool = True) -> np.ndarray | float:
+    """σ tangencial deducida del espaciado real, **por vértice**.
 
-    Una gaussiana se ve hasta ~2σ, así que para que la superficie salga continua hace
-    falta 2σ ≳ la distancia al vecino más próximo. Se toma el **percentil 90** de esa
-    distancia y no la mediana: con la mediana, el decil más disperso —la encía, de
-    triangulación más basta que las coronas— sale agujereado.
+    El divisor NO sale de «una gaussiana se ve hasta 2σ», que era mi razonamiento
+    anterior y daba huecos: con σ = d/1,7 la alfa a mitad de camino entre dos vecinas se
+    queda en 0,68 y la superficie no cierra. Sale de barrer el factor y medir, sobre un
+    molar de cerca, huecos (alfa < 0,9 dentro de la silueta) frente a nitidez (energía
+    de gradiente **solo donde alfa > 0,99**, que es la corrección que importa):
+
+        σ = d/1,7   102 µm   26,7 % de huecos   nitidez 7,53   solo 3,5 % de area cerrada
+        σ = d/1,4   123 µm    5,0 %             nitidez 5,06
+        σ = d/1,2   143 µm    0,7 %             nitidez 2,76   33 % de area cerrada
+        σ = d/1,05  163 µm    0,2 %             nitidez 2,34
+        σ = d/0,85  204 µm    0,3 %             nitidez 2,12
+
+    ⚠️ La nitidez altísima de la primera fila es un espejismo: está medida sobre el
+    3,5 % de píxeles que quedan cerrados, y lo que la infla son **los propios agujeros**,
+    que generan gradientes enormes. El ojo lee ese punteado como detalle. Por eso el
+    campo sin arreglar «parecía más nítido» y no lo era.
+
+    d/1,2 es la rodilla: cierra la superficie y conserva la mayor nitidez de entre las
+    opciones que de verdad cierran.
+
+    Lo importante es que sea **local**. Con una σ global sacada de un percentil pasa lo
+    peor de los dos mundos: donde la malla es densa —las coronas— las gaussianas salen
+    infladas y difuminan, y donde es basta —la encía, peor triangulada— siguen sin
+    tocarse y queda punteado. Medido: la distancia al vecino va de 138 µm de mediana a
+    204 µm en el percentil 90, y ninguna cifra única sirve para las dos zonas.
+
+    Se promedian los tres vecinos más próximos, no solo el primero: un único vecino
+    pegado por un artefacto de triangulación daría una σ diminuta y abriría un agujero.
     """
     from scipy.spatial import cKDTree
 
-    d, _ = cKDTree(puntos).query(puntos, k=2)
-    return float(np.percentile(d[:, 1], 90) / 2.0)
+    d, _ = cKDTree(puntos).query(puntos, k=4)
+    local = d[:, 1:].mean(axis=1) / 1.2
+    if not por_vertice:
+        return float(np.percentile(local, 90))
+    # Se recorta contra su propia distribución: un vértice suelto en el borde del
+    # recorte tiene vecinos lejísimos y pintaría un disco enorme sobre la anatomía.
+    return np.clip(local, *np.percentile(local, [2, 98]))
+
+
+# Grosor del disco como fracción de su radio. La gaussiana se aplana contra la
+# superficie: ancha en el plano tangente para tapar el hueco hasta el vecino, y fina en
+# la normal para que la superficie no engorde. Con 1/4 el disco sigue teniendo cuerpo a
+# contraluz —una lámina de grosor cero centellea en los ángulos rasantes— sin difuminar.
+RAZON_GROSOR = 0.25
+
+
+def orientacion_surfel(normales: np.ndarray) -> np.ndarray:
+    """Cuaternión por vértice que alinea el TERCER eje de la gaussiana con la normal.
+
+    Convierte cada bola en un **disco tangente a la superficie**. Es la respuesta
+    geométrica al punteado, frente a la aprendida: el entrenamiento también cierra los
+    huecos, pero mueve los puntos y ensancha lateralmente —medido: σ mayor 216 µm— y
+    con eso lava el detalle. Aquí no se mueve ni un vértice de donde lo puso el escáner,
+    así que la nitidez es la del dato.
+
+    Devuelve `(w, x, y, z)`, que es el orden en que la convención INRIA guarda `rot_*`.
+    """
+    from scipy.spatial.transform import Rotation
+
+    n = normales / np.maximum(np.linalg.norm(normales, axis=1, keepdims=True), 1e-12)
+    # Un tangente cualquiera: se cruza la normal con el eje del que más se aleja, que es
+    # lo que evita el producto vectorial degenerado cuando la normal ya va en ese eje.
+    aux = np.zeros_like(n)
+    aux[np.arange(len(n)), np.argmin(np.abs(n), axis=1)] = 1.0
+    t1 = np.cross(n, aux)
+    t1 /= np.maximum(np.linalg.norm(t1, axis=1, keepdims=True), 1e-12)
+    t2 = np.cross(n, t1)
+    # Columnas = ejes de la gaussiana, en el mismo orden que `scale_0..2`.
+    q = Rotation.from_matrix(np.stack([t1, t2, n], axis=2)).as_quat()  # (x, y, z, w)
+    return np.column_stack([q[:, 3], q[:, 0], q[:, 1], q[:, 2]])
 
 
 def escribe_campo(
-    puntos: np.ndarray, color: np.ndarray, destino: Path, escala_mm: float | None = None
+    puntos: np.ndarray, color: np.ndarray, destino: Path,
+    escala_mm: np.ndarray | float | None = None, normales: np.ndarray | None = None,
 ) -> None:
     """Campo gaussiano en el formato que carga el visor (convención INRIA).
 
-    Una gaussiana isótropa por vértice. No es un campo *entrenado* —no lo pretende—
-    sino la geometría medida con su color: el visor ya sabe dibujar esto, y montar
-    3DGS sobre `histora` para enseñar una cota sería pagar un entrenamiento por una
-    imagen que ya tenemos.
+    Un **disco tangente** por vértice cuando se le dan las normales, y una bola cuando
+    no. No es un campo *entrenado* —no lo pretende— sino la geometría medida con su
+    color, y esa es justamente su ventaja: cada gaussiana está donde la puso el escáner.
+
+    ⚠️ **Se probó entrenarlo y salió peor para lo que importa.** Dos corridas completas
+    (800 y 2048 px de render, 7000 y 9000 iteraciones) cerraron el punteado, sí, pero el
+    entrenamiento reparte gaussianas anchas a lo largo de la superficie —σ mayor 216 µm
+    medido— y con eso lava la anatomía: en un molar de cerca se ve la superficie
+    continua y el detalle borrado. Aquí el punteado se cierra **sin mover nada**:
+    aplanando cada gaussiana contra la superficie y ensanchándola solo en el plano
+    tangente hasta solapar con sus vecinas. Es geometría, no aprendizaje, y tarda
+    segundos en vez de treinta y nueve minutos.
     """
     n = len(puntos)
     if escala_mm is None:
@@ -328,10 +399,23 @@ def escribe_campo(
     reg["x"], reg["y"], reg["z"] = puntos[:, 0], puntos[:, 1], puntos[:, 2]
     for i in range(3):
         reg[f"f_dc_{i}"] = (color[:, i] - 0.5) / _C0
-    reg["opacity"] = 4.0                       # sigmoide ≈ 0,98: opaco
-    for i in range(3):
-        reg[f"scale_{i}"] = np.log(escala_mm)  # el formato guarda la escala en log
-    reg["rot_0"] = 1.0                         # cuaternión identidad
+    # Opaca a propósito, al revés que un campo entrenado. Discos que solapan y son
+    # opacos se resuelven por profundidad: gana el de delante y el borde queda limpio.
+    # Con opacidad baja se mezclarían entre sí y volvería el difuminado que queremos
+    # evitar — la neblina es un apaño del entrenamiento, no una virtud.
+    reg["opacity"] = 4.0                       # sigmoide ≈ 0,98
+    escala_mm = np.broadcast_to(np.asarray(escala_mm, dtype=float), (n,))
+    if normales is not None:
+        reg["scale_0"] = reg["scale_1"] = np.log(escala_mm)              # plano tangente
+        reg["scale_2"] = np.log(escala_mm * RAZON_GROSOR)                # grosor
+        q = orientacion_surfel(normales)
+        for i in range(4):
+            reg[f"rot_{i}"] = q[:, i]
+        reg["nx"], reg["ny"], reg["nz"] = normales[:, 0], normales[:, 1], normales[:, 2]
+    else:
+        for i in range(3):
+            reg[f"scale_{i}"] = np.log(escala_mm)  # el formato guarda la escala en log
+        reg["rot_0"] = 1.0                         # cuaternión identidad
     cabecera = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {n}\n"
@@ -466,8 +550,10 @@ def main() -> int:
         N = vertex_normals(V_post, mallas["despues"]["faces"]) @ plano["ejes"].T
         color = sombrea(N, color_por_region(nubes["despues"][2]))
         sigma = escala_del_campo(P)
-        escribe_campo(P.astype(np.float32), color, args.ply, escala_mm=sigma)
-        print(f"→ {args.ply}  ({len(P):,} gaussianas · σ {sigma:.3f} mm · "
+        escribe_campo(P.astype(np.float32), color, args.ply, escala_mm=sigma, normales=N)
+        print(f"→ {args.ply}  ({len(P):,} gaussianas · disco σ tangencial "
+              f"{np.percentile(sigma, 10) * 1000:.0f}–{np.percentile(sigma, 90) * 1000:.0f} µm "
+              f"(mediana {np.median(sigma) * 1000:.0f}) × {RAZON_GROSOR:.0%} de grosor · "
               f"corona {nubes['despues'][1].mean():.0%})")
         cotas = args.ply.with_name(args.ply.stem + "_cotas.json")
         cotas.write_text(json.dumps(
