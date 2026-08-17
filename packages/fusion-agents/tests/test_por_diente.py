@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from fusion_agents.por_diente import (
     condicionamiento,
+    desplazamientos_relativos,
     registra_dientes,
     transfiere_etiquetas,
 )
@@ -137,6 +138,84 @@ def test_condicionamiento_separa_lo_determinado_de_lo_que_desliza() -> None:
     assert bien < 100, f"un cubo determina la pose, y salió {bien:.0f}"
     assert condicionamiento(plano, normales_plano) > bien * 100
     assert condicionamiento(esfera, esfera) > bien * 100
+
+
+def test_relativo_recupera_el_diente_movido_y_deja_quietos_los_demas() -> None:
+    """El caso que la función existe para resolver, con una traslación conocida."""
+    destino, etiquetas, normales = dientes_sinteticos(n_dientes=7)
+    origen = destino.copy()
+    movido = etiquetas == 34
+    origen[movido] = destino[movido] + np.array([0.8, 0.0, 0.0])
+
+    fuera = desplazamientos_relativos(
+        origen, destino, etiquetas, normales,
+        rot_global=np.eye(3), trans_global=np.zeros(3),
+    )
+    por_fdi = {d.fdi: d for d in fuera}
+    assert len(por_fdi) == 7
+    assert por_fdi[34].dientes_referencia == 6, "la referencia excluye el diente medido"
+    assert abs(por_fdi[34].traslacion_mm - 0.8) < 0.15
+    quietos = {f: d.traslacion_mm for f, d in por_fdi.items() if f != 34}
+    assert max(quietos.values()) < 0.1, f"un diente quieto no se mueve: {quietos}"
+
+
+def test_relativo_no_hereda_el_marco_global_equivocado() -> None:
+    """La razón de ser: una referencia global mala NO debe cambiar el desplazamiento.
+
+    En el uso real la global se ajusta sobre el arco entero, encía incluida, y la encía
+    cambia de forma entre dos momentos sin que ningún diente se haya movido. Eso desplaza
+    la referencia. Aquí se simula pasando una global deliberadamente sesgada: como la
+    referencia se **reajusta** con los demás dientes, la cifra tiene que salir igual.
+    """
+    destino, etiquetas, normales = dientes_sinteticos(n_dientes=7)
+    origen = destino.copy()
+    origen[etiquetas == 34] = destino[etiquetas == 34] + np.array([0.8, 0.0, 0.0])
+
+    sesgo = Rotation.from_euler("xyz", [0.8, -0.6, 1.2], degrees=True).as_matrix()
+    limpia, sucia = (
+        desplazamientos_relativos(
+            origen, destino, etiquetas, normales,
+            rot_global=rot, trans_global=trans,
+        )
+        for rot, trans in ((np.eye(3), np.zeros(3)), (sesgo, np.array([0.5, -0.4, 0.3])))
+    )
+    a = {d.fdi: d.traslacion_mm for d in limpia}
+    b = {d.fdi: d.traslacion_mm for d in sucia}
+    assert a.keys() == b.keys() and a, "las dos pasadas tienen que ver los mismos dientes"
+    peor = max(abs(a[f] - b[f]) for f in a)
+    assert peor < 0.1, f"la global sesgada movió los desplazamientos {peor:.3f} mm"
+
+
+def test_relativo_no_deja_que_el_diente_medido_arrastre_su_referencia() -> None:
+    """Un movimiento GRANDE de una pieza no puede contagiar a las quietas.
+
+    Es lo que sí pasa midiendo contra el registro global: el diente que se mueve entra en
+    el ajuste de la referencia, tira de ella, y reparte su propio movimiento entre todos.
+    """
+    destino, etiquetas, normales = dientes_sinteticos(n_dientes=6)
+    origen = destino.copy()
+    origen[etiquetas == 33] = destino[etiquetas == 33] + np.array([0.0, 0.0, 2.0])
+
+    por_fdi = {
+        d.fdi: d
+        for d in desplazamientos_relativos(
+            origen, destino, etiquetas, normales,
+            rot_global=np.eye(3), trans_global=np.zeros(3),
+        )
+    }
+    assert abs(por_fdi[33].traslacion_mm - 2.0) < 0.2
+    contagiados = {f: d.traslacion_mm for f, d in por_fdi.items() if f != 33}
+    assert max(contagiados.values()) < 0.1, f"contagio a los quietos: {contagiados}"
+
+
+def test_relativo_exige_dientes_suficientes_para_una_referencia() -> None:
+    """Con pocas piezas el marco lo fija tan poca cosa que no se devuelve nada."""
+    destino, etiquetas, normales = dientes_sinteticos(n_dientes=3)
+    fuera = desplazamientos_relativos(
+        destino, destino, etiquetas, normales,
+        rot_global=np.eye(3), trans_global=np.zeros(3),
+    )
+    assert fuera == [], "3 dientes no bastan para una referencia leave-one-out"
 
 
 def test_dientes_pequenos_se_omiten_en_vez_de_inventarse() -> None:

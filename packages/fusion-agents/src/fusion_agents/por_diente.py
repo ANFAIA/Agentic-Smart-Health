@@ -61,6 +61,13 @@ MIN_PUNTOS = 600
 RADIO_TRANSFERENCIA_MM = 1.5
 TRIM_LOCAL = 0.9
 
+MIN_DIENTES_REFERENCIA = 4
+"""Dientes mínimos para que la referencia leave-one-out signifique algo.
+
+Con menos, el marco lo fijan tan pocas piezas que el movimiento de cualquiera de ellas
+contamina la referencia — que es exactamente el problema del que se está huyendo.
+"""
+
 
 @dataclass(frozen=True)
 class DienteRegistrado:
@@ -84,6 +91,37 @@ class DienteRegistrado:
     @property
     def mejora_mm(self) -> float:
         return self.rms_global_mm - self.rms_diente_mm
+
+
+@dataclass(frozen=True)
+class DesplazamientoRelativo:
+    """Cuánto se movió una pieza **respecto al resto del arco**, no respecto al fichero.
+
+    Es la lectura que `DienteRegistrado.traslacion_mm` no puede dar: aquella se mide
+    contra el registro global del arco completo, que incluye encía y que incluye el propio
+    movimiento del diente medido. Aquí la referencia se ajusta con **los demás dientes**.
+    """
+
+    fdi: int
+    n_diente: int
+    n_referencia: int
+    """Vértices que fijaron la referencia (todos los dientes menos este)."""
+    dientes_referencia: int
+    traslacion_mm: float
+    """Desplazamiento del centroide relativo al marco de los demás dientes."""
+    rotacion_deg: float
+    rms_referencia_mm: float
+    """Residuo de la mitad retenida con SOLO la referencia leave-one-out aplicada."""
+    rms_diente_mm: float
+    """El mismo residuo añadiendo la rígida propia del diente."""
+    condicion: float
+    matriz: np.ndarray = field(repr=False)
+    """4×4 del desplazamiento RELATIVO: lleva el diente de su sitio en el marco de los
+    demás dientes a su sitio real en el destino. La identidad significa «no se movió»."""
+
+    @property
+    def mejora_mm(self) -> float:
+        return self.rms_referencia_mm - self.rms_diente_mm
 
 
 def condicionamiento(puntos: np.ndarray, normales: np.ndarray) -> float:
@@ -185,6 +223,120 @@ def registra_dientes(
                 rotacion_deg=float(
                     np.degrees(np.arccos(np.clip((np.trace(rot) - 1) / 2, -1, 1)))
                 ),
+                condicion=condicionamiento(tgt, normales_destino[sel_d]),
+                matriz=matriz,
+            )
+        )
+    return salida
+
+
+def desplazamientos_relativos(
+    origen: np.ndarray,
+    destino: np.ndarray,
+    etiquetas_destino: np.ndarray,
+    normales_destino: np.ndarray,
+    *,
+    rot_global: np.ndarray,
+    trans_global: np.ndarray,
+    trim_referencia: float = TRIM_LOCAL,
+    min_puntos: int = MIN_PUNTOS,
+    min_dientes: int = MIN_DIENTES_REFERENCIA,
+    semilla: int = 0,
+) -> list[DesplazamientoRelativo]:
+    """Desplazamiento de cada pieza **contra una referencia leave-one-out**.
+
+    Para medir el diente *X* la referencia se ajusta con **todos los dientes menos X**, y
+    el movimiento de X se lee contra ese marco. Resuelve dos problemas de golpe:
+
+    - **La referencia no contiene a X.** Midiendo contra el registro global, el propio
+      desplazamiento de X entra en la referencia contra la que se mide: si X se mueve,
+      arrastra un poco el marco y su desplazamiento sale infravalorado.
+    - **La referencia no contiene encía.** El registro del arco completo la incluye, y la
+      encía cambia de forma entre dos momentos (inflamación, retracción) sin que ningún
+      diente se haya movido. Es ruido que se colaba entero en la referencia.
+
+    Lo que se mide pasa a ser **desplazamiento relativo dentro del arco**, que es lo que
+    clínicamente *es* un movimiento dental: no existe un marco absoluto en un escaneo
+    intraoral, porque no hay ninguna estructura fija que el escáner vea.
+
+    `rot_global`/`trans_global` solo hacen de arranque, para poder transferir etiquetas.
+    La referencia se **reajusta** desde cero con los demás dientes, así que el resultado
+    no hereda la arbitrariedad del recorte del ajuste global — que es la razón de existir
+    de esta función. `trim_referencia` queda expuesto para poder comprobarlo.
+
+    El afinado inicial sí usa **todos** los dientes, incluido el que se mide, pero solo
+    como punto de partida y para etiquetar: el marco contra el que se lee cada pieza se
+    vuelve a ajustar sin ella. Que un ICP arranque cerca importa; de dónde exactamente,
+    no. Comprobado en los tests con una global sesgada 1,2° y 0,7 mm.
+    """
+    rng = np.random.default_rng(semilla)
+    origen_alineado = apply(rot_global, trans_global, origen)
+    etiquetas_origen = transfiere_etiquetas(origen_alineado, destino, etiquetas_destino)
+
+    # Reafinar sobre los dientes y **volver a transferir**. Sin esto el resultado hereda
+    # la calidad del arranque por una vía poco obvia: no por el marco —que se reajusta más
+    # abajo— sino por las ETIQUETAS. Una global sesgada 1,2° desplaza los extremos del arco
+    # más que el radio de transferencia, así que cada diente acaba con un conjunto de
+    # vértices distinto, otro centroide y otra traslación. Medido: 0,228 mm de deriva, que
+    # es del orden de lo que se quiere detectar. Con este paso baja a ruido.
+    if (etiquetas_origen > 0).any() and (etiquetas_destino > 0).any():
+        r0 = icp(
+            origen_alineado[etiquetas_origen > 0],
+            destino[etiquetas_destino > 0],
+            trim=trim_referencia,
+        )
+        origen_alineado = apply(
+            quaternion_to_matrix(r0.rotation), np.asarray(r0.translation), origen_alineado
+        )
+        etiquetas_origen = transfiere_etiquetas(origen_alineado, destino, etiquetas_destino)
+
+    codigos = sorted({int(c) for c in np.unique(etiquetas_destino) if c})
+    utiles = [
+        c
+        for c in codigos
+        if (etiquetas_origen == c).sum() >= 2 * min_puntos
+        and (etiquetas_destino == c).sum() >= min_puntos
+    ]
+    if len(utiles) <= min_dientes:
+        return []
+
+    salida: list[DesplazamientoRelativo] = []
+    for fdi in utiles:
+        otros = [c for c in utiles if c != fdi]
+        ref_src = origen_alineado[np.isin(etiquetas_origen, otros)]
+        ref_tgt = destino[np.isin(etiquetas_destino, otros)]
+
+        # La referencia: rígida ajustada SOLO con los demás dientes.
+        r_ref = icp(ref_src, ref_tgt, trim=trim_referencia)
+        rot_ref = quaternion_to_matrix(r_ref.rotation)
+        trans_ref = np.asarray(r_ref.translation)
+
+        sel_d = etiquetas_destino == fdi
+        tgt = destino[sel_d]
+        src = apply(rot_ref, trans_ref, origen_alineado[etiquetas_origen == fdi])
+        arbol = cKDTree(tgt)
+
+        orden = rng.permutation(len(src))
+        ajuste, retenida = src[orden[::2]], src[orden[1::2]]
+        r = icp(ajuste, tgt, trim=TRIM_LOCAL)
+        rot, trans = quaternion_to_matrix(r.rotation), np.asarray(r.translation)
+
+        centro = src.mean(0)
+        matriz = np.eye(4)
+        matriz[:3, :3] = rot
+        matriz[:3, 3] = trans
+        salida.append(
+            DesplazamientoRelativo(
+                fdi=fdi,
+                n_diente=int(len(src)),
+                n_referencia=int(len(ref_src)),
+                dientes_referencia=len(otros),
+                traslacion_mm=float(np.linalg.norm(trans + (rot - np.eye(3)) @ centro)),
+                rotacion_deg=float(
+                    np.degrees(np.arccos(np.clip((np.trace(rot) - 1) / 2, -1, 1)))
+                ),
+                rms_referencia_mm=_rms(retenida, arbol),
+                rms_diente_mm=_rms(apply(rot, trans, retenida), arbol),
                 condicion=condicionamiento(tgt, normales_destino[sel_d]),
                 matriz=matriz,
             )
