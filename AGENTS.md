@@ -731,8 +731,9 @@ Detalle del contrato de ingesta en el
 
 | Agente | Entrada | Qué produce | No hace | Cerebro |
 |---|---|---|---|---|
-| `export-agent` | `TwinSnapshot` + ruta de salida | **STL binario** desde `surface_ref` + `max_deviation_mm` medida releyendo el fichero | no malla el campo gaussiano; no modifica el twin; no escribe en el almacén | determinista |
-| `field-export-agent` | `TwinSnapshot` | `.ply` / `.splat` desde `gaussian_field_ref` | — | `planned` — el formato binario depende del motor de render (futuro ADR) |
+| `export-agent` | `TwinSnapshot` + ruta de salida | **STL binario** desde `surface_ref` + `max_deviation_mm` y `mean_deviation_mm` medidas releyendo el fichero | no malla el campo gaussiano; no modifica el twin; no escribe en el almacén | determinista |
+| `field-export-agent` | `TwinSnapshot` + ruta de salida | **PLY binario** desde `gaussian_field_ref`, en el marco del twin o en mm del CBCT | no inventa color ni opacidad; no convierte a formato de splat de INRIA | determinista |
+| `render-export-agent` | `TwinSnapshot` + directorio | **PNG multivista** por Beer-Lambert + `psnr_db` / `ssim` del ciclo | no rasteriza splats; no reproduce las fotos intraorales | determinista |
 
 > El **canal de metadatos** (el `TwinSnapshot` a JSON) no tiene agente a propósito:
 > es `model_dump()` de Pydantic. Envolver una llamada de una línea en un contrato de
@@ -808,6 +809,115 @@ ExportOutput
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-13 | 0.1.0 | Registro inicial. Paquete `export-agents` con su contrato base (`ExportOutput` · `BaseExportAgent` · `SurfaceStore`), regeneración de la malla a STL binario desde `surface_ref`, verificación por relectura contra el presupuesto de 0,1 mm, exportación en el sistema del escáner o en el del twin, y declaración de snapshot parcial en la cabecera del fichero. |
+| 2026-08-17 | 0.1.0 | `mean_deviation_mm` junto al máximo: es el **Chamfer** del round-trip, calculado sobre la correspondencia conocida (vértice *i* releído contra vértice *i*) y no por vecino más próximo, que esconderría una permutación. Y la desviación pasa a ser **distancia euclídea por vértice** en vez de error máximo por coordenada: un desplazamiento diagonal de 1 mm son √3 ≈ 1,73 mm, y medir por coordenada lo reportaba como 1,0. |
+
+---
+
+### `field-export-agent` — Exportación del campo gaussiano
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`field.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | ninguno todavía: `FieldExportAgent(store).export(snapshot, destino)` |
+
+**Rol / Propósito**
+
+> Materializa lo que el escáner **no puede ver**: el interior que sembró el CBCT.
+> El canal de malla devuelve la superficie medida; éste devuelve el volumen.
+
+**Reglas específicas**
+
+- ⚠️ **El PLY no es un `.ply` de 3D Gaussian Splatting, y es deliberado.** La
+  convención de INRIA guarda `opacity` y armónicos esféricos `f_dc_*` — color y
+  transparencia. Este campo tiene `density` (σₙ, atenuación Beer-Lambert) y un CBCT
+  **no mide color**. Ponerle esa cabecera lo haría abrible en cualquier visor de
+  splats, que pintaría un color inventado sobre una magnitud física: peor que no
+  abrirlo. De qué color se pinta un campo de densidad es decisión de producto y sigue
+  pendiente del ADR de motor de render.
+- 🔒 **`origin` y `hu_range` viajan en el artefacto, no en `Provenance`.** El
+  `cbct-agent` centra el campo (`centers -= mundo.mean(0)`) y normaliza la densidad a
+  `[0, 1]`. Hasta 2026-08-17 el desplazamiento **se descartaba**, y eso hacía el campo
+  irreversible: depende del dato, así que ninguna versión del agente lo recomputa. No
+  se metió en `Provenance` porque `transform` ya significa el alineamiento de la
+  fusión geométrica (ADR 004) y reutilizarlo colisionaría, y porque el esquema declara
+  el snapshot **autocontenido**: lo que hace reversible un blob viaja con él.
+- **Pedir `frame="cbct"` sobre un artefacto sin `origin` falla declarando** y dice que
+  hay que reingerir. Entregarlo centrado haciéndolo pasar por coordenadas del CBCT
+  desplazaría todo lo que se midiese encima, y con buen aspecto.
+- **Las posiciones se escriben en `double`, no en `float32`.** Así
+  `max_deviation_mm` sale **exactamente 0** y la verificación mide *bugs* —endianness,
+  orden de propiedades, un stride mal calculado— en vez del redondeo del formato, que
+  taparía uno pequeño. Un splat convencional usa float32; aquí interesa la medida.
+- **Los dos marcos salen del dato, no de quien llama.** A diferencia de `frame="twin"`
+  en el canal de malla —que aplica `Provenance.transform`, escrita registrando contra
+  lo que el llamante pase como `target`, y el pipeline no fija ese marco—, aquí ambos
+  se definen con arrays del propio artefacto. Cerrar ese hueco es del protocolo entre
+  agentes, no de un exportador.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-17 | 0.1.0 | Registro inicial. Sale de `planned`: PLY binario con las propiedades que el campo **tiene**, dos marcos (`twin` centrado / `cbct` en mm reales), reversibilidad medida por relectura y `densidad_a_hu` para deshacer la normalización. Requirió que el `cbct-agent` empezase a guardar `origin` y `hu_range`. |
+
+---
+
+### `render-export-agent` — Render multivista del campo
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`render.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | ninguno todavía: `RenderExportAgent(store).export(snapshot, dir, ply=…)` |
+
+**Rol / Propósito**
+
+> Convierte el campo en algo que una persona puede **mirar y aprobar**. Es el canal
+> que hace revisable el interior del gemelo, y el que cierra la métrica del brief para
+> lo que no son milímetros.
+
+**Reglas específicas**
+
+- ⚠️ **No son las fotos intraorales.** Son renders del gemelo. De las originales solo
+  se guardaron muestras de apariencia (`image_refs`), así que no hay contra qué
+  compararlas y no se finge que la haya: lo medido es el ciclo *twin → fichero →
+  render*, con `psnr_db` y `ssim`.
+- **No rasteriza splats: compone por Beer-Lambert.** Un rasterizador de 3DGS mezcla
+  color con `alpha blending`, que depende del orden. `density` **no es opacidad**, y la
+  integral que le corresponde, `I = exp(−∫σ ds)`, es aditiva en la profundidad óptica y
+  por tanto **independiente del orden**. Eso no es eficiencia: hace el render
+  determinista sin ordenar por profundidad, y lo vuelve una radiografía sintética en
+  vez de una foto inventada.
+- ⚠️ **Se deposita masa, no amplitud.** Evaluar τ en el centro del píxel —lo evidente—
+  produce aliasing, no imagen: con `s = 0,15 mm` y píxeles de ~0,7 mm el centro cae a
+  más de 4σ de casi todas las gaussianas. Y recortar σ a medio píxel para taparlo infla
+  la amplitud: medido sobre `histora`, τ máximo pasaba de 34 a 256 px a **226** a
+  128 px, o sea la imagen dependía del tamaño del detector. Se deposita la masa con un
+  perfil normalizado y se divide por el área del píxel; hay test de regresión.
+- **Las vistas se nombran por ángulo, nunca por anatomía** (`az090_el+00`). El
+  significado anatómico de un eje depende de cómo el equipo escriba el DICOM, y en este
+  proyecto suponerlo en vez de leerlo salió mal tres veces sobre el mismo paciente. Un
+  nombre como `az090_el+00` no puede mentir; `oclusal` sí.
+- **El encuadre es común a todas las vistas.** Si cada imagen eligiese el suyo, dos
+  renders del mismo campo no serían comparables píxel a píxel y el SSIM mediría el
+  encuadre; además una vista podría recortar lo que otra muestra.
+- **Se devuelven PSNR y SSIM, no uno.** Miden cosas distintas: el PSNR promedia el
+  error por píxel y se deja engañar por un desplazamiento global de brillo, el SSIM
+  compara estructura local. Medido sobre una imagen suave, un sesgo de 10 niveles y
+  ruido de la misma energía dan PSNR casi igual y SSIM de 0,99 frente a 0,57.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. |
 
 ---
 

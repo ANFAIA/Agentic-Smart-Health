@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from core_schemas import Modality, ModalityStatus, Support
 from ingestion_agents import ArtifactStore, CBCTAgent, synthetic
-from ingestion_agents.cbct_agent import HU_SATURATION, pseudonymize
+from ingestion_agents.cbct_agent import HU_SATURATION, _read_series, pseudonymize
 
 
 # --- seudonimización ------------------------------------------------------- #
@@ -46,10 +46,49 @@ def test_ingesta_de_la_serie_sintetica(cbct_dir: Path, store: ArtifactStore) -> 
     assert outcome.support is Support.VOLUMETRIC
 
     arrays = store.load(outcome.artifact_ref or "")
-    assert set(arrays) == {"centers", "scales", "rotations", "density"}
+    assert set(arrays) == {
+        "centers", "scales", "rotations", "density", "origin", "hu_range",
+    }
     n = arrays["centers"].shape[0]
     assert (arrays["scales"].shape, arrays["rotations"].shape) == ((n, 3), (n, 4))
     assert outcome.n_primitives == n
+
+
+def test_el_campo_vuelve_a_coordenadas_reales(cbct_dir: Path, store: ArtifactStore) -> None:
+    """El centrado en el origen tiene que ser DESHACIBLE, o el campo es irreversible.
+
+    Restar el centroide y olvidarlo es la clase de pérdida que ninguna versión del agente
+    recupera: depende del dato, no del código. Con `origin` guardado, la exportación puede
+    devolver el campo a las coordenadas del CBCT y medir la reversibilidad de verdad.
+    """
+    arrays = store.load(CBCTAgent(store).ingest(cbct_dir).artifact_ref or "")
+    mundo = arrays["centers"].astype(np.float64) + arrays["origin"]
+
+    serie = _read_series(cbct_dir)
+    sx, sy, _ = serie.spacing
+    ocupados = np.argwhere(serie.volume >= CBCTAgent(store).hu_threshold)
+    esperado = np.column_stack(
+        [ocupados[:, 2] * sx, ocupados[:, 1] * sy, serie.z[ocupados[:, 0]]]
+    )
+    # Mismas cotas del volumen original, holgura por el float32 de `centers`.
+    assert np.abs(mundo.min(axis=0) - esperado.min(axis=0)).max() < 1e-3
+    assert np.abs(mundo.max(axis=0) - esperado.max(axis=0)).max() < 1e-3
+    assert arrays["origin"].shape == (3,)
+
+
+def test_la_densidad_vuelve_a_hounsfield(cbct_dir: Path, store: ArtifactStore) -> None:
+    """`hu_range` es lo que permite deshacer la normalización a [0, 1].
+
+    Sin él, un σ de 0,5 no significa nada legible: los dos extremos son configuración del
+    agente, y reconstruirlos «por la versión» ataría el fichero exportado al código.
+    """
+    arrays = store.load(CBCTAgent(store).ingest(cbct_dir).artifact_ref or "")
+    bajo, alto = arrays["hu_range"]
+    assert (bajo, alto) == (CBCTAgent(store).hu_threshold, HU_SATURATION)
+    # La densidad no saturada es invertible; la saturada solo dice «≥ alto».
+    hu = arrays["density"].astype(np.float64) * (alto - bajo) + bajo
+    assert hu.min() >= bajo
+    assert float(hu.max()) == pytest.approx(alto)
 
 
 def test_la_densidad_esta_normalizada(cbct_dir: Path, store: ArtifactStore) -> None:
