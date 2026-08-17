@@ -157,6 +157,45 @@ def test_la_cabecera_lleva_lo_que_hace_falta_para_invertir(ingerido) -> None:
     assert "origin_mm" in cabecera and "hu_range" in cabecera
 
 
+def test_las_etiquetas_de_diente_sobreviven_al_fichero(ingerido) -> None:
+    """Un campo segmentado exporta su `region_id`, y vuelve entero.
+
+    Es lo único que el pipeline sabe de anatomía —qué gaussiana es qué diente— y se
+    calcula una vez, en el `segmentation-agent`. Perderlo al escribir dejaría el PLY con
+    la geometría bien y mudo sobre el contenido, y quien lo abriese tendría que volver a
+    segmentar para recuperar algo que ya estaba calculado.
+    """
+    store, snapshot, tmp_path = ingerido
+    arrays = store.load(snapshot.gaussian_field_ref)
+    region = np.zeros(len(arrays["centers"]), dtype=np.int16)
+    region[::3] = 16  # un diente de mentira: aquí se prueba el transporte, no el modelo
+    region[1::3] = 21
+    etiquetado = store.put(**{**arrays, "region_id": region})
+
+    destino = tmp_path / "segmentado.ply"
+    assert FieldExportAgent(store).export(_snapshot(etiquetado), destino).ok
+
+    cabecera = destino.read_bytes().split(b"end_header")[0].decode("ascii")
+    assert "property short region_id" in cabecera
+    assert "codigo FDI" in cabecera and "2 diente(s)" in cabecera
+    assert np.array_equal(lee_ply(destino)["region_id"], region)
+
+
+def test_un_campo_sin_segmentar_no_declara_region_id(ingerido) -> None:
+    """Cero significa «sin asignar», así que una columna de ceros mentiría.
+
+    Diría que el campo pasó por el segmentador y no encontró nada, que es una afirmación
+    clínica distinta de «nadie lo ha segmentado todavía».
+    """
+    store, snapshot, tmp_path = ingerido
+    destino = tmp_path / "crudo.ply"
+    assert FieldExportAgent(store).export(snapshot, destino).ok
+
+    cabecera = destino.read_bytes().split(b"end_header")[0].decode("ascii")
+    assert "region_id" not in cabecera
+    assert "region_id" not in lee_ply(destino)
+
+
 def test_la_densidad_se_puede_devolver_a_hounsfield(ingerido) -> None:
     store, snapshot, _ = ingerido
     arrays = store.load(snapshot.gaussian_field_ref)

@@ -859,12 +859,19 @@ ExportOutput
   lo que el llamante pase como `target`, y el pipeline no fija ese marco—, aquí ambos
   se definen con arrays del propio artefacto. Cerrar ese hueco es del protocolo entre
   agentes, no de un exportador.
+- **`region_id` se escribe si el campo viene segmentado, y solo entonces.** Es la
+  etiqueta FDI por gaussiana que produce el `segmentation-agent`, o sea lo único que el
+  pipeline sabe de anatomía; tirarla al exportar dejaba el PLY con la geometría bien y
+  **mudo sobre el contenido**, obligando a resegmentar algo ya calculado. No se escribe
+  una columna de ceros cuando falta: en el convenio del agente `0` significa «sin
+  asignar», que es una afirmación distinta de «nadie lo ha segmentado todavía».
 
 **Historial de cambios**
 
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-17 | 0.1.0 | Registro inicial. Sale de `planned`: PLY binario con las propiedades que el campo **tiene**, dos marcos (`twin` centrado / `cbct` en mm reales), reversibilidad medida por relectura y `densidad_a_hu` para deshacer la normalización. Requirió que el `cbct-agent` empezase a guardar `origin` y `hu_range`. |
+| 2026-08-17 | 0.1.0 | `region_id` (propiedad opcional `short`) viaja al PLY cuando el campo está segmentado. Lo destapó atar la segmentación al recorrido extremo a extremo: las dos etapas pasaban sus tests por separado y la etiqueta se perdía justo entre ellas. |
 
 ---
 
@@ -942,16 +949,31 @@ Tres reglas que conviene tener a mano:
 
 Probado de punta a punta en
 [`apps/agent-orchestrator/tests/test_e2e.py`](apps/agent-orchestrator/tests/test_e2e.py):
-**ingesta → fusión → exportación**, con la fusión registrando las nubes reales del twin —la
-malla del `mesh-agent` contra el campo del `cbct-agent`— y no un blob sintético contra sí
-mismo. Dos comprobaciones cargan el peso:
+**ingesta → fusión → segmentación → exportación**, con la fusión registrando las nubes
+reales del twin —la malla del `mesh-agent` contra el campo del `cbct-agent`— y no un blob
+sintético contra sí mismo. Tres comprobaciones cargan el peso:
 
 - **La geometría que sale es la que entró**, comparando las cotas del OBJ original con las
   del STL regenerado. Existe porque las métricas internas de cada agente miden contra lo que
   *ese agente* escribió: un eje perdido o un espejo pasarían todas y esta no.
 - **La fusión desbloquea `frame="twin"`**, que necesita la `RigidTransform` que solo ella
-  escribe. Ata las tres fases por una dependencia real y no por el orden de las llamadas: si
+  escribe. Ata las fases por una dependencia real y no por el orden de las llamadas: si
   alguien desconectara la fusión, se pondría rojo aunque cada etapa siguiera pasando lo suyo.
+- **Las etiquetas de diente llegan al fichero**: el `region_id` del PLY exportado tiene que
+  ser el que infirió la segmentación. Esta es la que encontró algo — ver más abajo.
+
+El modelo de segmentación del recorrido es un **doble de test**, porque el de verdad pide
+GPU y un checkpoint sin versionar. No debilita lo que se prueba: la integración tiene que
+demostrar que la etapa está *atada*, y para eso el origen de las etiquetas da igual. La
+calidad del modelo se mide en otro sitio y no es un test.
+
+⚠️ **Atar la segmentación al recorrido destapó una pérdida silenciosa.** Las dos etapas
+pasaban sus tests por separado —el `segmentation-agent` guardaba `region_id` en el
+artefacto, el `field-export-agent` escribía un PLY correcto— y la etiqueta se perdía justo
+entre ellas: el fichero salía con la geometría bien y sin nada que dijera qué gaussiana es
+qué diente. Es el mismo modo de fallo que el centroide descartado del `cbct-agent`, y por el
+mismo motivo no lo veía nadie: **ningún test de etapa mira lo que la etapa siguiente
+necesita**.
 
 ⚠️ **Confianza y reversibilidad no son lo mismo**, y el recorrido lo enseña: registrar la
 malla del escáner contra los vóxeles de tejido duro del CBCT da 0,605 mm sobre un 52,7 %

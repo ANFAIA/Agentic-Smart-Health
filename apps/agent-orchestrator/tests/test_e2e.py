@@ -1,4 +1,4 @@
-"""Integración extremo a extremo: **ingesta → fusión → exportación** sobre un caso real.
+"""Integración extremo a extremo: **ingesta → fusión → segmentación → exportación**.
 
 Lo que prueba este fichero no es ninguna etapa por separado —para eso están
 `test_pipeline.py` y los tests de cada paquete— sino que **el recorrido completo existe**:
@@ -10,9 +10,17 @@ regenerar ficheros directamente desde el Digital Twin»), y la que habría desta
 campo gaussiano no era reversible mucho antes de que se notara: el `cbct-agent` restaba el
 centroide y lo tiraba, y no había ningún recorrido que volviese a pedirlo.
 
-El caso es el sintético de `ingestion_agents.synthetic`, no dato clínico: una arcada
+**Dos cosas son de mentira aquí, y las dos a propósito.**
+
+El *caso* es el sintético de `ingestion_agents.synthetic`, no dato clínico: una arcada
 paramétrica con su serie DICOM y su informe. Sirve porque lo que se comprueba aquí es el
 **recorrido**, no la anatomía.
+
+El *modelo* de segmentación es `_segmentador`, un doble de test, porque el Point
+Transformer necesita GPU y un checkpoint sin versionar. Eso no debilita lo que se prueba:
+lo que la integración tiene que demostrar es que la etapa está **atada** —que sus
+etiquetas llegan al fichero de salida—, y para eso el origen de las etiquetas da igual.
+La calidad del modelo se mide en otro sitio, y no es un test.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from export_agents import (
 )
 from ingestion_agents import ArtifactStore, synthetic
 from ingestion_agents.mesh_agent import parse_obj, parse_stl
+from ingestion_agents.ontology import all_fdi_codes
 
 
 @pytest.fixture(scope="session")
@@ -45,6 +54,29 @@ def pipeline(tmp_path: Path) -> IngestionPipeline:
     return IngestionPipeline(
         ArtifactStore(tmp_path / "artifacts"), quarantine_dir=tmp_path / "quarantine"
     )
+
+
+def _segmentador(fdis: list[str], *, prob: float = 0.99):
+    """Doble de test del `Segmenter`: parte el campo en tantas zonas como FDI se pidan.
+
+    Se corta por `x` ordenado para que cada zona salga **conexa**: la agregación por
+    componentes descartaría los trozos pequeños y el agente tendría razón al quejarse. El
+    índice de clase sale del convenio de `DEFAULT_CODES` (0 = encía, 1..32 = permanentes).
+    """
+    codigos = [all_fdi_codes().index(f) + 1 for f in fdis]
+    n_clases = len(all_fdi_codes()) + 1
+
+    def segmentar(points: np.ndarray) -> np.ndarray:
+        clases = np.zeros(len(points), dtype=int)
+        for codigo, zona in zip(
+            codigos, np.array_split(np.argsort(points[:, 0]), len(codigos)), strict=True
+        ):
+            clases[zona] = codigo
+        p = np.full((len(points), n_clases), (1.0 - prob) / (n_clases - 1))
+        p[np.arange(len(points)), clases] = prob
+        return np.log(p)
+
+    return segmentar
 
 
 def _nubes_del_twin(pipeline: IngestionPipeline, resultado) -> tuple[np.ndarray, np.ndarray]:
@@ -66,15 +98,39 @@ def _nubes_del_twin(pipeline: IngestionPipeline, resultado) -> tuple[np.ndarray,
 
 
 @pytest.fixture
-def recorrido(pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path):
-    """El caso completo: **ingesta → fusión → export**, que es el recorrido de la issue.
+def con_modelo(pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path):
+    """El pipeline entero, con el modelo de segmentación puesto, y el caso ya ingerido.
+
+    Hacen falta dos objetos `IngestionPipeline` porque el doble de test necesita saber qué
+    dientes buscar y eso solo se sabe **después** de leer el informe. Comparten el almacén,
+    así que es un único recorrido: el segundo continúa el snapshot del primero, no lo
+    reingiere. Con el modelo de verdad la vuelta no haría falta —encuentra lo que hay sin
+    que se lo digan—, y es la única costura que este doble introduce.
+    """
+    ingerido = pipeline.run(CaseInput.from_case_dir(case_dir))
+    fdis = sorted({o.region_id for o in ingerido.snapshot.regional})
+    completo = IngestionPipeline(
+        pipeline.store,
+        quarantine_dir=tmp_path / "quarantine",
+        segmenter=_segmentador(fdis),
+    )
+    return completo, ingerido, fdis
+
+
+@pytest.fixture
+def recorrido(con_modelo, pipeline: IngestionPipeline, tmp_path: Path):
+    """El caso completo: **ingesta → fusión → segmentación → export**.
+
+    Es el recorrido de la issue, con las cuatro fases encadenadas por sus datos y no por
+    el orden de las llamadas: la fusión geométrica necesita el campo que sembró la
+    ingesta, la segmentación necesita ese mismo campo, y el export necesita las dos.
 
     Devuelve `(resultado, directorio de salida)`.
     """
+    completo, ingerido, _ = con_modelo
     salida = tmp_path / "export"
-    ingerido = pipeline.run(CaseInput.from_case_dir(case_dir))
-    fusionado = pipeline.fuse(ingerido, registration=_nubes_del_twin(pipeline, ingerido))
-    return pipeline.exportar(fusionado, salida), salida
+    fusionado = completo.fuse(ingerido, registration=_nubes_del_twin(pipeline, ingerido))
+    return completo.exportar(fusionado, salida), salida
 
 
 # --- el recorrido completo -------------------------------------------------- #
@@ -83,10 +139,13 @@ def test_un_caso_entra_como_ficheros_y_sale_como_ficheros(recorrido) -> None:
     resultado, salida = recorrido
 
     assert resultado.snapshot is not None
-    # Las TRES fases, en orden: la ingesta ensambló, la fusión registró, el export escribió.
+    # Las CUATRO fases, en orden: la ingesta ensambló, la fusión registró, la segmentación
+    # etiquetó y ancló el informe, y el export escribió.
     assert [o.modality for o in resultado.outcomes]
     assert any(o.agent.startswith("geometric-fusion-agent") for o in resultado.fusion)
     assert resultado.snapshot.provenance.transform is not None
+    assert any(a.agent.startswith("segmentation-agent") for a in resultado.analysis)
+    assert any(o.agent.startswith("semantic-fusion-agent") for o in resultado.fusion)
     assert len(resultado.exports) == 3, "tres canales: malla, campo y render"
     assert all(e.ok for e in resultado.exports), [e.detail for e in resultado.exports]
     assert resultado.reversible, [
@@ -170,6 +229,47 @@ def test_el_campo_exportado_vuelve_a_coordenadas_del_cbct(recorrido, pipeline) -
     mundo = centrado + arrays["origin"]
     assert np.abs(centrado.mean(0)).max() < 1e-3, "el PLY sale en el marco del twin"
     assert np.abs(mundo.mean(0) - arrays["origin"]).max() < 1e-3
+
+
+def test_las_etiquetas_de_diente_llegan_hasta_el_fichero(recorrido, con_modelo, pipeline) -> None:
+    """La segmentación no es una etapa suelta: lo que infiere tiene que **salir**.
+
+    Es el mismo fallo que el centroide tirado, en otra magnitud. Cada etapa por su cuenta
+    pasaba: el `segmentation-agent` etiquetaba y guardaba `region_id` en el artefacto, y el
+    `field-export-agent` escribía un PLY correcto —sin la columna—. Solo el recorrido
+    entero enseña que el único conocimiento anatómico del pipeline se perdía al escribir, y
+    que quien abriese el fichero tendría que volver a segmentar para recuperarlo.
+    """
+    resultado, _ = recorrido
+    _, _, fdis = con_modelo
+
+    # 1. La etapa corrió y encontró los dientes que cita el informe.
+    seg = next(a for a in resultado.analysis if a.agent.startswith("segmentation-agent"))
+    assert sorted(seg.detected) == fdis
+
+    # 2. El campo del twin quedó etiquetado. Es el artefacto **nuevo** que emitió la
+    #    segmentación, no el que sembró la ingesta: el almacén es el mismo.
+    campo = pipeline.store.load(resultado.snapshot.gaussian_field_ref)
+    assert "region_id" in campo
+
+    # 3. Y esas etiquetas están en el PLY, no solo en el almacén.
+    leido = lee_ply(resultado.export("field-export-agent").path)
+    assert "region_id" in leido
+    assert np.array_equal(leido["region_id"], campo["region_id"])
+    assert sorted(str(c) for c in np.unique(leido["region_id"]) if c > 0) == fdis
+
+
+def test_la_segmentacion_no_rompe_la_reversibilidad(recorrido) -> None:
+    """Etiquetar es aditivo: el campo que sale sigue siendo el que entró.
+
+    La etapa reescribe `gaussian_field_ref` apuntando a un artefacto nuevo, así que lo que
+    se exporta ya **no** es el blob que sembró la ingesta. Si por el camino se reordenaran
+    las gaussianas o se perdiera `origin`, las métricas de geometría lo dirían aquí.
+    """
+    resultado, _ = recorrido
+    ply = resultado.export("field-export-agent")
+    assert ply.max_deviation_mm == 0.0
+    assert resultado.reversible
 
 
 # --- lo que el recorrido tiene que declarar en vez de esconder -------------- #

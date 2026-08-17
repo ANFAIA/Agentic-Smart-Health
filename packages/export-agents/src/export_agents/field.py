@@ -66,7 +66,13 @@ _PROPIEDADES: tuple[tuple[str, str], ...] = (
     ("rot_0", "float"), ("rot_1", "float"), ("rot_2", "float"), ("rot_3", "float"),
     ("density", "float"),
 )
-_TIPOS = {"double": np.float64, "float": np.float32}
+
+# Propiedades que solo existen si alguien las produjo. `region_id` la escribe el
+# `segmentation-agent`, y un campo sin segmentar no la tiene — declararla siempre
+# obligaría a rellenarla con ceros, que en el convenio del agente significan «sin
+# asignar» y son indistinguibles de un campo que sí se segmentó y no encontró nada.
+_OPCIONALES: tuple[tuple[str, str], ...] = (("region_id", "short"),)
+_TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
 _CLAVES_MINIMAS = ("centers", "scales", "rotations", "density")
 
@@ -84,17 +90,22 @@ def densidad_a_hu(density: np.ndarray, hu_range: np.ndarray) -> np.ndarray:
 
 
 def escribe_ply(destino: Path, columnas: dict[str, np.ndarray], *, comentarios: list[str]) -> None:
-    """PLY binario little-endian con las propiedades de `_PROPIEDADES`, en ese orden."""
+    """PLY binario little-endian: `_PROPIEDADES` en ese orden, más las opcionales que haya.
+
+    Las obligatorias no se buscan en `columnas`: si falta una, esto revienta, que es lo
+    correcto — un campo gaussiano sin `density` no es un campo gaussiano.
+    """
+    props = [*_PROPIEDADES, *(p for p in _OPCIONALES if p[0] in columnas)]
     n = len(columnas["x"])
     cabecera = ["ply", "format binary_little_endian 1.0"]
     cabecera += [f"comment {c}" for c in comentarios]
     cabecera.append(f"element vertex {n}")
-    cabecera += [f"property {tipo} {nombre}" for nombre, tipo in _PROPIEDADES]
+    cabecera += [f"property {tipo} {nombre}" for nombre, tipo in props]
     cabecera.append("end_header")
 
-    dtype = np.dtype([(nombre, _TIPOS[tipo]) for nombre, tipo in _PROPIEDADES])
+    dtype = np.dtype([(nombre, _TIPOS[tipo]) for nombre, tipo in props])
     filas = np.empty(n, dtype=dtype)
-    for nombre, _ in _PROPIEDADES:
+    for nombre, _ in props:
         filas[nombre] = columnas[nombre]
 
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +242,18 @@ class FieldExportAgent(BaseExportAgent):
             "rot_2": rotaciones[:, 2], "rot_3": rotaciones[:, 3],
             "density": densidad,
         }
+
+        # El campo segmentado trae una etiqueta FDI por gaussiana, y perderla al exportar
+        # dejaría el fichero mudo sobre lo único que el pipeline sabe de anatomía: qué
+        # trozo es qué diente. Se escribe solo si existe — ver `_OPCIONALES`.
+        if "region_id" in arrays:
+            region = np.asarray(arrays["region_id"], dtype=np.int16)
+            columnas["region_id"] = region
+            dientes = np.unique(region[region > 0])
+            comentarios.append(
+                f"region_id es el codigo FDI por gaussiana, 0 = sin asignar "
+                f"({len(dientes)} diente(s) etiquetado(s))"
+            )
 
         motivos = self._partial_reasons(snapshot)
         if motivos:
