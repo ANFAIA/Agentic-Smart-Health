@@ -86,15 +86,27 @@ import numpy as np
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packages/ingestion-agents/src"))
+_RAIZ = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_RAIZ / "packages/ingestion-agents/src"))
+sys.path.insert(0, str(_RAIZ / "packages/fusion-agents/src"))
+from fusion_agents.marco import (  # noqa: E402  (reexportadas: las importan otros scripts)
+    DECIL_CRESTA,
+    GRADO_ARCO,
+    curva_arco,
+    marco_arcada,
+)
 from ingestion_agents.mesh_agent import read_mesh  # noqa: E402
 
 # La malla se lee con el parser del repositorio y no con `vtkSTLReader`: es el que
 # deduplica la sopa de triángulos y reconstruye topología, y es el que ya usa el
 # `mesh-agent`. VTK queda solo de motor de corte y de render.
 
-GRADO_ARCO = 4  # el arco dental es casi una parábola; 4 absorbe la asimetría
-DECIL_CRESTA = 80  # percentil axial que se considera "cresta oclusal"
+# `marco_arcada` y `curva_arco` vivían aquí. Se movieron a `fusion_agents.marco` porque
+# media docena de sitios las cargaban de este script con `spec_from_file_location`, y
+# porque suponer el eje oclusal en vez de medirlo ya costó dos fallos (ver su docstring).
+# Se reexportan para no romper a quien las importe de aquí.
+__all__ = ["DECIL_CRESTA", "GRADO_ARCO", "curva_arco", "marco_arcada"]
+
 SUAVIZADO = 9  # ventana, en puntos de la polilínea (~0,1 mm cada uno)
 VENTANA_MARGEN_MM = (2.5, 14.0)  # dónde buscar el codo, desde el ápice
 COLOR_MALLA = (0.94, 0.90, 0.84)  # marfil plano: el color por vértice de un STL no existe
@@ -104,41 +116,6 @@ COLOR_COTA = (0.85, 0.16, 0.16)
 # --------------------------------------------------------------------------- #
 # Marco del arco
 # --------------------------------------------------------------------------- #
-def marco_arcada(V: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    """Lleva la arcada a `[largo, ancho, axial]` con el eje axial hacia oclusal.
-
-    Devuelve además la **razón de dispersión** entre las dos orientaciones posibles:
-    cuanto más baja, más claro fue el criterio. Cerca de 1 la orientación es dudosa y
-    conviene desconfiar de todo lo que venga después.
-    """
-    centro = V.mean(0)
-    _, _, ejes = np.linalg.svd(V - centro, full_matrices=False)
-    P = (V - centro) @ ejes.T
-
-    dispersion = {}
-    for signo in (+1, -1):
-        cresta = (P[:, 2] * signo) > np.percentile(P[:, 2] * signo, DECIL_CRESTA)
-        ajuste = np.polyfit(P[cresta, 0], P[cresta, 1], GRADO_ARCO)
-        dispersion[signo] = float(np.std(P[cresta, 1] - np.polyval(ajuste, P[cresta, 0])))
-    if dispersion[-1] < dispersion[+1]:
-        # Se voltean DOS ejes, no uno: invertir solo el axial dejaría un marco
-        # especular y la normal "hacia vestibular" apuntaría hacia dentro.
-        ejes[1] *= -1
-        ejes[2] *= -1
-        P = (V - centro) @ ejes.T
-    razon = min(dispersion.values()) / max(dispersion.values())
-    return centro, ejes, P, razon
-
-
-def curva_arco(P: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Polinomio de la curva del arco, ajustado a la cresta y no a toda la malla.
-
-    Ajustarlo a todo lo desviaría el paladar, que es la mitad de un escaneo maxilar.
-    """
-    cresta = P[:, 2] > np.percentile(P[:, 2], DECIL_CRESTA)
-    return np.polyfit(P[cresta, 0], P[cresta, 1], GRADO_ARCO), P[cresta, :2].mean(0)
-
-
 def plano_de_corte(
     coef: np.ndarray, centro_arco: np.ndarray, x: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
