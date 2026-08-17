@@ -135,7 +135,7 @@ agentic-smart-health/          ← workspace root
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
 │   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
-│   ├── export-agents/         ← regeneración del STL desde el twin, con el error medido
+│   ├── export-agents/         ← regeneración de malla, campo y render desde el twin, con el error medido
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
@@ -159,7 +159,7 @@ Orquestador central del sistema multiagente. Coordina los agentes de cada fase d
 - **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
 - **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
 - **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación** ✅ *(malla)*: `export-agents` regenera el STL desde el `TwinSnapshot` con el error de reconstrucción medido; se invoca directamente (`ExportAgent(store).export(snapshot, destino)`), sin pasar todavía por el orquestador. Pendientes el canal del campo gaussiano (`.ply`/`.splat`) y el de las imágenes.
+- **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Se invocan directamente (`ExportAgent(store).export(snapshot, destino)`), **sin pasar todavía por el orquestador**: cablearlos ahí es lo que falta para la prueba extremo a extremo.
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
@@ -225,7 +225,9 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 
 ### `export-agents`
 
-**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. El `export-agent` regenera la **malla en STL binario** desde `surface_ref` y devuelve la desviación máxima **medida releyendo el fichero** — la métrica de reversibilidad del brief comprobada en cada ejecución, no estimada. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`. Ficha completa en [`AGENTS.md`](AGENTS.md).
+**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. Tres canales, y **los tres miden lo que producen releyéndolo**, no estimándolo: `export-agent` → **STL** desde `surface_ref` (desviación máxima y Chamfer), `field-export-agent` → **PLY** desde `gaussian_field_ref`, `render-export-agent` → **PNG multivista** con PSNR/SSIM del ciclo. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`.
+
+Dos decisiones que se ven raras hasta que se leen: el PLY del campo **no es un `.ply` de 3D Gaussian Splatting** y el render **no rasteriza splats**. `density` es atenuación radiológica, no opacidad, y un CBCT no mide color — así que el fichero declara las propiedades que existen y el render compone por **Beer-Lambert**, que además es independiente del orden de las primitivas y por eso reproducible byte a byte. Fichas completas en [`AGENTS.md`](AGENTS.md).
 
 ### `3dgs-engine`
 
