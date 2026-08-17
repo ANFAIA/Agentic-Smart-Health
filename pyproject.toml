@@ -7,6 +7,7 @@ dependencies = [
     "agent-orchestrator",
     "analysis-agents",
     "core-schemas",
+    "export-agents",
     "fusion-agents",
     "ingestion-agents",
     "tooth-aggregation",
@@ -41,6 +42,7 @@ source = [
     "packages/ingestion-agents/src",
     "packages/fusion-agents/src",
     "packages/analysis-agents/src",
+    "packages/export-agents/src",
     "packages/tooth-aggregation/src",
     "apps/agent-orchestrator/src",
 ]
@@ -62,6 +64,7 @@ skip_covered = true
 agent-orchestrator = { workspace = true }
 analysis-agents = { workspace = true }
 core-schemas = { workspace = true }
+export-agents = { workspace = true }
 fusion-agents = { workspace = true }
 ingestion-agents = { workspace = true }
 tooth-aggregation = { workspace = true }

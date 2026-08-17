@@ -100,11 +100,24 @@ El gate HITL está en **0.7**. De qué sale ese número:
 **Geométrica** — del residuo del registro contra la banda de tolerancia:
 
 ```
-confidence = clamp(1 − rms_mm / ε, 0, 1)
+confidence = clamp(1 − rms_solapado / ε, 0, 1)     y  0.0  si el solapamiento < min_overlap
 ```
 
 Con `rms = 0` da 1.0; con `rms = ε` da 0.0. El gate en 0.7 equivale a exigir
 `rms ≤ 0.3·ε`.
+
+> **Enmienda 2026-08-10 (medida sobre dato real).** La fórmula original usaba el rms de
+> la nube **completa**, y eso es incorrecto cuando las dos superficies no cubren lo mismo.
+> Medido con [`scripts/registro_ios_cbct.py`](../../scripts/registro_ios_cbct.py) sobre un
+> paciente con CBCT y escáner intraoral: **4,98 mm** sobre la nube entera frente a
+> **0,452 mm** sobre los puntos que sí tienen contrapartida, *para el mismo registro*. El
+> primero no describe el registro — describe qué fracción del escaneo intraoral es
+> paladar, que no tiene esmalte contra el que emparejarse.
+>
+> Y hace falta la segunda mitad de la regla: **un solapamiento ridículo invalida el
+> registro por bajo que salga el rms**, porque con cuatro puntos emparejados siempre hay
+> alguna pose que los acerca. Por debajo de `min_overlap` (20 % por defecto) la confianza
+> es 0 y el motivo se declara.
 
 **Semántica** — el **eslabón más débil** de la cadena:
 
@@ -148,24 +161,50 @@ Así, reejecutar la fusión sobre el mismo material es **idempotente** — cumpl
 snapshot = 1 visita» de la issue #33 sin inflar la serie con visitas ficticias, y deja
 la cadena de derivaciones auditable.
 
-### 2.6 Registro: RANSAC-FPFH + ICP multiescala, con ε = 0.5 mm
+### 2.6 Registro: etapa gruesa + ICP multiescala, con ε **por par de modalidades**
 
-- **Grueso**: RANSAC sobre descriptores **FPFH** (descriptor local, invariante a la pose).
-- **Fino**: **ICP multiescala**.
+- **Grueso**: barrido de SO(3) con ICP de criba (`icp_global`). El ADR preveía RANSAC
+  sobre descriptores **FPFH**; la fuerza bruta resultó suficiente y no arrastra Open3D,
+  porque la traslación la resuelve el propio ICP alineando centroides y solo hay que
+  acertar la rotación.
+- **Fino**: **ICP multiescala**, con **recorte de atípicos** (`trim`).
 - Es la receta de **DDMF** ([arXiv:2203.05784](https://arxiv.org/abs/2203.05784)), validada
   sobre **503 pacientes CBCT+IOS emparejados**, con 0.17 mm de ASSD.
-- **Banda ε = 0.5 mm** como tolerancia de aceptación.
 
 > **⚠ ε NO es la métrica de 0.1 mm del brief.** Son cantidades distintas y confundirlas
 > sería un error de bulto:
 >
 > - **< 0.1 mm (brief)** = error de **reconstrucción de malla**: exportar el STL desde el
 >   twin y compararlo con el que entró. Mide **reversibilidad** de una sola modalidad.
-> - **ε = 0.5 mm (aquí)** = error de **alineamiento entre dos modalidades distintas**,
+> - **ε (aquí)** = error de **alineamiento entre dos modalidades distintas**,
 >   limitado por la resolución del CBCT (vóxel de 0,15–0,4 mm) y sus artefactos.
 >
 > El estado del arte publicado (0.17 mm) está por encima del 0.1 mm del brief, lo que
 > confirma que no pueden ser la misma métrica.
+
+**Enmienda 2026-08-10: ε deja de ser una constante.** Lo obliga la aritmética del gate.
+`clamp(1 − rms/ε) ≥ 0.7` equivale a `rms ≤ 0.3·ε`, o sea **0,15 mm** con ε = 0,5. Un CBCT
+de vóxel 0,30 mm y PSF medida de 425 µm no puede alcanzar eso ni en teoría, así que con
+ε = 0,5 la fusión **intraoral↔CBCT no podría pasar el gate nunca**.
+
+La lectura correcta de ε no es «la precisión que quiero» sino **«el error a partir del
+cual el resultado deja de servir»**. Para medir una recesión gingival de 1-3 mm, un
+registro con 1,5 mm de error ya no sirve:
+
+| par de modalidades | ε | de dónde sale |
+|---|---|---|
+| malla derivada del propio volumen | **0,5 mm** | alineadas por construcción; es el caso fácil |
+| **intraoral ↔ CBCT** | **1,5 mm** | mejor registro alcanzable medido = 0,452 mm → confianza 0,70 |
+
+### 2.6.1 Recortar atípicos tiene un coste que no es obvio
+
+El recorte es imprescindible cuando las superficies no cubren lo mismo, pero **destruye la
+capacidad de discriminar entre poses**: a una pose equivocada le basta con que la fracción
+conservada caiga cerca. Medido: con `trim = 0.35` la búsqueda global no recupera ni una
+transformación **conocida sobre la misma nube**; con `0.70` y `1.0` sí.
+
+De ahí la regla: **cribar flojo y refinar fuerte**. Un único valor de recorte para todo el
+registro es un error de diseño.
 
 ### 2.7 El registro se valida en dos niveles
 
@@ -176,6 +215,13 @@ motivos distintos y confundirlos deja agujeros:
 |---|---|---|
 | **unitario** | una malla y **una copia suya** a la que se aplica una transformación **conocida** | el algoritmo debe **recuperar esa transformación** dentro de ε |
 | **integración** | el lote de pares CBCT+IOS reales | ASSD sobre puntos de control, contra la banda ε |
+
+> **El nivel unitario destapó algo que el de integración no habría visto.** Con una
+> transformación conocida, el ICP fino **no falla ruidosamente**: converge y se queda en un
+> mínimo local a ~0,43 mm —una cifra que *parece* un buen registro— con una pose que no es
+> la correcta, y lo hace en las cuatro rotaciones probadas. La etapa gruesa recupera la
+> transformación exacta (< 0,01 mm). Un fallo ruidoso se ve solo; éste hay que ir a
+> buscarlo, y por eso este nivel de validación no es opcional.
 
 El nivel unitario es el que hace testeable el agente **sin datos clínicos y sin GPU**: la
 verdad de referencia es exacta porque la fabricas tú, así que un fallo ahí es del

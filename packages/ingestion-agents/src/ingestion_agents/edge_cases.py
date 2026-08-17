@@ -107,6 +107,14 @@ def _dicom_sin_modalidad(tmp: Path) -> Path:
     return _retocar(destino, quitar)
 
 
+def _dicom_sin_extension(tmp: Path) -> Path:
+    """Cortes escritos sin extensión, como los emiten los exportadores clínicos."""
+    destino = _serie_base(tmp / "dicom-sin-extension")
+    for i, corte in enumerate(sorted(destino.glob("*.dcm")), start=1):
+        corte.rename(destino / f"i{i:07d}")
+    return destino
+
+
 def _dicom_espaciado_cero(tmp: Path) -> Path:
     """`PixelSpacing` a cero: un vóxel sin tamaño no tiene coordenadas en mm."""
     destino = _serie_base(tmp / "dicom-espaciado-cero")
@@ -267,7 +275,9 @@ CASES: tuple[EdgeCase, ...] = (
         "dicom-cabecera-corrupta",
         "cbct",
         ModalityStatus.FAILED,
-        "Un corte ilegible invalida la serie: media boca no es un volumen.",
+        "Un corte ilegible invalida la serie: media boca no es un volumen. Todo "
+        "fichero no accesorio es candidato a corte, y uno que no supere la firma "
+        "`DICM` es un fallo — nunca algo que saltarse en silencio.",
         _dicom_cabecera_corrupta,
     ),
     EdgeCase(
@@ -294,6 +304,16 @@ CASES: tuple[EdgeCase, ...] = (
         "herramientas agresivas. Se ingiere; lo que se rechaza es la "
         "modalidad ajena declarada, no la ausente.",
         _dicom_sin_modalidad,
+    ),
+    EdgeCase(
+        "dicom-sin-extension",
+        "cbct",
+        ModalityStatus.OK,
+        "Encontrado sobre CBCT real (Carestream CS 9600): 578 cortes llamados "
+        "`i0000567`, sin extensión. Filtrar por `.dcm` veía un directorio vacío y "
+        "declaraba un fallo del dato que era nuestro. Se reconoce por la firma "
+        "`DICM` del byte 128, que es lo único fiable.",
+        _dicom_sin_extension,
     ),
     EdgeCase(
         "dicom-espaciado-cero",

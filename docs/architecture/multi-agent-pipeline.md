@@ -83,7 +83,7 @@ Visores (web three.js / VTK)  ◄── lo que ve el usuario
 | 1 | Contratos de datos de ingesta (DICOM, escaneos) | [ADR 001](001-digital-twin-core-schemas.md) + [§2](#2-tarea-1--contratos-de-ingesta) | ✅ (contrato cerrado; borde de ingesta definido) |
 | 2 | Mecanismo de fusión (radiografía ↔ malla 3D/3DGS) | [§3](#3-tarea-2--mecanismo-de-fusión-espacial) | ✅ diseño esbozado · ⚠ algoritmo pendiente de spike |
 | 3 | Roles de agentes de análisis + `AGENTS.md` | [§4](#4-tarea-3--agentes-de-análisis) + [`AGENTS.md`](../../AGENTS.md) | ✅ roles esbozados y registrados (stubs `planned`) |
-| 4 | Formato y pipeline de exportación | [§5](#5-tarea-4--formato-y-pipeline-de-exportación) | ✅ diseño esbozado · ⚠ formato concreto pendiente de spike |
+| 4 | Formato y pipeline de exportación | [§5](#5-tarea-4--formato-y-pipeline-de-exportación) | ✅ diseño esbozado · ✅ **canal de malla implementado** (`export-agent`, STL) · ⚠ formato del campo gaussiano pendiente de spike |
 | 5 | Diagrama de arquitectura | [§1](#1-arquitectura-de-alto-nivel) | ✅ este documento |
 
 > **Tres niveles, para evitar malentendidos.** Este documento **esboza el diseño**
@@ -317,6 +317,27 @@ flowchart LR
   class SN,J,PLY,WEB,VTK c;
 ```
 
+**Enmienda 2026-08-13: aparece un tercer canal, y es el que cierra la
+reversibilidad.** El diseño de arriba pensaba la exportación como alimento del
+**visor**, y por eso solo contemplaba metadatos + campo gaussiano. Pero la métrica
+del brief —«regenerar el STL desde el twin con < 0,1 mm»— no la satisface ninguno de
+los dos: se satisface devolviendo la **malla** a un fichero. Ese canal es hoy el
+`export-agent` (`packages/export-agents/`, [ficha](../../AGENTS.md)):
+
+| Canal | Qué exporta | Formato | Estado |
+|---|---|---|---|
+| **Malla** | `surface_ref` → superficie de origen | **STL binario** | ✅ implementado, con el error de reconstrucción **medido** por relectura |
+| Metadatos / contrato | `TwinSnapshot` | JSON (`model_dump`) | ✅ estable — no necesita agente: es una llamada de una línea |
+| Campo gaussiano | `gaussian_field_ref` | `.ply` / `.splat` | ⚠ pendiente de D1 |
+
+La geometría sale de `surface_ref` y **no** del campo gaussiano, y no es un atajo:
+mallar el volumen por *marching cubes* solo está bien definido donde el gradiente es
+fuerte (esmalte, 364 HU/vóxel); sobre hueso trabecular el área de la isosuperficie
+depende de la resolución con que se mida —dimensión fractal 2,45— y por tanto **no
+existe** como magnitud ([`scripts/resolucion_modalidades.py`](../../scripts/resolucion_modalidades.py)).
+Si esa ruta hace falta algún día será **otro agente**, con su propio criterio de
+aceptación.
+
 **Decisiones pendientes (nivel 2 — requieren spike):** el **formato binario
 concreto** del campo gaussiano (`.ply` vs `.splat` vs formato VTK) depende de qué
 motor de render se adopte. Se decide con el PoC del visor (three.js/GaussianSplats3D)
@@ -339,7 +360,9 @@ entonces, el canal de metadatos (JSON del contrato) es estable y no bloquea.
    geometría.**
 5. **Análisis** — `pathology-agent` y demás enriquecen el snapshot; los hallazgos
    clínicos pasan por **human-in-the-loop**.
-6. **Export** — el snapshot se materializa (JSON + `.ply/.splat`).
+6. **Export** — el snapshot se materializa: el `export-agent` regenera la **malla**
+   (STL, con el error medido) y, cuando D1 se cierre, el campo gaussiano
+   (`.ply/.splat`); el contrato viaja como JSON.
 7. **Visualización** — `web-viewer` (three.js) y/o VTK/Slicer lo renderizan.
 
 > **⚠ El orden de las fases 2–4 es provisional, no una decisión cerrada.** Lo único

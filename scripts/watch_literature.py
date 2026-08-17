@@ -26,6 +26,18 @@ ninguna, porque parece un dato.
 **El agente no mergea.** Su salida es una rama y una PR. La decisión de si un
 artículo entra en la base de conocimiento sigue siendo humana, y la PR pasa por los
 mismos guardianes que cualquier otra (`data_guard.py` incluido).
+
+**«No hay nada» y «no me contestó nadie» son desenlaces distintos**, y cada uno
+tiene su código de salida:
+
+    0   se propusieron artículos, o de verdad no había ninguno nuevo
+    1   el bloque YAML generado no parsea (el manifiesto se restaura)
+    2   ninguna consulta respondió: la vigilancia NO se ha hecho
+
+El 2 existe por un fallo real: el 2026-08-10 las siete consultas se llevaron un 429
+de arXiv y el run terminó en verde diciendo «Nada nuevo que proponer», exactamente
+igual que una semana tranquila. Un vigilante que existe para que nadie tenga que
+acordarse de mirar no puede avisar de que está roto callándose.
 """
 
 from __future__ import annotations
@@ -59,6 +71,9 @@ _MAX_PDF_BYTES = 30 * 1024 * 1024
 # arXiv pide un mínimo de 3 s entre peticiones. Respetarlo es la diferencia entre
 # un cliente educado y uno bloqueado.
 _ESPERA = 3.0
+# Códigos HTTP que se curan esperando: límite de tasa y caídas del lado de arXiv.
+# Un 400 (consulta mal formada) no está aquí a propósito — ver `_transitorio`.
+_CODIGOS_TRANSITORIOS = frozenset({429, 500, 502, 503, 504})
 
 # --------------------------------------------------------------------------- #
 # Las dos puertas
@@ -188,6 +203,42 @@ def _get(url: str) -> bytes:
 
 def _texto(nodo, etiqueta: str) -> str:
     return (nodo.findtext(f"{_ATOM}{etiqueta}") or "").strip()
+
+
+def _transitorio(e: Exception) -> bool:
+    """¿Este fallo se cura esperando, o va a fallar igual las tres veces?
+
+    Reintentar sin distinguir es tan malo como no reintentar: un 429 o un corte
+    de red se arreglan solos, pero un 400 por consulta mal formada no se arregla
+    nunca, y darle tres pasadas solo retrasa el diagnóstico media hora.
+
+    El `ParseError` cuenta como transitorio a propósito: bajo carga arXiv devuelve
+    respuestas truncadas o una página de error donde debería ir el Atom.
+    """
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code in _CODIGOS_TRANSITORIOS
+    return isinstance(e, urllib.error.URLError | TimeoutError | ET.ParseError)
+
+
+def buscar_con_reintentos(consulta: str, limite: int, *, intentos: int = 3) -> list[dict]:
+    """`buscar` con espera creciente ante fallos transitorios.
+
+    La IP de los runners de GitHub está muy usada contra arXiv: el 2026-08-10 las
+    siete consultas se llevaron un 429 seguido y la vigilancia de ese día se quedó
+    sin hacer. Tres segundos fijos entre consultas no bastan cuando el límite ya
+    saltó; hay que retroceder.
+    """
+    espera, ultimo = _ESPERA, intentos - 1
+    for intento in range(intentos):
+        try:
+            return buscar(consulta, limite)
+        except (urllib.error.URLError, ET.ParseError, TimeoutError) as e:
+            if intento == ultimo or not _transitorio(e):
+                raise
+            print(f"  · {consulta}: {e} — reintento en {espera:.0f} s", file=sys.stderr)
+            time.sleep(espera)
+            espera *= 3
+    raise AssertionError("bucle de reintentos sin salida")  # pragma: no cover
 
 
 def buscar(consulta: str, limite: int) -> list[dict]:
@@ -322,13 +373,15 @@ def main() -> int:
 
     candidatos: list[dict] = []
     vistos: set[str] = set()
+    fallidas: list[str] = []
     for i, busqueda in enumerate(CONSULTAS):
         if i:
             time.sleep(_ESPERA)
         try:
-            resultados = buscar(busqueda["consulta"], args.limite)
+            resultados = buscar_con_reintentos(busqueda["consulta"], args.limite)
         except (urllib.error.URLError, ET.ParseError, TimeoutError) as e:
             print(f"✗ consulta {busqueda['consulta']}: {e}", file=sys.stderr)
+            fallidas.append(busqueda["consulta"])
             continue
 
         pasan = 0
@@ -355,6 +408,26 @@ def main() -> int:
             candidatos.append(art)
             pasan += 1
         print(f"· {busqueda['consulta']}: {len(resultados)} resultados, {pasan} nuevos y del tema")
+
+    if fallidas:
+        print(
+            f"\n⚠ {len(fallidas)} de {len(CONSULTAS)} consultas no respondieron.",
+            file=sys.stderr,
+        )
+
+    if len(fallidas) == len(CONSULTAS):
+        # Ninguna respondió: esto NO es una semana tranquila, es una vigilancia que
+        # no se ha hecho. Devolver 0 con «nada nuevo» las haría indistinguibles, y
+        # este agente existe precisamente para que nadie tenga que acordarse de
+        # mirar — así que el silencio no puede ser su forma de avisar.
+        print(
+            "✗ Ninguna consulta respondió: la vigilancia de hoy NO se ha hecho. "
+            "El manifiesto queda intacto.",
+            file=sys.stderr,
+        )
+        if args.resumen:
+            args.resumen.write_text("", encoding="utf-8")
+        return 2
 
     # Reparto por consulta, no «los N más nuevos». Las consultas de estándares dan
     # mucho más volumen que las dentales (medido: 13 y 8 frente a 5 y 1), así que
@@ -425,9 +498,20 @@ def main() -> int:
             f"{'sí' if a['redistribuible'] else '**no**'} |"
             for a in aceptados
         )
+        # Un fallo parcial sesga la cosecha hacia los temas que sí contestaron, y
+        # quien revisa no tiene forma de saberlo mirando la tabla. Se declara.
+        aviso = ""
+        if fallidas:
+            listado = "\n".join(f"> - `{c}`" for c in fallidas)
+            aviso = (
+                f"> ⚠ **{len(fallidas)} de {len(CONSULTAS)} consultas no respondieron** en "
+                "esta ejecución, así que estas propuestas están sesgadas hacia los temas "
+                f"que sí contestaron:\n{listado}\n\n"
+            )
         args.resumen.write_text(
             f"{len(aceptados)} artículo(s) de arXiv publicados en los últimos "
             f"{args.dias} días que encajan con el proyecto y no estaban inventariados.\n\n"
+            f"{aviso}"
             "| arXiv | Título | Licencia | ¿Redistribuible? |\n|---|---|---|---|\n"
             f"{filas}\n\n"
             "La licencia está **leída del OAI-PMH de arXiv**, no supuesta. Ningún PDF "

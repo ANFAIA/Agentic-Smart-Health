@@ -82,20 +82,57 @@ jobs:
           uv run python scripts/data_guard.py --quiet
           uv run python scripts/docs_sync.py --check
 
-      - name: Abrir PR
+      # La PR automática puede estar prohibida por política de la organización
+      # (ANFAIA lo está: `GitHub Actions is not permitted to create or approve pull
+      # requests`). Eso NO es un fallo del vigilante: la rama con las propuestas ya
+      # está subida y el trabajo hecho. Por eso el `gh pr create` es tolerante — un
+      # run rojo cada lunes por una casilla de configuración enseña a ignorar el CI,
+      # y el día que falle de verdad no lo miraría nadie.
+      #
+      # El cuerpo de la PR (el porqué de cada artículo, su licencia y su hash) se
+      # vuelca SIEMPRE al resumen del run: si la abre una persona a mano, ese texto
+      # es justo lo que no puede reconstruir, porque muere con el runner.
+      - name: Proponer la literatura (rama + PR si se permite)
         if: steps.cambios.outputs.hay == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          rama="bot/literatura-$(date +%Y-%m-%d)"
+
+          # Relanzar a mano el mismo día que ya corrió el cron chocaría: la rama por
+          # fecha existe y su historia diverge, así que el push saldría rechazado. Se
+          # sufija con el número de run, que es único y ordenable.
+          rama="bot/literatura-$(date +%F)"
+          if git ls-remote --exit-code --heads origin "$rama" >/dev/null 2>&1; then
+            rama="$rama-r${GITHUB_RUN_NUMBER}"
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$rama"
           git add data/research-agent/knowledge_base/manifest.yaml
           git commit -m "chore(kb): propuestas de literatura del $(date +%F)"
+
+          # El resumen se escribe ANTES de tocar el remoto. Es lo único que una
+          # persona no puede reconstruir si algo falla más abajo, así que no puede
+          # quedar colgando de que el push y la PR salgan bien.
+          comparar="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/develop...$rama?expand=1"
+          {
+            echo "## Propuestas de literatura del $(date +%F)"
+            echo
+            echo "Rama: \`$rama\`"
+            echo
+            echo "**[→ Abrir la PR]($comparar)** y pegar como descripción el texto de abajo."
+            echo
+            echo '```markdown'
+            cat cuerpo-pr.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
           git push -u origin "$rama"
+
           gh pr create \
             --base develop --head "$rama" \
             --title "chore(kb): literatura nueva del $(date +%F)" \
-            --body-file cuerpo-pr.md
+            --body-file cuerpo-pr.md \
+          || echo "::notice::PR automática bloqueada por política de la organización. La rama \`$rama\` está subida; ábrela desde el resumen de este run, que lleva el cuerpo listo para pegar."

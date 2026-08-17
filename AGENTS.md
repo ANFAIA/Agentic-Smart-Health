@@ -25,6 +25,7 @@ herramientas son prosa y se escriben a mano.
 | Agente | Implementado en |
 |---|---|
 | `cbct-agent` | [`packages/ingestion-agents/src/ingestion_agents/cbct_agent.py`](packages/ingestion-agents/src/ingestion_agents/cbct_agent.py) |
+| `export-agent` | [`packages/export-agents/src/export_agents/stl.py`](packages/export-agents/src/export_agents/stl.py) |
 | `geometric-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/geometric.py`](packages/fusion-agents/src/fusion_agents/geometric.py) |
 | `image-agent` | [`packages/ingestion-agents/src/ingestion_agents/image_agent.py`](packages/ingestion-agents/src/ingestion_agents/image_agent.py) |
 | `mesh-agent` | [`packages/ingestion-agents/src/ingestion_agents/mesh_agent.py`](packages/ingestion-agents/src/ingestion_agents/mesh_agent.py) |
@@ -178,6 +179,186 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 ---
 
+### `data-guardian` — Guardián de datos y licencias
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `data-guardian` |
+| **Versión** | `0.1.0` |
+| **Ubicación** | [`scripts/data_guard.py`](scripts/data_guard.py) |
+| **Estado** | `active` |
+| **Disparo** | Hook `pre-commit` (**bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Tecnología** | Código tipado, **sin LLM** |
+
+**Rol / Propósito**
+
+> Impide que un dato ajeno —de terceros, de licencia incompatible o clínico— entre en
+> la historia de git. Es el único guardián que **detiene el commit**, y la asimetría es
+> deliberada: un fichero que ya está en la historia no se quita sin reescribirla.
+> Ocurrió (issue 45: 156 MiB de PDF, `filter-repo` y `force-push`). Aquí es más barato
+> que en ningún otro sitio.
+
+**Qué comprueba** (todas nacidas de un fallo real)
+
+| Comprobación | Qué caza |
+|---|---|
+| `extensiones` | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
+| `tamano` | cualquier fichero versionado por encima de 2 MiB |
+| `ignore` | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
+| `manifiesto` | que las entradas de `manifest.yaml` estén completas y parseen |
+| `procedencia` | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
+| `fichas` | que cada dataset usado tenga la suya |
+
+> Los identificadores no son decorativos: salen del registro `COMPROBACIONES` del
+> script, y el `docs-guardian` compara esta tabla con él. Añadir una comprobación y no
+> documentarla aquí —o quitarla y dejarla anunciada— falla en el CI.
+
+**Reglas de delegación**
+
+- **Bloquea, no avisa**: sale con código ≠ 0 y el commit no ocurre. Para saltárselo hay
+  que escribir `--no-verify` a mano, que deja rastro de intención.
+- No decide sobre licencias dudosas: veta por extensión y tamaño, que son criterios
+  mecánicos. El juicio sobre si una licencia permite redistribuir es humano.
+
+> ⚠️ **Punto ciego conocido (2026-08-09, sin cerrar).** Veta `.stl`, `.ply` y `.obj`,
+> pero un `.html` con esa misma geometría embebida en base64 le pasa por delante: la
+> única barrera es el límite de 2 MiB, que no es el criterio correcto. Se detectó al
+> construir un visor con geometría real de paciente. El repositorio es público.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-05 | 0.1.0 | Registro inicial: seis comprobaciones, rutas sonda para las reglas de ignore, enganche en el hook y en los dos workflows. |
+| 2026-08-11 | 0.1.1 | Sin cambio de comportamiento: las comprobaciones pasan a declararse en un registro con identificador estable, y esta ficha a reproducirlo. |
+
+---
+
+### `docs-guardian` — Guardián de coherencia documentación ↔ código
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `docs-guardian` |
+| **Versión** | `0.3.0` |
+| **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
+| **Estado** | `active` |
+| **Disparo** | Hook `pre-commit` (**no bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Tecnología** | Código tipado + `ast`, **sin LLM** |
+
+**Rol / Propósito**
+
+> La documentación se desincroniza en silencio: nadie recibe un error rojo por escribir
+> un número que dejó de ser cierto. Este agente lo convierte en un fallo visible.
+> Casos reales de este repositorio: un recuento de tests que decía 166 cuando eran 265,
+> un `.env.example` con cinco variables que no leía nadie, y el árbol del README
+> anunciando un notebook ya eliminado.
+
+**Comprueba, no redacta** — es su regla de diseño y su frontera
+
+> Solo **genera** lo que es copia mecánica de una fuente de verdad (las tablas entre
+> marcas `<!-- generado: … -->`). Todo lo demás lo **verifica**. Un agente que
+> "arreglase" la documentación por su cuenta haría que el documento se adapte al código
+> **incluso cuando el que está mal es el código**: el 166 se habría convertido en 265
+> sin que nadie se enterase de que llevaba meses mintiendo.
+
+| Comprobación | Qué caza |
+|---|---|
+| `env` | variables leídas por el código ↔ `.env.example` ↔ README |
+| `rutas` | ficheros citados en la documentación ↔ ficheros versionados |
+| `agentes` | atributo `name` de las clases ↔ registro de `AGENTS.md` |
+| `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
+| `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
+| `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
+| `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
+| `bloques` | que las tablas generadas coincidan con el código |
+
+> **Por qué los guardianes no se versionan.** Se planteó darles `__version__` y
+> comparar, como se hace con las clases `*Agent`. No se hizo, y por tres motivos. El
+> `version` de un agente **se usa**: viaja en `qualified` dentro de `provenance`, así
+> que una fusión guardada dice con qué fórmula se calculó. En un script no lo leería
+> nadie, y la comprobación quedaría comparando dos constantes que nadie tiene motivo
+> para tocar: verde permanente, peor que no comprobar. Además obligaría a cada
+> guardián a tener ficha propia con fila de versión, cuando `audit_pr.py` vive
+> —correctamente— dentro de la del `ai-code-reviewer`. Y SemVer sin nadie que importe
+> el módulo no significa nada. Lo que sí cambia y le importa a quien lo lea es **qué
+> comprueba**, y eso es lo que se compara.
+
+**Reglas de delegación**
+
+- **No bloquea el commit.** Un hook que impide trabajar por un problema de
+  documentación acaba desinstalado; si falla, avisa y el CI lo dice en la PR.
+- **Fuente de verdad = `git ls-files`**, no el disco: si no, un fichero ignorado que
+  existe en local haría pasar en tu máquina algo que en CI falla.
+
+> ⚠️ **Lo que no cubre.** Ninguna comprobación detecta que una afirmación **en prosa**
+> se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm» y «la etapa gruesa queda
+> pendiente»: las dos eran verdad hasta que dejaron de serlo, y este agente habría
+> pasado en verde. La extensión natural —constantes numéricas citadas en la
+> documentación contra su valor en el código— está pendiente.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-04 | 0.1.0 | Registro inicial: env, rutas, agentes, inventario, árbol y bloques generados. |
+| 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
+| 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
+
+---
+
+### `literature-watcher` — Vigilante de literatura científica
+
+| Campo | Valor |
+|---|---|
+| **Nombre** | `literature-watcher` |
+| **Versión** | `0.2.0` |
+| **Ubicación** | [`scripts/watch_literature.py`](scripts/watch_literature.py) + [`.github/workflows/literature-watch.yml`](.github/workflows/literature-watch.yml) |
+| **Estado** | `active` |
+| **Disparo** | `cron` lunes 06:00 UTC · `workflow_dispatch` |
+| **Tecnología** | Código tipado contra la API y el OAI-PMH de arXiv, **sin LLM** |
+
+**Rol / Propósito**
+
+> El `research-agent` ya sabe buscar literatura, pero es un REPL: solo descubre
+> mientras alguien está sentado delante. Este agente hace la parte que se repite —mirar
+> qué ha salido, descartar lo ya inventariado y averiguar bajo qué licencia se
+> publicó— y deja el juicio *(¿es relevante?)* donde debe estar: en una persona
+> revisando una PR.
+
+**Qué hace, y sus fronteras**
+
+- **Siete consultas** con puerta temática por consulta: cuatro dentales (3DGS, CBCT +
+  segmentación, escáner intraoral, gemelo digital) y tres de estándares (DICOM,
+  FHIR/HL7, interoperabilidad) — estas últimas filtradas **solo por título**, porque
+  con el resumen se colaban falsos positivos.
+- **Cupo por turnos**, no «los N más nuevos»: las consultas de estándares dan mucho más
+  volumen, y ordenar por fecha dejaba PRs sin un solo artículo dental.
+- **Ningún PDF toca el disco ni el repositorio.** Se descarga a memoria para calcular
+  `sha256` y tamaño, y se libera. Descargar no es redistribuir.
+- **La licencia se verifica en origen** (OAI-PMH, `verb=GetRecord`), no se supone. Una
+  licencia adivinada por el título es peor que ninguna, porque parece un dato.
+
+**Reglas de delegación**
+
+- **No mergea.** Su salida es una rama y una PR; la decisión es humana, y esa PR pasa
+  por los mismos guardianes que cualquier otra.
+- **«No hay nada» y «no contestó nadie» son desenlaces distintos**, con código de
+  salida distinto (`0` y `2`). Un vigilante que existe para que nadie tenga que
+  acordarse de mirar no puede avisar de que está roto callándose.
+- Reintenta solo lo transitorio (429, 5xx, cortes de red): un 400 por consulta mal
+  formada no se cura esperando, y darle tres pasadas solo retrasa el diagnóstico.
+- Si la organización prohíbe que Actions abra PRs, **no falla**: deja la rama subida y
+  el cuerpo de la PR en el resumen del run, listo para pegar.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-05 | 0.1.0 | Registro inicial: consultas con puerta temática, verificación de licencia en origen, cupo por turnos y apertura de PR. |
+| 2026-08-10 | 0.2.0 | Primer disparo real del cron. Reintentos con espera creciente, distinción entre «sin novedades» y «ninguna consulta respondió», declaración de fallos parciales en la PR, y tolerancia a que la organización bloquee la PR automática. |
+
+---
+
 ### Agentes de ingesta — `mesh-agent` · `cbct-agent` · `report-agent`
 
 | Campo | Valor |
@@ -273,7 +454,7 @@ IngestionOutput
 | Campo | Valor |
 |---|---|
 | **Ubicación** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
-| **Versión** | `0.1.0` |
+| **Versión** | `geometric-fusion-agent` **0.2.0** · `semantic-fusion-agent` `0.1.0` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 2 · Fusión geométrica **y** 4 · Fusión semántica (separadas por la segmentación) |
 | **Contrato común** | `FusionOutput` + `BaseFusionAgent` en `fusion_agents/base.py` |
@@ -336,13 +517,31 @@ FusionOutput
   se guarda como `RigidTransform` (cuaternión + traslación), **no** como matriz 4×4.
   Una 4×4 puede codificar escala y cizalla; si un ICP devolviera una escala espuria,
   la reversibilidad se rompería en silencio. Esta forma la hace *imposible de
-  expresar*, y un validador rechaza el cuaternión no unitario. La confianza sale del
-  residuo, `clamp(1 − rms/ε, 0, 1)` con **ε = 0.5 mm** — que **no** es la métrica de
-  0.1 mm del brief: esa mide reversibilidad de *una* malla, esta el alineamiento
-  entre *dos* modalidades.
-- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`).
-  Implementada solo la etapa **fina** (ICP multiescala); la **gruesa** (RANSAC-FPFH)
-  queda pendiente, así que **converge solo si la pose inicial ya está cerca**.
+  expresar*, y un validador rechaza el cuaternión no unitario.
+- ⚠️ `geometric-fusion-agent` — **la confianza sale del residuo de la población
+  solapada**, no del de la nube completa: `clamp(1 − rms_solapado/ε, 0, 1)`. Medido
+  sobre un paciente real con CBCT y escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)):
+  **4,98 mm** sobre la nube entera frente a **0,452 mm** sobre los puntos que sí tienen
+  contrapartida, para el mismo registro. El primero no mide el registro, mide qué
+  fracción del escaneo es paladar. Y por debajo de `min_overlap` (20 %) la confianza
+  es **0**: con cuatro puntos emparejados siempre hay una pose que los acerca.
+- ⚠️ `geometric-fusion-agent` — **ε es por par de modalidades**, no una constante.
+  `clamp(1 − rms/ε) ≥ 0,7` equivale a `rms ≤ 0,3·ε`, o sea 0,15 mm con ε = 0,5 — por
+  debajo del suelo físico de un CBCT de vóxel 0,30 mm y PSF 425 µm, así que con ese
+  valor la fusión intraoral↔CBCT **no podría pasar el gate nunca**. ε se lee como *el
+  error a partir del cual el resultado deja de servir*: **0,5 mm** para una malla
+  derivada del propio volumen, **1,5 mm** (`EPSILON_IOS_CBCT_MM`) para intraoral↔CBCT.
+  Ninguno de los dos es la métrica de 0,1 mm del brief: esa mide reversibilidad de
+  *una* malla, estas el alineamiento entre *dos* modalidades.
+- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`), con
+  dos implementaciones: `icp` (etapa **fina**, con recorte opcional de atípicos) e
+  `icp_global` (etapa **gruesa**, barrido de SO(3)). La gruesa cierra el hueco que el
+  ADR 004 dejaba para RANSAC-FPFH, por fuerza bruta y sin arrastrar Open3D. Sin ella
+  el ICP fino **no revienta**: converge a un mínimo local de ~0,43 mm —una cifra que
+  parece un buen registro— con una pose equivocada. Es un fallo que hay que ir a
+  buscar. **Recortar y buscar se pelean**: un recorte agresivo hace que una pose mala
+  puntúe bien, así que se criba flojo y se refina fuerte.
+- `geometric-fusion-agent` —
   **Transfiere el color desde la malla** (ADR 004 §2.8): cada gaussiana dentro de la
   banda ε toma el de su vértice más cercano. Las **fotos quedan fuera** — el notebook 07
   midió que el error foto↔malla es **no-rígido** (ICP estancado en IoU ≈ 0,55), así que
@@ -369,6 +568,7 @@ FusionOutput
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Registro inicial. ADR 004; `RigidTransform` en `core-schemas` (contrato 1.3.0); fusión semántica completa; fusión geométrica con ICP multiescala (falta la etapa gruesa); inserción idempotente en la serie temporal; enganche en el orquestador. |
+| 2026-08-10 | 0.2.0 (geométrica) | Medido el registro contra un paciente real con CBCT + escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). La confianza pasa a salir de la **población solapada**, ε pasa a ser **por par de modalidades** (0,5 mm derivada de volumen · 1,5 mm intraoral↔CBCT), se añade la puerta por **solapamiento mínimo**, y se implementa la **etapa gruesa** (`icp_global`) que el ADR 004 dejaba pendiente. Aditivo: un registrador que no mide solapamiento se comporta igual que antes. |
 
 ---
 
@@ -501,6 +701,113 @@ así que el orquestador ingiere cada foto y el `TwinSnapshot` las recoge en
 reconstruye 3D de una foto —eso es fusión— pero deja la apariencia lista y trazable.
 Detalle del contrato de ingesta en el
 [pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
+
+---
+
+### `export-agent` — Agente de exportación (regeneración de la malla)
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`stl.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` en `export_agents/base.py` |
+| **Orquestador** | ninguno todavía: se invoca directamente (`ExportAgent(store).export(snapshot, destino)`) |
+| **Decisiones** | [Pipeline §5](docs/architecture/multi-agent-pipeline.md#5-tarea-4--formato-y-pipeline-de-exportación) · [ADR 001](docs/architecture/001-digital-twin-core-schemas.md) (refs *fail-loud*) · [ADR 004 §2.2](docs/architecture/004-fusion.md) (`transform` invertible) |
+
+> **Por qué es una cuarta familia y no una función suelta.** Es la **única** que
+> escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de
+> entrada. Y su salida no encaja en las otras: `FusionOutput` y `AnalysisOutput`
+> devuelven un `TwinSnapshot` enriquecido, y un exportador **no enriquece nada** —
+> devuelve un fichero y la medida de cuánto se parece a lo que entró.
+
+**Rol / Propósito**
+
+> Cierra el círculo de la **reversibilidad**: la ingesta convirtió la malla del
+> escáner en contrato y este agente la devuelve a un fichero, con el **error de
+> reconstrucción medido** en vez de prometido. Es la fase que convierte la métrica
+> del brief («error de malla < 0,1 mm») en algo que se comprueba en cada ejecución.
+
+| Agente | Entrada | Qué produce | No hace | Cerebro |
+|---|---|---|---|---|
+| `export-agent` | `TwinSnapshot` + ruta de salida | **STL binario** desde `surface_ref` + `max_deviation_mm` medida releyendo el fichero | no malla el campo gaussiano; no modifica el twin; no escribe en el almacén | determinista |
+| `field-export-agent` | `TwinSnapshot` | `.ply` / `.splat` desde `gaussian_field_ref` | — | `planned` — el formato binario depende del motor de render (futuro ADR) |
+
+> El **canal de metadatos** (el `TwinSnapshot` a JSON) no tiene agente a propósito:
+> es `model_dump()` de Pydantic. Envolver una llamada de una línea en un contrato de
+> fallos que no puede fallar sería ceremonia, no diseño.
+
+**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+
+| Recurso | Permisos | Notas |
+|---|---|---|
+| `TwinSnapshot` (en memoria) | read | Nunca vuelve al fichero crudo. |
+| Almacén de artefactos | **read** | Vía el `Protocol` `SurfaceStore`, que **solo declara `load`**: que un exportador no escriba en el almacén no es una promesa en prosa, es algo que el tipo no permite expresar. |
+| Fichero de salida (STL) | write | Escritura **atómica** (temporal + `replace`): un STL a medio escribir no debe quedar donde alguien lo confunda con el bueno. |
+| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** geometría ni contenido clínico. |
+
+**Outputs generados**
+
+```
+ExportOutput
+  ├─ status          : ModalityStatus (ok/missing/failed) — SIEMPRE presente
+  ├─ path            : Path | None      — fichero escrito
+  ├─ format · frame  : 'stl' · 'source' | 'twin'
+  ├─ n_vertices · n_faces
+  ├─ max_deviation_mm: float | None     — MEDIDA, releyendo el fichero (métrica del brief)
+  ├─ hitl_reasons    : list[str]        — vacío = no hace falta revisión
+  └─ latency_s, quarantine_ref, detail
+```
+
+**Reglas de delegación**
+
+- **Fail-loud, nunca fail-fast**: igual que las otras tres familias, no lanza. Una
+  referencia colgante, una cara fuera de rango o un destino imposible se devuelven
+  como `status=FAILED` + `detail` y van a cuarentena.
+- **Human-in-the-loop**: el agente **no** decide si el fichero se entrega. Emite
+  `hitl_reasons` (`DEFAULT_HITL_THRESHOLD = 0.7`) y quien llama decide.
+- **Solo lectura sobre el gemelo**: no muta el snapshot ni reescribe artefactos. Si
+  un export pudiera reescribir el blob que exporta, la copia fiel de la superficie
+  —el guardarraíl del `mesh-agent`— dejaría de ser fiel al primer round-trip.
+
+**Reglas específicas**
+
+- 🔒 **La geometría sale de `surface_ref`, nunca del campo gaussiano.** El
+  `mesh-agent` guarda la superficie de origen tal cual (`float64` + topología
+  completa) para que exista una copia fiel; el único error del round-trip es el que
+  impone el **formato** (`float32`). Medido sobre un escaneo real de Teeth3DS+
+  (110.804 vértices, arcada de 86 mm): **3,8·10⁻⁶ mm**, cuatro órdenes de magnitud
+  bajo el presupuesto, con la exportación en 0,07 s. Sacar la malla del volumen por *marching
+  cubes* sería **otra cosa**: está medido
+  ([`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py)) que la
+  isosuperficie solo está bien definida donde el gradiente es fuerte —esmalte, 364
+  HU/vóxel— y que sobre hueso trabecular el área **no existe** como magnitud. Un
+  snapshot sin malla se declara `MISSING`; no se «rescata» interpolando.
+- ⚠️ **La desviación se mide releyendo el fichero, no estimando.** Una estimación
+  del error de `float32` sobrevive intacta a un bug de endianness o de orden de
+  vértices; una relectura, no. Y sin medida `within_budget` es `False`: un
+  exportador que no verifica no puede afirmar que cumple los 0,1 mm.
+- **Dos sistemas de referencia, explícitos.** `frame="source"` (por defecto) escribe
+  la malla como entró —es el que mide la reversibilidad—; `frame="twin"` aplica la
+  `RigidTransform` que registró la fusión geométrica para superponer con el CBCT.
+  Pedir `twin` sobre un snapshot que nunca pasó por fusión **falla declarando**: la
+  alternativa sería entregar la malla en el sistema del escáner haciéndola pasar por
+  la del CBCT.
+- **Un snapshot parcial no llega callado a exportación** (ADR 001). El exportador es
+  el último punto donde eso se puede decir, y lo dice dos veces: en `hitl_reasons` y
+  **dentro del propio fichero**, estampando `PARCIAL` en la cabecera de 80 bytes del
+  STL junto al `acquisition_id`. Es trazabilidad que sobrevive a que alguien copie el
+  fichero fuera del sistema, donde ya no hay `Provenance` que consultar.
+- **Lo que el formato no puede llevar se declara, no se finge.** El STL es «pelado»:
+  sin color por vértice, sin normales por vértice y sin topología compartida. El
+  `color_superficie` del twin no cabe en el fichero y sigue vivo en `surface_ref`.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-13 | 0.1.0 | Registro inicial. Paquete `export-agents` con su contrato base (`ExportOutput` · `BaseExportAgent` · `SurfaceStore`), regeneración de la malla a STL binario desde `surface_ref`, verificación por relectura contra el presupuesto de 0,1 mm, exportación en el sistema del escáner o en el del twin, y declaración de snapshot parcial en la cabecera del fichero. |
 
 ---
 
