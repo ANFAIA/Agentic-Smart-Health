@@ -34,6 +34,7 @@ source = { editable = "apps/agent-orchestrator" }
 dependencies = [
     { name = "analysis-agents" },
     { name = "core-schemas" },
+    { name = "export-agents" },
     { name = "fusion-agents" },
     { name = "ingestion-agents" },
 ]
@@ -42,6 +43,7 @@ dependencies = [
 requires-dist = [
     { name = "analysis-agents", editable = "packages/analysis-agents" },
     { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "export-agents", editable = "packages/export-agents" },
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
 ]

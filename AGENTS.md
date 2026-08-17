@@ -715,7 +715,7 @@ Detalle del contrato de ingesta en el
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` en `export_agents/base.py` |
-| **Orquestador** | ninguno todavía: se invoca directamente (`ExportAgent(store).export(snapshot, destino)`) |
+| **Orquestador** | `IngestionPipeline.exportar(result, destino)` dispara los tres canales |
 | **Decisiones** | [Pipeline §5](docs/architecture/multi-agent-pipeline.md#5-tarea-4--formato-y-pipeline-de-exportación) · [ADR 001](docs/architecture/001-digital-twin-core-schemas.md) (refs *fail-loud*) · [ADR 004 §2.2](docs/architecture/004-fusion.md) (`transform` invertible) |
 
 > **Por qué es una cuarta familia y no una función suelta.** Es la **única** que
@@ -824,7 +824,7 @@ ExportOutput
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | ninguno todavía: `FieldExportAgent(store).export(snapshot, destino)` |
+| **Orquestador** | `IngestionPipeline.exportar(result, destino)` |
 
 **Rol / Propósito**
 
@@ -877,7 +877,7 @@ ExportOutput
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | ninguno todavía: `RenderExportAgent(store).export(snapshot, dir, ply=…)` |
+| **Orquestador** | `IngestionPipeline.exportar(result, destino)`; `render=False` lo salta |
 
 **Rol / Propósito**
 
@@ -920,6 +920,44 @@ ExportOutput
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. |
+
+---
+
+### La fase 6 en el orquestador
+
+`IngestionPipeline.exportar(result, destino)` dispara los tres canales sobre un
+`PipelineResult` y devuelve otro **nuevo**, con `exports` y los motivos de revisión
+acumulados. Va en un método aparte —no dentro de `run`— por contrato: exportar **escribe
+ficheros**, y `run`/`fuse` son puras respecto al disco salvo por el almacén de artefactos.
+
+Tres reglas que conviene tener a mano:
+
+- **Los canales son independientes.** Que no haya malla no impide exportar el campo, y que
+  falle el render no borra el STL ya escrito.
+- **`PipelineResult.reversible`** exige que cada canal que corrió esté dentro de *su*
+  presupuesto —milímetros para geometría, PSNR/SSIM para imagen—, que ninguno esté en
+  `FAILED`, y que se haya exportado algo. Sin recorrido no hay reversibilidad que afirmar.
+- **`MISSING` no es un motivo de revisión humana.** Que una adquisición sea solo CBCT es
+  normal y no dice nada del fichero que sí se escribió; un `FAILED` sí se declara.
+
+Probado de punta a punta en
+[`apps/agent-orchestrator/tests/test_e2e.py`](apps/agent-orchestrator/tests/test_e2e.py):
+**ingesta → fusión → exportación**, con la fusión registrando las nubes reales del twin —la
+malla del `mesh-agent` contra el campo del `cbct-agent`— y no un blob sintético contra sí
+mismo. Dos comprobaciones cargan el peso:
+
+- **La geometría que sale es la que entró**, comparando las cotas del OBJ original con las
+  del STL regenerado. Existe porque las métricas internas de cada agente miden contra lo que
+  *ese agente* escribió: un eje perdido o un espejo pasarían todas y esta no.
+- **La fusión desbloquea `frame="twin"`**, que necesita la `RigidTransform` que solo ella
+  escribe. Ata las tres fases por una dependencia real y no por el orden de las llamadas: si
+  alguien desconectara la fusión, se pondría rojo aunque cada etapa siguiera pasando lo suyo.
+
+⚠️ **Confianza y reversibilidad no son lo mismo**, y el recorrido lo enseña: registrar la
+malla del escáner contra los vóxeles de tejido duro del CBCT da 0,605 mm sobre un 52,7 %
+solapado, así que el gate humano **salta** — correctamente, no son la misma superficie. Y
+aun así la exportación sale con sus métricas en verde, porque el error de reconstrucción
+mide si el fichero reproduce el twin, no si el twin está bien registrado.
 
 ---
 

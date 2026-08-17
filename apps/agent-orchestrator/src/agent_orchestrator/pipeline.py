@@ -42,6 +42,12 @@ from core_schemas import (
     Provenance,
     TwinSnapshot,
 )
+from export_agents import (
+    ExportAgent,
+    ExportOutput,
+    FieldExportAgent,
+    RenderExportAgent,
+)
 from fusion_agents import (
     FusionOutput,
     GeometricFusionAgent,
@@ -116,6 +122,10 @@ class PipelineResult:
     # que ha inferido (el mapa FDI → confianza). Lista aparte para que `fusion` siga
     # significando exactamente lo que dice.
     analysis: list[AnalysisOutput] = field(default_factory=list)
+    # La exportación tampoco es fusión ni análisis: no enriquece el snapshot, lo
+    # materializa. Lista aparte por lo mismo, y porque su salida —ficheros y errores
+    # medidos— no cabe en un `FusionOutput`, que declara `extra="forbid"`.
+    exports: list[ExportOutput] = field(default_factory=list)
     hitl_reasons: list[str] = field(default_factory=list)
     latency_s: float = 0.0
     patient_pseudonym: str = ""
@@ -136,6 +146,35 @@ class PipelineResult:
     def image_outcomes(self) -> list[IngestionOutput]:
         """Todas las fotos ingeridas (la imagen es 0..N, no una)."""
         return [o for o in self.outcomes if o.modality is Modality.IMAGE]
+
+    def export(self, agente: str) -> ExportOutput | None:
+        """La salida de un exportador por nombre (`export-agent`, `field-export-agent`…)."""
+        return next((e for e in self.exports if e.agent.split("@")[0] == agente), None)
+
+    @property
+    def reversible(self) -> bool:
+        """¿El recorrido entrada → twin → fichero cumple los presupuestos del brief?
+
+        Exige que **todos** los exportadores que corrieron con éxito estén dentro de su
+        presupuesto, cada uno en el canal que le toca: milímetros para lo que es geometría,
+        PSNR/SSIM para lo que es imagen. Un exportador que no verificó devuelve `False` en
+        su propiedad, así que aquí también: sin medida no hay reversibilidad demostrada.
+
+        Un canal en `FAILED` deja el recorrido en rojo aunque los demás cumplan: es un
+        fichero que se pidió y no se pudo escribir. Uno en `MISSING`, no — que una
+        adquisición no traiga malla es normal y no dice nada del recorrido.
+
+        `False` si no se exportó nada — no se puede afirmar que un recorrido es reversible
+        sin haberlo recorrido.
+        """
+        if any(e.status is ModalityStatus.FAILED for e in self.exports):
+            return False
+        hechos = [e for e in self.exports if e.ok]
+        if not hechos:
+            return False
+        return all(
+            e.image_within_budget if e.format == "png" else e.within_budget for e in hechos
+        )
 
 
 class IngestionPipeline:
@@ -287,6 +326,70 @@ class IngestionPipeline:
             hitl_reasons=[*result.hitl_reasons, *motivos],
         )
 
+    def exportar(
+        self,
+        result: PipelineResult,
+        destino: str | Path,
+        *,
+        marco_malla: str = "source",
+        render: bool = True,
+    ) -> PipelineResult:
+        """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
+
+        Es la **fase 6**, y va en un método aparte —no dentro de `run`— por una razón de
+        contrato: exportar **escribe ficheros**. `run` y `fuse` son puras respecto al disco
+        salvo por el almacén de artefactos, y meter escritura de salida ahí obligaría a
+        todos sus llamantes a pasar una ruta que casi ninguno quiere.
+
+        Los tres canales corren **independientes**: que no haya malla no impide exportar el
+        campo, y que falle el render no borra el STL ya escrito. Cada uno declara su propio
+        estado, y sus motivos de revisión se acumulan en el resultado como los de la fusión.
+
+        `marco_malla` elige el sistema del STL (`"source"` como entró, `"twin"` aplicando la
+        transformación de la fusión geométrica). El PLY se escribe siempre en el marco del
+        twin: pedir `"cbct"` exigiría `origin` en el artefacto, y un snapshot ingerido con
+        una versión antigua del `cbct-agent` no lo tiene — que falle la exportación entera
+        por eso sería desproporcionado. Quien lo necesite llama al agente directamente.
+
+        Devuelve un `PipelineResult` **nuevo**: ni muta el de entrada ni el snapshot.
+        """
+        if result.snapshot is None:
+            return replace(
+                result,
+                hitl_reasons=[
+                    *result.hitl_reasons,
+                    "no hay snapshot que exportar: la ingesta no llegó a ensamblar el twin",
+                ],
+            )
+
+        destino = Path(destino)
+        snapshot = result.snapshot
+        salidas: list[ExportOutput] = [
+            ExportAgent(self.store, frame=marco_malla).export(  # type: ignore[arg-type]
+                snapshot, destino / f"{snapshot.acquisition_id}.stl"
+            ),
+            FieldExportAgent(self.store).export(
+                snapshot, destino / f"{snapshot.acquisition_id}.ply"
+            ),
+        ]
+        if render:
+            # El render se verifica contra el PLY que se acaba de escribir: así la métrica
+            # de imagen mide el ciclo completo twin → fichero → render y no el render
+            # contra sí mismo. Si el PLY no llegó a escribirse, se exporta sin verificar.
+            ply = salidas[1].path if salidas[1].ok else None
+            salidas.append(
+                RenderExportAgent(self.store).export(
+                    snapshot, destino / "render", ply=ply
+                )
+            )
+
+        motivos = [m for s in salidas for m in self._export_reasons(s)]
+        return replace(
+            result,
+            exports=[*result.exports, *salidas],
+            hitl_reasons=[*result.hitl_reasons, *motivos],
+        )
+
     def _stage_reasons(self, out: FusionOutput | AnalysisOutput) -> list[str]:
         """Los motivos del agente, más el de que la etapa no llegara a hacerse.
 
@@ -296,6 +399,16 @@ class IngestionPipeline:
             return [f"{out.agent} falló: {out.detail}"]
         if out.status is ModalityStatus.MISSING:
             return [f"{out.agent} no pudo fusionar: {out.detail}"]
+        return list(out.hitl_reasons)
+
+    def _export_reasons(self, out: ExportOutput) -> list[str]:
+        """Como `_stage_reasons`, pero `MISSING` aquí no es un problema.
+
+        Que un snapshot no traiga malla es normal —una adquisición puede ser solo CBCT— y no
+        dice nada malo del fichero que sí se escribió. Un fallo sí, y se declara.
+        """
+        if out.status is ModalityStatus.FAILED:
+            return [f"{out.agent} falló al exportar: {out.detail}"]
         return list(out.hitl_reasons)
 
     def run_into_twin(

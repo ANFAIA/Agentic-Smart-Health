@@ -32,8 +32,8 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 ## Estado actual (semanas 1–4)
 
 La **ingesta, la fusión, la segmentación y los tres canales de exportación están
-construidos y probados**; lo que queda del camino es el análisis clínico y cablear la
-exportación al orquestador. Lo que ya funciona hoy:
+construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
+integración; lo que queda del camino es el análisis clínico. Lo que ya funciona hoy:
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -108,8 +108,7 @@ del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del prop
 fichero**.
 
 **Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
-sin calibración), `pathology-agent`, y **cablear la exportación al orquestador**, que es
-lo que falta para la prueba extremo a extremo. Sigue pendiente del ADR de motor de render
+sin calibración), `pathology-agent`. Sigue pendiente del ADR de motor de render
 **de dónde sale el color** de un campo de densidad — el contenedor ya está resuelto, pero
 un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
 placeholder: la reconstrucción vive en los notebooks + `gsplat`.
@@ -165,7 +164,7 @@ Orquestador central del sistema multiagente. Coordina los agentes de cada fase d
 - **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
 - **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
 - **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Se invocan directamente (`ExportAgent(store).export(snapshot, destino)`), **sin pasar todavía por el orquestador**: cablearlos ahí es lo que falta para la prueba extremo a extremo.
+- **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Los dispara el orquestador con `IngestionPipeline.exportar(result, destino)`, y el recorrido completo **entrada → twin → fichero** está probado de punta a punta en `tests/test_e2e.py`.
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
