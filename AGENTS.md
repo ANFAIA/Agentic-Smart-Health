@@ -299,6 +299,7 @@ versión nueva encuentre.
 | `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
 | `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
 | `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
+| `constantes` | un número escrito en la prosa ↔ el valor de la constante de la que sale |
 | `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
 | `bloques` | que las tablas generadas coincidan con el código |
 
@@ -320,11 +321,27 @@ versión nueva encuentre.
 - **Fuente de verdad = `git ls-files`**, no el disco: si no, un fichero ignorado que
   existe en local haría pasar en tu máquina algo que en CI falla.
 
-> ⚠️ **Lo que no cubre.** Ninguna comprobación detecta que una afirmación **en prosa**
-> se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm» y «la etapa gruesa queda
-> pendiente»: las dos eran verdad hasta que dejaron de serlo, y este agente habría
-> pasado en verde. La extensión natural —constantes numéricas citadas en la
-> documentación contra su valor en el código— está pendiente.
+**Cómo se ata un número a su constante.** `constantes` no adivina: hace falta un
+marcador, en un comentario HTML que no se ve al renderizar.
+
+```markdown
+...cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** <!--const:REVERSIBILITY_BUDGET_MM-->
+```
+
+A partir de ahí, si alguien cambia `REVERSIBILITY_BUDGET_MM` en el código y no toca esta
+frase, el CI lo dice con el fichero y la línea. Hoy hay 13 números marcados.
+
+> **Por qué un marcador y no buscar el nombre de la constante en el texto.** Porque la
+> prosa peligrosa **no la nombra**: dice «ε = 0,5 mm» o «< 0,1 mm» a secas. De los 25
+> sitios del repositorio donde hay un número que sale del código, solo 3 citaban la
+> constante — una comprobación por nombre habría vigilado el 12 % y dado la sensación de
+> cubrirlo todo. El marcador invierte la carga: quien escribe el número declara de dónde
+> sale, una vez, y el CI lo vigila para siempre.
+
+> ⚠️ **Lo que sigue sin cubrir.** Una afirmación en prosa **sin número** que se vuelve
+> falsa. La ficha de fusión decía «la etapa gruesa queda pendiente» mucho después de que
+> dejara de estarlo, y eso no hay constante que lo respalde. La otra mitad de aquel caso
+> —«ε = 0,5 mm»— sí está cubierta desde la 0.4.0.
 
 **Historial de cambios**
 
@@ -333,6 +350,7 @@ versión nueva encuentre.
 | 2026-08-04 | 0.1.0 | Registro inicial: env, rutas, agentes, inventario, árbol y bloques generados. |
 | 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
 | 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
+| 2026-08-17 | 0.4.0 | Comprobación de **constantes**: los números citados en la documentación contra el valor real en el código, atados con un marcador `<!--const:NOMBRE-->`. Era la extensión que esta misma ficha declaraba pendiente. |
 
 ---
 
@@ -556,12 +574,12 @@ FusionOutput
   fracción del escaneo es paladar. Y por debajo de `min_overlap` (20 %) la confianza
   es **0**: con cuatro puntos emparejados siempre hay una pose que los acerca.
 - ⚠️ `geometric-fusion-agent` — **ε es por par de modalidades**, no una constante.
-  `clamp(1 − rms/ε) ≥ 0,7` equivale a `rms ≤ 0,3·ε`, o sea 0,15 mm con ε = 0,5 — por
+  `clamp(1 − rms/ε) ≥ 0,7` equivale a `rms ≤ 0,3·ε`, o sea 0,15 mm con ε = 0,5 — por <!--const:DEFAULT_HITL_THRESHOLD--> <!--const:DEFAULT_EPSILON_MM-->
   debajo del suelo físico de un CBCT de vóxel 0,30 mm y PSF 425 µm, así que con ese
   valor la fusión intraoral↔CBCT **no podría pasar el gate nunca**. ε se lee como *el
-  error a partir del cual el resultado deja de servir*: **0,5 mm** para una malla
+  error a partir del cual el resultado deja de servir*: **0,5 mm** para una malla <!--const:DEFAULT_EPSILON_MM-->
   derivada del propio volumen, **1,5 mm** (`EPSILON_IOS_CBCT_MM`) para intraoral↔CBCT.
-  Ninguno de los dos es la métrica de 0,1 mm del brief: esa mide reversibilidad de
+  Ninguno de los dos es la métrica de 0,1 mm del brief: esa mide reversibilidad de <!--const:REVERSIBILITY_BUDGET_MM-->
   *una* malla, estas el alineamiento entre *dos* modalidades.
 - `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`), con
   dos implementaciones: `icp` (etapa **fina**, con recorte opcional de atípicos) e
@@ -954,7 +972,7 @@ ExportOutput
 
 | Fecha | Versión | Cambio |
 |---|---|---|
-| 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. |
+| 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. | <!--const:RENDER_PSNR_BUDGET_DB--> <!--const:RENDER_SSIM_BUDGET-->
 
 ---
 

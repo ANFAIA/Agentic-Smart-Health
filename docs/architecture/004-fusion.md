@@ -183,7 +183,7 @@ la cadena de derivaciones auditable.
 > confirma que no pueden ser la misma métrica.
 
 **Enmienda 2026-08-10: ε deja de ser una constante.** Lo obliga la aritmética del gate.
-`clamp(1 − rms/ε) ≥ 0.7` equivale a `rms ≤ 0.3·ε`, o sea **0,15 mm** con ε = 0,5. Un CBCT
+`clamp(1 − rms/ε) ≥ 0.7` equivale a `rms ≤ 0.3·ε`, o sea **0,15 mm** con ε = 0,5. Un CBCT <!--const:DEFAULT_EPSILON_MM-->
 de vóxel 0,30 mm y PSF medida de 425 µm no puede alcanzar eso ni en teoría, así que con
 ε = 0,5 la fusión **intraoral↔CBCT no podría pasar el gate nunca**.
 
@@ -193,7 +193,7 @@ registro con 1,5 mm de error ya no sirve:
 
 | par de modalidades | ε | de dónde sale |
 |---|---|---|
-| malla derivada del propio volumen | **0,5 mm** | alineadas por construcción; es el caso fácil |
+| malla derivada del propio volumen | **0,5 mm** | alineadas por construcción; es el caso fácil | <!--const:DEFAULT_EPSILON_MM-->
 | **intraoral ↔ CBCT** | **1,5 mm** | mejor registro alcanzable medido = 0,452 mm → confianza 0,70 |
 
 ### 2.6.1 Recortar atípicos tiene un coste que no es obvio

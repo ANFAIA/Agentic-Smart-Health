@@ -52,12 +52,12 @@ confianza y dejan la basura en cuarentena):
 | `image-agent` | JPG / PNG / HEIC (foto) | píxeles RGB **sin EXIF** |
 
 Diseño transversal: **Provenance** por valor, **ArtifactStore** direccionado por
-contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y
+contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y <!--const:DEFAULT_HITL_THRESHOLD-->
 **anonimización** (EXIF fuera, seudonimización HMAC — ver
 [`docs/architecture/anonymization-strategy.md`](docs/architecture/anonymization-strategy.md)).
 
 **Orquestador** — `agent-orchestrator` dispara los agentes en paralelo, ensambla el
-`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s.
+`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
 
 **Reconstrucción 3DGS** (en notebooks, ver más abajo): malla real → **Blender**
 (vistas con pose exacta, sin COLMAP) → **gsplat** → campo de gaussianas evaluable en
@@ -87,6 +87,17 @@ que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, a
 que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
 ningún número a mano: los recuentos manuales envejecen solos.
 
+> **Lo que el CI no verifica, dicho antes de que haga falta preguntarlo.** El runner no
+> tiene GPU. Eso **no** deja partes del pipeline sin probar: `packages/` y `apps/` no
+> importan `torch` en ninguna línea, a propósito — los modelos entran por los `Protocol`
+> `Segmenter` y `Registrar`, así que lo que se ejecuta en producción es numpy y se prueba
+> entero. Lo que queda fuera son tres scripts de investigación
+> ([`entrenar_3dgs.py`](scripts/entrenar_3dgs.py),
+> [`segmentar_fdi.py`](scripts/segmentar_fdi.py),
+> [`ablacion_recetas.py`](scripts/ablacion_recetas.py)) y los notebooks: se ejecutan a
+> mano en una máquina con GPU y su producto es una **medida**, no un servicio. Cuando un
+> número de esta página sale de ahí, la sección lo dice y enlaza el script que lo produjo.
+
 **Fusión y segmentación** — `fusion-agents` (registro geométrico + anclaje semántico
 al FDI, ADR 004) y `analysis-agents` (`segmentation-agent`: `region_id` por gaussiana
 y el mapa `FDI → confianza` que consume la fusión semántica). El registro
@@ -99,7 +110,7 @@ producen releyéndolo** en vez de prometerlo:
 
 | Agente | Materializa | Error medido |
 |---|---|---|
-| `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief |
+| `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief | <!--const:REVERSIBILITY_BUDGET_MM-->
 | `field-export-agent` | `gaussian_field_ref` → **PLY binario** | **0,0 mm** exactos sobre el CBCT de un paciente real (498.407 primitivas, 27,9 MB en 0,06 s): las posiciones van en `double` para que la verificación mida *bugs* de formato y no el redondeo |
 | `render-export-agent` | `gaussian_field_ref` → **PNG multivista** | **PSNR 102 dB · SSIM 0,99999999** en el ciclo twin → PLY → render, reproducible byte a byte |
 
@@ -161,7 +172,7 @@ agentic-smart-health/          ← workspace root
 
 Orquestador central del sistema multiagente. Coordina los agentes de cada fase del pipeline:
 
-- **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
+- **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
 - **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
 - **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
 - **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Los dispara el orquestador con `IngestionPipeline.exportar(result, destino)`, y el recorrido completo **entrada → twin → fichero** está probado de punta a punta en `tests/test_e2e.py`.
@@ -464,8 +475,8 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 ## Métricas de éxito
 
 - Cobertura de pruebas automatizadas > 80% del código de agentes y pipeline.
-- Fidelidad de reconstrucción STL desde el Digital Twin: error de malla < 0,1 mm.
-- Latencia de ingesta de un conjunto completo (STL + CBCT + informe clínico): < 60 segundos.
+- Fidelidad de reconstrucción STL desde el Digital Twin: error de malla < 0,1 mm. <!--const:REVERSIBILITY_BUDGET_MM-->
+- Latencia de ingesta de un conjunto completo (STL + CBCT + informe clínico): < 60 segundos. <!--const:LATENCY_BUDGET_S-->
 - Fiabilidad de los agentes de ingesta: > 95% en el dataset de validación.
 
 ---

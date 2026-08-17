@@ -320,7 +320,7 @@ flowchart LR
 **Enmienda 2026-08-13: aparece un tercer canal, y es el que cierra la
 reversibilidad.** El diseño de arriba pensaba la exportación como alimento del
 **visor**, y por eso solo contemplaba metadatos + campo gaussiano. Pero la métrica
-del brief —«regenerar el STL desde el twin con < 0,1 mm»— no la satisface ninguno de
+del brief —«regenerar el STL desde el twin con < 0,1 mm»— no la satisface ninguno de <!--const:REVERSIBILITY_BUDGET_MM-->
 los dos: se satisface devolviendo la **malla** a un fichero. Ese canal es hoy el
 `export-agent` (`packages/export-agents/`, [ficha](../../AGENTS.md)):
 

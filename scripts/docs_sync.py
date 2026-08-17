@@ -38,20 +38,23 @@ Las comprobaciones, todas derivadas de fallos que ya ocurrieron:
 - `comprobaciones`: el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su
   ficha. Es lo que sustituye a versionar los guardianes: de un guardián no importa su
   número de versión —que nadie lee— sino qué vigila, y eso sí se desincroniza.
+- `constantes`: un número escrito en la prosa ↔ el valor de la constante de la que sale,
+  atados por un marcador `<!--const:NOMBRE-->`. Habría cazado la ficha de fusión
+  diciendo «ε = 0,5 mm» después de que el código dijera otra cosa.
 - `inventario` y `arbol`: que lo que existe esté citado, no solo que lo citado exista.
 
-**Lo que sigue sin cubrirse, y conviene saberlo.** Ninguna comprobación detecta que
-una afirmación *en prosa* se haya vuelto falsa. La ficha de fusión decía «ε = 0.5 mm»
-y «la etapa gruesa queda pendiente»: las dos eran verdad hasta que dejaron de serlo, y
-este script habría pasado en verde. Lo que sí se puede mecanizar —una constante
-numérica citada en la documentación contra su valor en el código— está pendiente y es
-la extensión natural de `versiones`.
+**Lo que sigue sin cubrirse, y conviene saberlo.** Una afirmación en prosa **sin
+número** que se vuelve falsa. La ficha de fusión decía también «la etapa gruesa queda
+pendiente» mucho después de que dejara de estarlo, y eso no hay constante que lo
+respalde: no se puede mecanizar sin decidir qué significa que una frase siga siendo
+cierta. La mitad numérica de aquel caso sí está cubierta desde la 0.4.0.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import math
 import os
 import re
 import subprocess
@@ -635,6 +638,145 @@ def revisar_arbol(ficheros: set[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Constantes citadas en la documentacion
+# --------------------------------------------------------------------------- #
+# El marcador que ata un numero de la prosa a la constante de la que sale. Va en un
+# comentario HTML, asi que no se ve en el Markdown renderizado:
+#
+#     el error de malla se mide contra 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM-->
+#
+# Hace falta un marcador explicito, y esto es lo que costo entenderlo: la prosa
+# peligrosa NO nombra la constante. Dice «ε = 0,5 mm» o «< 0,1 mm» a secas, asi que una
+# comprobacion que buscara el nombre de la constante en el texto cazaria 3 de los 25
+# sitios donde hay un numero del codigo escrito a mano. El marcador invierte la carga:
+# quien escribe el numero declara de donde sale, una vez, y a partir de ahi el CI lo
+# vigila para siempre.
+MARCADOR_CONST = re.compile(r"<!--\s*const:\s*([A-Z][A-Z0-9_]*)\s*-->")
+
+# Numeros de la prosa: admite coma decimal (se escribe en espanol) y signo.
+_NUMERO = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+def constantes_del_codigo(ficheros: set[str]) -> dict[str, set[float]]:
+    """`NOMBRE → {valores}` de las constantes numericas de modulo del codigo fuente.
+
+    Por AST y no importando: importar ejecuta, y un guardian que ejecuta el codigo que
+    vigila puede fallar por un `ImportError` que no tiene nada que ver con la deriva.
+
+    El valor es un **conjunto** porque un mismo nombre puede vivir en dos modulos. Si los
+    dos valen lo mismo da igual; si no, la cita es ambigua y eso se declara.
+    """
+    encontradas: dict[str, set[float]] = {}
+    fuentes = [
+        f for f in ficheros
+        if f.endswith(".py") and "/src/" in f and "3dgs-engine" not in f
+    ]
+    for fichero in sorted(fuentes):
+        try:
+            arbol = ast.parse((REPO / fichero).read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for nodo in arbol.body:
+            objetivos: list[ast.expr] = []
+            if isinstance(nodo, ast.Assign):
+                objetivos = list(nodo.targets)
+            elif isinstance(nodo, ast.AnnAssign) and nodo.value is not None:
+                objetivos = [nodo.target]
+            else:
+                continue
+            valor = _valor_numerico(nodo.value)
+            if valor is None:
+                continue
+            for objetivo in objetivos:
+                if isinstance(objetivo, ast.Name) and objetivo.id.isupper():
+                    encontradas.setdefault(objetivo.id, set()).add(valor)
+    return encontradas
+
+
+def _valor_numerico(nodo: ast.expr | None) -> float | None:
+    """El valor de un literal numerico, incluido el negativo (`-0.5` es un unario)."""
+    if isinstance(nodo, ast.Constant) and isinstance(nodo.value, int | float):
+        return float(nodo.value)
+    if isinstance(nodo, ast.UnaryOp) and isinstance(nodo.op, ast.USub):
+        interior = _valor_numerico(nodo.operand)
+        return None if interior is None else -interior
+    return None
+
+
+def revisar_constantes(ficheros: set[str]) -> list[str]:
+    """Cada numero marcado en la documentacion contra el valor real de su constante.
+
+    Es la comprobacion que le faltaba a este guardian y que su propio docstring anunciaba
+    como pendiente: la ficha de fusion decia «ε = 0,5 mm» mucho despues de que el codigo
+    dijera otra cosa, y aqui salia todo en verde.
+    """
+    constantes = constantes_del_codigo(ficheros)
+    problemas: list[str] = []
+
+    for doc in sorted(f for f in ficheros if f.endswith(".md")):
+        for n, linea, sin_codigo in _lineas_de_prosa((REPO / doc).read_text(encoding="utf-8")):
+            for nombre in MARCADOR_CONST.findall(sin_codigo):
+                valores = constantes.get(nombre)
+                if not valores:
+                    problemas.append(
+                        f"{doc}:{n} cita la constante `{nombre}`, que no existe en el "
+                        "codigo fuente. O se renombro, o se borro, y el numero de al lado "
+                        "ya no lo respalda nadie."
+                    )
+                    continue
+                if len(valores) > 1:
+                    problemas.append(
+                        f"{doc}:{n} cita `{nombre}`, que existe con {len(valores)} valores "
+                        f"distintos ({', '.join(str(v) for v in sorted(valores))}). La cita "
+                        "es ambigua: renombra una de las dos constantes."
+                    )
+                    continue
+                esperado = next(iter(valores))
+                escritos = _numeros_de(MARCADOR_CONST.sub("", linea))
+                if not any(math.isclose(x, esperado, rel_tol=1e-9) for x in escritos):
+                    problemas.append(
+                        f"{doc}:{n} no dice {esperado:g} en ninguna parte, y `{nombre}` "
+                        f"vale eso. La linea trae {_lista(escritos)}. Uno de los dos "
+                        "miente, y el que se publica es el documento."
+                    )
+    return problemas
+
+
+def _lineas_de_prosa(texto: str):
+    """`(numero, linea, linea sin codigo en linea)` de lo que es prosa.
+
+    Los dos textos hacen falta, y confundirlos rompe la comprobacion de dos maneras
+    distintas — las dos ocurrieron al escribir esto:
+
+    * **El marcador** se busca en la version *sin* comillas invertidas. Uno que aparece
+      dentro de un bloque cercado o de un `codigo` es un **ejemplo** —la ficha de este
+      guardian enseña cómo se escribe uno—, no una afirmacion sobre un numero.
+    * **El numero** se busca en la linea *entera*, comillas incluidas: una fila que dice
+      `RENDER_PSNR_BUDGET_DB = 40` cita el valor dentro del codigo en linea, que es donde
+      normalmente se escribe. Quitarlo dejaba la linea sin numeros y la daba por mentirosa.
+    """
+    dentro = False
+    for n, linea in enumerate(texto.splitlines(), 1):
+        if linea.lstrip().startswith("```"):
+            dentro = not dentro
+            continue
+        if not dentro:
+            yield n, linea, re.sub(r"`[^`]*`", "", linea)
+
+
+def _numeros_de(texto: str) -> list[float]:
+    return [float(x.replace(",", ".")) for x in _NUMERO.findall(texto)]
+
+
+def _lista(numeros: list[float], tope: int = 5) -> str:
+    """Los numeros de la linea, recortados: una fila de tabla puede traer quince."""
+    if not numeros:
+        return "ningun numero"
+    mostrados = ", ".join(f"{x:g}" for x in numeros[:tope])
+    return mostrados if len(numeros) <= tope else f"{mostrados}… ({len(numeros)} en total)"
+
+
+# --------------------------------------------------------------------------- #
 def _agentes_md() -> str:
     return (REPO / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -653,6 +795,7 @@ COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ..
     ("guardianes", "guardianes registrados", lambda f, _: revisar_guardianes(f, _agentes_md())),
     ("comprobaciones", "comprobaciones documentadas",
      lambda f, _: revisar_comprobaciones(f, _agentes_md())),
+    ("constantes", "constantes citadas", lambda f, _: revisar_constantes(f)),
     ("inventario", "inventario documentado", lambda f, _: revisar_inventario(f)),
     ("arbol", "arbol del README", lambda f, _: revisar_arbol(f)),
     ("bloques", "bloques generados", sincronizar_bloques),
