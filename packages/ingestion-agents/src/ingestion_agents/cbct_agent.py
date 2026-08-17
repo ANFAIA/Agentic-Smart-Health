@@ -100,6 +100,17 @@ class Serie:
     corte ausente desplazaría todo lo que hay por encima."""
     huecos: int
     """Cortes que faltan en la serie, deducidos del espaciado."""
+    z_es_superior: bool
+    """Si `z` sale de `ImagePositionPatient[2]`, y por tanto **crece hacia craneal**.
+
+    `IPP` viene ya en el sistema del paciente (LPS: +x izquierda, +y posterior, +z
+    craneal), así que el equipo resuelve la orientación al escribirlo y `PatientPosition`
+    no la cambia. Con esto `z` alta es **maxilar** y `z` baja **mandíbula**, sin adivinar.
+
+    Es `False` cuando la serie no trae `IPP` y hubo que ordenar por `InstanceNumber`: ahí
+    el sentido del eje es **desconocido** y quien separe arcadas por altura no puede
+    nombrarlas. Se expone precisamente para que no se dé por supuesto lo que no consta.
+    """
 
 
 def _read_series(directory: Path) -> Serie:
@@ -143,6 +154,12 @@ def _read_series(directory: Path) -> Serie:
         if ipp is not None:
             return float(ipp[2])
         return float(getattr(ds, "InstanceNumber", 0))
+
+    # Que la altura salga de `IPP` o de `InstanceNumber` cambia lo que se puede afirmar:
+    # solo en el primer caso el eje tiene sentido anatómico. Se registra, no se supone.
+    z_es_superior = all(
+        getattr(ds, "ImagePositionPatient", None) is not None for ds in slices
+    )
 
     slices.sort(key=_z)
 
@@ -215,6 +232,7 @@ def _read_series(directory: Path) -> Serie:
         patient_id=str(getattr(first, "PatientID", "") or ""),
         z=posiciones,
         huecos=huecos,
+        z_es_superior=z_es_superior,
     )
 
 
