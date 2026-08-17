@@ -117,9 +117,74 @@ global: si la referencia se mueve, todas las traslaciones se mueven con ella.
 penalizar el residuo. `DienteRegistrado.condicion` declara cuándo pasa; conviene mirarlo
 antes que la cifra.
 
-Así que las matrices **sirven ya** para bajar el suelo de ruido de una medida, y **no
-sirven todavía** para afirmar «esta pieza se desplazó X mm». Para eso hace falta fijar la
-referencia contra algo que no se mueva, y eso no está resuelto.
+Así que las matrices **sirven ya** para bajar el suelo de ruido de una medida. Para
+afirmar «esta pieza se desplazó X mm» hacía falta fijar la referencia — resuelto en la
+sección siguiente.
+
+---
+
+## La referencia leave-one-out, y el umbral por debajo del cual no se afirma nada
+
+**Código:** [`desplazamientos_relativos`](../packages/fusion-agents/src/fusion_agents/por_diente.py)
+· **experimento:** [`scripts/desplazamiento_relativo.py`](../scripts/desplazamiento_relativo.py)
+
+Para medir el diente *X*, el marco se reajusta con **todos los dientes menos X**. Quita
+dos contaminaciones del registro global de golpe: X entraba en su propia referencia (si se
+mueve, tira del marco contra el que se le mide y reparte su movimiento entre los demás), y
+la **encía** entraba también (y cambia de forma entre dos momentos sin que ningún diente
+se haya movido).
+
+Lo que se mide pasa a ser desplazamiento **relativo dentro del arco**. No es una
+concesión: en un escaneo intraoral **no existe** marco absoluto, porque el escáner no ve
+ninguna estructura fija.
+
+### El resultado
+
+| referencia | mediana al cambiar el `trim` | factor | peor diente Δ |
+|---|---|---|---|
+| global | 0,171 → 0,738 mm | 4,3× | 0,696 mm |
+| **leave-one-out** | 0,158 → 0,182 mm | **1,2×** | **0,107 mm** |
+
+El peor diente pasa de moverse 0,696 mm al tocar un hiperparámetro a moverse 0,107 —
+por debajo del residuo de la propia medida. El desplazamiento ya es tan estable como el
+dato permite.
+
+### El control nulo, que es lo que fija el umbral
+
+`PREVIO → POST HIGIENE` **no** es un control nulo: una higiene no mueve dientes pero sí
+quita cálculo, así que la superficie cambia de verdad y el ICP lo lee como desplazamiento.
+El control limpio son los **dos escaneos independientes de la misma visita** (87.417 y
+93.860 vértices), donde no cambió ni la biología ni los depósitos. Todo lo que se informe
+ahí es falso por construcción:
+
+| referencia | `trim` | mediana | **máximo** |
+|---|---|---|---|
+| global | 0,7 | 0,112 | 0,295 |
+| global | 1,0 | **1,356** | **2,027** |
+| leave-one-out | 0,7 | 0,106 | 0,389 |
+| leave-one-out | 1,0 | 0,156 | 0,535 |
+
+⚠️ **A `trim` 0,7 la referencia global sale mejor** (0,295 frente a 0,389). Lo que la hace
+inservible no es ser peor: es que a 1,0 informa **2,027 mm de desplazamiento sobre dos
+escaneos de la misma boca**, y no hay forma de saber de antemano en qué régimen estás. La
+referencia relativa no gana en todos los ajustes — gana en **no depender del ajuste**, que
+es lo que permite citar un umbral.
+
+### Y el par real no lo supera
+
+| | mediana | p90 | max |
+|---|---|---|---|
+| control nulo | 0,106 / 0,156 | 0,349 / 0,375 | 0,389 / 0,535 |
+| `PREVIO → POST HIGIENE` | 0,158 / 0,182 | 0,342 / 0,308 | 0,398 / 0,398 |
+
+Indistinguibles. **Ningún diente se movió de forma detectable**, que es lo esperable en un
+par pre/post higiene: el test nulo **pasa**. Y deja el número que hacía falta —
+
+> **Umbral de detección: ~0,4 mm** (p90 del control nulo 0,35–0,38; máximo 0,39–0,54). Por
+> debajo de eso no se escribe «esta pieza se desplazó», por estable que sea la cifra.
+
+Eso es lo que le da regla al color que pedía el tutor: se pinta un diente cuando su
+desplazamiento relativo supera el umbral **a los dos `trim`**, y no antes.
 
 ---
 
