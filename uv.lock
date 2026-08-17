@@ -685,6 +685,7 @@ dependencies = [
     { name = "core-schemas" },
     { name = "fusion-agents" },
     { name = "numpy" },
+    { name = "pillow" },
 ]
 
 [package.metadata]
@@ -692,6 +693,7 @@ requires-dist = [
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "pillow", specifier = ">=10.0" },
 ]
 
 [[package]]

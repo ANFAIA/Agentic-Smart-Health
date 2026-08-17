@@ -31,9 +31,9 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 
 ## Estado actual (semanas 1–4)
 
-La **ingesta, la fusión, la segmentación y la exportación de la malla están
-construidas y probadas**; lo que queda del camino es el canal del campo gaussiano y
-el análisis clínico. Lo que ya funciona hoy:
+La **ingesta, la fusión, la segmentación y los tres canales de exportación están
+construidos y probados**; lo que queda del camino es el análisis clínico y cablear la
+exportación al orquestador. Lo que ya funciona hoy:
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -94,19 +94,25 @@ CBCT↔intraoral está **medido sobre un paciente real**
 ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
 población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
 
-**Exportación reversible** — `export-agents` (`export-agent`): regenera el **STL desde
-el twin** a partir de `surface_ref` y **mide** el error releyendo el fichero, en vez de
-prometerlo. Medido sobre un escaneo real de Teeth3DS+ (110.804 vértices · 221.515
-caras, arcada de 86 mm): **3,8·10⁻⁶ mm** de desviación máxima en 0,07 s — la que impone
-el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm**
-del brief. Exporta en el sistema del escáner o en el del twin (aplicando la
-`RigidTransform` de la fusión), y un snapshot parcial lo declara en `hitl_reasons` **y
-en la cabecera del propio fichero**.
+**Exportación reversible** — `export-agents`, **tres canales, y los tres miden lo que
+producen releyéndolo** en vez de prometerlo:
+
+| Agente | Materializa | Error medido |
+|---|---|---|
+| `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief |
+| `field-export-agent` | `gaussian_field_ref` → **PLY binario** | **0,0 mm** exactos sobre el CBCT de un paciente real (498.407 primitivas, 27,9 MB en 0,06 s): las posiciones van en `double` para que la verificación mida *bugs* de formato y no el redondeo |
+| `render-export-agent` | `gaussian_field_ref` → **PNG multivista** | **PSNR 102 dB · SSIM 0,99999999** en el ciclo twin → PLY → render, reproducible byte a byte |
+
+El STL sale en el sistema del escáner o en el del twin; el PLY, centrado o en mm reales
+del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del propio
+fichero**.
 
 **Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
-sin calibración), `pathology-agent` y el canal de **exportación del campo gaussiano**
-(`.ply`/`.splat`, formato pendiente del ADR de motor de render). El paquete
-`3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks + `gsplat`.
+sin calibración), `pathology-agent`, y **cablear la exportación al orquestador**, que es
+lo que falta para la prueba extremo a extremo. Sigue pendiente del ADR de motor de render
+**de dónde sale el color** de un campo de densidad — el contenedor ya está resuelto, pero
+un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
+placeholder: la reconstrucción vive en los notebooks + `gsplat`.
 
 ---
 
