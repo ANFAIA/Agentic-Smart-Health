@@ -160,15 +160,103 @@ entre raíz y hueso y mide **0,15–0,38 mm**; el vóxel de este CBCT es **0,30 
 frontera no está muestreada. Ninguna cota geométrica crea un borde que el dato no
 contiene: solo esconde la fuga.
 
-> ⚠️ **Esto NO bloquea la medida periodontal del proyecto.** Margen gingival → cresta
-> ósea necesita el borde **hueso ↔ tejido blando**, que son cientos de HU de diferencia,
-> no el borde raíz ↔ hueso. Son fronteras distintas y solo una es imposible aquí.
+---
+
+## Margen gingival → cresta ósea — también NEGATIVO, y corrige lo anterior
+
+> ⚠️ **Corrección.** Aquí decía: «esto NO bloquea la medida periodontal del proyecto;
+> margen → cresta necesita el borde hueso ↔ tejido blando, que son cientos de HU». Se
+> midió y **es falso**. El borde hueso ↔ blando sí es resoluble, pero la medida no lo
+> necesita en el vacío: lo necesita **junto a la raíz**, y ahí vuelve a hacer falta
+> distinguir raíz de hueso. Es el mismo muro, no una frontera distinta.
+
+Se lanzó un rayo desde cada margen hacia apical, separado lateralmente del diente para no
+medir el propio esmalte, barriendo la separación de 1,5 a 3,0 mm. **21/21 secciones** con
+margen detectado, y el marco verificado (cresta a 2000 HU, base a 129: el eje oclusal
+apunta donde debe).
+
+| lado | sitios con cresta (HU≥700) | dispersión en el barrido |
+|---|---|---|
+| vestibular | **1/21** | — |
+| lingual | 6/21 | **3,4 – 8,7 mm** |
+
+**Los dos lados fallan, y por motivos distintos.** A vestibular no hay señal mineralizada:
+el máximo de HU tiene mediana **137/126/105** a 1/2/3 mm de separación, durante 10 mm
+apicales. A lingual sí la hay (11/21 sitios pasan de 700 HU), pero la cresta se desplaza
+hasta **8,7 mm** al mover el rayo 1,5 mm, y varios sitios dan 0,00 mm porque el rayo
+**arranca ya dentro** de tejido duro.
+
+El criterio estaba fijado antes de correrlo —«una medida que cambia mucho con el barrido
+no es una medida»— y no lo pasa. Así que **no se puede decir «el método funciona y falta el
+dato»**: el control interno lingual, donde el hueso sí está, tampoco da un número.
+
+**La causa es la del injerto.** Para saber si un vóxel duro es cresta ósea o es raíz hace
+falta el ligamento periodontal, y no está muestreado. Medido: el tejido duro más cercano a
+cada margen está a 1,4 mm (HU≥400) o 2,9 mm (HU≥1000), pero su componente **apical es
+negativa** (−0,7 a −1,05 mm) — está *coronal* al margen. Es el diente, no el hueso, y a
+ningún umbral se separan.
+
+### Un hallazgo aparte, que es pregunta para los doctores
+
+La asimetría vestibular/lingual es demasiado marcada para ser solo ruido, y el caso es de
+**recesión**. Una tabla vestibular fina o dehiscente en el sector anteroinferior es lo
+esperable clínicamente, y por debajo de 0,30 mm el promedio parcial la borra. **No se
+afirma que el paciente no tenga hueso vestibular**: se afirma que en este CBCT no hay
+señal ≥200 HU ahí, y que decidir entre «no existe» y «no se ve» no es cosa del script.
+
+Verificado que no es un signo invertido, que es el error que ya apareció tres veces en
+esta sesión: las normales salen hacia fuera por dos vías independientes (el volumen con
+signo crece al inflar la malla, y el producto con el radial del arco da +0,95 en 21/21).
+
+---
+
+## Qué arcada del CBCT es cuál — y una conclusión propia retirada
+
+> ⚠️ **Retirado.** Se afirmó aquí y en dos docstrings que «en esta serie la z crece hacia
+> los pies, así que `arcada_superior` devuelve la mandíbula», y que el 0,452 mm commiteado
+> se había medido contra la arcada equivocada. **Las dos afirmaciones son falsas.** Salían
+> de un heurístico de anchura de arco que, reimplementado, daba la respuesta contraria.
+
+`Serie.z` es `ImagePositionPatient[2]`, e **`IPP` viene ya en coordenadas del paciente**
+(LPS: +z craneal). No es una convención del fichero ni depende de `PatientPosition`: el
+equipo la resuelve al exportar. Así que z alta es maxilar, y `arcada_superior` era correcta
+desde el principio. `Serie.z_es_superior` deja constancia de cuándo esto vale — es `False`
+si la serie no trae `IPP` y hubo que ordenar por `InstanceNumber`.
+
+Confirmado por **anatomía**, independiente de la metadata: alejándose del plano oclusal,
+
+| desde el plano oclusal | hacia z baja | hacia z alta |
+|---|---|---|
+| aire (<−500 HU) a 15 mm | 0,0 % | 10,8 % |
+| aire a 33 mm | **0,0 %** | **51,5 %** |
+| hueso (≥400 HU) a 33 mm | 23,0 % | 2,5 % |
+
+Hacia z alta aparece una cavidad de aire creciente **dentro** del hueso: seno maxilar y
+fosa nasal. Hacia z baja, hueso continuo y cero aire en 33 mm: cuerpo mandibular.
+
+**Lo que sí quedó medido es que el residuo del registro no discrimina la arcada.** Se
+registró el escaneo mandibular contra los dos lóbulos: **0,490 mm** contra z_baja y
+**0,509** contra z_alta, un 3,8 % de diferencia. Una arcada dental se parece bastante a
+otra arcada dental, así que «registrar contra los dos y quedarse con el que ajusta» —que
+es lo que yo había puesto en su lugar— **tampoco vale**. Ahora el lóbulo se elige por el
+`IPP` cruzado con la etiqueta del nombre del STL, y el segundo ajuste se conserva solo
+como aviso: si el otro lóbulo ajusta mejor que el que dice la anatomía, salta.
+
+> **Regla que queda:** un eje anatómico no se supone nunca, se lee de la metadata o se
+> mide. En esta sesión el mismo error apareció **tres veces** —eje oclusal en la
+> segmentación FDI, eje apical en el crecimiento radicular, y este— y las tres veces el
+> síntoma fue un número plausible, no una excepción.
 
 ---
 
 ## Lo que este experimento pide
 
-Van **tres preguntas distintas** bloqueadas por la misma resolución, todas medidas: la
-unión amelocementaria, la frontera esmalte/dentina y la delimitación raíz/hueso. Un CBCT
-de **FOV pequeño a 0,08 mm** —3,8× más fino, y por debajo del ligamento periodontal—
-desbloquearía las tres.
+Van **cuatro preguntas distintas** bloqueadas por la misma resolución, todas medidas: la
+unión amelocementaria, la frontera esmalte/dentina, la delimitación raíz/hueso y la
+**cresta ósea junto a la raíz**. Un CBCT de **FOV pequeño a 0,08 mm** —3,8× más fino, y
+por debajo del ligamento periodontal— desbloquearía las cuatro.
+
+Y una que no es de resolución sino clínica, para los doctores: **¿hay tabla ósea vestibular
+en el sector anteroinferior de este paciente?** Si la respuesta es que no, la medida
+periodontal que el proyecto persigue no es «margen → cresta» ahí, sino la propia
+dehiscencia — y eso cambia el producto, no solo el método.
