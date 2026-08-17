@@ -98,6 +98,21 @@ def segmenta(malla: dict, logprob: np.ndarray, codigos: np.ndarray) -> np.ndarra
     return fdi
 
 
+def _por_patron(directorio: Path, patron: str) -> Path:
+    """Localiza un STL por patrón en vez de escribir su nombre.
+
+    🔒 Los nombres que exporta el escáner llevan las **iniciales del paciente** («I.F.S.
+    POST HIGIENE LowerJawScan.stl»), así que no pueden aparecer en un repositorio público:
+    son dato identificativo, igual que el EXIF que el `image-agent` descarta. Se resuelven
+    en tiempo de ejecución sobre el directorio local, que no está versionado.
+
+    Si no hay exactamente una coincidencia devuelve la ruta literal, para que el chequeo de
+    existencia de `main` dé un mensaje claro en vez de fallar aquí con un `IndexError`.
+    """
+    encontrados = sorted(directorio.glob(patron)) if directorio.is_dir() else []
+    return encontrados[0] if len(encontrados) == 1 else directorio / patron
+
+
 def _rigida(fuente: np.ndarray, objetivo: np.ndarray, trim: float):
     r = icp(fuente, objetivo, trim=trim)
     return quaternion_to_matrix(r.rotation), np.asarray(r.translation), r
@@ -133,8 +148,12 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     raiz = Path.home() / "anfaia" / "histora"
-    ap.add_argument("--etiquetado", type=Path,
-                    default=raiz / "I.F.S. POST HIGIENE LowerJawScan.stl",
+    visita = raiz / "CASE-EB5070_files"
+    etiquetado = _por_patron(raiz, "*POST HIGIENE LowerJawScan.stl")
+    previo = visita / "PREVIO LowerJawScan.stl"
+    repetido = _por_patron(visita, "* ESCANEADO PREVIO LowerJawScan.stl")
+
+    ap.add_argument("--etiquetado", type=Path, default=etiquetado,
                     help="STL sobre el que se segmentó (el de mejor calidad).")
     ap.add_argument("--logprob", type=Path,
                     default=Path.home() / "anfaia/fdi/logp_lower_despues.npy",
@@ -142,13 +161,9 @@ def main() -> int:
     ap.add_argument("--codigos", type=Path,
                     default=Path.home() / "anfaia/fdi/codigos.npy",
                     help="Tabla índice de clase → código FDI.")
-    ap.add_argument("--par", type=Path, nargs=2,
-                    default=[raiz / "CASE-EB5070_files/PREVIO LowerJawScan.stl",
-                             raiz / "I.F.S. POST HIGIENE LowerJawScan.stl"],
+    ap.add_argument("--par", type=Path, nargs=2, default=[previo, etiquetado],
                     help="Par origen/destino sobre el que medir el desplazamiento.")
-    ap.add_argument("--control", type=Path, nargs=2,
-                    default=[raiz / "CASE-EB5070_files/7335 ESCANEADO PREVIO LowerJawScan.stl",
-                             raiz / "CASE-EB5070_files/PREVIO LowerJawScan.stl"],
+    ap.add_argument("--control", type=Path, nargs=2, default=[repetido, previo],
                     help="Par de la MISMA visita: el control nulo que fija el suelo.")
     ap.add_argument("--salida", type=Path, default=Path.home() / "anfaia/relativo",
                     help="Dónde escribir el JSON.")

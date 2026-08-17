@@ -54,8 +54,8 @@ nuevo hacia fuera. Ese pliegue es un máximo de curvatura con signo, y se busca 
 
 ## Lo que midió, y lo que no
 
-    I.F.S. POST HIGIENE LowerJawScan.stl    mediana 7,0 mm   (3,2 – 8,4)
-    I.F.S. POST HIGIENE UpperJawScan.stl    mediana 6,0 mm   (2,4 – 10,8)
+    escaneo mandibular (post higiene)    mediana 7,0 mm   (3,2 – 8,4)
+    escaneo maxilar    (post higiene)    mediana 6,0 mm   (2,4 – 10,8)
 
 En el superior las alturas suben a 9-10,8 mm **en los sectores centrales**, que es
 donde están los incisivos y es justo lo que mide su corona clínica. Ese patrón

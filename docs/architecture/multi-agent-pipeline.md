@@ -38,8 +38,8 @@ muestre. Un **orquestador** reparte el trabajo.
 
 > **La confusión típica:** «el modelo» (el LLM) **no** es el sistema entero ni una
 > capa aparte — es la *cabeza pensante* de un agente concreto. El agente es el
-> empleado (rol + herramientas + permisos); el orquestador es el jefe; el
-> `TwinSnapshot` es el documento que se pasan entre sí.
+> empleado (rol + herramientas + permisos); el orquestador reparte y coordina el
+> trabajo; el `TwinSnapshot` es el documento que se pasan entre sí.
 
 **El recorrido de un dato:**
 
