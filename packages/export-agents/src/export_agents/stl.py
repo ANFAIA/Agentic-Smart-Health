@@ -240,7 +240,9 @@ class ExportAgent(BaseExportAgent):
             header=self._header(snapshot, marco, parcial=bool(motivos)),
         )
 
-        desviacion = self._verify(destination, positions, faces) if self.verify else None
+        desviacion, media = (
+            self._verify(destination, positions, faces) if self.verify else (None, None)
+        )
         if desviacion is not None and desviacion > REVERSIBILITY_BUDGET_MM:
             motivos.append(
                 f"la malla exportada se desvía {desviacion:.4f} mm de la del twin, por "
@@ -255,6 +257,7 @@ class ExportAgent(BaseExportAgent):
             n_vertices=int(len(positions)),
             n_faces=int(len(faces)),
             max_deviation_mm=desviacion,
+            mean_deviation_mm=media,
             hitl_reasons=motivos,
             detail=self._detail(arrays, desviacion),
         )
@@ -282,16 +285,28 @@ class ExportAgent(BaseExportAgent):
             positions,
         )
 
-    def _verify(self, path: Path, positions: np.ndarray, faces: np.ndarray) -> float:
-        """Relee el fichero y devuelve la desviación máxima en mm, por coordenada.
+    def _verify(
+        self, path: Path, positions: np.ndarray, faces: np.ndarray
+    ) -> tuple[float, float]:
+        """Relee el fichero y devuelve `(desviación máxima, media)` en mm.
 
         Compara contra `positions[faces]`, es decir contra lo que se **pidió**
         escribir, no contra la versión ya redondeada a `float32`. Así el número
         incluye la pérdida del formato en vez de esconderla: es lo que de verdad
         recuperaría quien abra el STL.
+
+        La **media** es la distancia de Chamfer del round-trip. Se calcula sobre la
+        correspondencia conocida —el triángulo *i* releído contra el triángulo *i*
+        escrito— y no buscando el vecino más próximo, que es la versión habitual
+        cuando no hay correspondencia. Aquí sí la hay, y usar vecinos daría un número
+        mejor escondiendo una permutación de vértices: cada punto encontraría otro
+        distinto a una distancia diminuta y el error saldría casi nulo.
         """
         leidos = read_stl_triangles(path)
-        return float(np.abs(leidos - positions[faces]).max())
+        # Distancia euclídea por vértice, no error por coordenada: es lo que significa
+        # «se desvía X mm» para quien mide sobre la malla.
+        d = np.linalg.norm(leidos - positions[faces], axis=-1)
+        return float(d.max()), float(d.mean())
 
     def _header(self, snapshot: TwinSnapshot, frame: Frame, *, parcial: bool) -> str:
         marca = f"ASH {self.qualified} {snapshot.acquisition_id} frame={frame}"

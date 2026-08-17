@@ -129,7 +129,14 @@ def test_lo_escrito_lo_lee_el_parser_de_la_ingesta_como_binario(ingerido):
 
 
 def test_la_desviacion_se_mide_releyendo_no_estimando(ingerido, monkeypatch):
-    """Si el fichero escrito no coincide, la desviación tiene que notarlo."""
+    """Si el fichero escrito no coincide, la desviación tiene que notarlo.
+
+    La desviación es una **distancia euclídea por vértice**, no el error máximo por
+    coordenada: «esta malla se desvía X mm» significa una distancia, y el presupuesto de
+    0,1 mm del brief también. La diferencia se ve justo aquí — un desplazamiento de 1 mm en
+    los tres ejes está a √3 ≈ 1,73 mm, y medir por coordenada lo reportaría como 1,0,
+    quedándose corto en el factor peor: el de un error diagonal.
+    """
     store, snapshot, tmp_path = ingerido
     destino = tmp_path / "arcada.stl"
 
@@ -144,9 +151,36 @@ def test_la_desviacion_se_mide_releyendo_no_estimando(ingerido, monkeypatch):
     salida = ExportAgent(store).export(snapshot, destino)
 
     assert salida.ok  # el fichero se escribió: el fallo no es de escritura
-    assert salida.max_deviation_mm == pytest.approx(1.0, abs=1e-5)
+    assert salida.max_deviation_mm == pytest.approx(np.sqrt(3.0), abs=1e-5)
+    # Desplazamiento rígido: todos los vértices se van lo mismo, así que la media
+    # (el Chamfer) coincide con el máximo salvo el redondeo de `float32`, que hace que
+    # cada vértice se desvíe un pelo distinto. Es lo que distingue un sesgo de un pico.
+    assert salida.mean_deviation_mm == pytest.approx(salida.max_deviation_mm, abs=1e-5)
     assert not salida.within_budget
     assert any("presupuesto" in m for m in salida.hitl_reasons)
+
+
+def test_el_chamfer_distingue_un_pico_de_un_sesgo(ingerido, monkeypatch):
+    """Un solo vértice roto sube el máximo pero apenas la media. Y al revés.
+
+    Es la razón de devolver las dos: con una sola cifra, un pico de 1 mm en un vértice de
+    100.000 y una malla entera desplazada 1 mm son indistinguibles, y no son el mismo
+    problema — el primero es un dato corrupto, el segundo un marco equivocado.
+    """
+    store, snapshot, tmp_path = ingerido
+    original = write_binary_stl
+
+    def un_vertice_roto(path, positions, faces, **kw):
+        movido = positions.copy()
+        movido[0] += 1.0
+        return original(path, movido, faces, **kw)
+
+    monkeypatch.setattr("export_agents.stl.write_binary_stl", un_vertice_roto)
+    salida = ExportAgent(store).export(snapshot, tmp_path / "pico.stl")
+
+    assert salida.max_deviation_mm == pytest.approx(np.sqrt(3.0), abs=1e-5)
+    assert salida.mean_deviation_mm is not None
+    assert salida.mean_deviation_mm < salida.max_deviation_mm / 2
 
 
 def test_sin_verificar_no_hay_medida_ni_presupuesto_cumplido(ingerido):
