@@ -395,10 +395,42 @@ como aviso: si el otro lóbulo ajusta mejor que el que dice la anatomía, salta.
 
 ## Lo que este experimento pide
 
-Van **cuatro preguntas distintas** bloqueadas por la misma resolución, todas medidas: la
-unión amelocementaria, la frontera esmalte/dentina, la delimitación raíz/hueso y la
-**cresta ósea junto a la raíz**. Un CBCT de **FOV pequeño a 0,08 mm** —3,8× más fino, y
-por debajo del ligamento periodontal— desbloquearía las cuatro.
+Van **tres preguntas medidas** y bloqueadas por la misma resolución: la unión
+amelocementaria, la delimitación raíz/hueso y la **cresta ósea junto a la raíz**. Un CBCT
+de **FOV pequeño a 0,08 mm** —3,8× más fino, y por debajo del ligamento periodontal— las
+desbloquearía.
+
+> ⚠️ **Corrección.** Aquí decía «cuatro preguntas, todas medidas», incluyendo la frontera
+> **esmalte/dentina**. Esa cuarta **no está medida**: en el repositorio solo aparecía como un
+> umbral heredado (`HU ≥ 1100`) usado para crecer la etiqueta en el injerto, que es un
+> parámetro, no una medida de si el borde se resuelve.
+
+Se intentó medirla y **fallaron tres planteamientos**, los tres por el mismo motivo de
+fondo — no aislar un diente:
+
+1. **Perfiles desde la superficie del escáner hacia dentro.** El control positivo no medía
+   nada: el rayo arrancaba *en* la malla, o sea ya dentro del esmalte (1388 HU a
+   profundidad 0), y nunca cruzaba el borde exterior.
+2. **Promediar esos perfiles por diente.** Difumina la unión **por construcción**: el
+   esmalte mide ~2,5 mm en una cúspide y ~0,5 en el cuello, así que la media de muchos
+   escalones a distinta profundidad es una rampa. La rampa que salió (1380 → 840 HU en
+   1,5 mm) era eso, no anatomía.
+3. **Profundidad con signo por transformada de distancia sobre el CBCT.** Quita el error
+   del registro, pero la máscara de tejido duro (`HU ≥ 900`) **fusiona los dientes con el
+   hueso alveolar**, así que la profundidad es «hacia dentro del blob» y no «hacia dentro
+   de un diente». Se nota en que el HU **sube** con la profundidad (995 → 1669), al revés
+   de la anatomía: el esmalte es la capa exterior y es la más densa.
+
+De ese tercer intento sí queda un número utilizable, porque no depende de aislar el diente:
+el **borde más abrupto que este CBCT resuelve** —esmalte contra tejido blando— tiene un
+gradiente de **1050 HU/mm**, o sea que transiciona en ~1 vóxel, y el **ruido dentro de una
+meseta es ±300 HU**. Con eso, un contraste esmalte/dentina de los 700-1000 HU que da la
+literatura sería 2-3× el ruido: detectable en principio. Lo que falta no es contraste, es
+**aislar la corona de un diente** del hueso que la rodea.
+
+Medirla de verdad pide una máscara por pieza en el propio CBCT (no transferida desde el
+escáner, que mete 0,49 mm) y, para poder llamar «esmalte» y «dentina» a los dos niveles,
+una calibración — los grises de un CBCT no son HU.
 
 Y una que no es de resolución sino clínica, para los doctores: **¿hay tabla ósea vestibular
 en el sector anteroinferior de este paciente?** Si la respuesta es que no, la medida
