@@ -166,6 +166,41 @@ def arcada_superior(esmalte: np.ndarray) -> tuple[np.ndarray, float]:
     return esmalte[esmalte[:, 2] >= corte], corte
 
 
+# Altura bajo el plano oclusal donde viven las coronas inferiores. Ver `arcada_inferior`.
+BANDA_INFERIOR_MM = 22.0
+PERCENTIL_DENSIDAD = 50
+
+
+def arcada_inferior(esmalte: np.ndarray) -> tuple[np.ndarray, float]:
+    """Puntos de esmalte de la arcada mandibular. **No es simétrica de la maxilar.**
+
+    Quedarse con lo que hay bajo el plano oclusal —el reflejo exacto de
+    `arcada_superior`— aquí **no vale**, y está medido sobre `histora`: se lleva el
+    cuerpo mandibular entero más las estrías metálicas repartidas por el campo, y sale
+    un saco de **122 × 126 × 49 mm**, que es justo el fallo descrito en la decisión 2
+    del encabezado. Hacia arriba el problema no aparece porque encima del plano oclusal
+    apenas hay hueso que recoger.
+
+    Dos filtros, y hacen falta los dos:
+
+    - **Banda de 22 mm** bajo el plano oclusal: las coronas inferiores están ahí, el
+      cuerpo mandibular no.
+    - **Densidad local**: el esmalte real forma cúmulos compactos y las estrías del
+      metal van sueltas, así que contar vecinos en 3 mm las separa. Con la mediana como
+      corte queda **49,5 × 36,9 × 19,5 mm**, que sí pasa `parece_arcada`.
+
+    Sigue siendo obligatorio comprobar el resultado con `parece_arcada`: estos dos
+    números se ajustaron sobre un caso, y un CBCT con otra cantidad de metal puede
+    necesitar otros.
+    """
+    corte = plano_oclusal(esmalte[:, 2])
+    banda = esmalte[(esmalte[:, 2] < corte) & (esmalte[:, 2] > corte - BANDA_INFERIOR_MM)]
+    if len(banda) < 3:
+        return banda, corte
+    vecinos = np.array([len(v) for v in cKDTree(banda).query_ball_point(banda, 3.0)])
+    return banda[vecinos >= np.percentile(vecinos, PERCENTIL_DENSIDAD)], corte
+
+
 def parece_arcada(p: np.ndarray) -> bool:
     """¿Esto tiene forma de arcada dental, o es el campo de visión entero?
 
@@ -207,17 +242,32 @@ def buscar_pose(
     búsqueda ni siquiera recupera una rígida conocida sobre la MISMA nube. Se criba
     flojo (discriminar) y se refina fuerte (sobrevivir al paladar).
 
-    Devuelve `(rotación, traslación, distancias del escaneo completo)`.
+    Devuelve `(rotación, traslación, distancias del escaneo completo)`, y la rígida que
+    devuelve es la **completa**: `apply(rot, trans, fuente)` lleva la fuente sobre el
+    objetivo, sin más pasos.
+
+    ⚠ **Antes no lo era, y era una trampa silenciosa.** Se devolvía la `(rot, trans)`
+    del ICP de refinado, que se aplican a `inicial` —la nube ya girada por la rotación
+    aleatoria ganadora `R_i`, que no salía de la función—. Con eso solo se puede
+    informar del rms, que es lo único que hacía el `main()` de este script, así que el
+    fallo no se notaba. Al usarla para transformar de verdad daba una pose incoherente:
+    un rms de 0,486 mm de aspecto perfectamente respetable y **0 %** de puntos en
+    correspondencia al comprobarlo contra otra fuente. La composición es lo único que
+    se añade:
+
+        salida = ((p − c_f) @ R_i.T + c_o) @ rot.T + trans
+               = p @ (rot @ R_i).T + [trans + c_o @ rot.T − c_f @ R_i.T @ rot.T]
     """
     c_f, c_o = fuente.mean(axis=0), objetivo.mean(axis=0)
     rotaciones = Rotation.random(poses, random_state=0).as_matrix()
 
     cri_f, cri_o = submuestrear(fuente, criba, 1), submuestrear(objetivo, criba, 2)
+    arbol_criba = cKDTree(cri_o)
     puntuadas = []
     for i, r in enumerate(rotaciones):
         inicial = (cri_f - c_f) @ r.T + c_o
         rot, trans = icp_recortado(inicial, cri_o, frac=frac_criba, iters=25)
-        d, _ = cKDTree(cri_o).query(apply(rot, trans, inicial))
+        d, _ = arbol_criba.query(apply(rot, trans, inicial))
         k = max(3, int(len(d) * frac_criba))
         puntuadas.append((float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), i))
     puntuadas.sort()
@@ -226,11 +276,16 @@ def buscar_pose(
     arbol = cKDTree(objetivo)
     resultados = []
     for _, i in puntuadas[:mejores]:
-        inicial = (fin_f - c_f) @ rotaciones[i].T + c_o
+        giro = rotaciones[i]
+        inicial = (fin_f - c_f) @ giro.T + c_o
         rot, trans = icp_recortado(inicial, objetivo, frac=frac)
         d, _ = arbol.query(apply(rot, trans, inicial))
         k = max(3, int(len(d) * frac))
-        resultados.append((float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), rot, trans, d))
+        rot_total = rot @ giro
+        trans_total = trans + c_o @ rot.T - (c_f @ giro.T) @ rot.T
+        resultados.append(
+            (float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), rot_total, trans_total, d)
+        )
     resultados.sort(key=lambda r: r[0])
     _, rot, trans, d = resultados[0]
     return rot, trans, d
@@ -268,7 +323,9 @@ def main() -> int:
                     help="Directorio de la serie DICOM.")
     ap.add_argument("--ios", type=Path,
                     default=raiz / "CASE-EB5070_files" / "PREVIO UpperJawScan.stl",
-                    help="STL del escáner intraoral (arcada superior).")
+                    help="STL del escáner intraoral.")
+    ap.add_argument("--arcada", choices=("superior", "inferior"), default="superior",
+                    help="Qué arcada se aísla del CBCT. Tiene que casar con --ios.")
     ap.add_argument("--poses", type=int, default=500, help="Inicializaciones sobre SO(3).")
     ap.add_argument("--criba", type=int, default=2000, help="Puntos por pose al cribar.")
     ap.add_argument("--fino", type=int, default=20000, help="Puntos al refinar.")
@@ -296,7 +353,8 @@ def main() -> int:
         [ocupados[:, 2] * sx, ocupados[:, 1] * sy, serie.z[ocupados[:, 0]]]
     ).astype(np.float64)
 
-    arco, corte = arcada_superior(esmalte)
+    aisla = arcada_superior if args.arcada == "superior" else arcada_inferior
+    arco, corte = aisla(esmalte)
     print(f"  esmalte HU≥{HU_ESMALTE}: {len(esmalte)} vóxeles")
     print(f"  plano oclusal en z = {corte:.1f} mm  →  arcada de {len(arco)} puntos")
     print(f"  bbox de la arcada: {np.ptp(arco, axis=0).round(1)} mm")
