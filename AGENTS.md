@@ -141,10 +141,26 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 
 | Chequeo | Herramienta | ¿Bloquea el merge? | Cómo reporta |
 |---|---|---|---|
-| Estilo / lint | `ruff check` | No (informativo) | Anotaciones inline nativas de GitHub |
-| Formato | `ruff format --diff` | No (informativo) | Log del job |
-| Tipos | `mypy` | No (informativo) | Anotaciones inline (`::error`/`::warning`) |
+| **Estilo / lint** | `ruff check` | **Sí** | Anotaciones inline nativas de GitHub |
+| **Tipos** | `mypy` (solo `*/src/`) | **Sí** | Anotaciones inline (`::error`/`::warning`) |
 | **Arquitectura** | `scripts/audit_pr.py` | **Sí** | Comentario de revisión en la línea afectada + resumen |
+
+> **`ruff format` no se comprueba**, y es una decisión, no un olvido. El formato de este
+> repositorio es deliberado —tuplas agrupadas por significado, comentarios alineados con
+> el dato que explican— y `ruff format` lo deshace: 46 de 87 ficheros cambiarían, y
+> `_PROPIEDADES` pasaría de tres líneas agrupadas (posición · escala · rotación) a once
+> sueltas. Un check permanentemente rojo que nadie puede arreglar enseña a ignorar los
+> checks. Lo mecanizable del formato —longitud de línea, orden de imports— ya lo cubre
+> `ruff check`.
+
+> **MyPy mira solo los `src/`**, que es el código que se ejecuta en producción y que hoy
+> está limpio. Lo que queda fuera, medido antes de decidirlo: `scripts/` (17 errores;
+> exploratorio, carga módulos por `importlib` y vive de arrays sin tipar), los tests (49;
+> casi todos un `TwinSnapshot | None` que el propio test ya afirma que no es None, y cuya
+> puerta es pytest), y `packages/3dgs-engine/`, cuyo guion no es un identificador válido
+> de Python y hace abortar a MyPy antes de mirar nada. Meter cualquiera de los tres
+> cerraría la puerta en rojo desde el primer día, que es la forma más rápida de que una
+> puerta acabe desactivada.
 
 **Reglas de arquitectura auditadas** (regla → violación que detecta)
 
@@ -170,14 +186,26 @@ Corpus de partida (opcional): ficheros .pdf/.md/.txt en
 **Política de fallo**
 
 - Violación de arquitectura → el check falla (`core.setFailed`) y bloquea el merge.
-- Errores de Ruff/MyPy → se reportan como anotaciones pero **no** bloquean (informativo).
+- Errores de Ruff/MyPy → el paso falla y bloquea el merge, además de anotar la línea.
+- **Cada puerta da su veredicto aunque otra se cierre**: los pasos posteriores llevan
+  `!cancelled()`, así que un error de estilo no deja al PR sin pasar por el guardián de
+  datos. El job falla igual; lo que no se pierde es el diagnóstico completo.
+- El resumen publica el resultado **real** de cada puerta (`limpio` / `bloquea` / `no
+  aplica`), no un «ejecutado» que decía lo mismo con el linter limpio y con veinte errores.
 - Cualquier archivo no parseable se omite en el auditor (lo cazan Ruff/MyPy).
+
+**Versiones clavadas.** `ruff` y `mypy` van con `==` en `pyproject.toml`, no con `>=`.
+Un linter que se actualiza solo estrena reglas sobre código que nadie ha tocado y pone
+el CI rojo por un `uv sync` en una rama que no cambió nada — pasó con `ruff>=0.9`, que
+acabó instalando la 0.15. Subir de versión es un commit deliberado que arregla lo que la
+versión nueva encuentre.
 
 **Historial de cambios**
 
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-07-14 | 0.1.0 | Registro inicial del agente guardián de CI |
+| 2026-08-17 | 0.1.0 | Ruff y MyPy pasan de informativos a **puerta de merge**; versiones clavadas; `ruff format` retirado; `scripts/` fuera de MyPy; las puertas posteriores ya no se saltan cuando una falla. Deuda saldada para poder cerrarlas: 27 errores de Ruff y 9 de MyPy. |
 
 ---
 

@@ -338,8 +338,14 @@ class RenderExportAgent(BaseExportAgent):
 
         motivos = self._partial_reasons(snapshot)
         db = indice = None
+        # El nombre del PLY se guarda aquí, dentro de la única rama donde existe, en vez
+        # de volver a leerlo al componer el `detail`: allí `ply` sigue siendo opcional
+        # para el tipo aunque `db` no sea None solo si lo hubo, y eso es un `Optional`
+        # que el lector tiene que demostrarse a sí mismo cada vez.
+        verificado_contra = ""
         if self.verify and ply is not None:
             db, indice = self._verify(ply, encuadre, propias)
+            verificado_contra = ply.name
             if db < RENDER_PSNR_BUDGET_DB or indice < RENDER_SSIM_BUDGET:
                 motivos.append(
                     f"el render del PLY exportado no reproduce el del twin (PSNR {db:.1f} dB, "
@@ -362,7 +368,7 @@ class RenderExportAgent(BaseExportAgent):
                 + (
                     ""
                     if db is None
-                    else f"; ciclo verificado contra {ply.name}: PSNR "
+                    else f"; ciclo verificado contra {verificado_contra}: PSNR "
                     + ("exacto" if db == float("inf") else f"{db:.1f} dB")
                     + f", SSIM {indice:.4f}"
                 )

@@ -53,8 +53,11 @@ dev = torch.device("cuda")
 # Datos
 # --------------------------------------------------------------------------- #
 def leer_png(path: Path) -> np.ndarray:
-    r = vtk.vtkPNGReader(); r.SetFileName(str(path)); r.Update()
-    im = r.GetOutput(); d = im.GetDimensions()
+    r = vtk.vtkPNGReader()
+    r.SetFileName(str(path))
+    r.Update()
+    im = r.GetOutput()
+    d = im.GetDimensions()
     a = vtk_to_numpy(im.GetPointData().GetScalars()).reshape(d[1], d[0], -1)
     return a[::-1, :, :3].astype(np.float32) / 255.0
 
@@ -74,7 +77,9 @@ def cargar(case_dir: Path):
                      dtype=torch.float32, device=dev)
     Ks = K.unsqueeze(0).repeat(len(meta["frames"]), 1, 1)
 
-    pr = vtk.vtkPLYReader(); pr.SetFileName(str(case_dir / "init.ply")); pr.Update()
+    pr = vtk.vtkPLYReader()
+    pr.SetFileName(str(case_dir / "init.ply"))
+    pr.Update()
     init = vtk_to_numpy(pr.GetOutput().GetPoints().GetData()).astype(np.float32)
     pos = c2w[:, :3, 3].cpu().numpy()
     return gt, viewmats, Ks, W, H, init, pos
@@ -99,7 +104,8 @@ def vista_frontal(pos: np.ndarray, idx_test: np.ndarray) -> int:
 
 
 def construir(init: np.ndarray, extent: float, sh_grado: int, seed: int = 0):
-    torch.manual_seed(seed); np.random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     n = len(init)
     params = {
         "means": torch.nn.Parameter(torch.from_numpy(init).to(dev)),
@@ -269,7 +275,8 @@ def escribir_figura(filas, datos, case_dir, args) -> None:
 
     n = len(filas) + 1
     fig, axes = plt.subplots(2, n, figsize=(3.6 * n, 7.6))
-    axes[0, 0].imshow(ref); axes[0, 0].set_title("malla (referencia)", fontsize=12, pad=8)
+    axes[0, 0].imshow(ref)
+    axes[0, 0].set_title("malla (referencia)", fontsize=12, pad=8)
     axes[1, 0].imshow(ref[zy, zx])
 
     for k, r in enumerate(filas, start=1):
@@ -282,7 +289,8 @@ def escribir_figura(filas, datos, case_dir, args) -> None:
         axes[1, k].imshow(im[zy, zx])
 
     for ax in axes.ravel():
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
     axes[0, 0].set_ylabel("vista completa", fontsize=10)
     axes[1, 0].set_ylabel("detalle · molares", fontsize=10)
     fig.suptitle(f"Ablación de la receta · vista retenida r_{vista:04d} "

@@ -82,7 +82,7 @@ def _dicom_sin_pixeldata(tmp: Path) -> Path:
     destino = _serie_base(tmp / "dicom-sin-pixeldata")
 
     def quitar(ds: object) -> None:
-        del ds.PixelData  # type: ignore[union-attr]
+        del ds.PixelData  # type: ignore[attr-defined]
 
     return _retocar(destino, quitar)
 
@@ -92,7 +92,7 @@ def _dicom_modalidad_ajena(tmp: Path) -> Path:
     destino = _serie_base(tmp / "dicom-modalidad-ajena")
 
     def cambiar(ds: object) -> None:
-        ds.Modality = "MR"  # type: ignore[union-attr]
+        ds.Modality = "MR"  # type: ignore[attr-defined]
 
     return _retocar(destino, cambiar)
 
@@ -102,7 +102,7 @@ def _dicom_sin_modalidad(tmp: Path) -> Path:
     destino = _serie_base(tmp / "dicom-sin-modalidad")
 
     def quitar(ds: object) -> None:
-        del ds.Modality  # type: ignore[union-attr]
+        del ds.Modality  # type: ignore[attr-defined]
 
     return _retocar(destino, quitar)
 
@@ -120,8 +120,8 @@ def _dicom_espaciado_cero(tmp: Path) -> Path:
     destino = _serie_base(tmp / "dicom-espaciado-cero")
 
     def cambiar(ds: object) -> None:
-        ds.PixelSpacing = [0.0, 0.0]  # type: ignore[union-attr]
-        ds.SliceThickness = 0.0  # type: ignore[union-attr]
+        ds.PixelSpacing = [0.0, 0.0]  # type: ignore[attr-defined]
+        ds.SliceThickness = 0.0  # type: ignore[attr-defined]
 
     return _retocar(destino, cambiar)
 
@@ -130,7 +130,7 @@ def _dicom_espaciado_negativo(tmp: Path) -> Path:
     destino = _serie_base(tmp / "dicom-espaciado-negativo")
 
     def cambiar(ds: object) -> None:
-        ds.PixelSpacing = [-0.5, -0.5]  # type: ignore[union-attr]
+        ds.PixelSpacing = [-0.5, -0.5]  # type: ignore[attr-defined]
 
     return _retocar(destino, cambiar)
 

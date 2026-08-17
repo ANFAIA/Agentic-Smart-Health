@@ -30,7 +30,7 @@ Reconstruction", arXiv:2604.27552v1 (2026).
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated
 
@@ -87,7 +87,10 @@ class Support(str, Enum):
 # Código ISO-FDI de dos dígitos. Permanente: [1-4][1-8]; temporal: [5-8][1-5].
 FDICode = Annotated[
     str,
-    Field(pattern=r"^([1-4][1-8]|[5-8][1-5])$", description="Diente en numeración ISO-FDI, p. ej. '16'."),
+    Field(
+        pattern=r"^([1-4][1-8]|[5-8][1-5])$",
+        description="Diente en numeración ISO-FDI, p. ej. '16'.",
+    ),
 ]
 
 
@@ -191,10 +194,14 @@ class Provenance(BaseModel):
     source_file: str = Field(description="Ruta o URI del fichero de origen.")
     modality: Modality
     agent: str = Field(description="Agente de ingesta que produjo el valor.")
-    confidence: float = Field(1.0, ge=0.0, le=1.0)
-    ingested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # `default=` y no el primer posicional, en los dos: MyPy reconoce el valor por
+    # defecto de un campo solo cuando viene por palabra clave (así está definido
+    # `dataclass_transform`). Con el posicional da los campos por **obligatorios** y
+    # marca error en cada `Provenance(...)` que no los pase — que son casi todos.
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     transform: RigidTransform | None = Field(
-        None,
+        default=None,
         description=(
             "Transformación rígida que el agente aplicó a este valor. `None` en ingesta "
             "(no transforma nada); la pueblan los agentes de fusión para que el cambio "

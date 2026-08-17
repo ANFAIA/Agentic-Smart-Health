@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from core_schemas import (
@@ -38,7 +38,7 @@ def _prov(**kw) -> Provenance:
 def _snap(**kw) -> TwinSnapshot:
     base = dict(
         acquisition_id="A1",
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         gaussian_field_ref="sha256:abc",
         provenance=_prov(),
     )
@@ -90,7 +90,7 @@ def test_fdi_valido(code):
     obs = RegionalObservation(
         region_id=code,
         attributes=ClinicalAttributes(ph=7.0),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         provenance=_prov(modality=Modality.REPORT, agent="report-agent"),
     )
     assert obs.region_id == code
@@ -102,7 +102,7 @@ def test_fdi_invalido_se_rechaza(code):
         RegionalObservation(
             region_id=code,
             attributes=ClinicalAttributes(ph=7.0),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             provenance=_prov(modality=Modality.REPORT, agent="report-agent"),
         )
 

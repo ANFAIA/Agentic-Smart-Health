@@ -89,11 +89,11 @@ requires-dist = [
 dev = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "mypy", specifier = ">=1.15" },
+    { name = "mypy", specifier = "==2.3.0" },
     { name = "numpy", specifier = ">=2.5.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
-    { name = "ruff", specifier = ">=0.9" },
+    { name = "ruff", specifier = "==0.15.21" },
     { name = "vtk", specifier = ">=9.6.2" },
 ]
 

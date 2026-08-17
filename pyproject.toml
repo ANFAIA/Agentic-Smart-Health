@@ -17,10 +17,16 @@ dependencies = [
 members = ["apps/*", "packages/*"]
 
 # Herramientas del agente guardián de CI (revisión estática, sin LLM).
+#
+# Ruff y MyPy van **clavados**, no con `>=`. Son puertas de merge, y un linter que
+# se actualiza solo estrena reglas sobre código que nadie ha tocado: el CI se pone
+# rojo por un `uv sync` en una rama que no cambió nada. Con `ruff>=0.9` pasó — se
+# instaló la 0.15 y aparecieron errores en ficheros de hace meses. Subir de versión
+# es un commit deliberado que arregla lo que la versión nueva encuentre.
 [dependency-groups]
 dev = [
-    "ruff>=0.9",
-    "mypy>=1.15",
+    "ruff==0.15.21",
+    "mypy==2.3.0",
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "vtk>=9.6.2",
@@ -72,11 +78,27 @@ tooth-aggregation = { workspace = true }
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = [".venv", "data", "notebooks"]
+# Las plantillas de las skills no son Python: llevan marcadores que se sustituyen al
+# generar el agente, así que ni siquiera parsean. Excluirlas es lo correcto —
+# "arreglarlas" para que pasen el linter las rompería como plantillas.
+extend-exclude = [".venv", "data", "notebooks", ".claude/skills/*/templates"]
+# Sin esto la exclusión no sirve en CI: el workflow le pasa a Ruff la lista de ficheros
+# del PR uno a uno, y un fichero nombrado explícitamente se analiza aunque esté excluido.
+# `force-exclude` hace que la regla mande también ahí, que es donde importa.
+force-exclude = true
 
 [tool.ruff.lint]
 # E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear.
 select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# UP042 quiere `StrEnum` en vez de `(str, Enum)`. Aquí no: estos enums son el
+# **vocabulario del contrato** (`SCHEMA_VERSION`), y el cambio no es cosmético —
+# `StrEnum` cambia lo que devuelve `str(Modality.CBCT)` de `"Modality.CBCT"` a
+# `"cbct"`, así que cualquier f-string o log que los interpole empezaría a decir
+# otra cosa. Migrar es una decisión de contrato, con su versión de esquema, no un
+# autofix del linter.
+"packages/core-schemas/src/core_schemas/models.py" = ["UP042"]
 
 [tool.mypy]
 python_version = "3.13"

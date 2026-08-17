@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 
 from ollama import Client
 from rich.console import Console
@@ -227,7 +228,11 @@ TOOL_SCHEMAS = [
 ]
 
 # Mapa nombre-de-tool -> función real (Fases 2 y 3).
-DISPATCH = {
+# Anotado: las lambdas tienen firmas distintas, así que sin esto el tipo del valor se
+# infiere como `object` y `fn(**args)` deja de ser llamable para MyPy. El `...` es
+# honesto — el despacho es por nombre y los argumentos vienen del LLM, así que la
+# comprobación de verdad es el `except TypeError` de `_run_tool`.
+DISPATCH: dict[str, Callable[..., object]] = {
     "read_directory": lambda: tools.read_directory(),
     "read_file": lambda path: tools.read_file(path),
     "ingest_corpus": lambda: _get_rag().ingest_directory(),
@@ -306,7 +311,8 @@ def main() -> None:
 
     console.print(
         Panel.fit(
-            "[bold]research-agent[/] (local) — agente de investigación · [green]0 € · sin API key[/]\n"
+            "[bold]research-agent[/] (local) — agente de investigación · "
+            "[green]0 € · sin API key[/]\n"
             f"Modelo Ollama: [cyan]{MODEL}[/]  ·  Escribe [bold]salir[/] para terminar.",
             border_style="green",
         )
