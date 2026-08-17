@@ -50,6 +50,15 @@ DEFAULT_HITL_THRESHOLD = 0.7
 # mide alineamiento entre dos medidas distintas, ésta mide reversibilidad de una.
 REVERSIBILITY_BUDGET_MM = 0.1
 
+# Presupuesto del **canal de imagen**, el análogo de los 0,1 mm para lo que no es
+# geometría. Los dos umbrales son los de «visualmente sin pérdida» de la literatura de
+# compresión, y aquí se pueden exigir de sobra porque el ciclo del twin a su render **no
+# debería perder nada**: el campo se escribe con posiciones en `double` y el render es
+# determinista. Un valor por debajo no significa «se ve un poco peor», significa que hay
+# un bug — un stride mal calculado, un eje intercambiado, una vista no reproducible.
+RENDER_PSNR_BUDGET_DB = 40.0
+RENDER_SSIM_BUDGET = 0.99
+
 
 @runtime_checkable
 class SurfaceStore(Protocol):
@@ -94,6 +103,35 @@ class ExportOutput(BaseModel):
         "quedó escrita en el fichero, releyéndolo. Es la métrica de reversibilidad del "
         "brief (< 0,1 mm). `None` si no se verificó.",
     )
+    mean_deviation_mm: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Desviación MEDIA sobre los mismos puntos que `max_deviation_mm`. Con "
+        "la correspondencia conocida —y en un round-trip lo es, vértice a vértice— esto "
+        "**es** la distancia de Chamfer. Se calcula así a propósito: buscar el vecino más "
+        "próximo en vez de usar la correspondencia daría un número más bonito y esconderría "
+        "una permutación de vértices, emparejando cada punto con otro distinto que cae al "
+        "lado. Un máximo dice si algo se rompió; una media, cuánto se degradó en conjunto.",
+    )
+
+    paths: list[Path] = Field(
+        default_factory=list,
+        description="Ficheros escritos cuando la exportación produce **varios** (un render "
+        "multivista). `path` queda entonces en el directorio que los contiene. Vacío en los "
+        "exportadores de un solo fichero, que usan `path`.",
+    )
+    psnr_db: float | None = Field(
+        default=None,
+        description="PSNR entre el render del campo del twin y el del fichero exportado, "
+        "releído. `inf` si son idénticos, que es lo esperado y no un error.",
+    )
+    ssim: float | None = Field(
+        default=None,
+        le=1.0,
+        description="SSIM entre los mismos dos renders. Acompaña al PSNR porque miden cosas "
+        "distintas: el PSNR promedia el error por píxel y se deja engañar por un "
+        "desplazamiento global, el SSIM compara estructura local.",
+    )
 
     hitl_reasons: list[str] = Field(
         default_factory=list,
@@ -113,13 +151,29 @@ class ExportOutput(BaseModel):
 
     @property
     def within_budget(self) -> bool:
-        """¿Cumple el error de malla del brief? `False` si no se midió.
+        """¿Cumple el error **geométrico** del brief? `False` si no se midió.
 
         Sin medida no hay cumplimiento: un exportador que no verifica no puede
         afirmar que reconstruye por debajo de 0,1 mm.
         """
         return (
             self.max_deviation_mm is not None and self.max_deviation_mm <= REVERSIBILITY_BUDGET_MM
+        )
+
+    @property
+    def image_within_budget(self) -> bool:
+        """¿Cumple el presupuesto del canal de **imagen**? `False` si no se midió.
+
+        Propiedad aparte y no una ampliación de `within_budget` porque son canales
+        distintos: un exportador de malla no produce imágenes y un render no tiene
+        milímetros. Colapsarlos en un booleano obligaría a uno de los dos a declarar
+        `True` sobre algo que no ha medido.
+        """
+        return (
+            self.psnr_db is not None
+            and self.ssim is not None
+            and self.psnr_db >= RENDER_PSNR_BUDGET_DB
+            and self.ssim >= RENDER_SSIM_BUDGET
         )
 
 

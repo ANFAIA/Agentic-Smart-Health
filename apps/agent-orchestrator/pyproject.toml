@@ -6,6 +6,10 @@ requires-python = ">=3.11"
 dependencies = [
     "analysis-agents",
     "core-schemas",
+    # La fase 6 es la unica que escribe ficheros de salida, y el orquestador es quien
+    # la dispara: sin esta dependencia el pipeline llegaria hasta el analisis y el
+    # recorrido entrada -> twin -> fichero no se podria probar de extremo a extremo.
+    "export-agents",
     "fusion-agents",
     "ingestion-agents",
 ]
@@ -19,6 +23,7 @@ packages = ["src/agent_orchestrator"]
 
 [tool.uv.sources]
 analysis-agents = { workspace = true }
+export-agents = { workspace = true }
 fusion-agents = { workspace = true }
 core-schemas = { workspace = true }
 ingestion-agents = { workspace = true }

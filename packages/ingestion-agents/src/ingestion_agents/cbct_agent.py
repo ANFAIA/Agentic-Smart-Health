@@ -100,6 +100,17 @@ class Serie:
     corte ausente desplazaría todo lo que hay por encima."""
     huecos: int
     """Cortes que faltan en la serie, deducidos del espaciado."""
+    z_es_superior: bool
+    """Si `z` sale de `ImagePositionPatient[2]`, y por tanto **crece hacia craneal**.
+
+    `IPP` viene ya en el sistema del paciente (LPS: +x izquierda, +y posterior, +z
+    craneal), así que el equipo resuelve la orientación al escribirlo y `PatientPosition`
+    no la cambia. Con esto `z` alta es **maxilar** y `z` baja **mandíbula**, sin adivinar.
+
+    Es `False` cuando la serie no trae `IPP` y hubo que ordenar por `InstanceNumber`: ahí
+    el sentido del eje es **desconocido** y quien separe arcadas por altura no puede
+    nombrarlas. Se expone precisamente para que no se dé por supuesto lo que no consta.
+    """
 
 
 def _read_series(directory: Path) -> Serie:
@@ -143,6 +154,12 @@ def _read_series(directory: Path) -> Serie:
         if ipp is not None:
             return float(ipp[2])
         return float(getattr(ds, "InstanceNumber", 0))
+
+    # Que la altura salga de `IPP` o de `InstanceNumber` cambia lo que se puede afirmar:
+    # solo en el primer caso el eje tiene sentido anatómico. Se registra, no se supone.
+    z_es_superior = all(
+        getattr(ds, "ImagePositionPatient", None) is not None for ds in slices
+    )
 
     slices.sort(key=_z)
 
@@ -215,6 +232,7 @@ def _read_series(directory: Path) -> Serie:
         patient_id=str(getattr(first, "PatientID", "") or ""),
         z=posiciones,
         huecos=huecos,
+        z_es_superior=z_es_superior,
     )
 
 
@@ -274,14 +292,19 @@ class CBCTAgent(BaseIngestionAgent):
         # La z sale de la **posición real** de cada corte, no de `índice × espaciado`:
         # con un corte ausente, multiplicar por el índice desplazaría todo lo que hay
         # por encima del hueco. Es un error silencioso de 0,3 mm por corte perdido.
-        centers = np.column_stack(
+        mundo = np.column_stack(
             [
                 occupied[:, 2] * sx,
                 occupied[:, 1] * sy,
                 serie.z[occupied[:, 0]],
             ]
-        ).astype(np.float32)
-        centers -= centers.mean(axis=0)  # centrado en el origen, como el 3DGS estándar
+        ).astype(np.float64)
+        # Centrado en el origen, como el 3DGS estándar. El desplazamiento se GUARDA:
+        # restarlo y olvidarlo hace el campo irreversible, porque depende del dato y no
+        # se puede recomputar desde el fichero exportado. Con `origin` a mano,
+        # `mundo = centers + origin` devuelve las coordenadas reales del CBCT.
+        origin = mundo.mean(axis=0)
+        centers = (mundo - origin).astype(np.float32)
 
         hu = volume[occupied[:, 0], occupied[:, 1], occupied[:, 2]]
         density = np.clip(
@@ -302,7 +325,17 @@ class CBCTAgent(BaseIngestionAgent):
             source,
             confidence=confidence,
             artifact_ref=self.store.put(
-                centers=centers, scales=scales, rotations=rotations, density=density
+                centers=centers,
+                scales=scales,
+                rotations=rotations,
+                density=density,
+                # Lo que hace falta para deshacer las dos normalizaciones. Va en el
+                # artefacto y no en `Provenance` por dos razones: `Provenance.transform`
+                # ya significa otra cosa (el alineamiento de la fusión geométrica, ADR
+                # 004) y reutilizarlo colisionaría; y el esquema declara el snapshot
+                # **autocontenido**, así que lo que hace reversible un blob viaja con él.
+                origin=origin,
+                hu_range=np.asarray([self.hu_threshold, HU_SATURATION], dtype=np.float64),
             ),
             n_primitives=int(centers.shape[0]),
         )

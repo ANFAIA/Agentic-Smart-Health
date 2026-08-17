@@ -209,3 +209,96 @@ def test_una_ficha_sin_tabla_no_pasa_por_defecto():
     problemas = ds.revisar_comprobaciones({"scripts/docs_sync.py", ".githooks/pre-commit"}, ficha)
     assert len(problemas) == 1
     assert "no las enumera" in problemas[0]
+
+
+# --- constantes: un número de la prosa contra su valor en el código --------- #
+CODIGO = """\
+'''Modulo de mentira, para la prueba.'''
+REVERSIBILITY_BUDGET_MM = 0.1
+RENDER_PSNR_BUDGET_DB = 40.0
+DESPLAZAMIENTO_MM: float = -0.5
+NO_ES_NUMERO = "texto"
+minusculas = 3.0
+"""
+
+
+@pytest.fixture
+def repo_falso(tmp_path: Path, monkeypatch):
+    """Un repositorio en miniatura: un módulo con constantes y un documento que las cita.
+
+    Se sustituye `REPO` en vez de escribir en el repositorio real: la comprobación lee
+    ficheros del disco, y una prueba que ensucia el árbol de trabajo acaba desactivada.
+    """
+    (tmp_path / "pkg" / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "pkg" / "src" / "pkg" / "base.py").write_text(CODIGO, encoding="utf-8")
+    monkeypatch.setattr(ds, "REPO", tmp_path)
+
+    def revisar(markdown: str) -> list[str]:
+        (tmp_path / "doc.md").write_text(markdown, encoding="utf-8")
+        return ds.revisar_constantes({"pkg/src/pkg/base.py", "doc.md"})
+
+    return revisar
+
+
+def test_lee_las_constantes_numericas_por_ast(repo_falso, tmp_path: Path):
+    """Por AST y no importando: un guardián que ejecuta lo que vigila falla por otra cosa."""
+    constantes = ds.constantes_del_codigo({"pkg/src/pkg/base.py"})
+    assert constantes["REVERSIBILITY_BUDGET_MM"] == {0.1}
+    assert constantes["RENDER_PSNR_BUDGET_DB"] == {40.0}
+    assert constantes["DESPLAZAMIENTO_MM"] == {-0.5}, "el negativo es un unario, no un literal"
+    assert "NO_ES_NUMERO" not in constantes
+    assert "minusculas" not in constantes
+
+
+def test_el_numero_que_cuadra_no_da_problema(repo_falso):
+    assert repo_falso("presupuesto de 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM-->") == []
+
+
+def test_la_coma_decimal_cuenta_como_decimal(repo_falso):
+    """Se escribe en español: `0,1` y `0.1` son el mismo número."""
+    assert repo_falso("presupuesto de 0.1 mm <!--const:REVERSIBILITY_BUDGET_MM-->") == []
+
+
+def test_un_numero_que_dejo_de_ser_cierto_se_declara(repo_falso):
+    """El caso que justifica la comprobación: «ε = 0,5 mm» sobrevive al cambio del código."""
+    problemas = repo_falso("presupuesto de 0,2 mm <!--const:REVERSIBILITY_BUDGET_MM-->")
+    assert len(problemas) == 1
+    assert "REVERSIBILITY_BUDGET_MM" in problemas[0] and "0.1" in problemas[0]
+
+
+def test_una_constante_renombrada_deja_el_numero_sin_respaldo(repo_falso):
+    problemas = repo_falso("presupuesto de 0,1 mm <!--const:PRESUPUESTO_VIEJO-->")
+    assert len(problemas) == 1
+    assert "no existe en el codigo" in problemas[0]
+
+
+def test_dos_constantes_con_el_mismo_nombre_y_distinto_valor_son_ambiguas(tmp_path, monkeypatch):
+    """Replicar una constante vale si vale lo mismo; si no, la cita no dice a cuál apunta."""
+    for n, valor in ((1, "0.1"), (2, "0.9")):
+        (tmp_path / f"p{n}" / "src").mkdir(parents=True)
+        (tmp_path / f"p{n}" / "src" / "b.py").write_text(f"TOPE = {valor}\n", encoding="utf-8")
+    (tmp_path / "doc.md").write_text("el tope es 0,1 <!--const:TOPE-->", encoding="utf-8")
+    monkeypatch.setattr(ds, "REPO", tmp_path)
+
+    problemas = ds.revisar_constantes({"p1/src/b.py", "p2/src/b.py", "doc.md"})
+    assert len(problemas) == 1 and "ambigua" in problemas[0]
+
+
+def test_un_marcador_de_ejemplo_no_es_una_cita(repo_falso):
+    """La ficha del guardián enseña cómo se escribe un marcador. Eso no es una afirmación.
+
+    Documentar la sintaxis rompía la comprobación en cuanto se escribió la ficha, que es
+    la forma más rápida de aprender que el ejemplo y la cita no son lo mismo.
+    """
+    assert repo_falso("se escribe `<!--const:NOMBRE-->` al final") == []
+    assert repo_falso("```markdown\n0,9 <!--const:NOMBRE-->\n```") == []
+
+
+def test_el_numero_dentro_de_comillas_invertidas_si_cuenta(repo_falso):
+    """La otra mitad: el valor suele escribirse en código en línea, y ahí sí es una cita."""
+    assert repo_falso("presupuestos `RENDER_PSNR_BUDGET_DB = 40` <!--const:RENDER_PSNR_BUDGET_DB-->") == []  # noqa: E501
+
+
+def test_el_repositorio_no_miente_hoy_en_ningun_numero_marcado():
+    """El guardián aplicado a sí mismo, una vez más."""
+    assert ds.revisar_constantes(ds.versionados()) == []

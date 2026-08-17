@@ -31,9 +31,9 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 
 ## Estado actual (semanas 1–4)
 
-La **ingesta, la fusión, la segmentación y la exportación de la malla están
-construidas y probadas**; lo que queda del camino es el canal del campo gaussiano y
-el análisis clínico. Lo que ya funciona hoy:
+La **ingesta, la fusión, la segmentación y los tres canales de exportación están
+construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
+integración; lo que queda del camino es el análisis clínico. Lo que ya funciona hoy:
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -52,12 +52,12 @@ confianza y dejan la basura en cuarentena):
 | `image-agent` | JPG / PNG / HEIC (foto) | píxeles RGB **sin EXIF** |
 
 Diseño transversal: **Provenance** por valor, **ArtifactStore** direccionado por
-contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y
+contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y <!--const:DEFAULT_HITL_THRESHOLD-->
 **anonimización** (EXIF fuera, seudonimización HMAC — ver
 [`docs/architecture/anonymization-strategy.md`](docs/architecture/anonymization-strategy.md)).
 
 **Orquestador** — `agent-orchestrator` dispara los agentes en paralelo, ensambla el
-`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s.
+`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
 
 **Reconstrucción 3DGS** (en notebooks, ver más abajo): malla real → **Blender**
 (vistas con pose exacta, sin COLMAP) → **gsplat** → campo de gaussianas evaluable en
@@ -87,6 +87,17 @@ que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, a
 que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
 ningún número a mano: los recuentos manuales envejecen solos.
 
+> **Lo que el CI no verifica, dicho antes de que haga falta preguntarlo.** El runner no
+> tiene GPU. Eso **no** deja partes del pipeline sin probar: `packages/` y `apps/` no
+> importan `torch` en ninguna línea, a propósito — los modelos entran por los `Protocol`
+> `Segmenter` y `Registrar`, así que lo que se ejecuta en producción es numpy y se prueba
+> entero. Lo que queda fuera son tres scripts de investigación
+> ([`entrenar_3dgs.py`](scripts/entrenar_3dgs.py),
+> [`segmentar_fdi.py`](scripts/segmentar_fdi.py),
+> [`ablacion_recetas.py`](scripts/ablacion_recetas.py)) y los notebooks: se ejecutan a
+> mano en una máquina con GPU y su producto es una **medida**, no un servicio. Cuando un
+> número de esta página sale de ahí, la sección lo dice y enlaza el script que lo produjo.
+
 **Fusión y segmentación** — `fusion-agents` (registro geométrico + anclaje semántico
 al FDI, ADR 004) y `analysis-agents` (`segmentation-agent`: `region_id` por gaussiana
 y el mapa `FDI → confianza` que consume la fusión semántica). El registro
@@ -94,19 +105,24 @@ CBCT↔intraoral está **medido sobre un paciente real**
 ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
 población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
 
-**Exportación reversible** — `export-agents` (`export-agent`): regenera el **STL desde
-el twin** a partir de `surface_ref` y **mide** el error releyendo el fichero, en vez de
-prometerlo. Medido sobre un escaneo real de Teeth3DS+ (110.804 vértices · 221.515
-caras, arcada de 86 mm): **3,8·10⁻⁶ mm** de desviación máxima en 0,07 s — la que impone
-el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm**
-del brief. Exporta en el sistema del escáner o en el del twin (aplicando la
-`RigidTransform` de la fusión), y un snapshot parcial lo declara en `hitl_reasons` **y
-en la cabecera del propio fichero**.
+**Exportación reversible** — `export-agents`, **tres canales, y los tres miden lo que
+producen releyéndolo** en vez de prometerlo:
+
+| Agente | Materializa | Error medido |
+|---|---|---|
+| `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief | <!--const:REVERSIBILITY_BUDGET_MM-->
+| `field-export-agent` | `gaussian_field_ref` → **PLY binario** | **0,0 mm** exactos sobre el CBCT de un paciente real (498.407 primitivas, 27,9 MB en 0,06 s): las posiciones van en `double` para que la verificación mida *bugs* de formato y no el redondeo |
+| `render-export-agent` | `gaussian_field_ref` → **PNG multivista** | **PSNR 102 dB · SSIM 0,99999999** en el ciclo twin → PLY → render, reproducible byte a byte |
+
+El STL sale en el sistema del escáner o en el del twin; el PLY, centrado o en mm reales
+del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del propio
+fichero**.
 
 **Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
-sin calibración), `pathology-agent` y el canal de **exportación del campo gaussiano**
-(`.ply`/`.splat`, formato pendiente del ADR de motor de render). El paquete
-`3dgs-engine` es hoy un placeholder: la reconstrucción vive en los notebooks + `gsplat`.
+sin calibración), `pathology-agent`. Sigue pendiente del ADR de motor de render
+**de dónde sale el color** de un campo de densidad — el contenedor ya está resuelto, pero
+un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
+placeholder: la reconstrucción vive en los notebooks + `gsplat`.
 
 ---
 
@@ -135,7 +151,7 @@ agentic-smart-health/          ← workspace root
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
 │   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
-│   ├── export-agents/         ← regeneración del STL desde el twin, con el error medido
+│   ├── export-agents/         ← regeneración de malla, campo y render desde el twin, con el error medido
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
@@ -156,10 +172,10 @@ agentic-smart-health/          ← workspace root
 
 Orquestador central del sistema multiagente. Coordina los agentes de cada fase del pipeline:
 
-- **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s.
+- **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
 - **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
 - **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación** ✅ *(malla)*: `export-agents` regenera el STL desde el `TwinSnapshot` con el error de reconstrucción medido; se invoca directamente (`ExportAgent(store).export(snapshot, destino)`), sin pasar todavía por el orquestador. Pendientes el canal del campo gaussiano (`.ply`/`.splat`) y el de las imágenes.
+- **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Los dispara el orquestador con `IngestionPipeline.exportar(result, destino)`, y el recorrido completo **entrada → twin → fichero** está probado de punta a punta en `tests/test_e2e.py`.
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
@@ -225,7 +241,9 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 
 ### `export-agents`
 
-**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. El `export-agent` regenera la **malla en STL binario** desde `surface_ref` y devuelve la desviación máxima **medida releyendo el fichero** — la métrica de reversibilidad del brief comprobada en cada ejecución, no estimada. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`. Ficha completa en [`AGENTS.md`](AGENTS.md).
+**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. Tres canales, y **los tres miden lo que producen releyéndolo**, no estimándolo: `export-agent` → **STL** desde `surface_ref` (desviación máxima y Chamfer), `field-export-agent` → **PLY** desde `gaussian_field_ref`, `render-export-agent` → **PNG multivista** con PSNR/SSIM del ciclo. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`.
+
+Dos decisiones que se ven raras hasta que se leen: el PLY del campo **no es un `.ply` de 3D Gaussian Splatting** y el render **no rasteriza splats**. `density` es atenuación radiológica, no opacidad, y un CBCT no mide color — así que el fichero declara las propiedades que existen y el render compone por **Beer-Lambert**, que además es independiente del orden de las primitivas y por eso reproducible byte a byte. Fichas completas en [`AGENTS.md`](AGENTS.md).
 
 ### `3dgs-engine`
 
@@ -322,11 +340,15 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/audit_pr.py`](scripts/audit_pr.py) | Guardián de las reglas de arquitectura del monorepo. |
 | [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
 | [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
+| [`scripts/desplazamiento_relativo.py`](scripts/desplazamiento_relativo.py) | ¿Se puede decir «esta pieza se desplazó X mm»? Referencia leave-one-out y umbral. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
+| [`scripts/entrenar_3dgs.py`](scripts/entrenar_3dgs.py) | EXPERIMENTO con resultado NEGATIVO: 3DGS entrenado de una arcada. |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+| [`scripts/promedio_y_escala.py`](scripts/promedio_y_escala.py) | Dos preguntas de diseño sobre el registro por diente, medidas en vez de argumentadas. |
 | [`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py) | mide si el escáner intraoral y el CBCT se pueden alinear. |
 | [`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py) | Simula qué resolución alcanza cada modalidad dental. |
+| [`scripts/segmentar_fdi.py`](scripts/segmentar_fdi.py) | etiqueta cada diente de una arcada con su código FDI. |
 | [`scripts/seguimiento_histora.py`](scripts/seguimiento_histora.py) | cuánto se ha movido el margen gingival entre dos escaneos. |
 | [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
 <!-- /generado: scripts -->
@@ -453,8 +475,8 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 ## Métricas de éxito
 
 - Cobertura de pruebas automatizadas > 80% del código de agentes y pipeline.
-- Fidelidad de reconstrucción STL desde el Digital Twin: error de malla < 0,1 mm.
-- Latencia de ingesta de un conjunto completo (STL + CBCT + informe clínico): < 60 segundos.
+- Fidelidad de reconstrucción STL desde el Digital Twin: error de malla < 0,1 mm. <!--const:REVERSIBILITY_BUDGET_MM-->
+- Latencia de ingesta de un conjunto completo (STL + CBCT + informe clínico): < 60 segundos. <!--const:LATENCY_BUDGET_S-->
 - Fiabilidad de los agentes de ingesta: > 95% en el dataset de validación.
 
 ---

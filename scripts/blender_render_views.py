@@ -19,6 +19,23 @@ Produce, en `<dir>`:
 Las poses son **exactas** (salen del propio grafo de escena de Blender), así que
 no hace falta COLMAP ni structure-from-motion — igual que en los notebooks 03/05,
 pero con un render fotográfico.
+
+## Por qué la luz va a 35 grados del eje, y no en el eje
+
+Medido sobre `histora` inferior, 24 vistas por condición, energía de gradiente dentro
+de la máscara (que es cuánto relieve se ve) y fracción de píxeles aplastados a negro:
+
+    rasante   brillo medio   |gradiente|·1e3   aplastado (<0,05)
+       0°        0,540            27,90             0,5 %
+      20°        0,512            30,69             1,0 %
+      35°        0,463            34,38             2,1 %
+      50°        0,396            35,04             3,7 %
+
+Un frontal puro (0°) tiene n·l ≈ n·v: todo lo que mira a la cámara brilla igual y la
+anatomía oclusal casi no se lee. Separar la luz gana **+23 % de relieve visible** hasta
+los 35°; de ahí a 50° solo se saca un 2 % más y se paga con casi el doble de píxeles
+aplastados, que es información que ya no recupera ningún entrenamiento. De ahí el
+valor por defecto.
 """
 
 import argparse
@@ -43,6 +60,15 @@ ap.add_argument("--samples", type=int, default=16)     # muestras EEVEE por píx
 ap.add_argument("--elevations", type=int, default=3)   # anillos de la órbita
 ap.add_argument("--elev-max", type=float, default=60.0)  # ± grados del anillo más alto/bajo
 ap.add_argument("--fov-deg", type=float, default=40.0)
+# Luz rasante: grados que se separa la luz del eje de la cámara. Ver la nota junto al
+# montaje de las luces; 0 = frontal puro, que es plano.
+ap.add_argument("--raking-deg", type=float, default=35.0)
+ap.add_argument("--relleno", type=float, default=0.8)  # energía del relleno opuesto
+ap.add_argument("--ambiente", type=float, default=0.4)  # fuerza del mundo
+# Gris plano: ignora el color de vértice y usa un neutro. Sirve para mirar RELIEVE en
+# vez de anatomía — sin tono que distraiga, todo el rango dinámico va a la forma.
+ap.add_argument("--gris", type=float, default=None,
+                help="Color base neutro (0-1). Si se da, ignora el color de vértice.")
 args = ap.parse_args(argv)
 
 out = Path(args.out)
@@ -75,6 +101,7 @@ obj = import_scan(args.scan)
 # Así el encuadre de la cámara no depende del tamaño real del escaneo (mm que
 # varían por caso). El 3DGS trabaja en este espacio normalizado.
 bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
+centro_bounds = tuple(obj.location)  # dónde estaba el centro antes de mandarlo al origen
 obj.location = (0.0, 0.0, 0.0)
 dims = obj.dimensions
 scale = 2.0 / max(dims.x, dims.y, dims.z)
@@ -90,7 +117,10 @@ nt = mat.node_tree
 bsdf = nt.nodes.get("Principled BSDF")
 if bsdf and "Roughness" in bsdf.inputs:
     bsdf.inputs["Roughness"].default_value = 0.55
-if obj.data.color_attributes:
+if args.gris is not None and bsdf:
+    g = args.gris
+    bsdf.inputs["Base Color"].default_value = (g, g, g, 1.0)
+elif obj.data.color_attributes:
     obj.data.color_attributes.active_color_index = 0
     vc = nt.nodes.new("ShaderNodeVertexColor")
     vc.layer_name = obj.data.color_attributes[0].name
@@ -109,16 +139,41 @@ cam = bpy.data.objects.new("cam", cam_data)
 scene.collection.objects.link(cam)
 scene.camera = cam
 
+# Las luces van EMPARENTADAS A LA CÁMARA, y esto no es un detalle de montaje: es la
+# condición que hace que el 3DGS pueda aprender. Un campo de gaussianas modela el color
+# como función de la DIRECCIÓN DE VISTA (armónicos esféricos); si la luz se mueve por su
+# cuenta, el mismo punto visto desde el mismo sitio cambia de brillo entre fotogramas y
+# el modelo no tiene forma de representarlo — lo promedia y sale lavado. Solidaria con
+# la cámara, la iluminación es una función de la vista y el modelo sí la absorbe.
+#
+# Pero una luz EN el eje de la cámara (frontal puro, que es lo que había) es plana:
+# n·l ≈ n·v, así que toda superficie que te mira brilla igual y el relieve se pierde.
+# Por eso la principal se separa `--raking-deg` grados del eje. Ese es el efecto que
+# busca la técnica de "pasear una luz rasante por la superficie" para sacar detalle: la
+# luz oblicua alarga los gradientes y hace visible el microrrelieve de la anatomía.
+# La diferencia está en QUIÉN la mueve — aquí la mueve la cámara, no un keyframe suelto.
+_rk = math.radians(args.raking_deg)
 light_data = bpy.data.lights.new("key", type="SUN")
 light_data.energy = 3.0
+light_data.angle = math.radians(3.0)  # penumbra suave: un sol puntual da bordes duros
 light = bpy.data.objects.new("key", light_data)
 scene.collection.objects.link(light)
-light.parent = cam  # la luz sigue a la cámara → objeto siempre bien iluminado
+light.parent = cam
+light.rotation_euler = (_rk, 0.0, math.radians(25.0))  # arriba y a un lado
+
+# Relleno por el lado contrario, flojo, para que la cara en sombra no se cierre a negro:
+# lo que ahí se pierda no lo puede aprender ningún entrenamiento.
+fill_data = bpy.data.lights.new("fill", type="SUN")
+fill_data.energy = args.relleno
+fill = bpy.data.objects.new("fill", fill_data)
+scene.collection.objects.link(fill)
+fill.parent = cam
+fill.rotation_euler = (-_rk * 0.6, 0.0, math.radians(-140.0))
 
 # Ambiente tenue para que las zonas en sombra no queden negras.
 world = bpy.data.worlds.new("w")
 world.use_nodes = True
-world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.4
+world.node_tree.nodes["Background"].inputs["Strength"].default_value = args.ambiente
 scene.world = world
 
 
@@ -187,7 +242,11 @@ transforms = {
     "camera_angle_x": float(cam_data.angle),
     "w": args.res,
     "h": args.res,
-    "scan_scale": float(scale),   # factor aplicado a la malla original (reversibilidad)
+    # Reversibilidad: con estos dos, `mundo = normalizado / scan_scale + scan_offset`
+    # devuelve el campo entrenado a los milímetros del escaneo. Sin el offset la vuelta
+    # no se puede hacer, y un campo que no se puede devolver a mm no se puede medir.
+    "scan_scale": float(scale),
+    "scan_offset": [float(v) for v in centro_bounds],
     "frames": frames,
 }
 (out / "transforms.json").write_text(json.dumps(transforms, indent=1))

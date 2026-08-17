@@ -38,8 +38,8 @@ muestre. Un **orquestador** reparte el trabajo.
 
 > **La confusión típica:** «el modelo» (el LLM) **no** es el sistema entero ni una
 > capa aparte — es la *cabeza pensante* de un agente concreto. El agente es el
-> empleado (rol + herramientas + permisos); el orquestador es el jefe; el
-> `TwinSnapshot` es el documento que se pasan entre sí.
+> empleado (rol + herramientas + permisos); el orquestador reparte y coordina el
+> trabajo; el `TwinSnapshot` es el documento que se pasan entre sí.
 
 **El recorrido de un dato:**
 
@@ -320,7 +320,7 @@ flowchart LR
 **Enmienda 2026-08-13: aparece un tercer canal, y es el que cierra la
 reversibilidad.** El diseño de arriba pensaba la exportación como alimento del
 **visor**, y por eso solo contemplaba metadatos + campo gaussiano. Pero la métrica
-del brief —«regenerar el STL desde el twin con < 0,1 mm»— no la satisface ninguno de
+del brief —«regenerar el STL desde el twin con < 0,1 mm»— no la satisface ninguno de <!--const:REVERSIBILITY_BUDGET_MM-->
 los dos: se satisface devolviendo la **malla** a un fichero. Ese canal es hoy el
 `export-agent` (`packages/export-agents/`, [ficha](../../AGENTS.md)):
 
@@ -328,7 +328,30 @@ los dos: se satisface devolviendo la **malla** a un fichero. Ese canal es hoy el
 |---|---|---|---|
 | **Malla** | `surface_ref` → superficie de origen | **STL binario** | ✅ implementado, con el error de reconstrucción **medido** por relectura |
 | Metadatos / contrato | `TwinSnapshot` | JSON (`model_dump`) | ✅ estable — no necesita agente: es una llamada de una línea |
-| Campo gaussiano | `gaussian_field_ref` | `.ply` / `.splat` | ⚠ pendiente de D1 |
+| **Campo gaussiano** | `gaussian_field_ref` | **PLY binario** | ✅ implementado (`field-export-agent`), reversibilidad medida |
+| **Imagen** | `gaussian_field_ref` → render | **PNG multivista** | ✅ implementado (`render-export-agent`), PSNR/SSIM del ciclo |
+
+**Enmienda 2026-08-17: los dos canales que faltaban, y por qué NO esperaron a D1.**
+La decisión pendiente era *el formato binario que espera el motor de render*, y sigue
+pendiente. Pero eso solo bloquea **interoperar con un visor de splats**, no
+**materializar el campo y medir el ciclo**, que es lo que pide la reversibilidad. Se
+separaron las dos cosas:
+
+- El PLY escribe **las propiedades que el campo tiene** (`density`, `scale`, `rot`) y
+  no las de la convención de INRIA (`opacity`, armónicos esféricos `f_dc_*`). `density`
+  es σₙ, atenuación Beer-Lambert, y un CBCT **no mide color**: ponerle esa cabecera lo
+  haría abrible en cualquier visor, que pintaría un color inventado sobre una magnitud
+  física. **De qué color se pinta un campo de densidad sigue siendo D1**, y es una
+  decisión de producto, no una conversión de formato.
+- El render compone por **Beer-Lambert** en vez de rasterizar splats, así que es una
+  radiografía sintética, es independiente del orden de las primitivas y por eso sale
+  **reproducible byte a byte** sin ordenar por profundidad.
+
+⚠ **Hizo falta arreglar la ingesta primero.** El `cbct-agent` centraba el campo
+(`centers -= mundo.mean(0)`) y **tiraba el desplazamiento**, que depende del dato y
+ninguna versión del agente recomputa: el campo era irreversible y nadie lo había
+notado, porque el canal que lo habría destapado era justo el que faltaba. Ahora el
+artefacto guarda `origin` y `hu_range`.
 
 La geometría sale de `surface_ref` y **no** del campo gaussiano, y no es un atajo:
 mallar el volumen por *marching cubes* solo está bien definido donde el gradiente es
@@ -338,11 +361,14 @@ existe** como magnitud ([`scripts/resolucion_modalidades.py`](../../scripts/reso
 Si esa ruta hace falta algún día será **otro agente**, con su propio criterio de
 aceptación.
 
-**Decisiones pendientes (nivel 2 — requieren spike):** el **formato binario
-concreto** del campo gaussiano (`.ply` vs `.splat` vs formato VTK) depende de qué
-motor de render se adopte. Se decide con el PoC del visor (three.js/GaussianSplats3D)
-y el de VTK, y se registrará en el **futuro ADR de motor de render**. Hasta
-entonces, el canal de metadatos (JSON del contrato) es estable y no bloquea.
+**Decisiones pendientes (nivel 2 — requieren spike):** qué espera el **motor de
+render** que se adopte, que son dos cosas y no una. El *contenedor* ya está resuelto
+(PLY binario). Lo que sigue abierto es **de dónde sale el color** para un visor de
+splats: el campo no lo tiene y un CBCT no lo mide, así que hay que decidir si se
+deriva de la densidad con un mapa declarado, si se toma de la malla del escáner por
+proximidad, o si el visor renderiza atenuación en gris. Se decide con el PoC del visor
+(three.js/GaussianSplats3D) y el de VTK, y se registrará en el **futuro ADR de motor de
+render**. Mientras tanto no bloquea nada: los tres canales exportan y miden.
 
 ---
 

@@ -1,7 +1,7 @@
 [project]
 name = "export-agents"
 version = "0.1.0"
-description = "Agentes de exportación del Digital Twin dental: regeneración de la malla (STL) desde el TwinSnapshot"
+description = "Agentes de exportación del Digital Twin dental: malla (STL), campo gaussiano (PLY) y render multivista (PNG) desde el TwinSnapshot"
 requires-python = ">=3.11"
 dependencies = [
     "core-schemas",
@@ -13,6 +13,11 @@ dependencies = [
     # va después de la 2— así que se importa en vez de copiar.
     "fusion-agents",
     "numpy>=2.0",
+    # El render del campo escribe PNG. `pillow` está declarado también en
+    # `ingestion-agents`, pero ese paquete NO es dependencia de éste (solo de sus
+    # tests), así que apoyarse en su instalación sería depender de un transitivo
+    # que nadie promete.
+    "pillow>=10.0",
 ]
 
 [build-system]

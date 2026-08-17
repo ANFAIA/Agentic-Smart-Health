@@ -161,9 +161,105 @@ def plano_oclusal(z: np.ndarray, bins: int = 80) -> float:
 
 
 def arcada_superior(esmalte: np.ndarray) -> tuple[np.ndarray, float]:
-    """Puntos de esmalte de la arcada maxilar, y el corte que se usó."""
+    """Puntos de esmalte del lóbulo de **z alta** —el maxilar—, y el corte que se usó.
+
+    El nombre es correcto, y conviene saber **por qué** lo es en vez de darlo por hecho.
+    La `z` de estas nubes sale de `Serie.z`, que es `ImagePositionPatient[2]`, y `IPP`
+    viene ya en el sistema del paciente (LPS: +z craneal). No es una convención del
+    fichero ni depende de `PatientPosition`: el equipo la resuelve al escribirla. Así que
+    z alta es craneal es **maxilar**, y `Serie.z_es_superior` dice cuándo esto vale.
+
+    Comprobado sobre `histora` por dos vías independientes: el DICOM (`IPP[2]` de −11,7 a
+    +161,4 mm en orden de corte) y la anatomía (subiendo desde el plano oclusal aparece
+    aire dentro del hueso —seno maxilar y fosa nasal— hasta el 51,5 % a 33 mm, mientras
+    que bajando hay **0,0 %** de aire y hueso continuo: cuerpo mandibular).
+
+    ⚠ Lo que **no** puede usarse para decidir esto es el residuo del registro: ver
+    `separa_arcadas`, donde está medido que no discrimina.
+    """
     corte = plano_oclusal(esmalte[:, 2])
     return esmalte[esmalte[:, 2] >= corte], corte
+
+
+BANDA_ARCADA_MM = 22.0     # altura de coronas alrededor del plano oclusal
+PERCENTIL_DENSIDAD = 50
+
+
+def _limpia_lobulo(puntos: np.ndarray) -> np.ndarray:
+    """Quita del lóbulo lo que no es corona: hueso de fondo y estrías del metal.
+
+    Sin esto, un lóbulo entero mide **122 × 126 × 49 mm** —el saco descrito en la
+    decisión 2 del encabezado, el fallo que dio 8 mm—. Con la banda de altura y el
+    filtro de densidad queda del orden de **50 × 37 × 20 mm**, que sí es una arcada.
+
+    La densidad separa bien porque el esmalte forma cúmulos compactos y las estrías del
+    metal van sueltas por todo el campo.
+    """
+    if len(puntos) < 3:
+        return puntos
+    centro = np.median(puntos[:, 2])
+    banda = puntos[np.abs(puntos[:, 2] - centro) < BANDA_ARCADA_MM / 2]
+    if len(banda) < 3:
+        return banda
+    vecinos = np.array([len(v) for v in cKDTree(banda).query_ball_point(banda, 3.0)])
+    return banda[vecinos >= np.percentile(vecinos, PERCENTIL_DENSIDAD)]
+
+
+def separa_arcadas(esmalte: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """Devuelve los **dos lóbulos limpios** y el corte: `(z_alta, z_baja, corte)`.
+
+    Quién es quién lo dice el DICOM, no esta función: con `Serie.z_es_superior`, `z_alta`
+    es el **maxilar** y `z_baja` la **mandíbula** (ver `arcada_superior`). Se devuelven
+    los dos porque hay pipelines que necesitan ambos, y porque tener el otro a mano
+    permite el aviso de más abajo.
+
+    ⚠ **Lo que está medido que NO sirve para decidir la arcada es el residuo.** Se probó
+    registrar contra los dos lóbulos y quedarse con el que ajusta: sobre el escaneo
+    mandibular de `histora` salió **0,490 mm contra z_baja y 0,509 contra z_alta**, un
+    3,8 % de diferencia. Una arcada dental se parece bastante a otra arcada dental, y con
+    recorte agresivo una pose equivocada puntúa bien — es el modo de fallo que advierte el
+    encabezado. Por eso el llamante compara los dos ajustes solo para **avisar**, nunca
+    para elegir.
+
+    ⚠ **Los criterios geométricos tampoco valen.** Se probaron dos y los dos fallan:
+
+    - **anchura del arco** (el maxilar es más ancho porque resalta sobre el inferior):
+      da respuestas OPUESTAS según se mida el `ptp` sobre el lóbulo completo o sobre su
+      cresta, porque los ejes salen de la PCA del lóbulo y el subconjunto de cresta no
+      tiene por qué extenderse más en el mismo eje.
+    - **masa ósea a cada lado**: el cuerpo mandibular es denso, pero el macizo facial
+      también, y los números no separan (361k/455k frente a 511k/270k).
+
+    Lo que **sí** discrimina, además del `IPP`, es el **aire intraóseo**: subiendo desde
+    el plano oclusal aparecen el seno maxilar y la fosa nasal (0 → 51,5 % de vóxeles bajo
+    −500 HU a 33 mm) y bajando no hay ninguno (0,0 % en 33 mm, con hueso continuo). Es
+    anatomía y coincide con la metadata.
+    """
+    corte = plano_oclusal(esmalte[:, 2])
+    return (
+        _limpia_lobulo(esmalte[esmalte[:, 2] >= corte]),
+        _limpia_lobulo(esmalte[esmalte[:, 2] < corte]),
+        corte,
+    )
+
+
+def arcada_del_escaneo(ruta: Path) -> str | None:
+    """`"maxilar"`, `"mandibular"` o `None` si el nombre del fichero no lo dice.
+
+    Es una **etiqueta del operador**, no una medida: la pone el software del escáner al
+    exportar. Se usa porque la alternativa —deducir la arcada de la geometría— se probó y
+    falla (ver `separa_arcadas`), y porque una etiqueta equivocada se destapa: el aviso de
+    `main()` salta si el otro lóbulo ajusta mejor que el que la etiqueta predice.
+
+    No se acepta un fichero que diga las dos cosas, ni uno que no diga ninguna. Adivinar
+    aquí es lo que dejó un registro de la mandíbula contra el maxilar puntuando 0,452 mm.
+    """
+    n = ruta.name.lower()
+    arriba = any(s in n for s in ("upper", "maxilar", "superior"))
+    abajo = any(s in n for s in ("lower", "mandibular", "inferior"))
+    if arriba == abajo:            # ninguna, o las dos: no hay etiqueta utilizable
+        return None
+    return "maxilar" if arriba else "mandibular"
 
 
 def parece_arcada(p: np.ndarray) -> bool:
@@ -207,17 +303,32 @@ def buscar_pose(
     búsqueda ni siquiera recupera una rígida conocida sobre la MISMA nube. Se criba
     flojo (discriminar) y se refina fuerte (sobrevivir al paladar).
 
-    Devuelve `(rotación, traslación, distancias del escaneo completo)`.
+    Devuelve `(rotación, traslación, distancias del escaneo completo)`, y la rígida que
+    devuelve es la **completa**: `apply(rot, trans, fuente)` lleva la fuente sobre el
+    objetivo, sin más pasos.
+
+    ⚠ **Antes no lo era, y era una trampa silenciosa.** Se devolvía la `(rot, trans)`
+    del ICP de refinado, que se aplican a `inicial` —la nube ya girada por la rotación
+    aleatoria ganadora `R_i`, que no salía de la función—. Con eso solo se puede
+    informar del rms, que es lo único que hacía el `main()` de este script, así que el
+    fallo no se notaba. Al usarla para transformar de verdad daba una pose incoherente:
+    un rms de 0,486 mm de aspecto perfectamente respetable y **0 %** de puntos en
+    correspondencia al comprobarlo contra otra fuente. La composición es lo único que
+    se añade:
+
+        salida = ((p − c_f) @ R_i.T + c_o) @ rot.T + trans
+               = p @ (rot @ R_i).T + [trans + c_o @ rot.T − c_f @ R_i.T @ rot.T]
     """
     c_f, c_o = fuente.mean(axis=0), objetivo.mean(axis=0)
     rotaciones = Rotation.random(poses, random_state=0).as_matrix()
 
     cri_f, cri_o = submuestrear(fuente, criba, 1), submuestrear(objetivo, criba, 2)
+    arbol_criba = cKDTree(cri_o)
     puntuadas = []
     for i, r in enumerate(rotaciones):
         inicial = (cri_f - c_f) @ r.T + c_o
         rot, trans = icp_recortado(inicial, cri_o, frac=frac_criba, iters=25)
-        d, _ = cKDTree(cri_o).query(apply(rot, trans, inicial))
+        d, _ = arbol_criba.query(apply(rot, trans, inicial))
         k = max(3, int(len(d) * frac_criba))
         puntuadas.append((float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), i))
     puntuadas.sort()
@@ -226,11 +337,16 @@ def buscar_pose(
     arbol = cKDTree(objetivo)
     resultados = []
     for _, i in puntuadas[:mejores]:
-        inicial = (fin_f - c_f) @ rotaciones[i].T + c_o
+        giro = rotaciones[i]
+        inicial = (fin_f - c_f) @ giro.T + c_o
         rot, trans = icp_recortado(inicial, objetivo, frac=frac)
         d, _ = arbol.query(apply(rot, trans, inicial))
         k = max(3, int(len(d) * frac))
-        resultados.append((float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), rot, trans, d))
+        rot_total = rot @ giro
+        trans_total = trans + c_o @ rot.T - (c_f @ giro.T) @ rot.T
+        resultados.append(
+            (float(np.sqrt(np.mean(np.sort(d)[:k] ** 2))), rot_total, trans_total, d)
+        )
     resultados.sort(key=lambda r: r[0])
     _, rot, trans, d = resultados[0]
     return rot, trans, d
@@ -268,7 +384,9 @@ def main() -> int:
                     help="Directorio de la serie DICOM.")
     ap.add_argument("--ios", type=Path,
                     default=raiz / "CASE-EB5070_files" / "PREVIO UpperJawScan.stl",
-                    help="STL del escáner intraoral (arcada superior).")
+                    help="STL del escáner intraoral.")
+    # No hay `--arcada`: cuál de los dos lóbulos del CBCT corresponde al escaneo lo
+    # decide el AJUSTE, no un nombre. Ver `separa_arcadas`.
     ap.add_argument("--poses", type=int, default=500, help="Inicializaciones sobre SO(3).")
     ap.add_argument("--criba", type=int, default=2000, help="Puntos por pose al cribar.")
     ap.add_argument("--fino", type=int, default=20000, help="Puntos al refinar.")
@@ -296,13 +414,17 @@ def main() -> int:
         [ocupados[:, 2] * sx, ocupados[:, 1] * sy, serie.z[ocupados[:, 0]]]
     ).astype(np.float64)
 
-    arco, corte = arcada_superior(esmalte)
+    z_alta, z_baja, corte = separa_arcadas(esmalte)
+    lobulos = {"z_alta": z_alta, "z_baja": z_baja}
     print(f"  esmalte HU≥{HU_ESMALTE}: {len(esmalte)} vóxeles")
-    print(f"  plano oclusal en z = {corte:.1f} mm  →  arcada de {len(arco)} puntos")
-    print(f"  bbox de la arcada: {np.ptp(arco, axis=0).round(1)} mm")
-    if not parece_arcada(arco):
+    print(f"  plano oclusal en z = {corte:.1f} mm")
+    for nombre, p in lobulos.items():
+        print(f"  lóbulo {nombre}: {len(p):>7,} pts · bbox {np.ptp(p, axis=0).round(1)}"
+              f" mm · {'arcada' if parece_arcada(p) else 'NO parece arcada'}")
+    utiles = {n: p for n, p in lobulos.items() if parece_arcada(p)}
+    if not utiles:
         print(
-            "✗ Lo aislado NO tiene forma de arcada. Casi seguro el metal y sus estrías "
+            "✗ Ningún lóbulo tiene forma de arcada. Casi seguro el metal y sus estrías "
             "se han colado (ver decisión 2 del encabezado). No sigo: el número saldría "
             "sin sentido.",
             file=sys.stderr,
@@ -320,9 +442,40 @@ def main() -> int:
     _, _, d_ctrl = buscar_pose(ios @ giro.T + np.array([37.0, -12.0, 55.0]), ios, **busqueda)
     suelo = informe(d_ctrl, "escáner ↔ copia suya movida")
 
-    print(f"\n{'─' * 72}\nESCÁNER INTRAORAL  ↔  ARCADA MAXILAR DEL CBCT")
-    _, _, d_real = buscar_pose(ios, arco, **busqueda)
-    rms = informe(d_real, "escáner ↔ esmalte del CBCT")
+    # Se registra contra LOS DOS lóbulos, pero la elección NO sale del ajuste: está
+    # medido que no discrimina (0,490 frente a 0,509 mm). Sale del DICOM, y el segundo
+    # ajuste queda solo como aviso. Ver `separa_arcadas`.
+    ajustes = {}
+    for nombre, p in utiles.items():
+        print(f"\n{'─' * 72}\nESCÁNER INTRAORAL  ↔  LÓBULO {nombre.upper()} DEL CBCT")
+        _, _, d = buscar_pose(ios, p, **busqueda)
+        ajustes[nombre] = (informe(d, f"escáner ↔ esmalte del CBCT ({nombre})"), d)
+
+    esperado = arcada_del_escaneo(args.ios)
+    if esperado is None or not serie.z_es_superior:
+        motivo = ("el nombre del STL no dice la arcada"
+                  if esperado is None else "la serie no trae ImagePositionPatient")
+        elegido = min(ajustes, key=lambda n: ajustes[n][0])
+        print(f"\n  ⚠ {motivo}: cayendo al AJUSTE, que está medido que apenas "
+              f"discrimina. Trata la elección como no verificada.")
+    else:
+        elegido = "z_alta" if esperado == "maxilar" else "z_baja"
+        print(f"\n  arcada del escaneo: {esperado} (nombre del STL) → lóbulo {elegido} "
+              f"(IPP[2] crece hacia craneal)")
+        if elegido not in ajustes:
+            print(f"✗ El lóbulo {elegido} no tiene forma de arcada, así que el escaneo "
+                  f"{esperado} no tiene contra qué registrarse.", file=sys.stderr)
+            return 3
+    rms, d_real = ajustes[elegido]
+    if len(ajustes) == 2:
+        otro = next(n for n in ajustes if n != elegido)
+        print(f"  ajuste: {elegido} {rms:.3f} mm · {otro} {ajustes[otro][0]:.3f} mm")
+        if ajustes[otro][0] < rms * 1.3:
+            print("  ⚠ los dos lóbulos ajustan casi igual. Es lo ESPERADO —una arcada se "
+                  "parece a otra—, y la razón de no elegir por ajuste.")
+        if ajustes[otro][0] < rms:
+            print("  ⚠ el otro lóbulo ajusta MEJOR que el que dice la anatomía. O el "
+                  "nombre del STL miente, o el registro falló: revísalo a mano.")
 
     print(f"\n{'─' * 72}\nVEREDICTO")
     print(f"  suelo del método                : {suelo:.3f} mm  (= muestreo del escáner)")

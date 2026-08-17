@@ -429,3 +429,53 @@ A5 (vista cualitativa) ✅. **Experimento cerrado.** Los pesos de A3 quedan en
 Sin acotar, y ya sin impacto en las conclusiones: (a) el umbral de fusión óptimo sigue cayendo en
 el extremo del rango probado (48×); (b) **la estabilidad del entrenamiento**, que es el hallazgo
 que este último run destapó y el primer problema a resolver si se retoma el modelo.
+
+---
+
+## A6 · El modelo depende de la POSE del fichero — hallazgo al aplicarlo fuera de Teeth3DS+
+
+Al llevar el checkpoint de A3 a un escáner propio (`histora`), el modelo etiquetó una **arcada
+mandibular con códigos de maxilar**: `17`, `27`, `28`, `11`, `21`. El mismo síntoma que A4
+describe como «modelo degenerado», pero **con el modelo sano**.
+
+**No era el modelo, era la pose.** Dos controles lo separan:
+
+| control | resultado |
+|---|---|
+| el checkpoint sobre 4 inferiores de Teeth3DS+ **con etiquetas** | `tooth_acc` 0.80 / 0.84 / 0.93 / 0.94 — sano |
+| eje oclusal de Teeth3DS+ frente al de `histora` | **coseno 0.004** — perpendiculares |
+
+Teeth3DS+ escribe el eje oclusal en **+z** y este escáner en **+y**. El *loader* aplica
+`NormalizeScale`, que centra y escala pero **no rota**, así que la orientación absoluta del
+fichero llega intacta al modelo. Y A2 ya lo había medido sin sacar esta consecuencia: `pos-only`
+colapsa porque el modelo se apoya en la posición absoluta. Las normales arreglan el *descriptor*,
+pero **la geometría de la atención sigue viviendo en las coordenadas del fichero**.
+
+### El arreglo
+
+Canonizar la pose antes de inferir, con `fusion_agents.marco`: eje oclusal de `marco_arcada`,
+anterior por el signo de la parábola del arco, y lateral **derivado** (`x = y × z`) — elegirlo
+por separado espejaría la arcada y cambiaría los `3x` por los `4x`, que es un error que no avisa.
+
+Sobre `histora` inferior, con el mismo checkpoint y sin reentrenar:
+
+| | FDI a lo largo del arco | monotonía |
+|---|---|---|
+| sin canonizar | `17, 17, 36, 28, 27, 11, 21` | — (10 de 16 de la arcada equivocada) |
+| **canonizado** | `47, 48, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38` | **ρ +1.00** |
+
+Se añade además **decodificación restringida**: enmascarar los códigos de la arcada contraria
+antes de agregar. La arcada no es una hipótesis que el modelo deba resolver —viene en el fichero—,
+y dejarle emitirlos es darle libertad para fallar en algo que no estaba en duda. Bajó las
+instancias de 23 a 16.
+
+> ⚠️ **La canonización tiene su propio suelo.** `marco_arcada` devuelve una razón de orientación
+> y hay que mirarla: en la autocomprobación sobre Teeth3DS+, una malla con razón **0.61** se
+> hundió de 0.808 a **0.197**, mientras que las de 0.40-0.43 quedaron intactas. Canonizar una
+> arcada cuyo marco es dudoso es peor que no canonizarla.
+
+**Consecuencia para el agente:** la ficha del `segmentation-agent` tiene que declarar que su
+entrada es una arcada **en pose canónica**, no una malla cualquiera. Sin eso, el 0.93 de FDI por
+diente no significa nada fuera del dataset con el que se midió. Implementado en
+[`scripts/segmentar_fdi.py`](../scripts/segmentar_fdi.py); el uso posterior de las etiquetas está
+en [`registro-por-diente-histora.md`](registro-por-diente-histora.md).
