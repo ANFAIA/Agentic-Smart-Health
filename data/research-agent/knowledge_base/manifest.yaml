@@ -214,3 +214,47 @@ documentos:
     sha256: 99913750a5d90d2949c4f9d426363b39fce2cf73999548675fb2d06f4c2a9475
     bytes: 4730953
     nota: "Descubierto por watch_literature.py el 2026-08-10 (consulta: all:\"FHIR\" OR all:\"HL7\"). Relevancia sin revisar."
+  - fichero: "Splat-based Metal Artifact Reduction in Cone-Beam CT via Polychromatic Modeling - 2608.13159v1.pdf"
+    titulo: "Splat-based Metal Artifact Reduction in Cone-Beam CT via Polychromatic Modeling"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.13159v1"
+    url: "https://arxiv.org/pdf/2608.13159v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 2acd1ab0e415e498ace59b28503e15ac59ded7fe0e3a6213ae3500271a1d912c
+    bytes: 15944330
+    nota: "Descubierto por watch_literature.py el 2026-08-17 (consulta: all:\"Gaussian Splatting\"). Relevancia sin revisar."
+  - fichero: "Logit-Boundary Geometric Belief Interfaces and Sparse Sheaf-Enclave Protocols_ A Self-Contained Substrate for - 2608.10300v2.pdf"
+    titulo: "Logit-Boundary Geometric Belief Interfaces and Sparse Sheaf-Enclave Protocols: A Self-Contained Substrate for Secure Network Electronic Health Record (EHR) Interoperability"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.10300v2"
+    url: "https://arxiv.org/pdf/2608.10300v2"
+    licencia: "no verificada (The read operation timed out)"
+    redistribuible: false
+    sha256: 0449043ce233e88a93258d230941d818f693d98c18a29ad4d7f224ed5f3c281e
+    bytes: 497446
+    nota: "Descubierto por watch_literature.py el 2026-08-17 (consulta: all:\"FHIR\" OR all:\"HL7\"). Relevancia sin revisar."
+  - fichero: "APCReg_ Anatomical-Prior-Guided Coarse-to-Fine CBCT--IOS Registration via Multi-View Projection and Reliabilit - 2608.09993v1.pdf"
+    titulo: "APCReg: Anatomical-Prior-Guided Coarse-to-Fine CBCT--IOS Registration via Multi-View Projection and Reliability-Controlled Residual Correction"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.09993v1"
+    url: "https://arxiv.org/pdf/2608.09993v1"
+    licencia: "no verificada (The read operation timed out)"
+    redistribuible: false
+    sha256: 8226b282aa458136bd439ff883c3f3ffeb665785ff161ce1a6eeff3daa4bf6a5
+    bytes: 8065344
+    nota: "Descubierto por watch_literature.py el 2026-08-17 (consulta: all:\"intraoral scan\"). Relevancia sin revisar."
+  - fichero: "Coarse-to-Fine Registration of Jawbone CT and Intraoral Scan Data Using GeDi and ICP with Pseudo-IOS Ground Tr - 2608.07564v1.pdf"
+    titulo: "Coarse-to-Fine Registration of Jawbone CT and Intraoral Scan Data Using GeDi and ICP with Pseudo-IOS Ground Truth"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.07564v1"
+    url: "https://arxiv.org/pdf/2608.07564v1"
+    licencia: "CC BY-NC-ND 4.0"
+    redistribuible: false
+    sha256: 9bc7d27502f4ac73d9ec037ff3f1c30fca21f3791702390a37f073a22031e869
+    bytes: 5128004
+    nota: "Descubierto por watch_literature.py el 2026-08-17 (consulta: all:\"intraoral scan\"). Relevancia sin revisar."
