@@ -183,8 +183,8 @@ par pre/post higiene: el test nulo **pasa**. Y deja el número que hacía falta 
 > **Umbral de detección: ~0,4 mm** (p90 del control nulo 0,35–0,38; máximo 0,39–0,54). Por
 > debajo de eso no se escribe «esta pieza se desplazó», por estable que sea la cifra.
 
-Eso es lo que le da regla al color que pedía el tutor: se pinta un diente cuando su
-desplazamiento relativo supera el umbral **a los dos `trim`**, y no antes.
+Eso es lo que le da regla a la visualización por color que pide el producto: se pinta un
+diente cuando su desplazamiento relativo supera el umbral **a los dos `trim`**, y no antes.
 
 ---
 
@@ -272,6 +272,85 @@ señal ≥200 HU ahí, y que decidir entre «no existe» y «no se ve» no es co
 Verificado que no es un signo invertido, que es el error que ya apareció tres veces en
 esta sesión: las normales salen hacia fuera por dos vías independientes (el volumen con
 signo crece al inflar la malla, y el producto con el radial del arco da +0,95 en 21/21).
+
+---
+
+## Dos preguntas de diseño, respondidas con números
+
+**Experimento:** [`scripts/promedio_y_escala.py`](../scripts/promedio_y_escala.py)
+
+### 1 · Promediar la matriz de 3 dientes y usarla para el resto — **NO funciona**
+
+Importaba porque si funcionase, el artefacto sería **una** matriz en vez de trece y
+segmentar catorce piezas dejaría de hacer falta. Se probó de las dos formas en que se puede
+leer la frase, y sobre **las 286 combinaciones de 3** entre los 13 dientes — no un trío
+elegido a dedo, que permitiría contar el resultado que más convenga.
+
+| lectura | promediada | propia | global | gana la propia | **peor que no tocar nada** |
+|---|---|---|---|---|---|
+| cruda (las 4×4 tal cual) | 0,288 mm | 0,127 | 0,155 | 2860/2860 | **2629/2860 (92 %)** |
+| local (rotación sobre el centroide propio) | 0,180 mm | 0,127 | 0,155 | 2860/2860 | **2071/2860 (72 %)** |
+
+**El ajuste propio de cada diente gana en el 100 % de los casos**, y ni el mejor decil de
+tríos (p10 = 0,131 mm en la lectura buena) llega al 0,127 del ajuste propio. Peor: aplicar
+la matriz promediada **empeora** respecto a dejar el diente donde lo puso el registro global
+en el 72 % de los casos. Un movimiento promedio es el movimiento equivocado para todos.
+
+Dos cosas que merece la pena dejar escritas, porque el «no» no es lo único útil aquí:
+
+- **Si se va a promediar, hay que hacerlo en coordenadas locales.** La lectura cruda sale
+  0,288 y la local 0,180 — un 60 % peor solo por el sistema de referencia. La traslación de
+  una rígida depende del origen, así que una rotación pequeña alrededor de un origen lejano
+  produce un desplazamiento grande al aplicarla a otra pieza. Aun así, ninguna funciona.
+- **No es heterogeneidad biológica.** En el control nulo —dos escaneos de la misma visita,
+  donde nada se movió— pasa lo mismo (0,128 frente a 0,104, peor que no tocar nada en el
+  70 %). Lo que capturan las matrices por diente es geometría local y ruido de escaneo, y
+  eso es específico de cada pieza por naturaleza. No hay nada que promediar.
+
+### 2 · La escala (7º grado de libertad) — **no se puede medir, y no aporta**
+
+Un diente no cambia de tamaño entre dos escaneos, así que una escala ≠ 1 solo puede ser del
+escáner. Añadida como 7º grado de libertad por diente, la mejora en la mitad retenida es de
+**0,0003 mm** (0,1274 → 0,1271). Eso ya la descarta, pero el proceso de medirla dio algo más
+útil: **cuatro estimadores, tres roto**s.
+
+| estimador | qué pasó |
+|---|---|
+| ICP con escala, arco completo | **colapsa**: A→B da 0,904 y B→A 1,016, producto **0,913** ≠ 1 |
+| ICP con escala, por diente | desviación entre piezas ~8.000 ppm, sube a **70.000** sin recorte |
+| razón de distancias entre centroides de diente | razón individual dispersa **±6-8 %** |
+| **firma radial con la rígida fijada** | se comporta — es el que se usa |
+
+El colapso del primero es instructivo: **encoger acerca todos los puntos al centroide del
+objetivo y baja la distancia al vecino más próximo pase lo que pase con la escala real**. Y
+las diagonales de las dos mallas son 88,25 y 88,50 mm, así que un −9,6 % es imposible por
+construcción — el estimador estaba dando un número absurdo con toda tranquilidad.
+
+El que funciona no **optimiza** la escala, la **lee**: con la rígida fijada, un error de
+escala `s` desplaza cada punto radialmente en `(s−1)·r`, y eso es una recta sobre ~75.000
+puntos emparejados que no puede colapsar porque no se le deja mover la rígida.
+
+| par | ida | vuelta | suma | veredicto |
+|---|---|---|---|---|
+| control nulo (misma visita) | +432 ppm | −608 ppm | −177 | ✅ cambia de signo |
+| `PREVIO → POST HIGIENE` | **−1550 ppm** | −162 ppm | −1712 | ❌ **no cambia de signo** |
+
+**En el control nulo el estimador se comporta como una escala** (cambia de signo al invertir
+el par) y da el suelo: **±500 ppm**, o 0,03 mm sobre 60 mm de arco. **En el par real no.**
+Los −1550 ppm no son una escala: si lo fueran, el sentido inverso daría +1550.
+
+> **Conclusión: no se añade el grado de libertad.** Aporta 0,0003 mm, su estimación directa
+> es inestable hasta dar −9,6 %, y el único estimador fiable dice que lo que hay en el par
+> real no es una escala.
+
+**Hipótesis de qué es** —y es hipótesis, no medida—: la higiene **quita cálculo**, así que
+la superficie se mueve hacia dentro donde había depósitos. Eso imita un encogimiento en un
+sentido y no se invierte al cambiar de dirección. Encaja con que el control nulo, donde no
+se quitó nada, sí sea simétrico. Comprobarlo pide localizar los depósitos, que no se ha
+hecho.
+
+Y el `R²` de la regresión radial es **0,006-0,012** en todos los casos: aunque hubiera
+escala, explicaría el 1 % de la varianza del residuo. El otro 99 % es ruido de escaneo.
 
 ---
 
