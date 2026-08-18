@@ -40,6 +40,7 @@ from typing import NamedTuple
 
 from core_schemas import (
     ClinicalAttributes,
+    Hallazgo,
     Modality,
     RegionalObservation,
     Support,
@@ -186,6 +187,57 @@ def extract_ph_by_rules(text: str) -> RuleExtraction:
         found[code] = value
 
     return RuleExtraction(found, discards)
+
+
+# --------------------------------------------------------------------------- #
+# Informes de CBCT con IA: anatomía radicular y hallazgos por pieza
+# --------------------------------------------------------------------------- #
+# Estos informes NO traen pH — que era lo único que la capa regional sabía recoger — y sí
+# traen, línea a línea, «Diente 16 Diente, 3 raíces, 4 canales, Signos de caries». Es
+# exactamente el soporte regional del contrato, en un formato que el extractor de pH no
+# ve. Sin esto, un informe con hallazgos de 28 piezas se ingería con 0 observaciones.
+_DIENTE_RE = re.compile(r"Diente\s+(\d{2})\s+(.*?)(?=Diente\s+\d{2}\s|\Z)", re.S)
+_RAICES_RE = re.compile(r"(\d+)\s+ra[íi](?:z|ces)\b", re.IGNORECASE)
+# El informe alterna «conducto» y «canal» para lo mismo. Un vocabulario controlado existe
+# precisamente para que esa variación no llegue al twin.
+_CONDUCTOS_RE = re.compile(r"(\d+)\s+(?:conducto|canal)e?s?\b", re.IGNORECASE)
+
+_HALLAZGOS_RE: tuple[tuple[re.Pattern[str], Hallazgo], ...] = (
+    (re.compile(r"\bausente\b", re.I), Hallazgo.AUSENTE),
+    (re.compile(r"\bcaries\b", re.I), Hallazgo.CARIES),
+    (re.compile(r"\brestauraci[óo]n\b", re.I), Hallazgo.RESTAURACION),
+    (re.compile(r"c[áa]lculo\s+pulpar", re.I), Hallazgo.CALCULO_PULPAR),
+    (re.compile(r"p[ée]rdida\s+de\s+hueso\s+periodontal", re.I),
+     Hallazgo.PERDIDA_OSEA_PERIODONTAL),
+    (re.compile(r"aparato\s+de\s+ortodoncia", re.I), Hallazgo.APARATO_ORTODONCICO),
+)
+
+
+def extract_hallazgos_by_rules(text: str) -> dict[str, dict]:
+    r"""`FDI → {n_raices, n_conductos, hallazgos}` de un informe tabulado por diente.
+
+    El texto se parte en bloques por el marcador `Diente NN`, no línea a línea: el PDF
+    corta descripciones largas a mitad («…Signos de caries (Dentina,» + salto), y un
+    extractor por líneas perdería el resto del hallazgo sin avisar.
+
+    Solo se acepta un código FDI válido: el patrón `\d{2}` casaría con cualquier par de
+    dígitos, y `ontology.is_valid_fdi` es la misma puerta que usa el extractor de pH.
+    """
+    fuera: dict[str, dict] = {}
+    for codigo, cuerpo in _DIENTE_RE.findall(text):
+        if not ontology.is_valid_fdi(codigo):
+            continue
+        raices = _RAICES_RE.search(cuerpo)
+        conductos = _CONDUCTOS_RE.search(cuerpo)
+        hallazgos = [h for patron, h in _HALLAZGOS_RE if patron.search(cuerpo)]
+        if not (raices or conductos or hallazgos):
+            continue
+        fuera[codigo] = {
+            "n_raices": int(raices.group(1)) if raices else None,
+            "n_conductos": int(conductos.group(1)) if conductos else None,
+            "hallazgos": hallazgos,
+        }
+    return fuera
 
 
 def _describe_discards(discards: list[Discard]) -> str:
@@ -346,26 +398,44 @@ class ReportAgent(BaseIngestionAgent):
         else:
             findings, discards = extract_ph_by_llm(text, model=self.model)
 
+        # Los informes de CBCT con IA no traen pH: traen anatomía radicular y hallazgos.
+        # Se extraen SIEMPRE, con los dos backends, porque no compiten con el pH — son
+        # otro campo del mismo `ClinicalAttributes`. Un informe puede traer los dos, uno,
+        # o ninguno, y las tres cosas son válidas.
+        clinicos = extract_hallazgos_by_rules(text)
+
         observations = [
             RegionalObservation(
                 region_id=code,
-                attributes=ClinicalAttributes(ph=value),
+                attributes=ClinicalAttributes(
+                    ph=findings.get(code, (None, 0.0))[0],
+                    **clinicos.get(code, {}),
+                ),
                 timestamp=timestamp,
-                provenance=self._provenance(source, confidence=confidence),
+                provenance=self._provenance(
+                    source, confidence=findings.get(code, (None, _RULES_CONFIDENCE))[1]
+                ),
             )
-            for code, (value, confidence) in sorted(findings.items())
+            for code in sorted(set(findings) | set(clinicos))
         ]
 
         # Un informe del que no se extrae nada no es un éxito vacío: puede ser un
         # PDF escaneado sin OCR o un formato inesperado. Se declara con confianza
         # baja para que el gate de human-in-the-loop lo pare.
-        agent_confidence = min((c for _, c in findings.values()), default=0.0)
+        agent_confidence = min(
+            (c for _, c in findings.values()),
+            default=_RULES_CONFIDENCE if clinicos else 0.0,
+        )
 
         # Y un informe del que se extrae *parte* tampoco lo es. Si algo se
         # descartó, el informe decía algo que el twin no recoge: la confianza baja
         # por debajo del umbral del gate para que lo mire una persona y decida si
         # era un error de tecleo del clínico o un dato que hay que recuperar.
-        motivos = [] if findings else ["No se extrajo ningún hallazgo regional del informe."]
+        motivos = (
+            []
+            if (findings or clinicos)
+            else ["No se extrajo ningún hallazgo regional del informe."]
+        )
         if discards:
             agent_confidence = min(agent_confidence, _DISCARD_CONFIDENCE)
             motivos.append(_describe_discards(discards))

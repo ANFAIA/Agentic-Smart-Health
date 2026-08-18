@@ -10,6 +10,7 @@ from core_schemas.models import (
     Color,
     FDICode,
     GaussianPrimitive,
+    Hallazgo,
     Modality,
     ModalityIngestion,
     ModalityStatus,
@@ -24,6 +25,7 @@ from core_schemas.models import (
 __all__ = [
     "SCHEMA_VERSION",
     "ClinicalAttributes",
+    "Hallazgo",
     "Color",
     "FDICode",
     "GaussianPrimitive",

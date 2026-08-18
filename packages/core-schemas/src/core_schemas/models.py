@@ -43,7 +43,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # 1.3.0 — `Provenance.transform` (ADR 004): los agentes de fusión registran la
 #         transformación rígida que aplicaron, para que sea invertible. Aditivo y
 #         opcional: un JSON 1.2.0 sigue validando.
-SCHEMA_VERSION = "1.3.0"
+# 1.4.0 — `ClinicalAttributes` gana `n_raices`, `n_conductos` y `hallazgos`. Lo pidió
+#         un informe real: los de CBCT con IA no traen pH —que era lo único que la
+#         capa regional sabía recoger— sino anatomía radicular y hallazgos por pieza.
+#         Todo opcional y con defecto, así que un JSON 1.3.0 sigue validando.
+SCHEMA_VERSION = "1.4.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -265,17 +269,58 @@ class GaussianPrimitive(BaseModel):
 # --------------------------------------------------------------------------- #
 # Atributos regionales: la capa dispersa  (pH y demás)  — soporte REGIONAL
 # --------------------------------------------------------------------------- #
+class Hallazgo(str, Enum):
+    """Vocabulario controlado de hallazgos clínicos por diente.
+
+    **Controlado y no texto libre**, por la misma razón que `Modality` o `Support`: un
+    hallazgo tiene que poder compararse entre visitas y entre proveedores. «Signos de
+    caries», «caries» y «lesión cariosa» son la misma cosa para un clínico y tres cosas
+    distintas para un `==`, y una serie temporal construida sobre cadenas libres no se
+    puede consultar.
+
+    Los seis de aquí son los que **están medidos** sobre informes reales de CBCT con IA.
+    Añadir uno es aditivo y no rompe nada; inventarlos por adelantado, en cambio, llena
+    el vocabulario de términos que ningún extractor produce.
+    """
+
+    AUSENTE = "ausente"
+    CARIES = "caries"
+    RESTAURACION = "restauracion"
+    CALCULO_PULPAR = "calculo_pulpar"
+    PERDIDA_OSEA_PERIODONTAL = "perdida_osea_periodontal"
+    APARATO_ORTODONCICO = "aparato_ortodoncico"
+
+
 class ClinicalAttributes(BaseModel):
     """Metadatos clínicos definidos por zona/diente (no por punto).
 
-    Un valor por región FDI. Extensible: hoy el pH; mañana movilidad, sangrado,
-    profundidad de sondaje, etc. Mantener aquí solo lo que sea genuinamente
-    regional (el color y la densidad viven en `GaussianPrimitive`).
+    Un valor por región FDI. Extensible: hoy el pH, la anatomía radicular y los
+    hallazgos; mañana movilidad, sangrado, profundidad de sondaje. Mantener aquí solo lo
+    que sea genuinamente regional (el color y la densidad viven en `GaussianPrimitive`).
+
+    **Por qué la anatomía radicular vive aquí y no en el campo gaussiano.** El número de
+    raíces y de conductos es una propiedad *del diente*, no de un punto: no hay forma de
+    repartir «3 conductos» entre las gaussianas de la pieza. Y tiene un uso que ningún
+    otro atributo da — es **verificable contra la geometría**: un segmentador de CBCT que
+    encuentre dos raíces donde el informe dice tres está fallando de una forma concreta y
+    medible, sin necesidad de anotar el volumen.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     ph: float | None = Field(default=None, ge=0.0, le=14.0)
+    n_raices: int | None = Field(
+        default=None, ge=1, le=5,
+        description="Raíces de la pieza. El máximo anatómico es 4-5 en molares superiores.",
+    )
+    n_conductos: int | None = Field(
+        default=None, ge=1, le=8,
+        description="Conductos radiculares. Puede superar al número de raíces.",
+    )
+    hallazgos: list[Hallazgo] = Field(
+        default_factory=list,
+        description="Hallazgos del informe para esta pieza, en vocabulario controlado.",
+    )
 
 
 class RegionalObservation(BaseModel):
