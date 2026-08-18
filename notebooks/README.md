@@ -368,3 +368,34 @@ Tablas, caveats, referencia DDMF y reproducción:
 [`exercise-point-transformer-teeth3ds.md`](exercise-point-transformer-teeth3ds.md). Requiere el
 kernel GPU **"Dental GPU (3DGS)"** (ver §04) y `scipy`. Para seguir un run largo:
 `tail -f notebooks/.run-progress.log`.
+
+---
+
+## `09-per-tooth-registration-experiment.ipynb` — registro por diente sobre `histora`
+
+El experimento que responde a una pregunta de arquitectura: **¿merece la pena registrar cada
+diente por separado, o el registro global del arco ya es lo mejor que se puede sacar?** Importa
+porque cambia el producto — el registro por diente entrega **una 4×4 por pieza**, invertible y
+aprobable de una en una por un clínico, que es un artefacto de agente; una nube de puntos no.
+
+Recorre las cinco piezas: segmentación FDI con transferencia de etiquetas, el **confusor del
+`trim`**, el registro por diente, la **referencia leave-one-out** y el **control nulo** que fija
+el umbral de detección. Cierra con los dos resultados negativos medidos: promediar las matrices
+de tres dientes y añadir la escala como 7º grado de libertad.
+
+> **Todas las cifras del notebook se calculan**, incluida la tabla de resumen. La versión inicial
+> tenía el control nulo fabricado con ruido gaussiano, la figura de la escala simulada y las
+> conclusiones escritas a mano — y varias ya contradecían lo que el propio notebook calculaba dos
+> celdas más arriba.
+
+⚠️ **Los residuos absolutos salen ~3× mayores que en la ficha** porque el par se registra en
+sentido inverso. Las conclusiones cualitativas coinciden todas y la firma radial reproduce la
+ficha cifra a cifra, pero **antes de citar una cifra absoluta de aquí** hay que resolver cuál de
+los dos caminos es el correcto.
+
+Necesita los datos del paciente en `~/anfaia/` (no versionados) y la segmentación FDI
+pre-calculada en `~/anfaia/fdi/`. Los ficheros se resuelven **por patrón**: sus nombres traen
+identificativos del paciente y este notebook se versiona.
+
+Interpretación completa, resultados negativos del CBCT y retractaciones:
+[`registro-por-diente-histora.md`](registro-por-diente-histora.md).
