@@ -38,9 +38,10 @@ Las comprobaciones, todas derivadas de fallos que ya ocurrieron:
 - `comprobaciones`: el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su
   ficha. Es lo que sustituye a versionar los guardianes: de un guardián no importa su
   número de versión —que nadie lee— sino qué vigila, y eso sí se desincroniza.
-- `constantes`: un número escrito en la prosa ↔ el valor de la constante de la que sale,
-  atados por un marcador `<!--const:NOMBRE-->`. Habría cazado la ficha de fusión
-  diciendo «ε = 0,5 mm» después de que el código dijera otra cosa.
+- `constantes`: un número **o una cadena** escritos en la prosa ↔ el valor de la constante
+  de la que salen, atados por un marcador `<!--const:NOMBRE-->`. Habría cazado la ficha de
+  fusión diciendo «ε = 0,5 mm» después de que el código dijera otra cosa, y el README
+  anunciando el esquema `1.2.0` con el contrato ya en `1.3.0` — que llevaba meses así.
 - `inventario` y `arbol`: que lo que existe esté citado, no solo que lo citado exista.
 
 **Lo que sigue sin cubrirse, y conviene saberlo.** Una afirmación en prosa **sin
@@ -657,16 +658,22 @@ MARCADOR_CONST = re.compile(r"<!--\s*const:\s*([A-Z][A-Z0-9_]*)\s*-->")
 _NUMERO = re.compile(r"-?\d+(?:[.,]\d+)?")
 
 
-def constantes_del_codigo(ficheros: set[str]) -> dict[str, set[float]]:
+def constantes_del_codigo(ficheros: set[str]) -> dict[str, set[float | str]]:
     """`NOMBRE → {valores}` de las constantes numericas de modulo del codigo fuente.
 
     Por AST y no importando: importar ejecuta, y un guardian que ejecuta el codigo que
     vigila puede fallar por un `ImportError` que no tiene nada que ver con la deriva.
 
+    Se recogen numeros **y cadenas**. Las cadenas hacen falta por `SCHEMA_VERSION`, que es
+    el caso que motivo ampliarlo: el README anunciaba el esquema `1.2.0` cuando el codigo
+    iba por `1.3.0`, y la comprobacion pasaba en verde porque solo miraba numeros. Una
+    version de contrato desincronizada es justo el tipo de mentira que este guardian existe
+    para impedir.
+
     El valor es un **conjunto** porque un mismo nombre puede vivir en dos modulos. Si los
     dos valen lo mismo da igual; si no, la cita es ambigua y eso se declara.
     """
-    encontradas: dict[str, set[float]] = {}
+    encontradas: dict[str, set[float | str]] = {}
     fuentes = [
         f for f in ficheros
         if f.endswith(".py") and "/src/" in f and "3dgs-engine" not in f
@@ -684,7 +691,7 @@ def constantes_del_codigo(ficheros: set[str]) -> dict[str, set[float]]:
                 objetivos = [nodo.target]
             else:
                 continue
-            valor = _valor_numerico(nodo.value)
+            valor = _valor_de(nodo.value)
             if valor is None:
                 continue
             for objetivo in objetivos:
@@ -693,13 +700,18 @@ def constantes_del_codigo(ficheros: set[str]) -> dict[str, set[float]]:
     return encontradas
 
 
-def _valor_numerico(nodo: ast.expr | None) -> float | None:
-    """El valor de un literal numerico, incluido el negativo (`-0.5` es un unario)."""
-    if isinstance(nodo, ast.Constant) and isinstance(nodo.value, int | float):
-        return float(nodo.value)
+def _valor_de(nodo: ast.expr | None) -> float | str | None:
+    """El valor de un literal numerico o de cadena. El negativo es un unario, no literal."""
+    if isinstance(nodo, ast.Constant):
+        if isinstance(nodo.value, bool):
+            return None
+        if isinstance(nodo.value, int | float):
+            return float(nodo.value)
+        if isinstance(nodo.value, str):
+            return nodo.value
     if isinstance(nodo, ast.UnaryOp) and isinstance(nodo.op, ast.USub):
-        interior = _valor_numerico(nodo.operand)
-        return None if interior is None else -interior
+        interior = _valor_de(nodo.operand)
+        return None if isinstance(interior, str) or interior is None else -interior
     return None
 
 
@@ -727,11 +739,21 @@ def revisar_constantes(ficheros: set[str]) -> list[str]:
                 if len(valores) > 1:
                     problemas.append(
                         f"{doc}:{n} cita `{nombre}`, que existe con {len(valores)} valores "
-                        f"distintos ({', '.join(str(v) for v in sorted(valores))}). La cita "
+                        f"distintos ({', '.join(sorted(map(str, valores)))}). La cita "
                         "es ambigua: renombra una de las dos constantes."
                     )
                     continue
                 esperado = next(iter(valores))
+                if isinstance(esperado, str):
+                    # Una cadena se busca literal: `SCHEMA_VERSION = "1.4.0"` tiene que
+                    # aparecer tal cual, no como tres numeros sueltos.
+                    if esperado not in linea:
+                        problemas.append(
+                            f"{doc}:{n} no dice `{esperado}` en ninguna parte, y "
+                            f"`{nombre}` vale eso. Uno de los dos miente, y el que se "
+                            "publica es el documento."
+                        )
+                    continue
                 escritos = _numeros_de(MARCADOR_CONST.sub("", linea))
                 if not any(math.isclose(x, esperado, rel_tol=1e-9) for x in escritos):
                     problemas.append(

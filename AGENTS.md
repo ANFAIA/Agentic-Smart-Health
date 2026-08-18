@@ -305,7 +305,7 @@ versión nueva encuentre.
 | `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
 | `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
 | `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
-| `constantes` | un número escrito en la prosa ↔ el valor de la constante de la que sale |
+| `constantes` | un número o una cadena escritos en la prosa ↔ el valor de la constante de la que salen |
 | `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
 | `bloques` | que las tablas generadas coincidan con el código |
 
@@ -357,6 +357,7 @@ frase, el CI lo dice con el fichero y la línea. Hoy hay 13 números marcados.
 | 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
 | 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
 | 2026-08-17 | 0.4.0 | Comprobación de **constantes**: los números citados en la documentación contra el valor real en el código, atados con un marcador `<!--const:NOMBRE-->`. Era la extensión que esta misma ficha declaraba pendiente. |
+| 2026-08-18 | 0.5.0 | `constantes` admite **cadenas**, no solo números. Lo pidió `SCHEMA_VERSION`: el README anunciaba el esquema `1.2.0` con el contrato ya en `1.3.0`, y la comprobación pasaba en verde porque «1.2.0» no es un número. |
 
 ---
 
