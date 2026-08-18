@@ -233,7 +233,7 @@ versión nueva encuentre.
 | Comprobación | Qué caza |
 |---|---|
 | `extensiones` | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
-| `tamano` | cualquier fichero versionado por encima de 2 MiB |
+| `tamano` | cualquier fichero versionado por encima de 5 MiB |
 | `ignore` | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
 | `manifiesto` | que las entradas de `manifest.yaml` estén completas y parseen |
 | `procedencia` | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
@@ -250,10 +250,16 @@ versión nueva encuentre.
 - No decide sobre licencias dudosas: veta por extensión y tamaño, que son criterios
   mecánicos. El juicio sobre si una licencia permite redistribuir es humano.
 
-> ⚠️ **Punto ciego conocido (2026-08-09, sin cerrar).** Veta `.stl`, `.ply` y `.obj`,
-> pero un `.html` con esa misma geometría embebida en base64 le pasa por delante: la
-> única barrera es el límite de 2 MiB, que no es el criterio correcto. Se detectó al
-> construir un visor con geometría real de paciente. El repositorio es público.
+> ⚠️ **Punto ciego conocido (2026-08-09, sin cerrar y AHORA MÁS ANCHO).** Veta `.stl`,
+> `.ply` y `.obj`, pero un `.html` con esa misma geometría embebida en base64 le pasa por
+> delante: la única barrera es el límite de tamaño, que no es el criterio correcto. Se
+> detectó al construir un visor con geometría real de paciente. El repositorio es público.
+>
+> Subir el límite de 2 a 5 MiB el 2026-08-18 **ensancha este hueco**: un visor de 4 MiB
+> que antes se paraba, ahora pasa. Mitigado a medias porque `notebooks/visores/` está
+> ignorado, pero eso protege una ruta concreta, no el patrón. Cerrarlo de verdad pide
+> mirar **dentro** del HTML —buscar bloques base64 con firma de malla— y es trabajo
+> pendiente.
 
 **Historial de cambios**
 

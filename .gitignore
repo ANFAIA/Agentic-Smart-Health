@@ -156,3 +156,7 @@ data/research-agent/.qdrant_data/
 experiments/
 notebooks/08-*.ipynb
 .gstack/
+
+# Visores 3D generados por los notebooks: son geometria de paciente (decenas de MB de
+# malla por fichero) y derivados regenerables. Nunca al repositorio.
+notebooks/visores/

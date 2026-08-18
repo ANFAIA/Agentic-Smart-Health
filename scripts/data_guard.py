@@ -62,9 +62,17 @@ _VETADAS = (
 )
 EXTENSIONES_VETADAS = frozenset(_VETADAS.split())
 
-# 2 MiB. El fichero versionado más grande hoy es un notebook de 1,4 MiB, así que
-# el límite deja margen para trabajo normal y corta un dataset en seco.
-LIMITE_BYTES = 2 * 1024 * 1024
+# 5 MiB. Subido desde 2 MiB el 2026-08-18, y el motivo importa porque relajar el
+# guardián que evitó la issue 45 no es gratis: el notebook del registro por diente pesa
+# 3,9 MiB de renders del caso `histora`, que es dato clínico PROPIO y con consentimiento
+# de publicación (ver `docs/research/dataset-histora.md`). No es un dataset colándose:
+# es el producto del repositorio, y la regla `procedencia` —que exige ficha de dataset
+# para cualquier notebook con imágenes— es la que de verdad vigila ese caso.
+#
+# El límite sigue cortando un dataset en seco: una serie DICOM o una cohorte de mallas
+# están dos órdenes de magnitud por encima. Lo que ya no corta es un notebook con
+# figuras, que es trabajo normal.
+LIMITE_BYTES = 5 * 1024 * 1024
 
 # Rutas sonda: no existen: se le pregunta a git si *las ignoraría*. Comprobar el
 # comportamiento y no el texto del `.gitignore` sobrevive a que alguien reordene
