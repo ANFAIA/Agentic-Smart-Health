@@ -339,6 +339,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/altura_corona.py`](scripts/altura_corona.py) | mide la altura de corona clínica sobre el escáner intraoral. |
 | [`scripts/audit_pr.py`](scripts/audit_pr.py) | Guardián de las reglas de arquitectura del monorepo. |
 | [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
+| [`scripts/composicion_cbct_ios.py`](scripts/composicion_cbct_ios.py) | Dientes segmentados en el CBCT + encía del IOS, en gaussianas. |
 | [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
 | [`scripts/desplazamiento_relativo.py`](scripts/desplazamiento_relativo.py) | ¿Se puede decir «esta pieza se desplazó X mm»? Referencia leave-one-out y umbral. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
@@ -350,6 +351,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py) | Simula qué resolución alcanza cada modalidad dental. |
 | [`scripts/segmentar_fdi.py`](scripts/segmentar_fdi.py) | etiqueta cada diente de una arcada con su código FDI. |
 | [`scripts/seguimiento_histora.py`](scripts/seguimiento_histora.py) | cuánto se ha movido el margen gingival entre dos escaneos. |
+| [`scripts/umbral_vs_verdad.py`](scripts/umbral_vs_verdad.py) | ¿Cuánto diente recupera un umbral, contra una verdad conocida? |
 | [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
 <!-- /generado: scripts -->
 
