@@ -383,7 +383,11 @@ class IngestionPipeline:
                 )
             )
 
-        motivos = [m for s in salidas for m in self._export_reasons(s)]
+        # `dict.fromkeys` y no un `set`: deduplica CONSERVANDO el orden, que es el de
+        # descubrimiento y el que hace legible la lista. Sin esto los tres canales repiten
+        # los motivos del snapshot —cada exportador vuelve a mirar si es parcial— y un
+        # caso con una modalidad fallida sale con el mismo aviso tres veces.
+        motivos = list(dict.fromkeys(m for s in salidas for m in self._export_reasons(s)))
         return replace(
             result,
             exports=[*result.exports, *salidas],
