@@ -85,6 +85,17 @@ LATENCY_BUDGET_S = 60.0
 # existe para cazar —el centroide y el `region_id`— se colaron entre dos agentes que
 # cumplían su propio contrato. Ver `core_schemas.etapas`.
 CONTRATOS: dict[str, ContratoEtapa] = {
+    # Las dos etapas de fusión no leen el campo: la geométrica registra dos nubes que le
+    # llegan por parámetro y escribe en la procedencia; la semántica trabaja sobre
+    # `regional` y el mapa FDI. Por eso no exigen ningún array.
+    #
+    # Lo que sí declaran es que **no pueden perderlo**, y no es una comprobación vacía:
+    # `GeometricFusionAgent.transfer_color` ya existe y su docstring dice que
+    # materializar el color es de quien sea dueño del `ArtifactStore` — es decir, de este
+    # orquestador. El día que se conecte, esta etapa pasará a emitir un artefacto nuevo,
+    # y ese es exactamente el momento en que se pierden claves por el camino.
+    "fusion-geometrica": ContratoEtapa(nombre="geometric-fusion-agent"),
+    "fusion-semantica": ContratoEtapa(nombre="semantic-fusion-agent"),
     "segmentation": ContratoEtapa(
         nombre="segmentation-agent",
         requiere_arrays=frozenset({"centers"}),
@@ -430,6 +441,7 @@ class IngestionPipeline:
             out = self.geometric_fusion.fuse(snapshot, source=origen, target=destino)
             salidas.append(out)
             motivos += self._stage_reasons(out)
+            motivos += self._conservacion("fusion-geometrica", snapshot, out.snapshot)
             snapshot = out.snapshot or snapshot
 
         if snapshot is not None and detected is None and self.segmentation is not None:
@@ -446,13 +458,12 @@ class IngestionPipeline:
             seg = self.segmentation.analyze(snapshot)
             analisis.append(seg)
             motivos += self._stage_reasons(seg)
-            if seg.snapshot is not None:
-                # La otra mitad del contrato: lo que entró tiene que salir. Es lo que
-                # habría cazado el `region_id`, donde la entrada era correcta y la
-                # pérdida ocurría entre la entrada y la salida de la etapa.
-                motivos += revisa_conservacion(
-                    contrato, antes, self.store.load(seg.snapshot.gaussian_field_ref)
-                )
+            # La otra mitad del contrato: lo que entró tiene que salir. Es lo que
+            # habría cazado el `region_id`, donde la entrada era correcta y la pérdida
+            # ocurría entre la entrada y la salida de la etapa.
+            motivos += self._conservacion(
+                "segmentation", snapshot, seg.snapshot, arrays=antes
+            )
             snapshot = seg.snapshot or snapshot
             # Solo se ancla contra lo que la segmentación encontró de verdad: si
             # falló, `detected` sigue vacío y la fusión semántica se declarará
@@ -463,6 +474,7 @@ class IngestionPipeline:
             out = self.semantic_fusion.fuse(snapshot, detected=detected)
             salidas.append(out)
             motivos += self._stage_reasons(out)
+            motivos += self._conservacion("fusion-semantica", snapshot, out.snapshot)
             snapshot = out.snapshot or snapshot
 
         return replace(
@@ -564,6 +576,34 @@ class IngestionPipeline:
             result,
             exports=[*result.exports, *salidas],
             hitl_reasons=[*result.hitl_reasons, *motivos],
+        )
+
+    def _conservacion(
+        self,
+        clave: str,
+        antes: TwinSnapshot,
+        despues: TwinSnapshot | None,
+        *,
+        arrays: dict | None = None,
+    ) -> list[str]:
+        """La mitad `conserva` del contrato, sin pagar por comprobar lo que es trivial.
+
+        **Si la referencia al campo no cambió, no hay nada que comparar.** La referencia
+        es el hash del artefacto: misma referencia son los mismos bytes, y por tanto las
+        mismas claves. Sin este atajo, declarar el contrato en una etapa que solo escribe
+        en la procedencia costaría dos descompresiones de medio millón de gaussianas por
+        etapa para verificar algo que es cierto por construcción — y una comprobación que
+        se paga cara es una comprobación que alguien acaba quitando.
+
+        `arrays` es la entrada ya cargada, cuando la etapa tuvo que cargarla igualmente
+        para mirar sus requisitos. Releerla sería la misma descompresión otra vez.
+        """
+        if despues is None or despues.gaussian_field_ref == antes.gaussian_field_ref:
+            return []
+        return revisa_conservacion(
+            CONTRATOS[clave],
+            self.store.load(antes.gaussian_field_ref) if arrays is None else arrays,
+            self.store.load(despues.gaussian_field_ref),
         )
 
     def _columnas_del_campo(self, arrays: dict, ply: Path) -> list[str]:

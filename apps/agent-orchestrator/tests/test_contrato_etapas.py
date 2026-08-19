@@ -113,3 +113,61 @@ def test_los_metadatos_del_campo_no_se_exigen_como_columna(pipeline, caso, tmp_p
     ply = fuera.export("field-export-agent")
     assert ply.ok
     assert not any("origin" in m and "no lleva" in m for m in fuera.hitl_reasons)
+
+
+# --- las dos etapas de fusión ----------------------------------------------- #
+def test_las_siete_etapas_tienen_contrato():
+    """Ninguna etapa corre sin declarar qué necesita y qué conserva.
+
+    Una etapa sin entrada en `CONTRATOS` no es que pase la comprobación: es que **no se
+    comprueba**, y por fuera se ve igual. Este test es el que impide que la próxima etapa
+    entre al pipeline sin contrato por olvido.
+    """
+    assert set(CONTRATOS) == {
+        "fusion-geometrica",
+        "fusion-semantica",
+        "segmentation",
+        "export-malla",
+        "export-campo",
+        "export-render",
+    }
+
+
+def test_una_fusion_que_reescribiera_el_campo_no_podria_perder_nada():
+    """Las dos fusiones no leen el campo, pero prometen no perderlo.
+
+    Hoy escriben solo en la procedencia, así que la promesa se cumple sola. Se declara
+    igual porque `GeometricFusionAgent.transfer_color` ya existe y persistir el color es
+    trabajo del orquestador: el día que se conecte, la etapa pasará a emitir un artefacto
+    nuevo, y ese es justo el momento en que se pierden claves.
+    """
+    antes = {"centers": np.zeros((4, 3)), "colors": np.zeros((4, 3))}
+    for clave in ("fusion-geometrica", "fusion-semantica"):
+        assert revisa_conservacion(CONTRATOS[clave], antes, antes) == []
+        perdido = revisa_conservacion(CONTRATOS[clave], antes, {"centers": antes["centers"]})
+        assert len(perdido) == 1 and "`colors`" in perdido[0]
+
+
+def test_una_etapa_que_no_toca_el_campo_no_paga_por_comprobarlo(pipeline, caso):
+    """El atajo, y por qué importa que sea gratis.
+
+    Comparar entrada y salida cuesta dos descompresiones de medio millón de gaussianas.
+    Si la referencia no cambió, no hay nada que comparar —la referencia es el hash del
+    artefacto—, y sin el atajo declarar el contrato en las fusiones habría añadido cuatro
+    cargas por caso para verificar algo cierto por construcción. Una comprobación cara es
+    una comprobación que alguien acaba quitando.
+    """
+    resultado = pipeline.run(CaseInput.from_case_dir(caso))
+    snapshot = resultado.snapshot
+    cargas = []
+    original = pipeline.store.load
+    pipeline.store.load = lambda ref: (cargas.append(ref), original(ref))[1]  # type: ignore[method-assign]
+
+    # Mismo campo a la entrada y a la salida: no se carga nada.
+    assert pipeline._conservacion("fusion-geometrica", snapshot, snapshot) == []
+    assert cargas == []
+
+    # Y sin salida tampoco: una etapa que falló no perdió nada, no llegó a producir.
+    assert pipeline._conservacion("fusion-geometrica", snapshot, None) == []
+    assert cargas == []
+
