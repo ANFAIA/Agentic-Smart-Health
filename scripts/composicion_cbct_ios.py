@@ -51,6 +51,11 @@ from registro_ios_cbct import arcada_del_escaneo, plano_oclusal  # noqa: E402
 # cualquiera) y el alto es la saturación del esmalte: por encima no queda dentina.
 BARRIDO_HU = (700, 900, 1100, 1300, 1500, 1700, 1900)
 
+# Espaciado con el que se entrenó el segmentador (ToothFairy2, isótropo). No es una
+# preferencia: es el espaciado al que el campo receptivo de la red vale lo que valía
+# cuando se midió su F1. Ver `probabilidad_por_modelo`.
+ESPACIADO_ENTRENAMIENTO = 0.30
+
 # Radio de vecindad para las componentes conexas, en múltiplos del espaciado del vóxel.
 # 1,8 conecta un vóxel con sus vecinos en diagonal de cara y arista pero no en esquina:
 # más laxo une dientes por el punto de contacto, más estricto parte un diente sano.
@@ -201,7 +206,10 @@ def nombra_por_vecindad(
     return nombres
 
 
-def probabilidad_por_modelo(volumen: np.ndarray, checkpoint: Path, *, lado: int = 96):
+def probabilidad_por_modelo(
+    volumen: np.ndarray, checkpoint: Path, *, lado: int = 96,
+    espaciado: np.ndarray | None = None,
+):
     """Probabilidad de diente por vóxel, según el segmentador entrenado.
 
     Devuelve la **probabilidad** y no la máscara: umbralizarla es barato y la inferencia
@@ -211,11 +219,42 @@ def probabilidad_por_modelo(volumen: np.ndarray, checkpoint: Path, *, lado: int 
     Ventana deslizante SIN solape, la misma con la que se midió el F1 del modelo: si aquí
     se solapara y allí no, el número publicado no describiría a este código.
 
+    ⚠️ **Y el volumen se remuestrea al espaciado de entrenamiento primero.** Una U-Net 3D
+    tiene campo receptivo fijo *en vóxeles*, no en milímetros: el parche de 96³ con el que
+    se entrenó cubre 28,8 mm a 0,30 mm/vóxel —un molar con su hueso alrededor— y solo
+    14,4 mm sobre un CBCT de 0,15, que es apenas el diente sin contexto. Inferir al
+    espaciado nativo sobre un caso fino daría una segmentación peor **que parecería culpa
+    del modelo** en vez de la escala.
+
+    ⚠️ **Pendiente de que una medida lo respalde.** El razonamiento es geométrico y firme,
+    pero no hay número que diga que ayuda: el caso donde se activa (0,15 × 0,15 × 0,45)
+    falló antes por el registro, así que no se le puede atribuir nada, y el otro es 0,300
+    isótropo y ni se activa. Queda declarado como lo que es.
+
+    Y ojo con la anisotropía, que es el caso real y no el de manual: ese CBCT trae
+    0,45 mm en z contra 0,15 en el plano —el `SliceThickness` del DICOM dice 0,150 y
+    miente; el bueno es el que sale de las posiciones (IPP)—. Remuestrear ahí sube z de
+    0,45 a 0,30 **interpolando**, es decir inventando cortes que nadie midió, sobre un eje
+    que ya venía 3× más grueso. El entrenamiento no vio nada parecido.
+
     `torch` se importa dentro a propósito. Este script corre en el venv normal cuando usa
     el umbral, y solo necesita GPU en esta rama — importarlo arriba obligaría a todo el
     script a vivir en el entorno de GPU sin motivo.
     """
     import torch
+
+    nativo = volumen
+    factor = None
+    if espaciado is not None:
+        factor = np.asarray(espaciado, dtype=np.float64) / ESPACIADO_ENTRENAMIENTO
+        if np.allclose(factor, 1.0, atol=0.02):
+            factor = None
+        else:
+            from scipy.ndimage import zoom
+
+            print(f"remuestreo {np.round(espaciado, 3)} -> {ESPACIADO_ENTRENAMIENTO} mm/voxel "
+                  f"(factor {np.round(factor, 3)}) antes de inferir")
+            volumen = zoom(volumen, factor, order=1)
 
     sys.path.insert(0, str(RAIZ / "scripts"))
     from entrena_diente_cbct import HU_MAX, HU_MIN, UNet3D, normaliza
@@ -239,7 +278,18 @@ def probabilidad_por_modelo(volumen: np.ndarray, checkpoint: Path, *, lado: int 
                     xt = torch.from_numpy(hu[s]).unsqueeze(0).unsqueeze(0).to(dev)
                     fuera[s] = torch.sigmoid(modelo(xt))[0, 0].cpu().numpy()
     recorte = tuple(slice(0, s) for s in volumen.shape)
-    return fuera[recorte]
+    prob = fuera[recorte]
+    if factor is None:
+        return prob
+    # Y vuelta a la rejilla nativa, que es donde viven las gaussianas del campo. `zoom`
+    # con el inverso no cae exacto en el número de vóxeles, así que se fija por forma.
+    prob = zoom(prob, np.asarray(nativo.shape) / np.asarray(prob.shape), order=1)
+    ajuste = tuple(slice(0, s) for s in nativo.shape)
+    if prob.shape != nativo.shape:
+        relleno = np.zeros(nativo.shape, dtype=np.float32)
+        relleno[tuple(slice(0, s) for s in prob.shape)] = prob[ajuste]
+        return relleno
+    return prob
 
 
 def main() -> int:
@@ -286,7 +336,9 @@ def main() -> int:
         from ingestion_agents.cbct_agent import _read_series
 
         serie = _read_series(args.cbct)
-        prob = probabilidad_por_modelo(serie.volume, args.modelo)
+        prob = probabilidad_por_modelo(
+            serie.volume, args.modelo, espaciado=np.asarray(serie.spacing)
+        )
 
         # De vóxel a gaussiana. El `cbct-agent` construye los centros como
         # `(col*sx, fila*sy, serie.z[corte])` y luego resta el centroide, así que se
