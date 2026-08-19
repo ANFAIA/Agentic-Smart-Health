@@ -36,11 +36,14 @@ from typing import Any
 
 from analysis_agents import AnalysisOutput, SegmentationAgent, Segmenter
 from core_schemas import (
+    ContratoEtapa,
     Modality,
     ModalityStatus,
     PatientDigitalTwin,
     Provenance,
     TwinSnapshot,
+    revisa_conservacion,
+    revisa_requisitos,
 )
 from export_agents import (
     ExportAgent,
@@ -52,7 +55,9 @@ from fusion_agents import (
     FusionOutput,
     GeometricFusionAgent,
     SemanticFusionAgent,
+    arcada_del_nombre,
     insert_snapshot,
+    nubes_para_registro,
 )
 from ingestion_agents import (
     ArtifactStore,
@@ -72,6 +77,39 @@ DEFAULT_HITL_THRESHOLD = 0.7
 
 # Presupuesto de latencia de ingesta acordado con el partner (brief, Semana 3-4).
 LATENCY_BUDGET_S = 60.0
+
+# El contrato de cada etapa: qué necesita encontrar y qué no puede perder.
+#
+# Se declara aquí, junto a las llamadas que gobierna, y no dentro de cada agente: un
+# agente no sabe quién viene detrás, y precisamente por eso los dos fallos que esto
+# existe para cazar —el centroide y el `region_id`— se colaron entre dos agentes que
+# cumplían su propio contrato. Ver `core_schemas.etapas`.
+CONTRATOS: dict[str, ContratoEtapa] = {
+    "segmentation": ContratoEtapa(
+        nombre="segmentation-agent",
+        requiere_arrays=frozenset({"centers"}),
+    ),
+    # ⚠️ `export-malla` NO declara `surface_ref` como requisito, y la distinción importa:
+    # una adquisición puede ser solo CBCT, y eso es normal. El exportador ya devuelve
+    # MISSING y el gate no lo cuenta como motivo de revisión. Declararlo aquí convertía
+    # «esta visita no trajo escáner» en un aviso, que es ruido — y el ruido es como se
+    # desactiva un gate. El contrato es para lo que saldría MAL EN SILENCIO, no para lo
+    # que legítimamente falta.
+    "export-malla": ContratoEtapa(
+        nombre="export-agent",
+        conserva_arrays=False,  # su salida es una malla, no el campo
+    ),
+    "export-campo": ContratoEtapa(
+        nombre="field-export-agent",
+        requiere_arrays=frozenset({"centers", "scales", "rotations", "density"}),
+        conserva_arrays=False,  # su salida es un PLY; lo verifica `columnas_del_campo`
+    ),
+    "export-render": ContratoEtapa(
+        nombre="render-export-agent",
+        requiere_arrays=frozenset({"centers", "scales", "density"}),
+        conserva_arrays=False,  # su salida es una imagen: no conserva arrays por diseño
+    ),
+}
 
 
 @dataclass
@@ -268,12 +306,87 @@ class IngestionPipeline:
             patient_pseudonym=pseudonym,
         )
 
+    # --- preparación del registro ---------------------------------------- #
+    def prepara_registro(
+        self,
+        result: PipelineResult,
+        *,
+        malla: Path | str | None = None,
+        arcada: str | None = None,
+    ) -> tuple[Any, Any, dict] | None:
+        """Las dos nubes que `fuse` va a registrar, elegidas **aquí** y no a mano.
+
+        `None` si no hay snapshot o no hay malla: sin escáner no hay nada que registrar,
+        y eso es normal —una adquisición puede ser solo CBCT—, no un fallo.
+
+        Antes esta elección vivía en un script: para pasar un caso clínico por el
+        pipeline había que escribir a mano el aislamiento de la arcada, la selección de
+        la corona y el submuestreo. Un orquestador que necesita que una persona escriba
+        el pegamento no está terminado. El criterio de las tres decisiones —y lo que se
+        midió para fijarlo— está en `fusion_agents.preparacion`.
+
+        `arcada` se puede pasar a mano para el caso en que el nombre del fichero no lo
+        diga o mienta; si no, sale del nombre de `malla`. Nunca del residuo del registro,
+        que está medido que no discrimina (0,490 vs 0,509 mm entre lóbulo correcto e
+        incorrecto).
+        """
+        import numpy as np
+        from export_agents import densidad_a_hu
+
+        snapshot = result.snapshot
+        if snapshot is None or snapshot.surface_ref is None:
+            return None
+        campo = self.store.load(snapshot.gaussian_field_ref)
+        vertices = self.store.load(snapshot.surface_ref)["positions"]
+
+        # Sin `hu_range` el campo no viene de un CBCT y no hay HU que umbralizar; la
+        # preparación lo admite y registra contra todo, que es lo correcto ahí.
+        hu = (
+            densidad_a_hu(campo["density"], campo["hu_range"])
+            if "hu_range" in campo and "density" in campo
+            else None
+        )
+        if arcada is None and malla is not None:
+            arcada = arcada_del_nombre(malla)
+
+        origen, destino, informe = nubes_para_registro(
+            campo, np.asarray(vertices), arcada=arcada, hu=hu
+        )
+        if hu is not None and "n_corona" not in informe:
+            informe["sin_corona"] = (
+                "el campo no tiene bastantes gaussianas de corona: se registra contra "
+                "todo el tejido duro, que incluye raíz y hueso — superficie que el "
+                "escáner intraoral no puede ver"
+            )
+        return origen, destino, informe
+
+    @staticmethod
+    def _motivos_de_preparacion(informe: Mapping[str, Any]) -> list[str]:
+        """Lo que la preparación tuvo que dar por bueno sin poder comprobarlo.
+
+        Van al gate y no a un `print` porque son degradaciones **silenciosas**: el
+        registro termina, informa un residuo razonable y aun así puede haber encajado la
+        mandíbula contra el maxilar. El residuo no avisa; esto sí.
+        """
+        motivos = []
+        if informe.get("arcada") is None:
+            motivos.append(
+                "el escaneo no declara arcada (el nombre del fichero no la lleva): se "
+                "registra contra las dos, y el residuo del ICP no distingue una de otra"
+            )
+        for clave in ("no_se_parte", "sin_corona"):
+            if clave in informe:
+                motivos.append(str(informe[clave]))
+        return motivos
+
     # --- fusión (ADR 004) ------------------------------------------------ #
     def fuse(
         self,
         result: PipelineResult,
         *,
         registration: tuple[Any, Any] | None = None,
+        malla: Path | str | None = None,
+        arcada: str | None = None,
         detected: Mapping[str, float] | None = None,
     ) -> PipelineResult:
         """Aplica las etapas de fusión sobre un resultado de ingesta.
@@ -281,6 +394,10 @@ class IngestionPipeline:
         Cada etapa corre **solo si se le da su entrada**, y en el orden del pipeline:
         geométrica (registro malla↔CBCT) → **segmentación** (puebla `region_id`) →
         semántica (anclaje al FDI).
+
+        Para la geométrica basta con la ruta de la malla (`malla=`): las dos nubes las
+        elige `prepara_registro`, y lo que tuvo que dar por bueno entra en el gate. El
+        par `registration=` explícito se sigue aceptando y tiene prioridad.
 
         `detected` sigue siendo un parámetro y **manda sobre la segmentación**: es
         por donde entran las etiquetas revisadas por un clínico. Human-in-the-loop
@@ -293,7 +410,20 @@ class IngestionPipeline:
         `hitl_reasons` y **se conserva el último snapshot bueno**. Estas etapas
         enriquecen; que fallen no debe destruir lo que la ingesta sí consiguió.
         """
-        snapshot, salidas, analisis, motivos = result.snapshot, [], [], []
+        snapshot = result.snapshot
+        salidas: list[FusionOutput] = []
+        analisis: list[AnalysisOutput] = []
+        motivos: list[str] = []
+
+        # Con `malla` y sin `registration`, el orquestador elige las nubes él mismo.
+        # `registration` sigue mandando: es por donde entra un registro preparado fuera
+        # —un experimento, un par corregido a mano— sin tener que pasar por aquí.
+        if snapshot is not None and registration is None and malla is not None:
+            preparado = self.prepara_registro(result, malla=malla, arcada=arcada)
+            if preparado is not None:
+                origen, destino, informe = preparado
+                registration = (origen, destino)
+                motivos += self._motivos_de_preparacion(informe)
 
         if snapshot is not None and registration is not None:
             origen, destino = registration
@@ -303,9 +433,26 @@ class IngestionPipeline:
             snapshot = out.snapshot or snapshot
 
         if snapshot is not None and detected is None and self.segmentation is not None:
+            contrato = CONTRATOS["segmentation"]
+            antes = self.store.load(snapshot.gaussian_field_ref)
+            faltan = revisa_requisitos(contrato, snapshot, antes)
+            if faltan:
+                return replace(
+                    result, snapshot=snapshot, fusion=[*result.fusion, *salidas],
+                    analysis=[*result.analysis, *analisis],
+                    hitl_reasons=[*result.hitl_reasons, *motivos, *faltan],
+                )
+
             seg = self.segmentation.analyze(snapshot)
             analisis.append(seg)
             motivos += self._stage_reasons(seg)
+            if seg.snapshot is not None:
+                # La otra mitad del contrato: lo que entró tiene que salir. Es lo que
+                # habría cazado el `region_id`, donde la entrada era correcta y la
+                # pérdida ocurría entre la entrada y la salida de la etapa.
+                motivos += revisa_conservacion(
+                    contrato, antes, self.store.load(seg.snapshot.gaussian_field_ref)
+                )
             snapshot = seg.snapshot or snapshot
             # Solo se ancla contra lo que la segmentación encontró de verdad: si
             # falló, `detected` sigue vacío y la fusión semántica se declarará
@@ -364,6 +511,18 @@ class IngestionPipeline:
 
         destino = Path(destino)
         snapshot = result.snapshot
+        arrays = self.store.load(snapshot.gaussian_field_ref)
+
+        # Cada canal declara qué necesita ANTES de correr. Sin esto, pedir el marco del
+        # CBCT sobre un artefacto sin `origin` entregaba el campo centrado haciéndolo
+        # pasar por coordenadas reales: todo lo que se midiese encima salía desplazado y
+        # con buen aspecto.
+        previos = [
+            m
+            for clave in ("export-malla", "export-campo", "export-render")
+            for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
+        ]
+
         salidas: list[ExportOutput] = [
             ExportAgent(self.store, frame=marco_malla).export(  # type: ignore[arg-type]
                 snapshot, destino / f"{snapshot.acquisition_id}.stl"
@@ -387,12 +546,63 @@ class IngestionPipeline:
         # descubrimiento y el que hace legible la lista. Sin esto los tres canales repiten
         # los motivos del snapshot —cada exportador vuelve a mirar si es parcial— y un
         # caso con una modalidad fallida sale con el mismo aviso tres veces.
-        motivos = list(dict.fromkeys(m for s in salidas for m in self._export_reasons(s)))
+        # `salida_ply` y no `ply`: ese nombre ya es la RUTA que se le pasa al render unas
+        # líneas más arriba, y reutilizarlo daba un `ExportOutput` donde se esperaba un
+        # `Path`. Lo cazó MyPy; en ejecución habría petado al pedirle `.path` a una ruta.
+        salida_ply = next((s for s in salidas if s.format == "ply" and s.ok), None)
+        columnas = (
+            self._columnas_del_campo(arrays, salida_ply.path)
+            if salida_ply is not None and salida_ply.path is not None
+            else []
+        )
+        motivos = list(dict.fromkeys([
+            *previos,
+            *(m for s in salidas for m in self._export_reasons(s)),
+            *columnas,
+        ]))
         return replace(
             result,
             exports=[*result.exports, *salidas],
             hitl_reasons=[*result.hitl_reasons, *motivos],
         )
+
+    def _columnas_del_campo(self, arrays: dict, ply: Path) -> list[str]:
+        """Que el PLY lleve una columna por cada array **por gaussiana** del campo.
+
+        Es el contrato que faltaba y el que costó el fallo: el `segmentation-agent`
+        guardaba `region_id` en el artefacto, el `field-export-agent` escribía un PLY
+        perfectamente válido sin esa columna, y los dos pasaban sus tests. El fichero
+        salía con la geometría bien y mudo sobre lo único que el pipeline sabe de
+        anatomía.
+
+        Solo se exigen los arrays cuya primera dimensión es el número de gaussianas:
+        `origin` (3,) y `hu_range` (2,) son metadatos del campo y viajan en la cabecera,
+        no como columna por vértice.
+        """
+        from export_agents import COLUMNAS_DE_ARRAY, lee_ply
+
+        n = len(arrays["centers"])
+        por_gaussiana = {
+            k for k, v in arrays.items() if getattr(v, "shape", (0,))[:1] == (n,)
+        }
+        try:
+            columnas = set(lee_ply(ply))
+        except (OSError, ValueError) as e:
+            return [f"no se pudo releer {ply.name} para verificar sus columnas: {e}"]
+
+        # Un array sin entrada en el mapa es uno que el exportador NO SABE escribir, y
+        # cuenta como perdido: es el caso exacto de `region_id` antes del arreglo.
+        perdidos = sorted(
+            k for k in por_gaussiana
+            if not set(COLUMNAS_DE_ARRAY.get(k, ())) or
+            not set(COLUMNAS_DE_ARRAY[k]) <= columnas
+        )
+        if not perdidos:
+            return []
+        return [
+            f"el PLY exportado no lleva {', '.join(f'`{k}`' for k in perdidos)}, que el "
+            "campo del twin sí tiene. Quien abra el fichero no puede recuperarlo."
+        ]
 
     def _stage_reasons(self, out: FusionOutput | AnalysisOutput) -> list[str]:
         """Los motivos del agente, más el de que la etapa no llegara a hacerse.

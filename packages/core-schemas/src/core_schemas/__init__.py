@@ -4,6 +4,11 @@ Punto único de importación para el resto del monorepo. Los agentes se comunica
 exclusivamente a través de estos modelos (ver AGENTS.md y ADR 001).
 """
 
+from core_schemas.etapas import (
+    ContratoEtapa,
+    revisa_conservacion,
+    revisa_requisitos,
+)
 from core_schemas.models import (
     SCHEMA_VERSION,
     ClinicalAttributes,
@@ -25,6 +30,7 @@ from core_schemas.models import (
 __all__ = [
     "SCHEMA_VERSION",
     "ClinicalAttributes",
+    "ContratoEtapa",
     "Hallazgo",
     "Color",
     "FDICode",
@@ -38,4 +44,6 @@ __all__ = [
     "RegionalObservation",
     "Support",
     "TwinSnapshot",
+    "revisa_conservacion",
+    "revisa_requisitos",
 ]

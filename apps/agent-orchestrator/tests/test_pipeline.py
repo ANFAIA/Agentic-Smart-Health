@@ -401,6 +401,76 @@ def test_las_dos_etapas_corren_en_el_orden_del_pipeline(
     assert fusionado.snapshot.provenance.transform is not None
 
 
+# --- preparación del registro dentro del orquestador ------------------------ #
+def test_con_la_malla_el_orquestador_elige_las_nubes_el_solo(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """La prueba de que la #39 está cerrada: `fuse` sin `registration`, solo la ruta.
+
+    Antes, para registrar un caso había que traer las dos nubes ya elegidas —aislar la
+    arcada, quedarse con la corona, submuestrear— y eso vivía en un script. Si esto pasa,
+    el pegamento ya no hace falta.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, malla=case_dir / "arcada.obj")
+
+    assert [o.agent.split("@")[0] for o in fusionado.fusion] == ["geometric-fusion-agent"]
+    assert fusionado.snapshot.provenance.transform is not None
+
+
+def test_un_escaneo_que_no_dice_su_arcada_llega_al_gate(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """No basta con registrar igualmente: hay que decir contra qué se registró.
+
+    Sin arcada el ICP encaja contra las dos y puede meter la mandíbula en el maxilar
+    puntuando bien —está medido: 0,490 vs 0,509 mm, un 3,8 %—. El residuo no lo va a
+    decir, así que lo dice el gate.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, malla=case_dir / "arcada.obj")
+
+    assert any("no declara arcada" in m for m in fusionado.hitl_reasons)
+
+
+def test_las_nubes_dadas_a_mano_mandan_sobre_la_preparacion(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`registration=` sigue siendo la puerta de un registro preparado fuera."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    nube = _nube()
+    fusionado = pipeline.fuse(result, registration=(nube, nube), malla=case_dir / "x.obj")
+
+    assert fusionado.snapshot.provenance.confidence == pytest.approx(1.0)
+    # No se preparó nada, así que no hay nada que declarar sobre la preparación.
+    assert not any("no declara arcada" in m for m in fusionado.hitl_reasons)
+
+
+def test_sin_malla_no_hay_nada_que_preparar_y_no_es_un_fallo(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """Una adquisición solo-CBCT es normal: `None`, no una excepción ni un motivo."""
+    result = pipeline.run(
+        CaseInput(acquisition_id="solo-cbct", cbct=case_dir / "cbct")
+    )
+    assert result.snapshot is not None and result.snapshot.surface_ref is None
+    assert pipeline.prepara_registro(result, malla=case_dir / "arcada.obj") is None
+
+
+def test_la_arcada_se_puede_declarar_a_mano_cuando_el_nombre_no_la_trae(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """Porque la etiqueta es del operador, y a veces no está o está mal."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    preparado = pipeline.prepara_registro(result, malla=case_dir / "arcada.obj")
+    assert preparado is not None and preparado[2]["arcada"] is None
+
+    declarado = pipeline.prepara_registro(
+        result, malla=case_dir / "arcada.obj", arcada="maxilar"
+    )
+    assert declarado is not None and declarado[2]["arcada"] == "maxilar"
+
+
 def test_fuse_no_muta_el_resultado_de_entrada(
     pipeline: IngestionPipeline, case_dir: Path
 ) -> None:

@@ -49,6 +49,7 @@ from export_agents.base import (
     SurfaceStore,
 )
 from export_agents.field import (
+    COLUMNAS_DE_ARRAY,
     FIELD_FRAMES,
     FieldExportAgent,
     FieldFrame,
@@ -78,6 +79,7 @@ from export_agents.stl import (
 )
 
 __all__ = [
+    "COLUMNAS_DE_ARRAY",
     "DEFAULT_HITL_THRESHOLD",
     "FIELD_FRAMES",
     "FRAMES",

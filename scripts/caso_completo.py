@@ -33,17 +33,10 @@ for paquete in ("core-schemas", "ingestion-agents", "fusion-agents", "analysis-a
 sys.path.insert(0, str(RAIZ / "apps/agent-orchestrator/src"))
 
 from agent_orchestrator import CaseInput, IngestionPipeline  # noqa: E402
+from fusion_agents import arcada_del_nombre  # noqa: E402
 from ingestion_agents import ArtifactStore  # noqa: E402
 
 FOTOS = ("*.jpg", "*.jpeg", "*.png")
-
-# Umbral para la nube con la que se localiza el plano oclusal.
-#
-# ⚠️ NO son los 2000 HU de `registro_ios_cbct`: alli el umbral se aplica al DICOM crudo,
-# que llega a 3476 HU. Aqui se aplica al campo del `cbct-agent`, que SATURA a 2000, asi
-# que `>= 2000` selecciona solo los vertices saturados —2.507 de 493.932— y el plano
-# oclusal sale de una nube demasiado escasa para ser fiable.
-HU_CRESTA = 1500.0
 
 
 def _texto_extraible(pdf: Path) -> int:
@@ -135,53 +128,21 @@ def main() -> int:
           f"{len(r.snapshot.regional)} observación(es) regional(es)")
 
     print("\n--- 2 · FUSIÓN (registro malla ↔ campo) ---")
-    malla = pipe.store.load(r.snapshot.surface_ref)["positions"] if r.snapshot.surface_ref else None
-    campo = pipe.store.load(r.snapshot.gaussian_field_ref)
-    if malla is None:
+    if caso.mesh is None or r.snapshot.surface_ref is None:
         print("  sin malla: no hay nada que registrar")
         fus = r
     else:
-        import numpy as np
-        from export_agents.field import densidad_a_hu
-
-        sys.path.insert(0, str(RAIZ / "scripts"))
-        from registro_ios_cbct import arcada_del_escaneo, separa_arcadas
-
-        centros = campo["centers"].astype(np.float64) + campo["origin"]
-
-        # El CBCT trae las DOS arcadas y la malla es una sola. Registrar contra el
-        # volumen entero mezcla maxilar con mandibula: la primera pasada dio 0,778 mm
-        # sobre el 5,9 % solapado, que el propio gate marco como no interpretable.
-        # Cual es cual lo dice el nombre del fichero cruzado con el `IPP` del DICOM —
-        # nunca el residuo, que esta medido que NO discrimina (0,490 vs 0,509 mm).
-        hu = densidad_a_hu(campo["density"], campo["hu_range"])
-        cresta = centros[hu >= HU_CRESTA]
-        z_alta, z_baja, corte = separa_arcadas(cresta)
-        quiere = arcada_del_escaneo(caso.mesh)
-
-        # El objetivo es la CRESTA del lobulo, no el lobulo entero.
+        # Las dos nubes las elige el ORQUESTADOR, no este script.
         #
-        # ⚠️ Corregido tras medirlo: registrando contra todo el tejido duro del lobulo
-        # (322.195 gaussianas) el solape salia del 7,4 %, y el gate lo marcaba como no
-        # interpretable — con razon. Pero no era un fallo del registro: la malla del
-        # escaner ve SUPERFICIE DE CORONA, y la mayor parte de esas gaussianas son hueso e
-        # interior, que ningun escaneo intraoral puede ver. Se estaba midiendo el solape
-        # contra una nube cuya mayoria no tiene contrapartida posible.
-        if quiere == "maxilar":
-            objetivo = z_alta
-        elif quiere == "mandibular":
-            objetivo = z_baja
-        else:
-            objetivo = cresta
-        print(f"  arcada del escaneo: {quiere or 'INDETERMINADA — se registra contra todo'} "
-              f"· plano oclusal z={corte:.1f} · cresta {len(cresta):,} pts "
-              f"({len(z_alta):,} alta / {len(z_baja):,} baja) · objetivo "
-              f"{len(objetivo):,} puntos")
-
-        paso_m = max(1, len(malla) // 4000)
-        paso_c = max(1, len(objetivo) // 4000)
-        fus = pipe.fuse(r, registration=(np.asarray(malla, dtype=np.float64)[::paso_m],
-                                         objetivo[::paso_c]))
+        # ⚠️ Aquí vivían 40 líneas de pegamento: aislar la arcada del lóbulo que toca,
+        # quedarse con la cresta, submuestrear. Estaba bien medido y estaba en el sitio
+        # equivocado — un caso clínico no se podía pasar por el pipeline sin que una
+        # persona reescribiera eso. Ahora es `IngestionPipeline.prepara_registro`, con
+        # sus tests, y lo que tuvo que dar por bueno entra en el gate de revisión en vez
+        # de quedarse en un `print`. Ver `fusion_agents.preparacion`.
+        print(f"  arcada del escaneo: "
+              f"{arcada_del_nombre(caso.mesh) or 'INDETERMINADA'}")
+        fus = pipe.fuse(r, malla=caso.mesh)
         for o in fus.fusion:
             print(linea(o))
 

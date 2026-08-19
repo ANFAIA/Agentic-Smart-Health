@@ -76,6 +76,22 @@ _TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
 _CLAVES_MINIMAS = ("centers", "scales", "rotations", "density")
 
+# Qué columnas escribe cada array del campo. Lo declara el exportador porque es quien lo
+# sabe: `centers` sale como x/y/z y `rotations` como `rot_*`, y ninguna regla de recorte
+# de cadenas acierta con las dos.
+#
+# Sirve además de contrato hacia fuera: un array del campo que NO esté aquí es uno que
+# este exportador no sabe escribir, y por tanto se pierde al exportar. Eso es exactamente
+# lo que le pasó a `region_id`, y el orquestador lo comprueba con este mapa
+# (`IngestionPipeline._columnas_del_campo`).
+COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
+    "centers": ("x", "y", "z"),
+    "scales": ("scale_0", "scale_1", "scale_2"),
+    "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
+    "density": ("density",),
+    "region_id": ("region_id",),
+}
+
 
 def densidad_a_hu(density: np.ndarray, hu_range: np.ndarray) -> np.ndarray:
     """Deshace la normalización del `cbct-agent`: σ ∈ [0, 1] → unidades Hounsfield.

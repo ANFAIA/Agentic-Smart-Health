@@ -28,6 +28,12 @@ from fusion_agents.base import (
 )
 from fusion_agents.color import transfer_surface_color
 from fusion_agents.geometric import DEFAULT_MIN_OVERLAP, GeometricFusionAgent
+from fusion_agents.preparacion import (
+    HU_CORONA,
+    arcada_del_nombre,
+    nubes_para_registro,
+    plano_oclusal,
+)
 from fusion_agents.registration import (
     DEFAULT_EPSILON_MM,
     DEFAULT_OVERLAP_MM,
@@ -41,6 +47,10 @@ from fusion_agents.semantic import SemanticFusionAgent
 from fusion_agents.twin import insert_snapshot
 
 __all__ = [
+    "plano_oclusal",
+    "nubes_para_registro",
+    "arcada_del_nombre",
+    "HU_CORONA",
     "DEFAULT_EPSILON_MM",
     "DEFAULT_MIN_OVERLAP",
     "DEFAULT_OVERLAP_MM",
