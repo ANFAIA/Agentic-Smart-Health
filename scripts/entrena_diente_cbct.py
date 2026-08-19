@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -54,60 +53,72 @@ def normaliza(hu: np.ndarray) -> np.ndarray:
     return ((np.clip(hu, HU_MIN, HU_MAX) - HU_MIN) / (HU_MAX - HU_MIN)).astype(np.float32)
 
 
-# Casos que se mantienen descomprimidos en RAM a la vez. Cada uno ocupa ~140 MB ya
-# normalizado, asi que cachearlos todos son ~20 GB con 142 casos y la maquina tiene 24
-# libres: entrenar acabaria compitiendo con el sistema por memoria. Con 16 el consumo se
-# queda en ~2,3 GB y el coste es volver a descomprimir un caso de vez en cuando.
-MAX_EN_RAM = 16
-_CACHE: OrderedDict[Path, tuple[np.ndarray, np.ndarray]] = OrderedDict()
-
-
 class Caso:
-    """Un CBCT preparado, cargado perezosamente y con la RAM acotada."""
+    """Un CBCT preparado, **mapeado en memoria**: solo se lee el parche que se pide.
 
-    def __init__(self, ruta: Path) -> None:
-        self.ruta = ruta
+    ⚠️ La version anterior guardaba los casos en `.npz` comprimido y cacheaba 16
+    descomprimidos en RAM. Medido: con 135 casos de entrenamiento y lotes de 2 tomados al
+    azar, casi cada paso expulsaba y volvia a descomprimir ~140 MB. El proceso leia
+    1,24 GB cada 10 s **sin tocar disco** —todo era zlib— y la GPU se quedaba al **2 %**.
+    26 minutos sin llegar al paso 250.
 
-    def cargar(self) -> tuple[np.ndarray, np.ndarray]:
-        if self.ruta in _CACHE:
-            _CACHE.move_to_end(self.ruta)
-            return _CACHE[self.ruta]
-        d = np.load(self.ruta)
-        par = (normaliza(d["hu"]), np.isin(d["lab"], CLASES_DIENTE).astype(np.uint8))
-        _CACHE[self.ruta] = par
-        while len(_CACHE) > MAX_EN_RAM:
-            _CACHE.popitem(last=False)
-        return par
+    Con `.npy` crudo y `mmap_mode="r"`, leer un parche de 96 lee 96 voxeles y no el
+    volumen entero. Cuesta 10,3 GB de disco en vez de 4,4, y es la diferencia entre
+    entrenar en horas o en dias.
+    """
+
+    def __init__(self, ruta_hu: Path) -> None:
+        self.hu = np.load(ruta_hu, mmap_mode="r")
+        self.lab = np.load(ruta_hu.with_name(ruta_hu.name.replace("_hu.npy", "_lab.npy")),
+                           mmap_mode="r")
+
+    def recorta(self, ini: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        """El parche en `ini`, normalizado. Solo aqui se toca la memoria de verdad."""
+        s = tuple(slice(i, i + PARCHE) for i in ini)
+        return normaliza(np.asarray(self.hu[s])), np.asarray(self.lab[s])
 
 
 def parche(caso: Caso, rng: np.random.Generator, *, en_diente: bool) -> tuple:
-    """Un parche de `PARCHE³`. `en_diente` lo centra en un vóxel de diente."""
-    hu, lab = caso.cargar()
-    if any(s < PARCHE for s in hu.shape):
-        pad = [(0, max(0, PARCHE - s)) for s in hu.shape]
-        hu, lab = np.pad(hu, pad), np.pad(lab, pad)
+    """Un parche de `PARCHE³`. `en_diente` lo centra en un voxel de diente.
+
+    El centro de un parche de diente se busca sobre el memmap de etiquetas, que es uint8
+    y ~28 MB: barato de recorrer y no hay que traer el volumen de HU para decidir donde
+    mirar.
+    """
+    forma = caso.hu.shape
+    if any(s < PARCHE for s in forma):
+        hu = normaliza(np.asarray(caso.hu))
+        lab = np.asarray(caso.lab)
+        pad = [(0, max(0, PARCHE - s)) for s in forma]
+        return np.pad(hu, pad), np.pad(lab, pad)
 
     if en_diente:
-        cand = np.argwhere(lab > 0)
-        c = cand[rng.integers(len(cand))] if len(cand) else np.array(hu.shape) // 2
-        ini = [int(np.clip(c[i] - PARCHE // 2, 0, hu.shape[i] - PARCHE)) for i in range(3)]
+        cand = np.argwhere(np.asarray(caso.lab) > 0)
+        c = cand[rng.integers(len(cand))] if len(cand) else np.array(forma) // 2
+        ini = [int(np.clip(c[i] - PARCHE // 2, 0, forma[i] - PARCHE)) for i in range(3)]
     else:
-        ini = [int(rng.integers(0, hu.shape[i] - PARCHE + 1)) for i in range(3)]
-
-    s = tuple(slice(i, i + PARCHE) for i in ini)
-    return hu[s], lab[s]
+        ini = [int(rng.integers(0, forma[i] - PARCHE + 1)) for i in range(3)]
+    return caso.recorta(ini)
 
 
-def lote(casos: list[Caso], n: int, rng: np.random.Generator, dev) -> tuple:
-    """Mitad de los parches centrados en diente: sin ese sesgo la clase se pierde.
+def lote(casos: list[Caso], n: int, rng: np.random.Generator, dev, *,
+         frac_diente: float = 0.5) -> tuple:
+    """Parte de los parches centrados en diente. `frac_diente` gobierna cuántos.
 
     El diente es ~0,5 % de los vóxeles. Muestreando al azar, casi ningún parche lo
     contiene y la red converge a predecir «fondo» siempre — 99,5 % de acierto y F1 cero.
+    Por eso hace falta sesgo.
+
+    ⚠️ Pero el sesgo se paga en precisión, y está medido: con 0,5 el modelo ve ~30 % de
+    vóxeles positivos en entrenamiento y ~1 % en inferencia, y ese salto de prior le hace
+    sobre-predecir — recall 0,948 con precisión 0,588. En el compuesto de `histora` eso
+    sale como hueso etiquetado de diente y piezas de 37 mm donde el máximo anatómico es
+    25. Bajarlo acerca el prior al real a cambio de que la clase positiva sea más rara.
     """
     xs, ys = [], []
-    for i in range(n):
+    for _ in range(n):
         c = casos[rng.integers(len(casos))]
-        x, y = parche(c, rng, en_diente=(i % 2 == 0))
+        x, y = parche(c, rng, en_diente=(rng.random() < frac_diente))
         xs.append(x)
         ys.append(y)
     x = torch.from_numpy(np.stack(xs)).unsqueeze(1).to(dev)
@@ -184,7 +195,7 @@ def evalua_volumen(modelo, casos: list[Caso], dev) -> dict:
     modelo.eval()
     tp = fp = fn = 0
     for caso in casos:
-        hu, lab = caso.cargar()
+        hu, lab = normaliza(np.asarray(caso.hu)), np.asarray(caso.lab)
         pad = [(0, (-s) % PARCHE) for s in hu.shape]
         h, lb = np.pad(hu, pad), np.pad(lab, pad)
         for z in range(0, h.shape[0], PARCHE):
@@ -233,12 +244,14 @@ def main() -> int:
     ap.add_argument("--datos", type=Path, default=Path.home() / "anfaia/toothfairy2")
     ap.add_argument("--pasos", type=int, default=3000)
     ap.add_argument("--lote", type=int, default=2)
+    ap.add_argument("--frac-diente", type=float, default=0.5,
+                    help="Fracción de parches centrados en diente. Bajarlo sube precisión.")
     ap.add_argument("--val", type=int, default=8, help="Casos reservados para validar.")
     ap.add_argument("--salida", type=Path,
                     default=Path("data/processed/cbct-diente/modelo.pt"))
     args = ap.parse_args()
 
-    ficheros = sorted(args.datos.glob("*.npz"))
+    ficheros = sorted(args.datos.glob("memmap/*_hu.npy"))
     if len(ficheros) < args.val + 2:
         print(f"✗ solo hay {len(ficheros)} caso(s) en {args.datos}; hacen falta más.")
         return 1
@@ -262,7 +275,7 @@ def main() -> int:
     rng_ent = np.random.default_rng(0)
     mejor, t0 = 0.0, time.time()
     for paso in range(1, args.pasos + 1):
-        x, y = lote(ent, args.lote, rng_ent, dev)
+        x, y = lote(ent, args.lote, rng_ent, dev, frac_diente=args.frac_diente)
         opt.zero_grad(set_to_none=True)
         p = perdida(modelo(x), y)
         p.backward()
