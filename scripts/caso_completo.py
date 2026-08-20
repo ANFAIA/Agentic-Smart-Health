@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -33,6 +34,7 @@ for paquete in ("core-schemas", "ingestion-agents", "fusion-agents", "analysis-a
 sys.path.insert(0, str(RAIZ / "apps/agent-orchestrator/src"))
 
 from agent_orchestrator import CaseInput, IngestionPipeline  # noqa: E402
+from core_schemas import ContratoEtapa, revisa_conservacion  # noqa: E402
 from fusion_agents import arcada_del_nombre  # noqa: E402
 from ingestion_agents import ArtifactStore  # noqa: E402
 
@@ -86,6 +88,69 @@ def descubre(raiz: Path) -> CaseInput:
     )
 
 
+def _fabrica_segmentador(caso, args):
+    """Devuelve la fábrica que el orquestador llamará **después** de registrar.
+
+    El trabajo caro —ingerir el CBCT e inferir el volumen de probabilidad— se hace una vez,
+    aquí. Lo que queda dentro de la fábrica es solo mover las coronas con la pose que la
+    fusión geométrica acaba de calcular.
+
+    ⚠️ **Y esa pose no se recalcula: se lee de `provenance.transform`.** Antes esta función
+    registraba por su cuenta, así que la segmentación podía nombrar dientes con una pose
+    distinta de la que el snapshot declara y de la que se exporta en el STL — dos verdades
+    sobre el mismo paciente, sin que nada las comparase. La transformación va de escáner a
+    twin y se aplica en el sentido en que se midió (ver `ExportAgent._to_twin_frame`).
+    """
+    import numpy as np
+    from analysis_agents import SegmentadorDental
+    from fusion_agents.registration import apply, quaternion_to_matrix
+    from ingestion_agents import ArtifactStore, CBCTAgent
+    from ingestion_agents.cbct_agent import _read_series
+    from ingestion_agents.mesh_agent import parse_stl
+
+    sys.path.insert(0, str(RAIZ / "scripts"))
+    from composicion_cbct_ios import probabilidad_por_modelo
+
+    almacen = ArtifactStore(args.salida / "_seg")
+    campo = almacen.load(CBCTAgent(almacen).ingest(caso.cbct).artifact_ref)
+    origen_mm = campo["origin"]
+
+    V = np.asarray(parse_stl(caso.mesh)["positions"], dtype=np.float64)
+    etq = np.load(args.fdi).astype(np.int64)
+
+    serie = _read_series(caso.cbct)
+    prob = probabilidad_por_modelo(serie.volume, args.modelo,
+                                   espaciado=np.asarray(serie.spacing))
+    sx, sy, _z = serie.spacing
+    z_ord = np.sort(serie.z)
+
+    def probabilidad_en(puntos):
+        """De mm a vóxel. El `cbct-agent` construye los centros como
+        `(col*sx, fila*sy, z[corte])` y luego resta el centroide, así que se deshace."""
+        p = np.asarray(puntos, dtype=np.float64) + origen_mm
+        col = np.clip(np.rint(p[:, 0] / sx).astype(int), 0, prob.shape[2] - 1)
+        fil = np.clip(np.rint(p[:, 1] / sy).astype(int), 0, prob.shape[1] - 1)
+        cor = np.clip(np.searchsorted(z_ord, p[:, 2]), 0, prob.shape[0] - 1)
+        return prob[cor, fil, col]
+
+    def fabrica(snapshot):
+        t = snapshot.provenance.transform
+        if t is None:
+            print("  segmentador: el snapshot no trae transformación — sin registro no "
+                  "se puede saber DÓNDE está cada corona, así que no se segmenta.")
+            return None
+        # Al marco CENTRADO, que es en el que el agente pasa los puntos: el registro deja
+        # las coronas en coordenadas absolutas del CBCT y `campo["centers"]` no las lleva.
+        coronas = apply(
+            quaternion_to_matrix(t.rotation), np.asarray(t.translation), V
+        ) - origen_mm
+        print(f"  segmentador: {args.modelo.name} · {len(coronas):,} coronas con la pose "
+              f"de la fusión · {len(set(etq[etq > 0].tolist()))} códigos FDI")
+        return SegmentadorDental(probabilidad_en, coronas, etq)
+
+    return fabrica
+
+
 def linea(o) -> str:
     conf = f"{o.provenance.confidence:.2f}" if getattr(o, "provenance", None) else "—"
     return (f"  {o.agent.split('@')[0]:<24} {o.status.value:<8} conf {conf:<5} "
@@ -98,6 +163,24 @@ def main() -> int:
     )
     ap.add_argument("--caso", type=Path, required=True)
     ap.add_argument("--salida", type=Path, default=RAIZ / "data/processed/caso-completo")
+    ap.add_argument(
+        "--refina-3dgs", action="store_true",
+        help="Optimiza el campo semilla como 3DGS contra los DRR del volumen (necesita "
+             "GPU: usar ~/.venvs/dental-gpu/bin/python). Sin esto, el twin se exporta "
+             "TAL COMO LO SEMBRO el `cbct-agent`, que es lo que ha pasado hasta hoy.",
+    )
+    ap.add_argument("--pasos-3dgs", type=int, default=400)
+    ap.add_argument(
+        "--modelo", type=Path, default=None,
+        help="Checkpoint del segmentador de CBCT. Con el, la etapa de SEGMENTACION corre "
+             "de verdad y puebla `region_id`; sin el no hay `Segmenter` y la etapa "
+             "sencillamente no se ejecuta, que es lo que ha pasado hasta hoy.",
+    )
+    ap.add_argument(
+        "--fdi", type=Path, default=None,
+        help="`region_id` por vertice del escaneo intraoral. Es la mitad que dice CUAL es "
+             "cada diente: el modelo del CBCT es binario y no puede darla.",
+    )
     args = ap.parse_args()
 
     caso = descubre(args.caso)
@@ -110,8 +193,15 @@ def main() -> int:
     print(f"  informe  {'sí' if caso.report else '— no encontrado'}")
     print(f"  fotos    {len(caso.images)}")
 
+    # Se pasa una FÁBRICA, no un `Segmenter`: la segmentación necesita las coronas ya
+    # movidas al marco del CBCT, y esa pose no existe hasta que `fuse()` registra.
+    fabrica = None
+    if args.modelo and args.fdi and caso.mesh and caso.cbct:
+        fabrica = _fabrica_segmentador(caso, args)
+
     pipe = IngestionPipeline(ArtifactStore(args.salida / "artifacts"),
-                            quarantine_dir=args.salida / "quarantine")
+                            quarantine_dir=args.salida / "quarantine",
+                            segmenter_factory=fabrica)
 
     print("\n--- 1 · INGESTA ---")
     r = pipe.run(caso)
@@ -142,11 +232,51 @@ def main() -> int:
         # de quedarse en un `print`. Ver `fusion_agents.preparacion`.
         print(f"  arcada del escaneo: "
               f"{arcada_del_nombre(caso.mesh) or 'INDETERMINADA'}")
-        fus = pipe.fuse(r, malla=caso.mesh)
+        # `dos_arcadas=True` lo declara este script porque lo SABE: un CBCT dental de
+        # FOV completo trae maxilar y mandíbula, y el escaneo intraoral es de una sola.
+        # El dato no puede deducirlo —en oclusión no hay valle que encontrar—, así que lo
+        # dice quien tiene el contexto. Ver `fusion_agents.preparacion`.
+        fus = pipe.fuse(r, malla=caso.mesh, dos_arcadas=True)
         for o in fus.fusion:
             print(linea(o))
+        for a in fus.analysis:
+            print(linea(a))
+        seg = next((a for a in fus.analysis if a.agent.startswith("segmentation")), None)
+        if seg is not None:
+            print(f"  → {seg.n_teeth} diente(s) con `region_id` · "
+                  f"{seg.unassigned_fraction:.1%} sin asignar")
 
-    print("\n--- 3 · EXPORTACIÓN ---")
+    if args.refina_3dgs:
+        print("\n--- 3 · GAUSSIAN SPLATTING (refinado contra los DRR del volumen) ---")
+        # La fase que el ADR 001 describía y que el recorrido nunca ejecutaba: hasta hoy
+        # se saltaba de la semilla del `cbct-agent` a exportación, así que el gemelo
+        # digital NO se había entrenado nunca como 3DGS.
+        #
+        # Va aquí y no dentro de `fuse()` porque necesita GPU y torch, y meterlo en el
+        # orquestador obligaría a todos sus llamantes a ese entorno. Lo que sí se respeta
+        # es el contrato: el campo refinado es un artefacto NUEVO, así que pasa por
+        # `revisa_conservacion` igual que cualquier otra etapa.
+        from ingestion_agents.cbct_agent import _read_series
+        from refina_3dgs import refina
+
+        campo = pipe.store.load(fus.snapshot.gaussian_field_ref)
+        arrays, informe = refina(campo, _read_series(caso.cbct),
+                                 pasos=args.pasos_3dgs, registro=lambda m: print(f"  {m}"))
+        motivos = revisa_conservacion(
+            ContratoEtapa(nombre="refinado-3dgs"), campo, arrays
+        )
+        nuevo_ref = pipe.store.put(**arrays)
+        fus = replace(
+            fus,
+            snapshot=fus.snapshot.model_copy(update={"gaussian_field_ref": nuevo_ref}),
+            hitl_reasons=[*fus.hitl_reasons, *motivos],
+        )
+        print(f"  → semilla {informe['psnr_semilla_db']:.2f} dB → refinado "
+              f"{informe['psnr_refinado_db']:.2f} dB ({informe['delta_db']:+.2f}) sobre "
+              f"{informe['vistas_retenidas']} vistas RETENIDAS")
+        print("  → " + ("APORTA" if informe["aporta"] else "NO aporta sobre la semilla"))
+
+    print("\n--- 4 · EXPORTACIÓN ---")
     fin = pipe.exportar(fus, args.salida / "export")
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
@@ -154,7 +284,7 @@ def main() -> int:
               f"{'' if e.psnr_db is None else f'PSNR {e.psnr_db:.1f} dB'}")
     print(f"  → reversible: {'sí' if fin.reversible else 'NO'}")
 
-    print("\n--- 4 · GATE DE REVISIÓN HUMANA ---")
+    print("\n--- 5 · GATE DE REVISIÓN HUMANA ---")
     if not fin.hitl_reasons:
         print("  sin motivos: el caso pasaría sin revisión")
     for m in fin.hitl_reasons:

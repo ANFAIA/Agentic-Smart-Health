@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from core_schemas import ModalityStatus, Provenance, RegionalObservation, TwinSnapshot
+from ingestion_agents.ontology import describe, is_valid_fdi
 
 from fusion_agents.base import BaseFusionAgent, FusionOutput
 
@@ -58,8 +59,15 @@ class SemanticFusionAgent(BaseFusionAgent):
                 ),
             )
 
+        # Arcadas en las que la segmentación encontró ALGO. Una arcada con cero dientes
+        # no es que se buscara y no hubiera: casi siempre es que no había con qué mirar
+        # —el escáner intraoral es de una sola arcada— y eso es ausencia de entrada, no
+        # desacuerdo. Ver `_falta_la_arcada`.
+        cubiertas = {_arcada_de(f) for f in detected}
+
         ancladas: list[RegionalObservation] = []
         motivos: list[str] = []
+        sin_arcada: dict[str, list[str]] = {}
 
         for obs in snapshot.regional:
             fdi = obs.region_id
@@ -72,11 +80,19 @@ class SemanticFusionAgent(BaseFusionAgent):
                     )
             else:
                 confianza = 0.0
-                motivos.append(
-                    f"FDI {fdi}: el informe lo referencia pero la segmentación no lo "
-                    f"encontró (detectados: {', '.join(sorted(detected))})"
-                )
+                arco = _arcada_de(fdi)
+                if arco in cubiertas:
+                    # Aquí sí se miró y no estaba: es un desacuerdo real entre el informe
+                    # y el modelo, y va uno por uno porque cada uno es una decisión.
+                    motivos.append(
+                        f"FDI {fdi}: el informe lo referencia pero la segmentación no lo "
+                        f"encontró (detectados: {', '.join(sorted(detected))})"
+                    )
+                else:
+                    sin_arcada.setdefault(arco, []).append(fdi)
             ancladas.append(self._anclar(obs, confianza))
+
+        motivos += _falta_la_arcada(sin_arcada)
 
         return self._outcome(
             ModalityStatus.OK,
@@ -107,3 +123,42 @@ class SemanticFusionAgent(BaseFusionAgent):
         """
         prov = snapshot.provenance.model_copy(update={"agent": self.qualified})
         return snapshot.model_copy(update={"regional": ancladas, "provenance": prov})
+
+
+# --- arcadas sin cubrir ------------------------------------------------------ #
+def _arcada_de(fdi: str) -> str:
+    """`"superior"` / `"inferior"`, o `"?"` si el código no es un FDI válido.
+
+    No se lanza: un FDI inválido en el informe es problema del `report-agent`, y hacer
+    caer la fusión aquí escondería el anclaje del resto de observaciones.
+    """
+    return describe(fdi).arch if is_valid_fdi(fdi) else "?"
+
+
+def _falta_la_arcada(sin_arcada: dict[str, list[str]]) -> list[str]:
+    """**Un** motivo por arcada no cubierta, no uno por diente. Y es la diferencia
+    entre un gate que se lee y uno que se ignora.
+
+    Medido sobre un caso clínico real: el informe referencia 32 dientes y solo se aportó
+    el escaneo maxilar, así que salían **22 motivos, 16 de ellos la misma frase** para los
+    dientes mandibulares. Ninguno decía nada que los otros no dijeran, y entre ellos
+    quedaban enterrados los que sí —el registro sin converger, la confianza bajo umbral—.
+    Un aviso que salta en bloque es como se desactiva un gate.
+
+    **No se ocultan.** La información sigue entera —qué arcada y qué códigos— y la
+    confianza de esas observaciones sigue puesta a 0,0, así que tampoco se anclan. Lo que
+    cambia es que se dice una vez.
+
+    ⚠️ **Y no se afirma la causa**, porque desde aquí no se puede saber: una arcada con
+    cero dientes puede ser que no se aportara escaneo o que la segmentación fallara
+    entera. Las dos piden revisión y piden cosas distintas, así que se declara el hecho
+    —ninguno cubierto— y lo decide quien mira.
+    """
+    return [
+        f"arcada {arco}: la segmentación no cubrió NINGÚN diente, así que las "
+        f"{len(codigos)} observación(es) del informe sobre ella se quedan sin anclar "
+        f"(FDI {', '.join(sorted(codigos))}). Puede ser que no se aportara escaneo de esa "
+        f"arcada o que la segmentación fallara en ella: no es un desacuerdo diente a "
+        f"diente."
+        for arco, codigos in sorted(sin_arcada.items())
+    ]

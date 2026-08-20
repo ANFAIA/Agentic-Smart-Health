@@ -378,12 +378,17 @@ def test_la_fusion_semantica_ancla_las_observaciones(
 def test_el_conflicto_de_fdi_llega_al_gate_del_orquestador(
     pipeline: IngestionPipeline, case_dir: Path
 ) -> None:
-    """La cadena completa: el agente marca con confianza 0 y el orquestador lo eleva."""
+    """La cadena completa: el agente marca con confianza 0 y el orquestador lo eleva.
+
+    El informe sintético es todo maxilar (11, 16, 21, 26) y aquí no se detecta nada de esa
+    arcada, así que el motivo es **de arcada** y no diente a diente — ver
+    `test_una_arcada_sin_cubrir_es_un_motivo_y_no_dieciseis`.
+    """
     result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
     fusionado = pipeline.fuse(result, detected={"99": 0.9})  # ningún FDI del informe
 
     assert fusionado.hitl_required
-    assert any("segmentación no lo encontró" in m for m in fusionado.hitl_reasons)
+    assert any("no cubrió NINGÚN diente" in m for m in fusionado.hitl_reasons)
 
 
 def test_las_dos_etapas_corren_en_el_orden_del_pipeline(
@@ -575,15 +580,58 @@ def test_la_segmentacion_produce_el_ancla_sin_pasarla_a_mano(con_segmentacion) -
 
 
 def test_el_diente_que_el_modelo_no_encuentra_llega_al_gate(con_segmentacion) -> None:
-    """El informe cita cuatro dientes y el modelo encuentra otros: nadie decide solo."""
+    """El informe cita cuatro dientes y el modelo encuentra otros: nadie decide solo.
+
+    El modelo encuentra el 48 —mandibular— y el informe es todo maxilar, así que ninguna
+    observación se ancla y el gate lo dice. Los cuatro códigos siguen nombrados, que es lo
+    que hace el motivo accionable.
+    """
     pipeline, result, fdis = con_segmentacion
     pipeline.segmentation.segmenter = _segmentador(["48"])  # ninguno de los del informe
     salida = pipeline.fuse(result)
 
     assert salida.hitl_required
     assert all(
-        any(f"FDI {fdi}" in m for m in salida.hitl_reasons) for fdi in fdis
+        any(f"FDI {fdi}" in m or fdi in m for m in salida.hitl_reasons) for fdi in fdis
     )
+
+
+def test_una_arcada_sin_cubrir_es_un_motivo_y_no_dieciseis(con_segmentacion) -> None:
+    """La limpieza del gate, medida sobre lo que la motivó.
+
+    Un caso clínico real con solo escaneo maxilar producía **22 motivos, 16 de ellos la
+    misma frase** para dientes mandibulares que nadie había mirado. Entre ellos quedaban
+    enterrados los que sí importaban —el registro sin converger, la confianza bajo umbral—.
+    Un aviso que salta en bloque es como se desactiva un gate.
+    """
+    pipeline, result, fdis = con_segmentacion
+    pipeline.segmentation.segmenter = _segmentador(["48"])
+    salida = pipeline.fuse(result)
+
+    de_arcada = [m for m in salida.hitl_reasons if "no cubrió NINGÚN diente" in m]
+    por_diente = [m for m in salida.hitl_reasons if "no lo encontró" in m]
+    assert len(de_arcada) == 1, "una línea por arcada, no una por diente"
+    assert por_diente == [], "no se miró esa arcada: no hay desacuerdo que declarar"
+    # Y no se pierde nada: los cuatro códigos siguen en el motivo.
+    assert all(fdi in de_arcada[0] for fdi in fdis)
+
+
+def test_en_la_arcada_que_si_se_miro_el_desacuerdo_va_diente_a_diente(
+    con_segmentacion,
+) -> None:
+    """La otra mitad, y la que hace que la agrupación no sea una excusa para callar.
+
+    Si la segmentación **sí** cubrió la arcada y aun así falta un diente que el informe
+    cita, eso es un desacuerdo real entre dos fuentes clínicas y cada uno es una decisión
+    distinta. Ahí sigue habiendo una línea por diente.
+    """
+    pipeline, result, fdis = con_segmentacion
+    pipeline.segmentation.segmenter = _segmentador(["17"])  # maxilar, pero no del informe
+    salida = pipeline.fuse(result)
+
+    por_diente = [m for m in salida.hitl_reasons if "no lo encontró" in m]
+    assert len(por_diente) == len(fdis)
+    assert not any("no cubrió NINGÚN diente" in m for m in salida.hitl_reasons)
 
 
 def test_las_etiquetas_revisadas_mandan_sobre_el_modelo(con_segmentacion) -> None:
@@ -640,3 +688,49 @@ def test_si_la_segmentacion_falla_no_se_ancla_contra_un_ancla_inexistente(
     assert salida.fusion == []  # la fusión semántica no llega a correr
     assert salida.snapshot is not None  # y la ingesta sobrevive
     assert any("falló" in m for m in salida.hitl_reasons)
+
+
+# --- la fábrica de segmentador (la costura registro → segmentación) --------- #
+def test_la_fabrica_recibe_el_snapshot_YA_REGISTRADO(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """La costura que esto existe para coser.
+
+    Un `Segmenter` del campo necesita las coronas del escáner movidas al marco del CBCT, y
+    esa pose la calcula la fusión geométrica **dentro de `fuse()`**. Con el parámetro
+    `segmenter` a secas, quien lo construía tenía que registrar por su cuenta: trabajo
+    duplicado y, peor, una pose distinta de la que el snapshot declara y de la que se
+    exporta en el STL — dos verdades sobre el mismo paciente sin nada que las compare.
+    """
+    vistos = []
+
+    def fabrica(snapshot):
+        vistos.append(snapshot.provenance.transform)
+        return lambda puntos: np.log(
+            np.full((len(puntos), max(DEFAULT_CODES) + 1), 1.0 / (max(DEFAULT_CODES) + 1))
+        )
+
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"), segmenter_factory=fabrica
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    pipe.fuse(resultado, registration=(_nube(), _nube()))
+
+    assert len(vistos) == 1, "la fábrica se llama una vez, tras la fusión geométrica"
+    assert vistos[0] is not None, "y con la transformación ya puesta en la procedencia"
+
+
+def test_una_fabrica_que_devuelve_none_no_rompe_el_recorrido(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Sin registro no se puede saber DÓNDE está cada corona, y no segmentar es la
+    respuesta correcta — no segmentar mal."""
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"), segmenter_factory=lambda s: None
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    salida = pipe.fuse(resultado)
+
+    assert salida.analysis == []
+    assert salida.snapshot is not None
+

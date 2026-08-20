@@ -27,7 +27,7 @@ el GIL. Es lo que da margen al presupuesto de <60 s del brief.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -52,10 +52,12 @@ from export_agents import (
     RenderExportAgent,
 )
 from fusion_agents import (
+    EPSILON_IOS_CBCT_MM,
     FusionOutput,
     GeometricFusionAgent,
     SemanticFusionAgent,
     arcada_del_nombre,
+    icp,
     insert_snapshot,
     nubes_para_registro,
 )
@@ -238,10 +240,24 @@ class IngestionPipeline:
         report_backend: str = "rules",
         parallel: bool = True,
         segmenter: Segmenter | None = None,
+        segmenter_factory: Callable[[TwinSnapshot], Segmenter | None] | None = None,
     ) -> None:
         self.store = store
         self.hitl_threshold = hitl_threshold
         self.parallel = parallel
+        self.quarantine_dir = quarantine_dir
+        # ⚠️ **La segmentación depende del registro, así que no se puede construir aquí.**
+        #
+        # Un `Segmenter` del campo necesita las coronas del escáner **ya movidas al marco
+        # del CBCT**, y esa pose la calcula la fusión geométrica dentro de `fuse()` — es
+        # decir, después de este constructor. Con `segmenter` a secas, quien lo construía
+        # tenía que registrar por su cuenta: trabajo duplicado y, peor, **una pose distinta
+        # de la que el resto del snapshot declara**, sin que nada lo dijera.
+        #
+        # La fábrica recibe el snapshot ya registrado y saca la transformación de
+        # `provenance.transform`, que es la que se exportó y la que el twin afirma. Una
+        # dependencia entre etapas se declara; no se resuelve por detrás.
+        self.segmenter_factory = segmenter_factory
         self.agents: dict[Modality, BaseIngestionAgent] = {
             Modality.MESH: MeshAgent(store, quarantine_dir=quarantine_dir),
             Modality.CBCT: CBCTAgent(store, quarantine_dir=quarantine_dir),
@@ -254,6 +270,23 @@ class IngestionPipeline:
         # snapshot ya ensamblado (ADR 004). Por eso viven aparte del dict de ingesta.
         self.geometric_fusion = GeometricFusionAgent(
             hitl_threshold=hitl_threshold, quarantine_dir=quarantine_dir
+        )
+        # ⚠️ **ε es por PAR DE MODALIDADES**, y por eso hay dos agentes y no uno.
+        #
+        # El de arriba lleva el ε por defecto (0,5 mm), que es el del caso fácil: una
+        # malla derivada del propio volumen. Para intraoral↔CBCT ese valor exigiría
+        # `rms ≤ 0,15 mm` para pasar el gate — **por debajo del vóxel de 0,30 mm del
+        # CBCT**, así que ningún registro real podría aprobarlo nunca, y el gate se
+        # convertiría en un sello de «revisar» permanente. Un aviso que salta siempre es
+        # un aviso que alguien apaga.
+        #
+        # El agente lo documenta desde hace tiempo; lo que faltaba era que el orquestador
+        # lo respetara. Salió a la luz al arreglar el objetivo del ICP: con el solape por
+        # debajo del mínimo, el gate paraba antes de llegar a mirar el residuo.
+        self.fusion_ios_cbct = GeometricFusionAgent(
+            epsilon_mm=EPSILON_IOS_CBCT_MM,
+            hitl_threshold=hitl_threshold,
+            quarantine_dir=quarantine_dir,
         )
         self.semantic_fusion = SemanticFusionAgent(
             hitl_threshold=hitl_threshold, quarantine_dir=quarantine_dir
@@ -324,6 +357,8 @@ class IngestionPipeline:
         *,
         malla: Path | str | None = None,
         arcada: str | None = None,
+        dos_arcadas: bool = False,
+        corona_origen: Any | None = None,
     ) -> tuple[Any, Any, dict] | None:
         """Las dos nubes que `fuse` va a registrar, elegidas **aquí** y no a mano.
 
@@ -360,8 +395,17 @@ class IngestionPipeline:
         if arcada is None and malla is not None:
             arcada = arcada_del_nombre(malla)
 
+        # `registrar=icp` activa el árbitro: el umbral del objetivo se ELIGE midiendo,
+        # porque está medido que ninguno vale para las dos arcadas, que el barrido no es
+        # monótono, y que el rms del ICP no distingue entre poses buenas y malas.
         origen, destino, informe = nubes_para_registro(
-            campo, np.asarray(vertices), arcada=arcada, hu=hu
+            campo,
+            np.asarray(vertices),
+            arcada=arcada,
+            hu=hu,
+            dos_arcadas=dos_arcadas,
+            corona_origen=corona_origen,
+            registrar=icp,
         )
         if hu is not None and "n_corona" not in informe:
             informe["sin_corona"] = (
@@ -385,7 +429,7 @@ class IngestionPipeline:
                 "el escaneo no declara arcada (el nombre del fichero no la lleva): se "
                 "registra contra las dos, y el residuo del ICP no distingue una de otra"
             )
-        for clave in ("no_se_parte", "sin_corona"):
+        for clave in ("no_se_parte", "sin_corona", "sin_arbitro"):
             if clave in informe:
                 motivos.append(str(informe[clave]))
         return motivos
@@ -398,6 +442,8 @@ class IngestionPipeline:
         registration: tuple[Any, Any] | None = None,
         malla: Path | str | None = None,
         arcada: str | None = None,
+        dos_arcadas: bool = False,
+        corona_origen: Any | None = None,
         detected: Mapping[str, float] | None = None,
     ) -> PipelineResult:
         """Aplica las etapas de fusión sobre un resultado de ingesta.
@@ -429,22 +475,40 @@ class IngestionPipeline:
         # Con `malla` y sin `registration`, el orquestador elige las nubes él mismo.
         # `registration` sigue mandando: es por donde entra un registro preparado fuera
         # —un experimento, un par corregido a mano— sin tener que pasar por aquí.
+        agente_geo = self.geometric_fusion
         if snapshot is not None and registration is None and malla is not None:
-            preparado = self.prepara_registro(result, malla=malla, arcada=arcada)
+            preparado = self.prepara_registro(
+                result, malla=malla, arcada=arcada, dos_arcadas=dos_arcadas,
+                corona_origen=corona_origen,
+            )
             if preparado is not None:
                 origen, destino, informe = preparado
                 registration = (origen, destino)
                 motivos += self._motivos_de_preparacion(informe)
+                # Este camino ES intraoral↔CBCT por construcción: la malla la trae un
+                # escáner y el destino sale del campo del CBCT. Ahí manda el otro ε.
+                agente_geo = self.fusion_ios_cbct
 
         if snapshot is not None and registration is not None:
             origen, destino = registration
-            out = self.geometric_fusion.fuse(snapshot, source=origen, target=destino)
+            out = agente_geo.fuse(snapshot, source=origen, target=destino)
             salidas.append(out)
             motivos += self._stage_reasons(out)
             motivos += self._conservacion("fusion-geometrica", snapshot, out.snapshot)
             snapshot = out.snapshot or snapshot
 
-        if snapshot is not None and detected is None and self.segmentation is not None:
+        agente_seg = self.segmentation
+        if agente_seg is None and self.segmenter_factory is not None and snapshot is not None:
+            fabricado = self.segmenter_factory(snapshot)
+            if fabricado is not None:
+                agente_seg = SegmentationAgent(
+                    self.store,
+                    segmenter=fabricado,
+                    hitl_threshold=self.hitl_threshold,
+                    quarantine_dir=self.quarantine_dir,
+                )
+
+        if snapshot is not None and detected is None and agente_seg is not None:
             contrato = CONTRATOS["segmentation"]
             antes = self.store.load(snapshot.gaussian_field_ref)
             faltan = revisa_requisitos(contrato, snapshot, antes)
@@ -455,7 +519,7 @@ class IngestionPipeline:
                     hitl_reasons=[*result.hitl_reasons, *motivos, *faltan],
                 )
 
-            seg = self.segmentation.analyze(snapshot)
+            seg = agente_seg.analyze(snapshot)
             analisis.append(seg)
             motivos += self._stage_reasons(seg)
             # La otra mitad del contrato: lo que entró tiene que salir. Es lo que
