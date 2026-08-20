@@ -138,49 +138,54 @@ def psnr_t(a: torch.Tensor, b: torch.Tensor) -> float:
     return float("inf") if mse == 0 else 10 * np.log10(pico**2 / mse)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    ap.add_argument("--cbct", type=Path, required=True)
-    ap.add_argument("--vistas", type=int, default=12)
-    ap.add_argument("--pasos", type=int, default=400)
-    ap.add_argument("--vistas-por-paso", type=int, default=4)
-    ap.add_argument("--lado", type=int, default=192)
-    ap.add_argument("--salida", type=Path, default=RAIZ / "data/processed/rgs")
-    args = ap.parse_args()
+def refina(
+    campo: dict[str, np.ndarray],
+    serie,
+    *,
+    n_vistas: int = 12,
+    pasos: int = 400,
+    vistas_por_paso: int = 4,
+    lado: int = 192,
+    registro=print,
+) -> tuple[dict[str, np.ndarray], dict]:
+    """Optimiza el campo semilla contra los DRR del volumen. `(arrays, informe)`.
 
+    Es la fase que el ADR 001 describía y que no existía: el `cbct-agent` **siembra** el
+    campo y hasta ahora el pipeline saltaba de la semilla a exportación, así que el gemelo
+    nunca se entrenaba como 3DGS.
+
+    Devuelve los arrays refinados **sin persistirlos**: guardar es de quien tenga el
+    almacén, igual que en `GeometricFusionAgent.transfer_color`. Así esto puede ser una
+    etapa del orquestador en vez de un script que ingiere por su cuenta.
+
+    `informe` trae el PSNR sobre vistas **retenidas** antes y después, que es el único
+    número que dice si el refinado aporta: sobre las vistas de ajuste, «mejora» solo
+    significa que el optimizador sabe memorizar lo que ve.
+    """
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    store = ArtifactStore(args.salida / "artifacts")
-    salida = CBCTAgent(store).ingest(args.cbct)
-    if not salida.ok:
-        print(f"✗ ingesta: {salida.detail}")
-        return 1
-    campo = store.load(salida.artifact_ref)
-    serie = _read_series(args.cbct)
 
     # El volumen se normaliza igual que el `cbct-agent` normaliza la densidad, para que
     # τ del campo y τ del volumen vivan en la misma escala y el residuo sea comparable.
     hu = np.clip(serie.volume.astype(np.float32), 300.0, HU_SATURATION)
     mu = (hu - 300.0) / (HU_SATURATION - 300.0)
     vol = torch.from_numpy(mu).to(dev)
-    print(f"volumen {tuple(vol.shape)} · campo {len(campo['centers']):,} gaussianas · {dev}")
+    registro(f"volumen {tuple(vol.shape)} · campo {len(campo['centers']):,} gaussianas · {dev}")
 
     centros = torch.tensor(campo["centers"], dtype=torch.float32, device=dev)
     sig = torch.tensor(np.cbrt(np.prod(campo["scales"], axis=1)), dtype=torch.float32, device=dev)
     den = torch.tensor(campo["density"], dtype=torch.float32, device=dev)
 
-    todas = vistas(args.vistas)
+    todas = vistas(n_vistas)
     # Una de cada cuatro se RETIENE: sin vistas fuera del ajuste, «mejora» solo dice que
     # el optimizador sabe memorizar las que ve.
     ent = [v for i, v in enumerate(todas) if i % 4 != 3]
     ret = [v for i, v in enumerate(todas) if i % 4 == 3]
-    print(f"{len(ent)} vistas de ajuste · {len(ret)} retenidas")
+    registro(f"{len(ent)} vistas de ajuste · {len(ret)} retenidas")
 
     objetivo = {}
     with torch.no_grad():
         for v in todas:
-            objetivo[v.nombre] = proyecta_volumen(vol, serie.spacing, v.base, args.lado,
+            objetivo[v.nombre] = proyecta_volumen(vol, serie.spacing, v.base, lado,
                                                   MM_POR_PIXEL)
     del vol
     torch.cuda.empty_cache()
@@ -188,12 +193,12 @@ def main() -> int:
     def evalua(cs, ss, ds, cuales) -> float:
         with torch.no_grad():
             return float(np.mean([
-                psnr_t(splat(cs, ss, ds, v.base, args.lado, MM_POR_PIXEL), objetivo[v.nombre])
+                psnr_t(splat(cs, ss, ds, v.base, lado, MM_POR_PIXEL), objetivo[v.nombre])
                 for v in cuales
             ]))
 
     base_ret = evalua(centros, sig, den, ret)
-    print(f"\nsemilla (sin refinar): PSNR retenidas {base_ret:.2f} dB")
+    registro(f"semilla (sin refinar): PSNR retenidas {base_ret:.2f} dB")
 
     d_c = centros.clone().requires_grad_(True)
     d_s = torch.log(sig.clamp(min=1e-4)).clone().requires_grad_(True)
@@ -210,17 +215,17 @@ def main() -> int:
         {"params": [d_s], "lr": 1e-3},
         {"params": [d_d], "lr": 1e-3},
     ])
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.pasos)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=pasos)
     rng = np.random.default_rng(0)
 
-    for paso in range(1, args.pasos + 1):
+    for paso in range(1, pasos + 1):
         # El gradiente se promedia sobre VARIAS vistas: es la direccion que las satisface
         # a la vez, no la de la ultima que toco.
-        elegidas = rng.choice(len(ent), min(args.vistas_por_paso, len(ent)), replace=False)
+        elegidas = rng.choice(len(ent), min(vistas_por_paso, len(ent)), replace=False)
         perdida = sum(
             torch.nn.functional.mse_loss(
                 splat(d_c, torch.exp(d_s), torch.clamp(d_d, min=0.0), ent[i].base,
-                      args.lado, MM_POR_PIXEL),
+                      lado, MM_POR_PIXEL),
                 objetivo[ent[i].nombre],
             )
             for i in elegidas
@@ -229,27 +234,63 @@ def main() -> int:
         perdida.backward()
         opt.step()
         sched.step()
-        if paso % 100 == 0 or paso == args.pasos:
+        if paso % 100 == 0 or paso == pasos:
             p = evalua(d_c.detach(), torch.exp(d_s.detach()),
                        torch.clamp(d_d.detach(), min=0.0), ret)
-            print(f"[{paso:>4}/{args.pasos}] perdida {float(perdida):.5f} · "
-                  f"PSNR retenidas {p:.2f} dB  ({p - base_ret:+.2f} sobre la semilla)")
+            registro(f"[{paso:>4}/{pasos}] perdida {float(perdida.detach()):.5f} · "
+                     f"PSNR retenidas {p:.2f} dB  ({p - base_ret:+.2f} sobre la semilla)")
 
     final = evalua(d_c.detach(), torch.exp(d_s.detach()),
                    torch.clamp(d_d.detach(), min=0.0), ret)
-    print(f"\nsemilla {base_ret:.2f} dB → refinado {final:.2f} dB "
-          f"({final - base_ret:+.2f})")
-    print("→ " + ("el refinado APORTA" if final > base_ret + 0.1
+    arrays = {
+        "centers": d_c.detach().cpu().numpy(),
+        "scales": np.repeat(torch.exp(d_s.detach()).cpu().numpy()[:, None], 3, axis=1),
+        "rotations": campo["rotations"],
+        "density": torch.clamp(d_d.detach(), min=0.0).cpu().numpy(),
+        "origin": campo["origin"],
+        "hu_range": campo["hu_range"],
+    }
+    informe = {
+        "psnr_semilla_db": base_ret,
+        "psnr_refinado_db": final,
+        "delta_db": final - base_ret,
+        "aporta": final > base_ret + 0.1,
+        "vistas_retenidas": len(ret),
+        "pasos": pasos,
+    }
+    return arrays, informe
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--cbct", type=Path, required=True)
+    ap.add_argument("--vistas", type=int, default=12)
+    ap.add_argument("--pasos", type=int, default=400)
+    ap.add_argument("--vistas-por-paso", type=int, default=4)
+    ap.add_argument("--lado", type=int, default=192)
+    ap.add_argument("--salida", type=Path, default=RAIZ / "data/processed/rgs")
+    args = ap.parse_args()
+
+    store = ArtifactStore(args.salida / "artifacts")
+    salida = CBCTAgent(store).ingest(args.cbct)
+    if not salida.ok:
+        print(f"✗ ingesta: {salida.detail}")
+        return 1
+    campo = store.load(salida.artifact_ref)
+
+    arrays, informe = refina(
+        campo, _read_series(args.cbct), n_vistas=args.vistas, pasos=args.pasos,
+        vistas_por_paso=args.vistas_por_paso, lado=args.lado,
+    )
+    print(f"\nsemilla {informe['psnr_semilla_db']:.2f} dB → refinado "
+          f"{informe['psnr_refinado_db']:.2f} dB ({informe['delta_db']:+.2f})")
+    print("→ " + ("el refinado APORTA" if informe["aporta"]
                   else "el refinado NO aporta sobre la semilla"))
 
     args.salida.mkdir(parents=True, exist_ok=True)
-    ref = store.put(
-        centers=d_c.detach().cpu().numpy(),
-        scales=np.repeat(torch.exp(d_s.detach()).cpu().numpy()[:, None], 3, axis=1),
-        rotations=campo["rotations"],
-        density=torch.clamp(d_d.detach(), min=0.0).cpu().numpy(),
-        origin=campo["origin"], hu_range=campo["hu_range"],
-    )
+    ref = store.put(**arrays)
     print(f"campo refinado: {ref}")
     return 0
 
