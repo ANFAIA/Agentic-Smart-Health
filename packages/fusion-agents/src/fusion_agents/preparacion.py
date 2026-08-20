@@ -126,6 +126,41 @@ def separacion_de_arcadas(z: np.ndarray, bins: int = 80) -> tuple[float, float]:
     return float(centros[i]), valle
 
 
+# Umbral de esmalte para localizar el plano oclusal. Ver `plano_oclusal_del_esmalte`.
+HU_ESMALTE = 1400.0
+
+
+def plano_oclusal_del_esmalte(z: np.ndarray, bins: int = 80) -> float:
+    """El plano oclusal como el **modo** de la z del esmalte. Sin valle, sin modelo.
+
+    **Por qué el modo y no el valle.** Un CBCT dental se toma en oclusión, así que las
+    coronas de arriba y las de abajo se tocan: el esmalte de las dos arcadas se apila en
+    la misma altura y forma **un pico**, no dos lóbulos con un hueco en medio. Buscar un
+    valle ahí es buscar algo que la postura de la adquisición garantiza que no existe —
+    ver el aviso del punto 2 del módulo.
+
+    Y un plano no necesita un hueco. Solo necesita dejar cada diente del lado correcto,
+    que es una pregunta distinta de «¿hay separación?».
+
+    **Por qué es fiable.** Medido sobre el caso real, el modo apenas se mueve al cambiar
+    el umbral: 40,9 · 40,8 · 40,7 · 40,7 · 39,6 · 40,9 · 40,7 mm para HU ≥ 1200 … 1900.
+    Siete umbrales dentro de 1,3 mm. No hace falta acertar con el umbral.
+
+    **Y sobre todo: no depende del segmentador.** El criterio anterior partía la máscara
+    del modelo, y eso acoplaba dos etapas que deben ser independientes — cambiar de
+    checkpoint movía el plano y con él el registro, sin que nadie tocara el registro.
+    Está medido lo que costó: el registro se degradó 5× (p50 0,81 → 4,02 mm) y el
+    nombrado perdió 7 dientes de 27, ver
+    `docs/research/segmentacion-diente-cbct.md`.
+
+    Sobre ese mismo caso el criterio viejo daba 36,3 mm frente a estos 40,8: cuatro
+    milímetros y medio de diente superior asignados a la arcada de abajo.
+    """
+    h, bordes = np.histogram(z, bins=bins)
+    centros = (bordes[:-1] + bordes[1:]) / 2
+    return float(centros[int(np.argmax(h))])
+
+
 def arcada_del_nombre(ruta: Path | str) -> str | None:
     """`"maxilar"`, `"mandibular"` o `None` si el nombre del fichero no lo dice.
 
@@ -151,6 +186,7 @@ def nubes_para_registro(
     arcada: str | None,
     hu: np.ndarray | None = None,
     hu_corona: float = HU_CORONA,
+    plano: float | None = None,
     muestra: int = MUESTRA,
     semilla: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
@@ -176,7 +212,15 @@ def nubes_para_registro(
             objetivo = centros[corona]
             informe["n_corona"] = int(corona.sum())
 
-    if arcada is not None and len(objetivo) > 500:
+    if arcada is not None and plano is not None and len(objetivo) > 500:
+        # Plano dado de fuera: se parte y punto. El veto del valle NO aplica aquí, y esa
+        # es justo la lección — en oclusión no hay valle y aun así hay que partir.
+        informe["plano_oclusal_mm"] = plano
+        informe["plano_dado"] = True
+        lado = objetivo[:, 2] >= plano if arcada == "maxilar" else objetivo[:, 2] < plano
+        if lado.sum() >= 500:
+            objetivo = objetivo[lado]
+    elif arcada is not None and len(objetivo) > 500:
         corte, valle = separacion_de_arcadas(objetivo[:, 2])
         informe["valle"] = valle
         if valle > VALLE_MAXIMO:

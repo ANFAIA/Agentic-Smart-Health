@@ -113,6 +113,48 @@ el modelo por el rms del registro elegiría el equivocado. Es la cuarta vez que 
 de fallo aparece medido en el proyecto (ver
 [`fusion_agents.preparacion`](../../packages/fusion-agents/src/fusion_agents/preparacion.py)).
 
+### 5.1 · Resuelto, y lo que costó
+
+El objetivo del ICP ya no toca la máscara del modelo. El plano oclusal sale del **modo de
+la z del esmalte** (`plano_oclusal_del_esmalte`) y el objetivo se elige **midiendo**, no
+fijando una constante.
+
+| | acoplado | desacoplado ingenuo | **desacoplado + árbitro** |
+|---|---|---|---|
+| FDI con `modelo.pt` | 27 | 25 | **27** |
+| FDI con `modelo_p025.pt` | **20** | 24 | **27** |
+| maxilar corona→diente | 0,81 mm · 78 % | 4,49 · 27 % | 1,06 · 71 % |
+| mandibular | 0,77 mm · 80 % | 1,48 · 60 % | **0,56 · 90 %** |
+
+**El hueco de 7 dientes desaparece**, y el registro sale bit a bit idéntico con los dos
+checkpoints (mismo objetivo, mismo rms): la etapa ya no depende del segmentador.
+
+Tres cosas que hubo que aprender por el camino:
+
+**a · El acoplamiento hacía trabajo real.** La máscara excluía el hueso del objetivo del
+ICP. Quitarla sin más (`HU ≥ 1200` sobre el campo entero) mete cortical del paladar y
+hunde el maxilar a 4,49 mm. La salida libre de modelo es el **esmalte**: ningún hueso
+llega a esa densidad.
+
+**b · Pero ningún umbral vale para las dos arcadas, y el barrido no es monótono.**
+
+```
+maxilar     1200 → 6,84 mm    1400 → 1,73    1600 → 1,53    1800 → 8,13 ⚠    1900 → 1,64
+mandibular  1200 → 7,35 mm    1400 → 7,41    1600 → 7,45    1800 → 0,73      1900 → 0,73
+```
+
+El maxilar **falla en 1800 entre dos vecinos buenos** — firma de mínimo local del ICP, no
+de mala elección de objetivo. Fijar una constante ahí sería ajustar a un paciente. Por eso
+se prueban los cinco y gana el que puntúe mejor contra el árbitro.
+
+**c · Y el árbitro no puede ser el rms.** Quinta aparición del mismo modo de fallo: el rms
+de esas diez poses cabe en **0,614-0,668 mm** mientras su calidad real va de **0,73 a
+8,13**. La distancia corona→esmalte sí discrimina, y no conoce al modelo.
+
+**Lo que esto NO arregló:** las desbordadas vuelven a 12 (eran 13 acopladas). La bajada a 7
+del desacoplamiento ingenuo era un artefacto de que, con el registro malo, se nombraban
+menos gaussianas y las piezas salían más cortas. El §4 se mantiene entero.
+
 ## 6 · Lo que NO se puede concluir
 
 Se corrió también sobre el segundo paciente, y **esa ejecución no aporta nada** por dos

@@ -40,12 +40,13 @@ for paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "export-age
     sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))
 
 from export_agents.field import densidad_a_hu, escribe_ply  # noqa: E402
+from fusion_agents.preparacion import HU_ESMALTE, plano_oclusal_del_esmalte  # noqa: E402
 from fusion_agents.registration import apply, icp, quaternion_to_matrix  # noqa: E402
 from ingestion_agents import ArtifactStore, CBCTAgent  # noqa: E402
 from ingestion_agents.mesh_agent import parse_stl  # noqa: E402
 
 sys.path.insert(0, str(RAIZ / "scripts"))
-from registro_ios_cbct import arcada_del_escaneo, plano_oclusal  # noqa: E402
+from registro_ios_cbct import arcada_del_escaneo  # noqa: E402
 
 # Umbrales del barrido. El extremo bajo es el del `cbct-agent` (300 HU, tejido duro
 # cualquiera) y el alto es la saturación del esmalte: por encima no queda dentina.
@@ -89,6 +90,15 @@ RADIO_NOMBRE_MM = 16.0
 # mientras la calidad real mejoraba 7×. El residuo del registro no discrimina, y es el
 # mismo modo de fallo que documenta `registro_ios_cbct.separa_arcadas`.
 HU_CORONA = 1200.0
+
+# Umbrales candidatos para el objetivo del ICP. No se elige uno: se prueban todos y gana
+# el que mejor puntúe contra el árbitro. Medido sobre `histora`, el mejor es 1600 en el
+# maxilar y 1800-1900 en la mandíbula, y 1200 es el PEOR en las dos (6,84 y 7,35 mm).
+BARRIDO_OBJETIVO = (1200, 1400, 1600, 1800, 1900)
+
+# El árbitro: esmalte. Ningún hueso llega a esta densidad, así que la distancia de una
+# corona del escáner a la gaussiana de esmalte más cercana no depende del segmentador.
+HU_ARBITRO = 1800.0
 
 # Cotas de tamaño de un diente, en mm. Un incisivo inferior mide ~4 mm de ancho y un
 # molar con raíz ~25 de largo. SIN esta cota el barrido da por buena una componente de
@@ -362,7 +372,7 @@ def main() -> int:
         arcadas = {arcada_del_escaneo(m) for m in args.ios} - {None}
         quiere = next(iter(arcadas)) if len(arcadas) == 1 else None
         if quiere is not None:
-            corte = plano_oclusal(centros[p_gauss > 0.5][:, 2])
+            corte = plano_oclusal_del_esmalte(centros[hu >= HU_ESMALTE][:, 2])
             lado = (centros[:, 2] >= corte) if quiere == "maxilar" else (centros[:, 2] < corte)
             p_gauss = np.where(lado, p_gauss, 0.0)
             print(f"arcada del escaneo: {quiere} · plano oclusal z={corte:.1f} → "
@@ -481,7 +491,14 @@ def _compone(args, store, campo, centros, hu, sel, piezas, mejor) -> int:
     # 35 mm. El ICP encuentra una pose con buen residuo (0,604 mm) porque una arcada se
     # parece a la otra, y a partir de ahí cada gaussiana toma el FDI de la corona más
     # cercana, que puede ser la de enfrente. Dos adquisiciones, dos rígidas, dos lóbulos.
-    corte_oclusal = plano_oclusal(centros_sel[:, 2])
+    # El plano oclusal sale del ESMALTE, no de la máscara del modelo.
+    #
+    # ⚠️ Este es el desacoplamiento, y costó medirlo: partir `centros_sel` metía la salida
+    # del segmentador dentro del registro, así que cambiar de checkpoint movía el plano y
+    # con él la pose — el registro se degradó 5× (p50 0,81 → 4,02 mm) y el nombrado perdió
+    # 7 dientes de 27, sin que nadie tocara el registro.
+    # Ver `docs/research/segmentacion-diente-cbct.md` §5.
+    corte_oclusal = plano_oclusal_del_esmalte(centros[hu >= HU_ESMALTE][:, 2])
     encia_total, rms = 0, []
     coronas_todas, etiquetas_todas = [], []
 
@@ -495,27 +512,55 @@ def _compone(args, store, campo, centros, hu, sel, piezas, mejor) -> int:
         # El lóbulo se usa SOLO para registrar: dar al ICP la mitad que le corresponde
         # evita que encaje una arcada sobre la otra, que se parecen lo bastante como para
         # puntuar bien (0,604 mm) estando mal.
+        # El objetivo del ICP se elige sobre el campo ENTERO por HU, no sobre la máscara
+        # del modelo: es corona contra corona, y la corona la define la densidad, no el
+        # segmentador. Misma regla que `fusion_agents.nubes_para_registro`.
         arc = arcada_del_escaneo(malla_p)
         if arc == "maxilar":
-            lobulo = centros_sel[:, 2] >= corte_oclusal
+            lobulo = centros[:, 2] >= corte_oclusal
         elif arc == "mandibular":
-            lobulo = centros_sel[:, 2] < corte_oclusal
+            lobulo = centros[:, 2] < corte_oclusal
         else:
-            lobulo = np.ones(len(centros_sel), dtype=bool)
+            lobulo = np.ones(len(centros), dtype=bool)
 
-        objetivo_reg = lobulo & (hu[sel] >= HU_CORONA)
-        if objetivo_reg.sum() < 500:  # sin corona suficiente, mejor todo el lóbulo
-            objetivo_reg = lobulo
-        r = icp(V, centros_sel[objetivo_reg], trim=0.8)
+        # El umbral del objetivo NO se fija: se ELIGE midiendo, arcada por arcada.
+        #
+        # ⚠️ Está medido que ningún valor sirve para las dos y que el barrido no es
+        # monótono —el maxilar falla en 1800 entre dos vecinos buenos, firma de mínimo
+        # local del ICP—, así que una constante sería fitting sobre un paciente. Lo que sí
+        # se puede es **puntuar cada pose** con un árbitro libre de modelo: la distancia de
+        # las coronas del escáner al ESMALTE del CBCT, que ningún hueso alcanza.
+        #
+        # Y hace falta un árbitro que no sea el rms del ICP porque el rms **no
+        # discrimina**: 0,614-0,668 mm sobre poses cuya calidad real va de 0,73 a 8,13 mm.
+        # Quinta vez que este modo de fallo aparece medido en el proyecto.
+        esmalte = centros[hu >= HU_ARBITRO]
+        arbol_esmalte = cKDTree(esmalte)
+        mejor_pose = None
+        for u in BARRIDO_OBJETIVO:
+            objetivo_reg = lobulo & (hu >= u)
+            if objetivo_reg.sum() < 500:
+                continue
+            cand = icp(V, centros[objetivo_reg], trim=0.8)
+            Vc = apply(quaternion_to_matrix(cand.rotation), np.asarray(cand.translation), V)
+            d, _ = arbol_esmalte.query(Vc[f > 0]) if (f > 0).any() else (np.array([np.inf]), None)
+            p50 = float(np.median(d))
+            if mejor_pose is None or p50 < mejor_pose[0]:
+                mejor_pose = (p50, u, cand, int(objetivo_reg.sum()))
+        if mejor_pose is None:  # sin corona suficiente a ningún umbral: todo el lóbulo
+            r = icp(V, centros[lobulo], trim=0.8)
+            p50_mejor, u_mejor, objetivo_n = float("nan"), 0, int(lobulo.sum())
+        else:
+            p50_mejor, u_mejor, r, objetivo_n = mejor_pose
         V = apply(quaternion_to_matrix(r.rotation), np.asarray(r.translation), V)
         rms.append(r.rms_efectivo_mm)
         coronas_todas.append(V[f > 0])
         etiquetas_todas.append(f[f > 0])
         encia_total += int((f == 0).sum())
         d_ctrl, _ = cKDTree(centros_sel).query(V[f > 0])
-        print(f"{arc or 'arcada ?':<12} rms {r.rms_efectivo_mm:.3f} mm · objetivo "
-              f"{int(objetivo_reg.sum()):,} gaussianas de corona · corona→gaussiana p50 "
-              f"{np.median(d_ctrl):.2f} mm, {(d_ctrl < 2).mean():.0%} bajo 2 mm")
+        print(f"{arc or 'arcada ?':<12} objetivo HU>={u_mejor} ({objetivo_n:,} gaussianas) "
+              f"· rms {r.rms_efectivo_mm:.3f} mm · corona→esmalte p50 {p50_mejor:.2f} mm "
+              f"· corona→diente p50 {np.median(d_ctrl):.2f} mm, {(d_ctrl < 2).mean():.0%} bajo 2")
 
     # Pero NOMBRAR no se hace por lóbulo, sino contra las coronas de LAS DOS arcadas.
     #

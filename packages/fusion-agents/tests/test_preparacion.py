@@ -11,6 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from fusion_agents import HU_CORONA, arcada_del_nombre, nubes_para_registro, plano_oclusal
+from fusion_agents.preparacion import (
+    VALLE_MAXIMO,
+    plano_oclusal_del_esmalte,
+    separacion_de_arcadas,
+)
 
 
 def _dos_lobulos(sep: float = 20.0, n: int = 2000, semilla: int = 0) -> np.ndarray:
@@ -148,3 +153,60 @@ def test_sin_hu_no_filtra_por_corona_en_vez_de_fallar():
     _, destino, informe = nubes_para_registro(campo, np.zeros((10, 3)), arcada=None)
     assert "n_corona" not in informe
     assert len(destino) > 0
+
+
+# --- el plano oclusal por el esmalte ---------------------------------------- #
+def test_el_plano_sale_del_pico_no_de_un_hueco():
+    """En oclusión las coronas se tocan: hay UN pico, y ahí está el plano.
+
+    Es la corrección del criterio anterior. `separacion_de_arcadas` busca un valle, y la
+    postura de la adquisición garantiza que no lo hay — medido sobre el caso real: valle
+    0,65 a HU ≥ 1200 y 1,00 a HU ≥ 1500, unimodal las dos veces. Un plano no necesita un
+    hueco; solo necesita dejar cada diente del lado correcto.
+    """
+    rng = np.random.default_rng(0)
+    # Esmalte apilado en el plano oclusal, con las raíces repartiéndose arriba y abajo.
+    esmalte = rng.normal(40.0, 2.0, 4000)
+    raices = np.concatenate([rng.normal(55.0, 6.0, 800), rng.normal(25.0, 6.0, 800)])
+    z = np.concatenate([esmalte, raices])
+
+    plano = plano_oclusal_del_esmalte(z)
+    assert abs(plano - 40.0) < 2.0
+
+    # Y el criterio del valle NO lo encuentra: por eso hacía falta otra función.
+    assert separacion_de_arcadas(z)[1] > VALLE_MAXIMO
+
+
+def test_el_plano_no_depende_de_acertar_con_el_umbral():
+    """Medido sobre el caso real: 40,9 · 40,8 · 40,7 · 40,7 · 39,6 · 40,9 · 40,7 mm para
+    HU ≥ 1200 … 1900. Siete umbrales dentro de 1,3 mm — el modo es estable porque el
+    esmalte de las dos arcadas se apila en la misma altura, no porque el umbral acierte.
+    """
+    rng = np.random.default_rng(1)
+    denso = np.concatenate([rng.normal(40.0, 2.0, 4000), rng.uniform(0.0, 90.0, 3000)])
+    escaso = np.concatenate([rng.normal(40.0, 2.0, 900), rng.uniform(0.0, 90.0, 200)])
+    assert abs(plano_oclusal_del_esmalte(denso) - plano_oclusal_del_esmalte(escaso)) < 3.0
+
+
+def test_un_plano_dado_manda_sobre_el_veto_del_valle():
+    """`nubes_para_registro` acepta el plano de fuera y parte, valle o no valle.
+
+    Sin esta puerta el módulo se negaba a partir en el único caso que importa —dos arcadas
+    en oclusión— y registraba el escaneo de una arcada contra las dos.
+    """
+    rng = np.random.default_rng(2)
+    centros = np.column_stack([rng.normal(0, 10, 3000), rng.normal(0, 10, 3000),
+                               rng.normal(40.0, 8.0, 3000)])
+    campo = {"centers": centros}
+    vertices = rng.normal(0, 10, (500, 3))
+
+    _, sin_plano, inf_sin = nubes_para_registro(campo, vertices, arcada="maxilar")
+    assert "no_se_parte" in inf_sin  # unimodal: se niega, y lo dice
+
+    _, con_plano, inf_con = nubes_para_registro(
+        campo, vertices, arcada="maxilar", plano=40.0
+    )
+    assert inf_con["plano_dado"] is True
+    assert inf_con["plano_oclusal_mm"] == 40.0
+    assert len(con_plano) < len(sin_plano)  # partió de verdad
+
