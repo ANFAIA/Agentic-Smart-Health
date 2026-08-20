@@ -98,7 +98,16 @@ def _sincronizar(doc: Path, ident: str, contenido: str, escribir: bool) -> str |
         return None
     patron = re.compile(re.escape(inicio) + r".*?" + re.escape(fin), re.S)
     esperado = f"{inicio}\n{contenido}\n{fin}"
-    if patron.search(texto).group(0) == esperado:
+    actual = patron.search(texto)
+    if actual is None:
+        # Marca de apertura sin cierre. Se declara en vez de reventar: quien edito la
+        # pagina borro media marca, y decirselo es mas util que un `AttributeError` sobre
+        # `NoneType` a mitad de la revision.
+        return (
+            f"{doc.relative_to(REPO)} abre el bloque `{ident}` y no lo cierra: falta "
+            f"`{fin}`. Sin las dos marcas no se puede regenerar."
+        )
+    if actual.group(0) == esperado:
         return None
     if escribir:
         doc.write_text(patron.sub(lambda _: esperado, texto), encoding="utf-8")
@@ -206,6 +215,12 @@ def leidas_por_el_codigo(ficheros: set[str]) -> dict[str, tuple[str, str | None]
         try:
             arbol = ast.parse((REPO / ruta).read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
+            continue
+        except FileNotFoundError:
+            # Versionado pero ya no en disco: alguien borro el fichero y todavia no ha
+            # hecho `git rm`. Es un estado normal de trabajo, no un fallo del repositorio,
+            # y reventar aqui deja al guardian inservible justo mientras se reorganiza
+            # algo — que es cuando mas falta hace.
             continue
         constantes = _constantes(arbol)
         for nodo in ast.walk(arbol):
@@ -322,6 +337,12 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, tuple[str, str]]:
         try:
             arbol = ast.parse((REPO / ruta).read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
+            continue
+        except FileNotFoundError:
+            # Versionado pero ya no en disco: alguien borro el fichero y todavia no ha
+            # hecho `git rm`. Es un estado normal de trabajo, no un fallo del repositorio,
+            # y reventar aqui deja al guardian inservible justo mientras se reorganiza
+            # algo — que es cuando mas falta hace.
             continue
         for nodo in ast.walk(arbol):
             if not (isinstance(nodo, ast.ClassDef) and nodo.name.endswith("Agent")):
@@ -808,6 +829,59 @@ def _agentes_md() -> str:
 # El identificador va aparte del título a propósito. El título se reformula sin
 # consecuencias; el identificador es el que aparece en la ficha de `AGENTS.md`, así que
 # es un nombre estable y sin acentos. Este script se compara a sí mismo con su ficha.
+def revisar_componentes_vacios(ficheros: set[str]) -> list[str]:
+    """Un componente con ficha en el README y **cero lineas de codigo** no existe.
+
+    Es la comprobacion que faltaba, y costo un fantasma: `apps/slicer-mcp-server` tenia un
+    `server.py` de 0 lineas y el README lo describia **en presente** —«expone una
+    interfaz», «permite que los agentes interactuen», «depende de core-schemas»—. Las tres
+    afirmaciones eran falsas y ninguna comprobacion las vio: la de rutas citadas pasaba
+    porque el directorio existia, con el fichero vacio dentro.
+
+    Un placeholder ES legitimo —`3dgs-engine` lo es— pero tiene que decirlo. Por eso lo que
+    se exige no es que haya codigo, sino que si NO lo hay, su ficha lo declare.
+    """
+    raiz = Path(__file__).resolve().parent.parent
+    problemas = []
+    for prefijo in ("apps/", "packages/"):
+        componentes = {f.split("/")[1] for f in ficheros if f.startswith(prefijo)
+                       and len(f.split("/")) > 2}
+        for nombre in sorted(componentes):
+            fuentes = [f for f in ficheros
+                       if f.startswith(f"{prefijo}{nombre}/") and f.endswith(".py")
+                       and "/tests/" not in f]
+            lineas = sum(
+                len([x for x in (raiz / f).read_text(encoding="utf-8").splitlines() if x.strip()])
+                for f in fuentes if (raiz / f).exists()
+            )
+            if lineas > 0:
+                continue
+            ficha = _seccion_del_readme(nombre)
+            if ficha is None:
+                continue  # sin ficha no afirma nada: no miente
+            if not re.search(r"placeholder|pendiente|no implementad|todav[ií]a no", ficha, re.I):
+                problemas.append(
+                    f"`{prefijo}{nombre}` no tiene ni una linea de codigo y su ficha del "
+                    "README lo describe como si funcionara. O se declara placeholder, o "
+                    "se retira: un directorio vacio documentado en presente es la clase "
+                    "de mentira que este guardian existe para impedir."
+                )
+    return problemas
+
+
+def _seccion_del_readme(nombre: str) -> str | None:
+    """La seccion `###` del README que menciona `nombre`, o None si no la hay.
+
+    Distinta de `_ficha_de`, que exige ademas una fila `**Version**` porque documenta
+    agentes. Un componente puede tener seccion sin ser un agente.
+    """
+    texto = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    for seccion in re.split(r"\n(?=### )", texto):
+        if f"`{nombre}`" in seccion and seccion.lstrip().startswith("### "):
+            return seccion
+    return None
+
+
 COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ...] = (
     ("env", "variables de entorno", lambda f, _: revisar_env(f)),
     ("rutas", "rutas citadas", lambda f, _: revisar_rutas(f)),
@@ -819,6 +893,7 @@ COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ..
      lambda f, _: revisar_comprobaciones(f, _agentes_md())),
     ("constantes", "constantes citadas", lambda f, _: revisar_constantes(f)),
     ("inventario", "inventario documentado", lambda f, _: revisar_inventario(f)),
+    ("vacios", "componentes con codigo", lambda f, _: revisar_componentes_vacios(f)),
     ("arbol", "arbol del README", lambda f, _: revisar_arbol(f)),
     ("bloques", "bloques generados", sincronizar_bloques),
 )

@@ -145,7 +145,6 @@ agentic-smart-health/          ← workspace root
 ├── apps/
 │   ├── agent-orchestrator/    ← orquestador del sistema multiagente
 │   ├── research-agent/        ← agente de investigación (RAG + literatura científica)
-│   └── slicer-mcp-server/     ← servidor MCP para integración con 3D Slicer
 ├── packages/
 │   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
@@ -179,11 +178,24 @@ Orquestador central del sistema multiagente. Coordina los agentes de cada fase d
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
-### `slicer-mcp-server`
+### Interoperabilidad con [3D Slicer](https://www.slicer.org/) y otras plataformas
 
-Servidor **MCP (Model Context Protocol)** que expone una interfaz para la integración con [3D Slicer](https://www.slicer.org/), la plataforma open source de referencia para visualización y análisis de imágenes médicas. Permite que los agentes interactúen con modelos 3D e imágenes DICOM directamente desde el entorno de Slicer.
+**Por formatos abiertos, no por un servidor.** El pipeline materializa cada caso en STL, PLY
+y PNG, más el JSON del propio `TwinSnapshot`, y todos ellos los lee Slicer de forma nativa.
+Eso ya es interoperabilidad: no hay protocolo que negociar ni servicio que mantener vivo, y
+el fichero sigue abriéndose dentro de diez años sin nosotros.
 
-Depende igualmente de `core-schemas` para mantener la coherencia de los datos a través de la interfaz MCP.
+Hubo aquí un `slicer-mcp-server` y **se ha retirado**. Era un directorio con un `server.py`
+de **cero líneas** descrito en este mismo README en presente —«expone una interfaz»,
+«permite que los agentes interactúen»— y su desbloqueo dependía de que un tercero
+confirmase formato y sentido de la llamada. Una pieza vacía que no podemos desbloquear
+nosotros no es arquitectura: es una intención escrita en el sitio donde se documentan los
+hechos.
+
+Un servidor MCP tendría sentido para interacción **viva y bidireccional** — que un agente
+conduzca la sesión de Slicer, no que lea un fichero. Nadie ha pedido eso todavía, y cuando
+se pida se construye. Ver la issue #40, que ahora es una pregunta al partner y no un
+componente de este repositorio.
 
 ### `research-agent`
 

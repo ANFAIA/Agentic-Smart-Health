@@ -308,6 +308,7 @@ versión nueva encuentre.
 | `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
 | `constantes` | un número o una cadena escritos en la prosa ↔ el valor de la constante de la que salen |
 | `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
+| `vacios` | un componente con ficha en el README ↔ que tenga código, o que la ficha lo declare placeholder |
 | `bloques` | que las tablas generadas coincidan con el código |
 
 > **Por qué los guardianes no se versionan.** Se planteó darles `__version__` y
