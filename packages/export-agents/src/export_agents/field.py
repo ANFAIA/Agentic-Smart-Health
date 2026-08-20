@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from core_schemas import ModalityStatus, TwinSnapshot
+from core_schemas import ColumnaCampo, ModalityStatus, TwinSnapshot
 
 from export_agents.base import (
     REVERSIBILITY_BUDGET_MM,
@@ -97,6 +97,60 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
     "region_id": ("region_id",),
     "origen": ("origen",),
 }
+
+
+# Qué es cada columna, **en máquina**. Vive aquí, junto a `COLUMNAS_DE_ARRAY`, porque es
+# el mismo conocimiento: el exportador es quien sabe qué escribe y con qué semántica.
+#
+# ⚠️ Lo importante de esta tabla es `escala`. El PLY de facto de 3DGS usa `scale_0..2` y
+# `rot_0..3` con los MISMOS nombres y guarda el **logaritmo** de la escala; aquí van
+# milímetros lineales. Un visor estándar abriendo este fichero no fallaría: exponenciaría
+# nuestros milímetros y renderizaría basura con buen aspecto. Por eso el snapshot declara
+# además `perfil_campo`, para que un lector pueda negarse en vez de adivinar.
+ESQUEMA_COLUMNAS: dict[str, dict] = {
+    "x": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "y": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "z": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "scale_0": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "scale_1": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "scale_2": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "rot_0": {"significado": "cuaternion (w, x, y, z) normalizado — componente w"},
+    "rot_1": {"significado": "cuaternion (w, x, y, z) normalizado — componente x"},
+    "rot_2": {"significado": "cuaternion (w, x, y, z) normalizado — componente y"},
+    "rot_3": {"significado": "cuaternion (w, x, y, z) normalizado — componente z"},
+    "density": {
+        "unidad": "sigma_normalizada",
+        "significado": "atenuacion Beer-Lambert en [0,1] sobre `hu_range`. NO es opacidad",
+    },
+    "region_id": {
+        "significado": "diente al que pertenece la gaussiana; 0 = sin asignar",
+        "vocabulario": "ISO-3950",
+        "medido": False,
+        "derivado_de": "segmentation-agent",
+    },
+    "origen": {
+        "significado": "modalidad de la que viene: 0 = CBCT (densidad medida), "
+        "1 = escaner intraoral (forma medida)",
+        "medido": False,
+        "derivado_de": "composite-export-agent",
+    },
+}
+
+
+def esquema_del_campo(arrays: dict) -> list[ColumnaCampo]:
+    """Las columnas que este exportador escribiria para `arrays`, ya descritas.
+
+    Se deriva de lo que el campo trae, no de una lista fija: un campo sin segmentar no
+    declara `region_id`, igual que no la escribe. Declarar de mas seria tan mentira como
+    declarar de menos.
+    """
+    columnas = []
+    for clave in arrays:
+        for prop in COLUMNAS_DE_ARRAY.get(clave, ()):
+            spec = ESQUEMA_COLUMNAS.get(prop)
+            if spec is not None:
+                columnas.append(ColumnaCampo(nombre=prop, **spec))
+    return columnas
 
 
 def densidad_a_hu(density: np.ndarray, hu_range: np.ndarray) -> np.ndarray:

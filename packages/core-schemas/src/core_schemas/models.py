@@ -53,7 +53,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #         `RegionalObservation` no podía alojarlos: exige un `FDICode`. TRES de esos
 #         ocho estaban fuera de su propio rango normal y se tiraban enteros.
 #         Aditivo y con defecto: un JSON 1.4.0 sigue validando.
-SCHEMA_VERSION = "1.5.0"
+# 1.6.0 — `ColumnaCampo` y `TwinSnapshot.esquema_campo`: el twin describe las columnas del
+#         campo gaussiano **en máquina**. Antes todo lo necesario para interpretarlas
+#         —que `scale_*` va en mm lineales, que `density` es σ y NO opacidad, que
+#         `region_id` es ISO-3950— vivía en líneas `comment` del PLY, que las personas
+#         leen y los programas ignoran. Aditivo y con defecto: un JSON 1.5.0 sigue
+#         validando.
+SCHEMA_VERSION = "1.6.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -383,6 +389,58 @@ class Medida(BaseModel):
         return bajo or alto
 
 
+class ColumnaCampo(BaseModel):
+    """Qué es una columna del campo gaussiano, dicho **en máquina**.
+
+    **Por qué existe.** El PLY que exporta el pipeline ya declara todo lo necesario para
+    interpretarlo… en líneas `comment`:
+
+        comment density es sigma_n normalizada en [0,1] (atenuacion Beer-Lambert), NO opacidad
+        comment scale en mm; rot es cuaternion (w,x,y,z)
+        comment region_id es el codigo FDI por gaussiana, 0 = sin asignar
+
+    Las personas las leen; los programas, no. Y el riesgo no es que un lector no entienda
+    el fichero: es que **lo entienda mal sin enterarse**. El PLY de facto de 3DGS usa los
+    mismos nombres `scale_0..2` y `rot_0..3` con **semántica distinta** —guarda el
+    logaritmo de la escala, no milímetros—, así que un visor estándar abriendo esto no
+    fallaría: exponenciaría nuestros milímetros y renderizaría basura con muy buen aspecto.
+
+    Esto es lo que convierte «un fichero que sabemos leer» en **un formato**: cualquiera
+    puede interpretar el campo sin nuestro código fuente, y una columna nueva llega
+    describiéndose sola.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre: str = Field(description="Nombre de la propiedad en el PLY: `scale_0`, `density`.")
+    unidad: str = Field(
+        default="",
+        description="Unidad física. Vacío para lo adimensional (un cuaternión, un código).",
+    )
+    escala: str = Field(
+        default="lineal",
+        description="`lineal` o `log`. Es lo que separa nuestros milímetros del logaritmo "
+        "que guarda el PLY de 3DGS bajo el mismo nombre.",
+    )
+    significado: str = Field(default="", description="Qué es, en una línea.")
+    vocabulario: str | None = Field(
+        default=None,
+        description="Estándar del que sale el valor, si sale de uno: `ISO-3950` para el "
+        "código FDI. Sin esto, `region_id` es un entero sin más.",
+    )
+    medido: bool = Field(
+        default=True,
+        description="Si el valor procede de una medida física o lo derivó un agente. La "
+        "frontera entre lo medido y lo inferido es la disciplina de este contrato, y "
+        "borrarla es cómo alguien acaba diagnosticando sobre una suposición.",
+    )
+    derivado_de: str | None = Field(
+        default=None,
+        description="Agente que la produjo, cuando `medido` es falso: "
+        "`segmentation-agent@0.1.0`.",
+    )
+
+
 class RegionalObservation(BaseModel):
     """Una medición regional en un instante concreto (unidad de la serie temporal).
 
@@ -430,6 +488,16 @@ class TwinSnapshot(BaseModel):
         description="Hash/URI del campo gaussiano en 3dgs-engine. Invariante fail-loud: "
         "al cargar/exportar hay que validar que el blob referenciado existe; una "
         "referencia colgante es un error, no un modelo vacío silencioso.",
+    )
+    perfil_campo: str = Field(
+        default="ash-twin/1.0",
+        description="Perfil del campo gaussiano. **No es el PLY de 3DGS de facto** y por "
+        "eso se declara: comparte nombres de propiedad con él y no su semántica, así que "
+        "un lector tiene que poder NEGARSE en vez de adivinar.",
+    )
+    esquema_campo: list[ColumnaCampo] = Field(
+        default_factory=list,
+        description="Qué es cada columna del campo referenciado. Ver `ColumnaCampo`.",
     )
     surface_ref: str | None = Field(
         default=None,

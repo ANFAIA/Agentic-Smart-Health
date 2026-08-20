@@ -51,6 +51,7 @@ from export_agents import (
     ExportOutput,
     FieldExportAgent,
     RenderExportAgent,
+    esquema_del_campo,
 )
 from fusion_agents import (
     EPSILON_IOS_CBCT_MM,
@@ -575,7 +576,7 @@ class IngestionPipeline:
 
         return replace(
             result,
-            snapshot=snapshot,
+            snapshot=self._con_esquema(snapshot),
             fusion=[*result.fusion, *salidas],
             analysis=[*result.analysis, *analisis],
             hitl_reasons=[*result.hitl_reasons, *motivos],
@@ -675,6 +676,25 @@ class IngestionPipeline:
             result,
             exports=[*result.exports, *salidas],
             hitl_reasons=[*result.hitl_reasons, *motivos],
+        )
+
+    def _con_esquema(self, snapshot: TwinSnapshot | None) -> TwinSnapshot | None:
+        """Reescribe `esquema_campo` para el campo que el snapshot referencia AHORA.
+
+        Hace falta porque las etapas cambian las columnas: la segmentación añade
+        `region_id` y el refinado 3DGS reescribe el campo entero. Un esquema que se
+        calculara solo en la ingesta describiría un artefacto que ya no es el que se
+        referencia — y sería exactamente el tipo de mentira que este contrato existe para
+        no publicar.
+        """
+        if snapshot is None:
+            return None
+        return snapshot.model_copy(
+            update={
+                "esquema_campo": esquema_del_campo(
+                    self.store.load(snapshot.gaussian_field_ref)
+                )
+            }
         )
 
     def _conservacion(
@@ -832,6 +852,11 @@ class IngestionPipeline:
             modalities=list(dict.fromkeys(o.modality for o in outcomes if o.ok)),
             ingestion=[o.ingestion for o in outcomes],
             gaussian_field_ref=cbct.artifact_ref,
+            # El twin describe su propio campo. Sin esto, lo único que dice qué es
+            # `scale_0` o `density` son líneas `comment` del PLY, que las personas leen y
+            # los programas ignoran — y el PLY de 3DGS usa esos mismos nombres con otra
+            # semántica, así que un lector no se queda sin entender: entiende MAL.
+            esquema_campo=esquema_del_campo(self.store.load(cbct.artifact_ref)),
             surface_ref=mesh.artifact_ref if mesh.ok else None,
             image_refs=image_refs,
             n_primitives=cbct.n_primitives,

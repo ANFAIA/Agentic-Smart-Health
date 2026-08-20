@@ -801,3 +801,69 @@ def test_sin_ningun_informe_la_modalidad_sigue_siendo_missing(
     assert len(result.report_outcomes) == 1
     assert result.report_outcomes[0].status is ModalityStatus.MISSING
 
+
+# --- el twin describe su propio campo ---------------------------------------- #
+def test_el_snapshot_dice_QUE_es_cada_columna(pipeline: IngestionPipeline, case_dir: Path):
+    """Lo que convierte «un fichero que sabemos leer» en un formato.
+
+    Todo esto vivía en líneas `comment` del PLY: las personas las leen y los programas no.
+    """
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    por_nombre = {c.nombre: c for c in snapshot.esquema_campo}
+
+    assert {"x", "scale_0", "rot_0", "density"} <= set(por_nombre)
+    assert por_nombre["density"].unidad == "sigma_normalizada"
+    assert "NO es opacidad" in por_nombre["density"].significado
+
+
+def test_la_escala_declara_que_son_MILIMETROS_y_no_su_logaritmo(
+    pipeline: IngestionPipeline, case_dir: Path
+):
+    """El detalle que evita una mala interpretación silenciosa.
+
+    El PLY de facto de 3DGS usa `scale_0..2` con el MISMO nombre y guarda el logaritmo. Un
+    visor estándar abriendo esto no fallaría: exponenciaría nuestros milímetros y
+    renderizaría basura con buen aspecto. Por eso `escala` es una columna del esquema y no
+    un comentario.
+    """
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    escala = next(c for c in snapshot.esquema_campo if c.nombre == "scale_0")
+
+    assert escala.unidad == "mm"
+    assert escala.escala == "lineal"
+    assert snapshot.perfil_campo == "ash-twin/1.0", "y el perfil se declara, para poder rechazarlo"
+
+
+def test_un_campo_sin_segmentar_no_declara_region_id(
+    pipeline: IngestionPipeline, case_dir: Path
+):
+    """Declarar de más sería tan mentira como declarar de menos."""
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    assert not any(c.nombre == "region_id" for c in snapshot.esquema_campo)
+
+
+def test_el_esquema_SIGUE_al_campo_cuando_una_etapa_lo_cambia(
+    case_dir: Path, tmp_path: Path
+):
+    """El que de verdad importa.
+
+    Las etapas cambian las columnas: la segmentación añade `region_id`. Un esquema
+    calculado solo en la ingesta describiría un artefacto que ya no es el referenciado, y
+    eso es peor que no tener esquema — es un contrato que miente con precisión.
+    """
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"),
+        segmenter=_segmentador(sorted({"11", "16"})),
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    assert not any(c.nombre == "region_id" for c in resultado.snapshot.esquema_campo)
+
+    fusionado = pipe.fuse(resultado)
+    region = next(
+        (c for c in fusionado.snapshot.esquema_campo if c.nombre == "region_id"), None
+    )
+    assert region is not None, "la segmentación la añadió y el esquema tiene que decirlo"
+    assert region.vocabulario == "ISO-3950"
+    assert region.medido is False, "no es una medida: la derivó un agente"
+    assert region.derivado_de == "segmentation-agent"
+

@@ -61,6 +61,7 @@ from export_agents.field import (
     FieldFrame,
     densidad_a_hu,
     escribe_ply,
+    esquema_del_campo,
     lee_ply,
 )
 from export_agents.render import (
@@ -109,6 +110,7 @@ __all__ = [
     "Vista",
     "beer_lambert",
     "densidad_a_hu",
+    "esquema_del_campo",
     "escribe_ply",
     "escribe_png",
     "face_normals",
