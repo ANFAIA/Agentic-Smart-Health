@@ -47,7 +47,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #         un informe real: los de CBCT con IA no traen pH —que era lo único que la
 #         capa regional sabía recoger— sino anatomía radicular y hallazgos por pieza.
 #         Todo opcional y con defecto, así que un JSON 1.3.0 sigue validando.
-SCHEMA_VERSION = "1.4.0"
+# 1.5.0 — `Medida` y `TwinSnapshot.medidas`: lo que el informe trae y el contrato NO
+#         interpreta. Lo pidió otro informe real —un estudio de oclusión/ATM— cuyos ocho
+#         índices no son por diente (son por lado y de la mordida entera), así que
+#         `RegionalObservation` no podía alojarlos: exige un `FDICode`. TRES de esos
+#         ocho estaban fuera de su propio rango normal y se tiraban enteros.
+#         Aditivo y con defecto: un JSON 1.4.0 sigue validando.
+SCHEMA_VERSION = "1.5.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +329,60 @@ class ClinicalAttributes(BaseModel):
     )
 
 
+class Medida(BaseModel):
+    """Un valor del informe que el contrato **captura sin interpretar**.
+
+    **Por qué existe.** `ClinicalAttributes` es cerrado a propósito: lo que entra ahí está
+    tipado, acotado y verificable. Pero un informe clínico real trae más de lo que
+    anticipamos, y lo que no cabía **desaparecía**. Medido: un estudio de oclusión con
+    ocho índices —dos de ellos fuera de su propio rango normal— salía del `report-agent`
+    con cero hallazgos y confianza 0,00.
+
+    **Por qué no va en `ClinicalAttributes`.** Dos motivos, y los dos importan:
+
+    1. **No es por diente.** Los índices de oclusión son por lado y de la mordida entera.
+       `RegionalObservation` exige un `FDICode`, así que colgarlos de un diente sería
+       inventarse la localización. Por eso `medidas` cuelga del snapshot, no de la región.
+    2. **No está interpretado, y tiene que notarse.** Un `ph` del contrato viene validado
+       contra un rango clínico; una `Medida` no. Mezclarlos borraría la frontera entre
+       «esto lo entendemos» y «esto lo hemos guardado», y alguien acabaría diagnosticando
+       sobre lo segundo creyendo que era lo primero.
+
+    **El rango lo pone el informe, no nosotros.** Los informes de instrumentación traen su
+    intervalo de referencia impreso al lado del valor. Eso permite decir «el informe dice
+    90-100 y reporta 89,34» **sin saber qué es TORS**: se señala lo que el propio documento
+    considera anómalo, que es captura honesta y no interpretación clínica.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre: str = Field(description="Como lo llama el informe: `POC TA`, `TORS`, `ASIM`.")
+    valor: float
+    unidad: str = Field(default="", description="Tal cual la escribe el informe (`%`, `mm`).")
+    normal_min: float | None = Field(default=None)
+    normal_max: float | None = Field(default=None)
+    lado: str | None = Field(
+        default=None,
+        description="Lateralidad tal cual la marca el informe (`I`, `D`, `A`). No se "
+        "traduce: cada fabricante usa su código y mapearlo sería suponer.",
+    )
+    texto: str = Field(
+        default="",
+        description="La línea literal de la que salió. Es lo que hace auditable una "
+        "captura que nadie ha interpretado.",
+    )
+    provenance: Provenance
+
+    @property
+    def fuera_de_rango(self) -> bool | None:
+        """`None` si el informe no declaró rango — que es distinto de «está bien»."""
+        if self.normal_min is None and self.normal_max is None:
+            return None
+        bajo = self.normal_min is not None and self.valor < self.normal_min
+        alto = self.normal_max is not None and self.valor > self.normal_max
+        return bajo or alto
+
+
 class RegionalObservation(BaseModel):
     """Una medición regional en un instante concreto (unidad de la serie temporal).
 
@@ -390,6 +450,12 @@ class TwinSnapshot(BaseModel):
         "es un error.",
     )
     n_primitives: int | None = Field(default=None, ge=0)
+    medidas: list[Medida] = Field(
+        default_factory=list,
+        description="Valores del informe que el contrato no interpreta y que **no son "
+        "por diente**: índices de oclusión, cargas por lado, cualquier medida de "
+        "instrumentación. Ver `Medida`.",
+    )
     regional: list[RegionalObservation] = Field(default_factory=list)
     provenance: Provenance
 

@@ -115,7 +115,7 @@ def test_secuencial_y_paralelo_dan_el_mismo_resultado(
 # --- modalidades ausentes y fallidas --------------------------------------- #
 def test_modalidad_no_aportada_es_missing(pipeline: IngestionPipeline, case_dir: Path) -> None:
     case = CaseInput.from_case_dir(case_dir)
-    case.report = None
+    case.reports = []
     result = pipeline.run(case)
     report = result.outcome(Modality.REPORT)
     assert report is not None and report.status is ModalityStatus.MISSING
@@ -186,7 +186,7 @@ def test_un_hallazgo_descartado_del_informe_dispara_el_gate(
     informe = tmp_path / "informe.txt"
     informe.write_text("Diente 16: pH 5.1\nDiente 47: pH 74\n", encoding="utf-8")
     case = CaseInput.from_case_dir(case_dir)
-    case.report = informe
+    case.reports = [informe]
 
     result = pipeline.run(case)
 
@@ -255,12 +255,12 @@ def test_from_case_dir_descubre_las_modalidades(case_dir: Path) -> None:
     assert case.acquisition_id == "acq-001"
     assert case.mesh is not None and case.mesh.suffix == ".obj"
     assert case.cbct is not None and case.cbct.is_dir()
-    assert case.report is not None
+    assert case.reports
 
 
 def test_from_case_dir_en_directorio_vacio(tmp_path: Path) -> None:
     case = CaseInput.from_case_dir(tmp_path)
-    assert (case.mesh, case.cbct, case.report) == (None, None, None)
+    assert (case.mesh, case.cbct, case.reports) == (None, None, [])
 
 
 # --- imagen: 0..N fotos → image_refs (lista) ------------------------------- #
@@ -733,4 +733,71 @@ def test_una_fabrica_que_devuelve_none_no_rompe_el_recorrido(
 
     assert salida.analysis == []
     assert salida.snapshot is not None
+
+
+# --- varios informes por adquisición ---------------------------------------- #
+def test_dos_informes_aportan_los_dos_sus_observaciones(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """El hueco que esto cierra, y costó dato clínico.
+
+    Con `report` como campo único, el orquestador se quedaba con uno y el resto
+    desaparecía **sin que nada lo dijera**. Medido sobre un caso real: tres PDF, y el que
+    se perdía era un informe de oclusión/ATM con análisis de contacto dental — otra
+    modalidad clínica, no un duplicado.
+    """
+    uno = tmp_path / "cbct.txt"
+    uno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    dos = tmp_path / "oclusion.txt"
+    dos.write_text("Diente 47: pH 6.2\n", encoding="utf-8")
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [uno, dos]
+    result = pipeline.run(case)
+
+    assert len(result.report_outcomes) == 2
+    fdis = {o.region_id for o in result.snapshot.regional}
+    assert {"16", "47"} <= fdis, "ninguno de los dos manda sobre el otro"
+
+
+def test_un_informe_ilegible_se_declara_en_vez_de_desaparecer(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Y el resto sigue entrando: fail-loud, no fail-fast.
+
+    Un PDF escaneado sin capa de texto es normal en una carpeta de clínica. Lo que no es
+    normal es que se filtre antes de que ningún agente lo vea — el `report-agent` ya sabe
+    decir «no contiene texto extraíble», y que lo haya es justo lo que un clínico
+    necesita saber.
+    """
+    bueno = tmp_path / "bueno.txt"
+    bueno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    # Un PDF de verdad pero sin capa de texto, que es lo que sale de un escáner de
+    # sobremesa. Un `.txt` no sirve para este test: por esa rama el agente devuelve OK con
+    # cero hallazgos, y hace bien — un informe sin pH es legítimo.
+    ilegible = tmp_path / "escaneado.pdf"
+    ilegible.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\ntrailer<<>>\n%%EOF\n")
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [bueno, ilegible]
+    result = pipeline.run(case)
+
+    estados = {o.status for o in result.report_outcomes}
+    assert ModalityStatus.FAILED in estados, "el ilegible se declara"
+    assert result.snapshot is not None, "y no tumba al que sí se pudo leer"
+    assert any(o.region_id == "16" for o in result.snapshot.regional)
+    assert result.hitl_required
+
+
+def test_sin_ningun_informe_la_modalidad_sigue_siendo_missing(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`missing` = no había fichero, `failed` = lo había y no se pudo leer. La
+    distinción no se pierde al pasar a lista."""
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = []
+    result = pipeline.run(case)
+
+    assert len(result.report_outcomes) == 1
+    assert result.report_outcomes[0].status is ModalityStatus.MISSING
 

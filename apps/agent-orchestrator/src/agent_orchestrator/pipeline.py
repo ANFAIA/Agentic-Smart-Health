@@ -133,7 +133,14 @@ class CaseInput:
     patient_id: str = "SYNTH-0001"
     mesh: Path | None = None
     cbct: Path | None = None
-    report: Path | None = None
+    # **Varios informes por adquisición, 0..N.** Igual que las fotos, y por el mismo
+    # motivo: una carpeta de clínica trae papeleo de clases distintas. Medido sobre un
+    # caso real — tres PDF, y uno era un informe de oclusión/ATM con análisis de contacto
+    # dental que **no tenía nada que ver** con el informe de CBCT. Con un solo hueco en el
+    # contrato, el orquestador se quedaba con el más largo y el otro desaparecía sin que
+    # nada lo dijera: dato clínico perdido en silencio, que es el fallo que este pipeline
+    # existe para no cometer.
+    reports: list[Path] = field(default_factory=list)
     # Varias fotos por adquisición (Bite2Text trae 5): 0..N, no exactamente una.
     images: list[Path] = field(default_factory=list)
     timestamp: datetime | None = None
@@ -156,7 +163,7 @@ class CaseInput:
             acquisition_id=kwargs.pop("acquisition_id", root.name),  # type: ignore[arg-type]
             mesh=objs[0] if objs else None,
             cbct=cbct if cbct.is_dir() else None,
-            report=reports[0] if reports else None,
+            reports=reports,
             images=photos,
             **kwargs,  # type: ignore[arg-type]
         )
@@ -197,6 +204,17 @@ class PipelineResult:
     def image_outcomes(self) -> list[IngestionOutput]:
         """Todas las fotos ingeridas (la imagen es 0..N, no una)."""
         return [o for o in self.outcomes if o.modality is Modality.IMAGE]
+
+    @property
+    def report_outcomes(self) -> list[IngestionOutput]:
+        """Todos los informes ingeridos (el informe también es 0..N).
+
+        `outcome(Modality.REPORT)` sigue funcionando pero devuelve **el primero**, que con
+        varios informes ya no es «el informe»: por eso existe esta vista. Quien pregunte
+        por uno cuando hay tres se estará quedando con el más largo sin saberlo, que es
+        exactamente el fallo que costó perder un informe de oclusión entero.
+        """
+        return [o for o in self.outcomes if o.modality is Modality.REPORT]
 
     def export(self, agente: str) -> ExportOutput | None:
         """La salida de un exportador por nombre (`export-agent`, `field-export-agent`…)."""
@@ -311,7 +329,6 @@ class IngestionPipeline:
         single = {
             Modality.MESH: case.mesh,
             Modality.CBCT: case.cbct,
-            Modality.REPORT: case.report,
         }
 
         # Una tarea por modalidad *single* aportada + una por CADA foto: la imagen
@@ -319,6 +336,7 @@ class IngestionPipeline:
         tasks: list[tuple[Modality, Path]] = [
             (m, p) for m, p in single.items() if p is not None
         ]
+        tasks += [(Modality.REPORT, p) for p in case.reports]
         tasks += [(Modality.IMAGE, p) for p in case.images]
 
         if self.parallel and len(tasks) > 1:
@@ -330,14 +348,18 @@ class IngestionPipeline:
 
         # Las single no aportadas se declaran MISSING (así `missing` = no había
         # fichero, y `failed` = lo había y no se pudo leer, nunca se confunden).
-        by_mod = {m: o for m, o in done if m is not Modality.IMAGE}
-        for m in (Modality.MESH, Modality.CBCT, Modality.REPORT):
+        multiples = {Modality.IMAGE, Modality.REPORT}
+        by_mod = {m: o for m, o in done if m not in multiples}
+        for m in (Modality.MESH, Modality.CBCT):
             by_mod.setdefault(m, self._missing(m))
+        report_outcomes = [o for m, o in done if m is Modality.REPORT] or [
+            self._missing(Modality.REPORT)
+        ]
         image_outcomes = [o for m, o in done if m is Modality.IMAGE]
 
         ordered = [
-            by_mod[Modality.CBCT], by_mod[Modality.MESH], by_mod[Modality.REPORT],
-            *image_outcomes,
+            by_mod[Modality.CBCT], by_mod[Modality.MESH],
+            *report_outcomes, *image_outcomes,
         ]
         pseudonym = pseudonymize(case.patient_id)
         snapshot = self._assemble(case, ordered, pseudonym)
@@ -777,7 +799,11 @@ class IngestionPipeline:
                 )
 
         mesh = next(o for o in outcomes if o.modality is Modality.MESH)
-        report = next(o for o in outcomes if o.modality is Modality.REPORT)
+        # Las observaciones se juntan de TODOS los informes que se leyeron bien: cada uno
+        # aporta lo suyo y ninguno manda sobre otro. Si dos citan el mismo diente, las dos
+        # entran — resolverlo aquí en silencio sería exactamente lo que el
+        # `semantic-fusion-agent` se niega a hacer con el conflicto informe↔modelo.
+        informes = [o for o in outcomes if o.modality is Modality.REPORT and o.ok]
         # Todas las fotos que se ingirieron bien → lista de referencias (apariencia
         # pre-fusión). La comprobación de referencia colgante de arriba ya las validó.
         image_refs = [
@@ -796,7 +822,8 @@ class IngestionPipeline:
             surface_ref=mesh.artifact_ref if mesh.ok else None,
             image_refs=image_refs,
             n_primitives=cbct.n_primitives,
-            regional=list(report.regional),
+            regional=[obs for o in informes for obs in o.regional],
+            medidas=[m for o in informes for m in o.medidas],
             provenance=Provenance(
                 source_file=str(case.cbct),
                 modality=Modality.CBCT,

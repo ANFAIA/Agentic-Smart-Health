@@ -35,7 +35,7 @@ La **ingesta, la fusión, la segmentación y los tres canales de exportación es
 construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
 integración; lo que queda del camino es el análisis clínico. Lo que ya funciona hoy:
 
-**Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.4.0`**). El <!--const:SCHEMA_VERSION-->
+**Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.5.0`**). El <!--const:SCHEMA_VERSION-->
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
 `surface_ref` (malla), `image_refs` (fotos, lista), `regional` (observaciones por
 diente FDI) y `provenance` por valor (trazabilidad raw→contrato).

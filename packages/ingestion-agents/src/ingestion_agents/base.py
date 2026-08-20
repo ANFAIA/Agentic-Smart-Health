@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
 
 from core_schemas import (
+    Medida,
     Modality,
     ModalityIngestion,
     ModalityStatus,
@@ -81,6 +82,11 @@ class IngestionOutput(BaseModel):
     regional: list[RegionalObservation] = Field(
         default_factory=list,
         description="Observaciones por región FDI (soporte REGIONAL, p. ej. pH).",
+    )
+    medidas: list[Medida] = Field(
+        default_factory=list,
+        description="Valores del informe que el contrato NO interpreta y que no son por "
+        "diente (índices de oclusión, cargas por lado). Ver `core_schemas.Medida`.",
     )
 
     # --- trazabilidad y métrica ------------------------------------------ #

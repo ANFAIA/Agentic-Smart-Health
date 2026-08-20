@@ -41,6 +41,7 @@ from typing import NamedTuple
 from core_schemas import (
     ClinicalAttributes,
     Hallazgo,
+    Medida,
     Modality,
     RegionalObservation,
     Support,
@@ -211,6 +212,56 @@ _HALLAZGOS_RE: tuple[tuple[re.Pattern[str], Hallazgo], ...] = (
      Hallazgo.PERDIDA_OSEA_PERIODONTAL),
     (re.compile(r"aparato\s+de\s+ortodoncia", re.I), Hallazgo.APARATO_ORTODONCICO),
 )
+
+
+# Un índice de instrumentación con su rango de referencia al lado. La forma la fija el
+# informe, no nosotros:
+#
+#     POC TA      88.09%  I        83≤(%)≤100
+#     ASIM         4.58%          -10≤(%)≤10
+#
+# El nombre puede llevar espacios (`POC TA`, `POC ECM`), la lateralidad es opcional y el
+# rango puede venir con cualquiera de los dos extremos negativos.
+_INDICE_RE = re.compile(
+    r"^\s*(?P<nombre>[A-Z][A-Z ]{1,20}?)\s+"
+    r"(?P<valor>-?\d+(?:[.,]\d+)?)\s*(?P<unidad>%|mm|N)?\s*"
+    r"(?P<lado>[IDA])?\s+"
+    r"(?P<lo>-?\d+(?:[.,]\d+)?)\s*≤\s*\(?(?P=unidad)?\)?\s*≤\s*(?P<hi>-?\d+(?:[.,]\d+)?)\s*$",
+    re.MULTILINE,
+)
+
+
+def extract_medidas_by_rules(texto: str) -> list[dict]:
+    """Índices del informe con el rango de referencia que el propio informe declara.
+
+    **No se interpreta ninguno.** No hay tabla de qué significa `TORS` ni `POC ECM`, y no
+    debería haberla: inventarle semántica clínica a la sigla de un fabricante es
+    exactamente el tipo de suposición que este pipeline no hace. Lo que sí se puede hacer
+    —y es mucho— es capturar el valor **junto al intervalo que el documento imprime al
+    lado**, porque eso permite señalar lo anómalo sin entender la magnitud.
+
+    Medido sobre un estudio real de oclusión: ocho índices, y **dos fuera de su propio
+    rango normal** (`TORS` 89,34 con normal 90-100; `POC ECM` 81,20 con normal 83-100).
+    Antes de esto el informe entero salía con cero hallazgos y confianza 0,00.
+
+    Solo se recogen las líneas que traen rango. Un número suelto sin intervalo no se puede
+    ni validar ni señalar, y meterlo aquí solo añadiría ruido con aspecto de dato.
+    """
+    fuera = []
+    for m in _INDICE_RE.finditer(texto):
+        nombre = " ".join(m.group("nombre").split())
+        if len(nombre) < 2:
+            continue
+        fuera.append({
+            "nombre": nombre,
+            "valor": float(m.group("valor").replace(",", ".")),
+            "unidad": m.group("unidad") or "",
+            "normal_min": float(m.group("lo").replace(",", ".")),
+            "normal_max": float(m.group("hi").replace(",", ".")),
+            "lado": m.group("lado"),
+            "texto": " ".join(m.group(0).split()),
+        })
+    return fuera
 
 
 def extract_hallazgos_by_rules(text: str) -> dict[str, dict]:
@@ -404,6 +455,14 @@ class ReportAgent(BaseIngestionAgent):
         # o ninguno, y las tres cosas son válidas.
         clinicos = extract_hallazgos_by_rules(text)
 
+        # Y lo que el contrato NO interpreta. Va aparte de `findings`/`clinicos` porque no
+        # es por diente y porque no está validado contra ningún rango clínico nuestro: lo
+        # único que lo acota es el intervalo que el propio informe imprime. Ver `Medida`.
+        medidas = [
+            Medida(**m, provenance=self._provenance(source, confidence=_RULES_CONFIDENCE))
+            for m in extract_medidas_by_rules(text)
+        ]
+
         observations = [
             RegionalObservation(
                 region_id=code,
@@ -424,7 +483,7 @@ class ReportAgent(BaseIngestionAgent):
         # baja para que el gate de human-in-the-loop lo pare.
         agent_confidence = min(
             (c for _, c in findings.values()),
-            default=_RULES_CONFIDENCE if clinicos else 0.0,
+            default=_RULES_CONFIDENCE if (clinicos or medidas) else 0.0,
         )
 
         # Y un informe del que se extrae *parte* tampoco lo es. Si algo se
@@ -433,9 +492,22 @@ class ReportAgent(BaseIngestionAgent):
         # era un error de tecleo del clínico o un dato que hay que recuperar.
         motivos = (
             []
-            if (findings or clinicos)
+            if (findings or clinicos or medidas)
             else ["No se extrajo ningún hallazgo regional del informe."]
         )
+        # Un índice fuera del rango que el propio informe declara es lo más accionable que
+        # sale de aquí, y el agente **no lo interpreta**: lo repite. Decir «TORS 89,34 con
+        # normal 90-100» no es un diagnóstico, es leer el documento en voz alta.
+        anomalas = [m for m in medidas if m.fuera_de_rango]
+        if anomalas:
+            motivos.append(
+                f"{len(anomalas)} de {len(medidas)} índice(s) fuera del rango que el "
+                "propio informe declara: "
+                + ", ".join(
+                    f"{m.nombre} {m.valor:g}{m.unidad} (normal "
+                    f"{m.normal_min:g}-{m.normal_max:g})" for m in anomalas
+                )
+            )
         if discards:
             agent_confidence = min(agent_confidence, _DISCARD_CONFIDENCE)
             motivos.append(_describe_discards(discards))
@@ -444,5 +516,6 @@ class ReportAgent(BaseIngestionAgent):
             source,
             confidence=agent_confidence,
             regional=observations,
+            medidas=medidas,
             detail=" ".join(motivos) if motivos else None,
         )

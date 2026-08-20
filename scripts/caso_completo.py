@@ -51,17 +51,24 @@ def _texto_extraible(pdf: Path) -> int:
     return len(b"".join(r.stdout.split()))
 
 
-def _informes_por_texto(raiz: Path) -> list[Path]:
-    """Los PDF ordenados por cantidad de texto, de mas a menos.
+def _informes(raiz: Path) -> list[Path]:
+    """**Todos** los PDF, ordenados por cantidad de texto de mas a menos.
 
-    ⚠️ Ordenar por nombre eligia `BRN3C2AF...` —un escaneado sin capa de texto, 0
-    caracteres— y dejaba sin tocar el informe de IA con los hallazgos por diente. El
-    `report-agent` fallaba correctamente («no contiene texto extraible») sobre un fichero
-    que ni siquiera era el informe. Un carpeta de clinica trae papeleo mezclado con lo
-    clinico, y el nombre no distingue uno de otro.
+    Ordenar importa —el primero es el mas informativo y es el que se lee antes en los
+    logs— pero **no se filtra nada**, y ese es el arreglo.
+
+    ⚠️ Antes esta funcion devolvia solo los que tenian texto, asi que un PDF escaneado sin
+    capa de texto desaparecia **antes de que ningun agente lo viera**. Y el `report-agent`
+    ya sabe declararlo («no contiene texto extraible»): filtrar aqui era quitarle el
+    trabajo al agente para hacerlo peor, en silencio. Que haya un PDF ilegible en la
+    carpeta de un paciente es justo lo que un clinico tiene que saber.
+
+    ⚠️ Y ordenar por NOMBRE tampoco vale: elegia `BRN3C2AF...` —el escaneado— y dejaba el
+    informe de IA con los hallazgos por diente para el final. Una carpeta de clinica trae
+    papeleo mezclado con lo clinico, y el nombre no distingue uno de otro.
     """
     conteo = [(p, _texto_extraible(p)) for p in sorted(raiz.glob("*.pdf"))]
-    return [p for p, n in sorted(conteo, key=lambda x: -x[1]) if n > 0]
+    return [p for p, _ in sorted(conteo, key=lambda x: -x[1])]
 
 
 def descubre(raiz: Path) -> CaseInput:
@@ -76,14 +83,14 @@ def descubre(raiz: Path) -> CaseInput:
                  and any(d.glob("*.dcm"))), None)
     mallas = sorted(p for p in raiz.glob("*.stl")
                     if "Unsectioned" not in p.name)  # el Unsectioned es derivado del CBCT
-    informes = _informes_por_texto(raiz)
+    informes = _informes(raiz)
     fotos = sorted(p for pat in FOTOS for p in raiz.glob(pat))
 
     return CaseInput(
         acquisition_id=raiz.name,
         cbct=cbct,
         mesh=mallas[0] if mallas else None,
-        report=informes[0] if informes else None,
+        reports=informes,
         images=fotos,
     )
 
@@ -190,7 +197,8 @@ def main() -> int:
     print(f"  CBCT     {caso.cbct.name if caso.cbct else '— no encontrado'}"
           + (f"  ({len(list(caso.cbct.glob('*.dcm')))} cortes)" if caso.cbct else ""))
     print(f"  malla    {'sí' if caso.mesh else '— no encontrada'}")
-    print(f"  informe  {'sí' if caso.report else '— no encontrado'}")
+    print(f"  informes {len(caso.reports)} (los ilegibles NO se filtran: los declara "
+          f"el `report-agent`)")
     print(f"  fotos    {len(caso.images)}")
 
     # Se pasa una FÁBRICA, no un `Segmenter`: la segmentación necesita las coronas ya
@@ -215,7 +223,12 @@ def main() -> int:
             print(f"    · {m}")
         return 1
     print(f"  → {r.snapshot.n_primitives:,} primitivas · "
-          f"{len(r.snapshot.regional)} observación(es) regional(es)")
+          f"{len(r.snapshot.regional)} observación(es) regional(es) · "
+          f"{len(r.snapshot.medidas)} medida(s) no regional(es)")
+    for m in r.snapshot.medidas:
+        marca = "⚠ FUERA" if m.fuera_de_rango else ""
+        print(f"      {m.nombre:<10} {m.valor:>7.2f}{m.unidad:<2} {m.lado or ' ':<2}"
+              f"[{m.normal_min:g}, {m.normal_max:g}] {marca}")
 
     print("\n--- 2 · FUSIÓN (registro malla ↔ campo) ---")
     if caso.mesh is None or r.snapshot.surface_ref is None:
