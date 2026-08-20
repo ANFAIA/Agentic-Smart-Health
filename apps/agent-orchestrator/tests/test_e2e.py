@@ -146,7 +146,7 @@ def test_un_caso_entra_como_ficheros_y_sale_como_ficheros(recorrido) -> None:
     assert resultado.snapshot.provenance.transform is not None
     assert any(a.agent.startswith("segmentation-agent") for a in resultado.analysis)
     assert any(o.agent.startswith("semantic-fusion-agent") for o in resultado.fusion)
-    assert len(resultado.exports) == 3, "tres canales: malla, campo y render"
+    assert len(resultado.exports) == 4, "malla, campo, compuesto y render"
     assert all(e.ok for e in resultado.exports), [e.detail for e in resultado.exports]
     assert resultado.reversible, [
         (e.agent, e.max_deviation_mm, e.psnr_db, e.ssim) for e in resultado.exports
@@ -288,7 +288,7 @@ def test_sin_snapshot_no_se_exporta_y_se_dice(pipeline, case_dir: Path, tmp_path
 def test_un_caso_sin_malla_exporta_el_campo_igualmente(
     pipeline, case_dir: Path, tmp_path: Path
 ) -> None:
-    """Los tres canales son independientes: que falte uno no tumba a los otros.
+    """Los cuatro canales son independientes: que falte uno no tumba a los otros.
 
     Y la ausencia de malla es `MISSING`, no `FAILED`: una adquisición puede ser solo CBCT y
     eso no dice nada malo del fichero que sí se escribió.
@@ -339,14 +339,14 @@ def test_exportar_no_muta_el_resultado_de_entrada(recorrido, pipeline, tmp_path:
     antes = len(resultado.exports)
     otro = pipeline.exportar(resultado, tmp_path / "otra-salida")
     assert len(resultado.exports) == antes
-    assert len(otro.exports) == antes + 3
+    assert len(otro.exports) == antes + 4
 
 
 def test_el_render_se_puede_desactivar(pipeline, case_dir: Path, tmp_path: Path) -> None:
     """Es el canal más caro; quien solo quiera geometría no debería pagarlo."""
     resultado = pipeline.run(CaseInput.from_case_dir(case_dir))
     fuera = pipeline.exportar(resultado, tmp_path / "export", render=False)
-    assert len(fuera.exports) == 2
+    assert len(fuera.exports) == 3
     assert fuera.export("render-export-agent") is None
     assert fuera.reversible
 

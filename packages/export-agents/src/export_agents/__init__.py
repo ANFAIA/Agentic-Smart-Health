@@ -48,6 +48,12 @@ from export_agents.base import (
     ExportOutput,
     SurfaceStore,
 )
+from export_agents.compuesto import (
+    DENSIDAD_ENCIA,
+    ORIGEN_CBCT,
+    ORIGEN_IOS,
+    CompositeExportAgent,
+)
 from export_agents.field import (
     COLUMNAS_DE_ARRAY,
     FIELD_FRAMES,
@@ -88,6 +94,10 @@ __all__ = [
     "REVERSIBILITY_BUDGET_MM",
     "VISTAS_POR_DEFECTO",
     "BaseExportAgent",
+    "CompositeExportAgent",
+    "DENSIDAD_ENCIA",
+    "ORIGEN_CBCT",
+    "ORIGEN_IOS",
     "ExportAgent",
     "ExportAgentProtocol",
     "ExportOutput",

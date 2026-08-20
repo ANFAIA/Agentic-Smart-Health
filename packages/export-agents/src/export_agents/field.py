@@ -71,7 +71,12 @@ _PROPIEDADES: tuple[tuple[str, str], ...] = (
 # `segmentation-agent`, y un campo sin segmentar no la tiene — declararla siempre
 # obligaría a rellenarla con ceros, que en el convenio del agente significan «sin
 # asignar» y son indistinguibles de un campo que sí se segmentó y no encontró nada.
-_OPCIONALES: tuple[tuple[str, str], ...] = (("region_id", "short"),)
+_OPCIONALES: tuple[tuple[str, str], ...] = (
+    ("region_id", "short"),
+    # De qué modalidad viene cada gaussiana. Solo la escribe el compuesto, porque solo él
+    # mezcla dos: un campo de una sola fuente no la necesita. Ver `compuesto.py`.
+    ("origen", "short"),
+)
 _TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
 _CLAVES_MINIMAS = ("centers", "scales", "rotations", "density")
@@ -90,6 +95,7 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
     "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
     "density": ("density",),
     "region_id": ("region_id",),
+    "origen": ("origen",),
 }
 
 

@@ -129,6 +129,7 @@ def test_las_siete_etapas_tienen_contrato():
         "segmentation",
         "export-malla",
         "export-campo",
+        "export-compuesto",
         "export-render",
     }
 

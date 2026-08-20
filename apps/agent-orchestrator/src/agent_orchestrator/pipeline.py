@@ -46,6 +46,7 @@ from core_schemas import (
     revisa_requisitos,
 )
 from export_agents import (
+    CompositeExportAgent,
     ExportAgent,
     ExportOutput,
     FieldExportAgent,
@@ -116,6 +117,15 @@ CONTRATOS: dict[str, ContratoEtapa] = {
         nombre="field-export-agent",
         requiere_arrays=frozenset({"centers", "scales", "rotations", "density"}),
         conserva_arrays=False,  # su salida es un PLY; lo verifica `columnas_del_campo`
+    ),
+    # El compuesto exige `surface_ref` **y** la rígida: sin escáner no hay encía y sin
+    # registro los dientes y la encía caerían en sistemas distintos dentro del mismo
+    # fichero. Es lo contrario que `export-malla`, donde la ausencia de malla es normal —
+    # aquí la malla ES la mitad del producto, así que su falta no es un detalle.
+    "export-compuesto": ContratoEtapa(
+        nombre="composite-export-agent",
+        requiere_arrays=frozenset({"centers", "scales", "rotations", "density"}),
+        conserva_arrays=False,  # su salida mezcla dos fuentes; no es el campo
     ),
     "export-render": ContratoEtapa(
         nombre="render-export-agent",
@@ -617,7 +627,7 @@ class IngestionPipeline:
         # con buen aspecto.
         previos = [
             m
-            for clave in ("export-malla", "export-campo", "export-render")
+            for clave in ("export-malla", "export-campo", "export-compuesto", "export-render")
             for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
         ]
 
@@ -627,6 +637,9 @@ class IngestionPipeline:
             ),
             FieldExportAgent(self.store).export(
                 snapshot, destino / f"{snapshot.acquisition_id}.ply"
+            ),
+            CompositeExportAgent(self.store).export(
+                snapshot, destino / f"{snapshot.acquisition_id}-compuesto.ply"
             ),
         ]
         if render:
