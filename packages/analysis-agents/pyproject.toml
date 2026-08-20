@@ -12,6 +12,8 @@ dependencies = [
     "ingestion-agents",
     "tooth-aggregation",
     "numpy>=2.0",
+    # `SegmentadorDental` busca la corona etiquetada más cercana con un KD-tree.
+    "scipy>=1.14",
 ]
 
 [build-system]
