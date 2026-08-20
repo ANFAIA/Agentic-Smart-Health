@@ -57,6 +57,9 @@ import re
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial import cKDTree
+
+from fusion_agents.registration import Registrar, apply, quaternion_to_matrix
 
 # HU mínima para considerar que una gaussiana es corona. Ver el punto 1 de arriba.
 HU_CORONA = 1200.0
@@ -129,6 +132,26 @@ def separacion_de_arcadas(z: np.ndarray, bins: int = 80) -> tuple[float, float]:
 # Umbral de esmalte para localizar el plano oclusal. Ver `plano_oclusal_del_esmalte`.
 HU_ESMALTE = 1400.0
 
+# Umbrales candidatos para el objetivo del ICP. **No se elige uno**: se prueban todos y
+# gana el que puntúe mejor, porque está medido que ninguno vale para las dos arcadas y que
+# el barrido NO es monótono — el maxilar falla en 1800 entre dos vecinos buenos, que es
+# firma de mínimo local del ICP y no de mala elección. Fijar una constante sería ajustar a
+# un paciente. Medido sobre `histora`, corona→esmalte:
+#
+#     maxilar     1200 → 6,84 mm   1400 → 1,73   1600 → 1,53   1800 → 8,13 ⚠   1900 → 1,64
+#     mandibular  1200 → 7,35 mm   1400 → 7,41   1600 → 7,45   1800 → 0,73     1900 → 0,73
+#
+# Nótese que 1200 —el valor que esta función usaba antes— es el PEOR en las dos.
+BARRIDO_OBJETIVO = (1200.0, 1400.0, 1600.0, 1800.0, 1900.0)
+
+# La referencia del árbitro. Ningún hueso llega a densidad de esmalte, así que la
+# distancia de un vértice del escáner a la gaussiana de esmalte más cercana **no depende
+# del segmentador** — que es justo lo que hacía falta para desacoplar las dos etapas.
+HU_ARBITRO = 1800.0
+
+# A cuánto se considera que un vértice del escáner «encontró» su esmalte.
+TOLERANCIA_ARBITRO_MM = 2.0
+
 
 def plano_oclusal_del_esmalte(z: np.ndarray, bins: int = 80) -> float:
     """El plano oclusal como el **modo** de la z del esmalte. Sin valle, sin modelo.
@@ -179,6 +202,53 @@ def arcada_del_nombre(ruta: Path | str) -> str | None:
     return "maxilar" if arriba else "mandibular"
 
 
+def puntua_contra_esmalte(
+    vertices: np.ndarray,
+    esmalte: np.ndarray,
+    *,
+    corona: np.ndarray | None = None,
+    tolerancia: float = TOLERANCIA_ARBITRO_MM,
+) -> float:
+    """Fracción de vértices del escáner que caen a menos de `tolerancia` del esmalte.
+
+    Es el árbitro para elegir entre poses, y **hace falta uno porque el rms del ICP no
+    sirve**: sobre diez poses cuya calidad real iba de 0,73 a 8,13 mm, el rms cabía entero
+    en 0,614-0,668. Quien eligiera por el residuo elegiría mal.
+
+    **Por qué una fracción y no la mediana.** En el script que estrenó esta idea se usaba
+    la mediana de la distancia de las CORONAS al esmalte, con las coronas identificadas
+    por sus etiquetas FDI. Aquí no hay etiquetas: el orquestador recibe la malla entera,
+    encía incluida, y la encía **no tiene contrapartida posible** —no hay esmalte debajo
+    de la encía—. Una mediana sobre todos los vértices mediría sobre todo cuánta encía
+    trae el escaneo.
+
+    Una fracción aguanta eso: para una pose razonable la encía aporta cero, así que no
+    mueve el orden entre candidatas. Lo que sube el número es cuántas coronas encontraron
+    su esmalte, que es lo que se quiere puntuar. Es el mismo fallo que invalidó una
+    ejecución entera cuando se corrió sin `--fdi` y la métrica salió midiendo encía contra
+    dientes.
+
+    **`corona` cierra el único agujero que le queda, y es opcional a propósito.** Una pose
+    *patológica* puede empujar encía encima de los dientes y llevarse crédito que no le
+    toca; con la máscara de corona eso no pasa. Pero no se exige, y la distinción es
+    deliberada: esa máscara la produce **otro modelo** (`segmentar_fdi.py`), y hacer que la
+    elección de pose dependa de su salida sería reintroducir por la otra puerta el
+    acoplamiento que este módulo existe para quitar — cambiar de checkpoint movería el
+    registro sin que nadie tocase el registro, que es lo que costó 7 dientes de 27
+    (`docs/research/segmentacion-diente-cbct.md` §5).
+
+    Así que: **se usa si está, nunca se necesita.** Es la diferencia entre una mejora y una
+    dependencia.
+    """
+    if len(vertices) == 0 or len(esmalte) == 0:
+        return 0.0
+    puntos = vertices if corona is None else vertices[np.asarray(corona, dtype=bool)]
+    if len(puntos) == 0:
+        return 0.0
+    d, _ = cKDTree(esmalte).query(puntos)
+    return float((d < tolerancia).mean())
+
+
 def nubes_para_registro(
     campo: dict[str, np.ndarray],
     vertices: np.ndarray,
@@ -187,6 +257,9 @@ def nubes_para_registro(
     hu: np.ndarray | None = None,
     hu_corona: float = HU_CORONA,
     plano: float | None = None,
+    dos_arcadas: bool = False,
+    corona_origen: np.ndarray | None = None,
+    registrar: Registrar | None = None,
     muestra: int = MUESTRA,
     semilla: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
@@ -198,6 +271,25 @@ def nubes_para_registro(
 
     `informe` lleva lo que hizo falta decidir, para que el llamante lo pueda declarar en
     vez de que se pierda dentro de esta función.
+
+    **Con `registrar`, el umbral del objetivo no se fija: se ELIGE midiendo.** Se prueban
+    los de `BARRIDO_OBJETIVO` y gana el que más vértices del escáner deje a menos de 2 mm
+    del esmalte. Hace falta porque está medido que ningún umbral vale para las dos arcadas
+    y que el barrido no es monótono, y hace falta *este* árbitro porque el rms del ICP no
+    distingue — ver `puntua_contra_esmalte`. Sin `registrar` se usa `hu_corona` a secas,
+    que es el comportamiento de antes y **el peor de los cinco umbrales** sobre el caso
+    medido.
+
+    `corona_origen` es opcional y solo afina el árbitro; ver `puntua_contra_esmalte`.
+
+    **`dos_arcadas` lo declara quien llama, y no se deduce.** Se intentó: con las dos
+    arcadas en oclusión no hay valle que encontrar (medido: 0,65 y 1,00 sobre el caso
+    real), y la extensión tampoco sirve —`HU ≥ 1400` sobre un FOV de cabeza no es esmalte,
+    es todo lo denso del cráneo, y da 131 mm donde una arcada mide 25—. El dato **no sabe**
+    cuántas arcadas trae, así que se declara en vez de adivinarse.
+
+    Por defecto `False`, que deja el camino conservador de siempre: partir una nube de una
+    sola arcada tiraría media sin decirlo, y ese es el fallo peor de los dos.
     """
     centros = np.asarray(campo["centers"], dtype=np.float64)
     if "origin" in campo:
@@ -220,7 +312,25 @@ def nubes_para_registro(
         lado = objetivo[:, 2] >= plano if arcada == "maxilar" else objetivo[:, 2] < plano
         if lado.sum() >= 500:
             objetivo = objetivo[lado]
+    elif (
+        arcada is not None
+        and dos_arcadas
+        and hu is not None
+        and (np.asarray(hu) >= HU_ESMALTE).sum() >= 500
+    ):
+        # El plano sale del ESMALTE, no de un valle. En oclusión las coronas de las dos
+        # arcadas se tocan y forman un pico único: buscar un hueco es buscar algo que la
+        # postura de la adquisición garantiza que no existe, y por eso esta función se
+        # negaba a partir justo en el caso que importa. Un plano no necesita un hueco.
+        corte = plano_oclusal_del_esmalte(centros[np.asarray(hu) >= HU_ESMALTE][:, 2])
+        informe["plano_oclusal_mm"] = corte
+        informe["plano_por_esmalte"] = True
+        lado = objetivo[:, 2] >= corte if arcada == "maxilar" else objetivo[:, 2] < corte
+        if lado.sum() >= 500:
+            objetivo = objetivo[lado]
     elif arcada is not None and len(objetivo) > 500:
+        # Sin HU no hay esmalte que localizar: queda el criterio del valle, que solo
+        # acierta cuando de verdad hay dos lóbulos separados.
         corte, valle = separacion_de_arcadas(objetivo[:, 2])
         informe["valle"] = valle
         if valle > VALLE_MAXIMO:
@@ -235,12 +345,64 @@ def nubes_para_registro(
             if lado.sum() >= 500:
                 objetivo = objetivo[lado]
                 informe["plano_oclusal_mm"] = corte
-    informe["n_objetivo"] = len(objetivo)
-
     rng = np.random.default_rng(semilla)
     origen = np.asarray(vertices, dtype=np.float64)
     if len(origen) > muestra:
-        origen = origen[rng.choice(len(origen), muestra, replace=False)]
+        idx = rng.choice(len(origen), muestra, replace=False)
+        origen = origen[idx]
+        corona_origen = None if corona_origen is None else np.asarray(corona_origen)[idx]
+
+    if registrar is not None and hu is not None:
+        objetivo, extra = _objetivo_por_arbitro(
+            origen, centros, np.asarray(hu), objetivo, corona_origen, registrar, rng, muestra
+        )
+        informe.update(extra)
+
+    informe["n_objetivo"] = len(objetivo)
     if len(objetivo) > muestra:
         objetivo = objetivo[rng.choice(len(objetivo), muestra, replace=False)]
     return origen, objetivo, informe
+
+
+def _objetivo_por_arbitro(
+    origen, centros, hu, objetivo, corona_origen, registrar, rng, muestra
+) -> tuple[np.ndarray, dict]:
+    """El objetivo que mejor puntúa contra el esmalte, entre los de `BARRIDO_OBJETIVO`.
+
+    Registra una vez por candidato sobre nubes submuestreadas —son segundos— y devuelve el
+    objetivo ganador, no la pose: registrar de verdad es del `GeometricFusionAgent`, que
+    además es quien calcula la confianza y alimenta el gate. Aquí solo se elige contra qué.
+    """
+    esmalte = centros[hu >= HU_ARBITRO]
+    if len(esmalte) < 500:
+        return objetivo, {"sin_arbitro": "no hay bastante esmalte para puntuar las poses"}
+
+    # El lóbulo ya elegido acota los candidatos: se mira qué gaussianas del objetivo
+    # sobreviven a cada umbral, no el campo entero otra vez.
+    dentro = np.zeros(len(centros), dtype=bool)
+    dentro[np.unique(cKDTree(centros).query(objetivo, k=1)[1])] = True
+
+    mejor: tuple[float, float, np.ndarray] | None = None
+    puntuaciones: dict[str, float] = {}
+    for u in BARRIDO_OBJETIVO:
+        cand = centros[dentro & (hu >= u)]
+        if len(cand) < 500:
+            continue
+        if len(cand) > muestra:
+            cand = cand[rng.choice(len(cand), muestra, replace=False)]
+        r = registrar(origen, cand)
+        movido = apply(
+            quaternion_to_matrix(r.rotation), np.asarray(r.translation), origen
+        )
+        p = puntua_contra_esmalte(movido, esmalte, corona=corona_origen)
+        puntuaciones[f"{u:.0f}"] = round(p, 4)
+        if mejor is None or p > mejor[0]:
+            mejor = (p, u, centros[dentro & (hu >= u)])
+
+    if mejor is None:
+        return objetivo, {"sin_arbitro": "ningún candidato tenía bastantes gaussianas"}
+    return mejor[2], {
+        "hu_objetivo": mejor[1],
+        "puntuacion_arbitro": mejor[0],
+        "puntuaciones": puntuaciones,
+    }

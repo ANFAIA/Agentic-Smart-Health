@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from fusion_agents import HU_CORONA, arcada_del_nombre, nubes_para_registro, plano_oclusal
+from fusion_agents import HU_CORONA, arcada_del_nombre, icp, nubes_para_registro, plano_oclusal
 from fusion_agents.preparacion import (
+    BARRIDO_OBJETIVO,
     VALLE_MAXIMO,
     plano_oclusal_del_esmalte,
+    puntua_contra_esmalte,
     separacion_de_arcadas,
 )
 
@@ -209,4 +211,84 @@ def test_un_plano_dado_manda_sobre_el_veto_del_valle():
     assert inf_con["plano_dado"] is True
     assert inf_con["plano_oclusal_mm"] == 40.0
     assert len(con_plano) < len(sin_plano)  # partió de verdad
+
+
+# --- el árbitro que elige el objetivo --------------------------------------- #
+def test_la_encia_no_puede_cambiar_el_orden_entre_poses():
+    """El árbitro es una FRACCIÓN por esto: la encía no tiene esmalte debajo.
+
+    Con una mediana —lo que usaba el script, que sí tenía etiquetas— el número mediría
+    sobre todo cuánta encía trae el escaneo. Es el fallo que invalidó una ejecución entera.
+    """
+    rng = np.random.default_rng(0)
+    esmalte = rng.normal(0, 3, (2000, 3))
+    coronas = esmalte[:400] + rng.normal(0, 0.3, (400, 3))
+    encia = rng.normal([0, 0, 40], 3, (1600, 3))  # lejos, sin contrapartida posible
+
+    solo_coronas = puntua_contra_esmalte(coronas, esmalte)
+    con_encia = puntua_contra_esmalte(np.vstack([coronas, encia]), esmalte)
+    assert solo_coronas > 0.9
+    # Diluye el valor, pero no lo anula: la señal sigue siendo la de las coronas.
+    assert 0.15 < con_encia < solo_coronas
+
+    # Y con la máscara de corona se recupera el número afilado, sin necesitarla.
+    mascara = np.zeros(2000, dtype=bool)
+    mascara[:400] = True
+    assert puntua_contra_esmalte(
+        np.vstack([coronas, encia]), esmalte, corona=mascara
+    ) == pytest.approx(solo_coronas)
+
+
+def test_el_objetivo_se_elige_midiendo_y_no_por_el_residuo():
+    """`registrar` activa el barrido: gana el que más vértices acerca al esmalte.
+
+    Sin esto se usaba `hu_corona` a secas, que es **el peor de los cinco umbrales** sobre
+    el caso medido (6,84 mm en el maxilar, 7,35 en la mandíbula).
+    """
+    rng = np.random.default_rng(1)
+    n = 6000
+    centros = rng.normal(0, 12, (n, 3))
+    hu = rng.uniform(300, 1300, n)
+    # Un núcleo denso —el «esmalte»— que es lo único con lo que la malla puede casar.
+    centros[:1200] = rng.normal(0, 2.5, (1200, 3))
+    hu[:1200] = rng.uniform(1850, 2000, 1200)
+    campo = {"centers": centros}
+    vertices = centros[:600] + rng.normal(0, 0.2, (600, 3))
+
+    _, destino, informe = nubes_para_registro(
+        campo, vertices, arcada=None, hu=hu, registrar=icp
+    )
+    assert informe["hu_objetivo"] in BARRIDO_OBJETIVO
+    assert informe["puntuacion_arbitro"] > 0.5
+    assert len(informe["puntuaciones"]) >= 2, "tiene que haber comparado candidatos"
+    assert len(destino) > 0
+
+
+def test_sin_registrar_no_hay_barrido_y_se_comporta_como_antes():
+    """El árbitro es opt-in: quien no lo pide conserva el camino de siempre."""
+    rng = np.random.default_rng(2)
+    campo = {"centers": rng.normal(0, 10, (3000, 3))}
+    hu = rng.uniform(300, 2000, 3000)
+    _, _, informe = nubes_para_registro(campo, rng.normal(0, 10, (200, 3)),
+                                        arcada=None, hu=hu)
+    assert "hu_objetivo" not in informe and "puntuaciones" not in informe
+
+
+def test_partir_las_dos_arcadas_hay_que_declararlo():
+    """`dos_arcadas` no se deduce del dato, y se intentó: ni valle ni extensión sirven."""
+    rng = np.random.default_rng(3)
+    centros = np.column_stack([rng.normal(0, 10, 4000), rng.normal(0, 10, 4000),
+                               rng.normal(40.0, 9.0, 4000)])
+    hu = np.full(4000, 1500.0)
+    campo = {"centers": centros}
+    v = rng.normal(0, 10, (300, 3))
+
+    _, sin_declarar, inf_sin = nubes_para_registro(campo, v, arcada="maxilar", hu=hu)
+    assert "no_se_parte" in inf_sin  # por defecto NO parte: tirar media arcada es peor
+
+    _, partido, inf_con = nubes_para_registro(
+        campo, v, arcada="maxilar", hu=hu, dos_arcadas=True
+    )
+    assert inf_con["plano_por_esmalte"] is True
+    assert len(partido) < len(sin_declarar)
 
