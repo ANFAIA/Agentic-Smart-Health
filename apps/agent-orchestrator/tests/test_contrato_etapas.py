@@ -116,7 +116,7 @@ def test_los_metadatos_del_campo_no_se_exigen_como_columna(pipeline, caso, tmp_p
 
 
 # --- las dos etapas de fusión ----------------------------------------------- #
-def test_las_siete_etapas_tienen_contrato():
+def test_todas_las_etapas_tienen_contrato():
     """Ninguna etapa corre sin declarar qué necesita y qué conserva.
 
     Una etapa sin entrada en `CONTRATOS` no es que pase la comprobación: es que **no se
@@ -130,6 +130,7 @@ def test_las_siete_etapas_tienen_contrato():
         "export-malla",
         "export-campo",
         "export-compuesto",
+        "export-visor",
         "export-render",
     }
 

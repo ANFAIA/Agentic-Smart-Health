@@ -51,6 +51,7 @@ from export_agents import (
     ExportOutput,
     FieldExportAgent,
     RenderExportAgent,
+    ViewerExportAgent,
     esquema_del_campo,
 )
 from fusion_agents import (
@@ -127,6 +128,15 @@ CONTRATOS: dict[str, ContratoEtapa] = {
         nombre="composite-export-agent",
         requiere_arrays=frozenset({"centers", "scales", "rotations", "density"}),
         conserva_arrays=False,  # su salida mezcla dos fuentes; no es el campo
+    ),
+    # El visor solo exige el campo: sin escáner enseña el CBCT y lo dice, y sin
+    # segmentación enseña geometría y lo dice. Su trabajo es ENSEÑAR lo que hay, incluido
+    # el hecho de que falte algo — declararle requisitos duros lo dejaría mudo justo en
+    # los casos donde más hace falta mirar.
+    "export-visor": ContratoEtapa(
+        nombre="viewer-export-agent",
+        requiere_arrays=frozenset({"centers", "density"}),
+        conserva_arrays=False,  # su salida es un HTML
     ),
     "export-render": ContratoEtapa(
         nombre="render-export-agent",
@@ -249,7 +259,19 @@ class PipelineResult:
         """
         if any(e.status is ModalityStatus.FAILED for e in self.exports):
             return False
-        hechos = [e for e in self.exports if e.ok]
+        # ⚠️ El visor **no cuenta**, y no es una excepción de conveniencia.
+        #
+        # `reversible` pregunta si el twin se puede reconstruir desde lo que se escribió.
+        # El paquete del visor es una **vista**: está decimado a propósito, su opacidad es
+        # una ganancia de visualización y su color es falso. Exigirle una desviación
+        # obligaría a inventarse un número; darlo por reversible afirmaría que de él se
+        # recupera el campo, que es falso — y lo dice él mismo en su sidecar. Un artefacto
+        # que nunca prometió ser reversible no puede hacer fracasar la comprobación de que
+        # los que sí lo prometieron la cumplen.
+        hechos = [
+            e for e in self.exports
+            if e.ok and not e.agent.startswith("viewer-export-agent")
+        ]
         if not hechos:
             return False
         return all(
@@ -269,6 +291,8 @@ class IngestionPipeline:
         report_backend: str = "rules",
         parallel: bool = True,
         segmenter: Segmenter | None = None,
+        cbct_recorte_dental: bool = False,
+        cbct_max_primitivas: int = 500_000,
         segmenter_factory: Callable[[TwinSnapshot], Segmenter | None] | None = None,
     ) -> None:
         self.store = store
@@ -289,7 +313,12 @@ class IngestionPipeline:
         self.segmenter_factory = segmenter_factory
         self.agents: dict[Modality, BaseIngestionAgent] = {
             Modality.MESH: MeshAgent(store, quarantine_dir=quarantine_dir),
-            Modality.CBCT: CBCTAgent(store, quarantine_dir=quarantine_dir),
+            Modality.CBCT: CBCTAgent(
+                store,
+                quarantine_dir=quarantine_dir,
+                max_primitives=cbct_max_primitivas,
+                recorte_dental=cbct_recorte_dental,
+            ),
             Modality.REPORT: ReportAgent(
                 backend=report_backend, quarantine_dir=quarantine_dir
             ),
@@ -588,6 +617,7 @@ class IngestionPipeline:
         destino: str | Path,
         *,
         marco_malla: str = "source",
+        etiquetas_ios: Any | None = None,
         render: bool = True,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
@@ -628,7 +658,8 @@ class IngestionPipeline:
         # con buen aspecto.
         previos = [
             m
-            for clave in ("export-malla", "export-campo", "export-compuesto", "export-render")
+            for clave in ("export-malla", "export-campo", "export-compuesto",
+                          "export-visor", "export-render")
             for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
         ]
 
@@ -641,6 +672,18 @@ class IngestionPipeline:
             ),
             CompositeExportAgent(self.store).export(
                 snapshot, destino / f"{snapshot.acquisition_id}-compuesto.ply"
+            ),
+            # Al visor se le pasan los motivos del gate: es lo único que un clínico no
+            # puede deducir mirando el modelo, y esconderlo detrás de la geometría sería
+            # entregar un twin que parece más firme de lo que es.
+            ViewerExportAgent(self.store).export(
+                snapshot,
+                destino / f"{snapshot.acquisition_id}-visor",
+                motivos=list(result.hitl_reasons),
+                # Las etiquetas del escáner, si el llamante las tiene: son lo que permite
+                # enseñar las coronas COMPLETAS y separadas en vez del compuesto parcial
+                # del CBCT. Ver `viewer-export-agent`.
+                etiquetas_ios=etiquetas_ios,
             ),
         ]
         if render:
