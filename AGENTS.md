@@ -35,6 +35,7 @@ herramientas son prosa y se escriben a mano.
 | `report-agent` | [`packages/ingestion-agents/src/ingestion_agents/report_agent.py`](packages/ingestion-agents/src/ingestion_agents/report_agent.py) |
 | `segmentation-agent` | [`packages/analysis-agents/src/analysis_agents/segmentation.py`](packages/analysis-agents/src/analysis_agents/segmentation.py) |
 | `semantic-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/semantic.py`](packages/fusion-agents/src/fusion_agents/semantic.py) |
+| `viewer-export-agent` | [`packages/export-agents/src/export_agents/visor.py`](packages/export-agents/src/export_agents/visor.py) |
 <!-- /generado: agentes -->
 
 

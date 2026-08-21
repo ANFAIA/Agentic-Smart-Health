@@ -84,6 +84,7 @@ from export_agents.stl import (
     stl_header,
     write_binary_stl,
 )
+from export_agents.visor import ViewerExportAgent
 
 __all__ = [
     "COLUMNAS_DE_ARRAY",
@@ -96,6 +97,7 @@ __all__ = [
     "VISTAS_POR_DEFECTO",
     "BaseExportAgent",
     "CompositeExportAgent",
+    "ViewerExportAgent",
     "DENSIDAD_ENCIA",
     "ORIGEN_CBCT",
     "ORIGEN_IOS",
