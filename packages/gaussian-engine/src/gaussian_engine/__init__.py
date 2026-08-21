@@ -29,6 +29,7 @@ visor.
 
 from gaussian_engine.agente import PERFIL, ajusta_campo, esquema
 from gaussian_engine.ajuste import (
+    ITERACIONES,
     Ajuste,
     ajusta,
     evalua,
@@ -36,6 +37,6 @@ from gaussian_engine.ajuste import (
 )
 
 __all__ = [
-    "PERFIL", "Ajuste", "ajusta", "ajusta_campo", "esquema", "evalua",
+    "ITERACIONES", "PERFIL", "Ajuste", "ajusta", "ajusta_campo", "esquema", "evalua",
     "siembra_por_rejilla",
 ]

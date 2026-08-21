@@ -14,7 +14,7 @@ from typing import Protocol
 import numpy as np
 from core_schemas import ColumnaCampo, TwinSnapshot
 
-from gaussian_engine.ajuste import Ajuste, ajusta
+from gaussian_engine.ajuste import ITERACIONES, Ajuste, ajusta
 
 PERFIL = "ash-twin-ajustado/1.0"
 
@@ -57,7 +57,7 @@ def ajusta_campo(
     store: CampoStore,
     *,
     n_objetivo: int,
-    iteraciones: int = 400,
+    iteraciones: int = ITERACIONES,
     tasa: float = 0.02,
     dispositivo: str | None = None,
 ) -> tuple[TwinSnapshot, Ajuste]:

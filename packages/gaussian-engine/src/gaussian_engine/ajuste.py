@@ -52,6 +52,28 @@ SIGMA_MAX_MM = 3.0
 # a `N * k * 3`, que con medio millón de semillas son gigabytes.
 LOTE = 131_072
 
+# Iteraciones por defecto. **Es un optimo medido, no un compromiso de tiempo.**
+#
+# Medido sobre el caso real (1,34 M semillas, k=8, 100 k gaussianas) apartando el 20 % de
+# las semillas del ajuste y midiendo solo en ellas:
+#
+#     iter   entrenamiento   RESERVADAS   anisotropia p50
+#      800        89,1 HU      185,5 HU        1,34
+#    2.000        59,6 HU      159,6 HU        1,58
+#    6.000        38,6 HU      161,5 HU        2,22
+#
+# ⚠️ El minimo esta en 2.000 y pasarse **empeora**. De 2.000 a 6.000 el error de
+# entrenamiento cae un 35 % y el de las reservadas sube: a partir de ahi el ajuste aprende
+# donde estaban los centros de las semillas, no que forma tiene el tejido. Era previsible
+# por la cuenta de parametros —100 k gaussianas x ~10 grados de libertad contra 1,34 M de
+# muestras son 1,3 puntos por parametro— y por eso el criterio de parada no puede ser el
+# error de entrenamiento, que baja siempre.
+#
+# El suelo de ese error es 144 HU: lo que se obtiene prediciendo cada voxel reservado con
+# la media de sus cuatro vecinos de entrenamiento. Ningun campo suave puede bajar de ahi,
+# porque debajo solo queda variacion a escala de voxel. Los 159,6 estan a un 11 % de el.
+ITERACIONES = 2_000
+
 
 @dataclass(frozen=True)
 class Ajuste:
@@ -179,7 +201,7 @@ def ajusta(
     *,
     n_objetivo: int,
     hu_range: tuple[float, float] | np.ndarray = (0.0, 1.0),
-    iteraciones: int = 800,
+    iteraciones: int = ITERACIONES,
     k: int = K_VECINOS,
     tasa: float = 0.01,
     dispositivo: str | None = None,
