@@ -95,7 +95,7 @@ def descubre(raiz: Path) -> CaseInput:
     )
 
 
-def _fabrica_segmentador(caso, args):
+def _fabrica_segmentador(caso, args, almacen, etq):
     """Devuelve la fábrica que el orquestador llamará **después** de registrar.
 
     El trabajo caro —ingerir el CBCT e inferir el volumen de probabilidad— se hace una vez,
@@ -111,19 +111,13 @@ def _fabrica_segmentador(caso, args):
     import numpy as np
     from analysis_agents import SegmentadorDental
     from fusion_agents.registration import apply, quaternion_to_matrix
-    from ingestion_agents import ArtifactStore, CBCTAgent
     from ingestion_agents.cbct_agent import _read_series
     from ingestion_agents.mesh_agent import parse_stl
 
     sys.path.insert(0, str(RAIZ / "scripts"))
     from composicion_cbct_ios import probabilidad_por_modelo
 
-    almacen = ArtifactStore(args.salida / "_seg")
-    campo = almacen.load(CBCTAgent(almacen).ingest(caso.cbct).artifact_ref)
-    origen_mm = campo["origin"]
-
     V = np.asarray(parse_stl(caso.mesh)["positions"], dtype=np.float64)
-    etq = np.load(args.fdi).astype(np.int64)
 
     serie = _read_series(caso.cbct)
     prob = probabilidad_por_modelo(serie.volume, args.modelo,
@@ -131,16 +125,31 @@ def _fabrica_segmentador(caso, args):
     sx, sy, _z = serie.spacing
     z_ord = np.sort(serie.z)
 
-    def probabilidad_en(puntos):
-        """De mm a vóxel. El `cbct-agent` construye los centros como
-        `(col*sx, fila*sy, z[corte])` y luego resta el centroide, así que se deshace."""
-        p = np.asarray(puntos, dtype=np.float64) + origen_mm
-        col = np.clip(np.rint(p[:, 0] / sx).astype(int), 0, prob.shape[2] - 1)
-        fil = np.clip(np.rint(p[:, 1] / sy).astype(int), 0, prob.shape[1] - 1)
-        cor = np.clip(np.searchsorted(z_ord, p[:, 2]), 0, prob.shape[0] - 1)
-        return prob[cor, fil, col]
+    def sonda(origen_mm):
+        """De mm a vóxel, para el `origin` que el campo del snapshot declare.
+
+        Va parametrizada por el origen y no cerrada sobre uno fijo: el centroide depende
+        de qué vóxeles entraron al campo, así que cambia con el recorte dental. Cerrarla
+        sobre el de otra ingesta es lo que desplomó el nombrado de 14 dientes a 1.
+        """
+
+        def probabilidad_en(puntos):
+            p = np.asarray(puntos, dtype=np.float64) + origen_mm
+            col = np.clip(np.rint(p[:, 0] / sx).astype(int), 0, prob.shape[2] - 1)
+            fil = np.clip(np.rint(p[:, 1] / sy).astype(int), 0, prob.shape[1] - 1)
+            cor = np.clip(np.searchsorted(z_ord, p[:, 2]), 0, prob.shape[0] - 1)
+            return prob[cor, fil, col]
+
+        return probabilidad_en
 
     def fabrica(snapshot):
+        # ⚠️ El `origin` se lee DEL CAMPO QUE EL PIPELINE YA SEMBRO, no de una ingesta
+        # propia. Aqui se reingeria el CBCT con los ajustes por defecto, y en cuanto el
+        # orquestador empezo a recortar a la region dental los dos centroides dejaron de
+        # coincidir: las coronas caian en otro sitio y el nombrado se desplomo de 14
+        # dientes a 1. Un agente que reconstruye por su cuenta lo que ya esta en el
+        # snapshot acaba discrepando de el.
+        origen_mm = almacen.load(snapshot.gaussian_field_ref)["origin"]
         t = snapshot.provenance.transform
         if t is None:
             print("  segmentador: el snapshot no trae transformación — sin registro no "
@@ -151,9 +160,26 @@ def _fabrica_segmentador(caso, args):
         coronas = apply(
             quaternion_to_matrix(t.rotation), np.asarray(t.translation), V
         ) - origen_mm
+        # Hacia donde va la raiz, MEDIDO del propio escaneo y no supuesto.
+        #
+        # El margen gingival es el lado del hueso: la encia rodea las coronas por donde
+        # sale la raiz. Asi que `media(encia) - media(coronas)` apunta hacia el hueso, sin
+        # necesidad de saber la convencion de ejes del DICOM ni si la arcada es la de
+        # arriba o la de abajo — vale para las dos. Medido en este caso: [-1,3 4,1 5,4] mm.
+        #
+        # Hace falta porque sin ella el nombrado funde cada diente con el que lo ocluye:
+        # piezas de 44 y 47 mm cruzando la encia. Ver `TOLERANCIA_OCLUSAL_MM`.
+        direccion = coronas[etq == 0].mean(axis=0) - coronas[etq > 0].mean(axis=0)
         print(f"  segmentador: {args.modelo.name} · {len(coronas):,} coronas con la pose "
               f"de la fusión · {len(set(etq[etq > 0].tolist()))} códigos FDI")
-        return SegmentadorDental(probabilidad_en, coronas, etq)
+        return SegmentadorDental(
+            sonda(origen_mm), coronas, etq, direccion_raiz=direccion,
+            # ⚠️ El recorte apical convierte el ápice en SUPUESTO. Se pide aquí, en el
+            # script que monta el caso, y no por defecto en el agente: quien lo active
+            # tiene que saber que a partir de ese momento la longitud de la raíz ya no se
+            # puede medir sobre el resultado, porque sería medir lo que se ha supuesto.
+            recorta_por_longitud=not args.sin_recorte_apical,
+        )
 
     return fabrica
 
@@ -177,6 +203,23 @@ def main() -> int:
              "TAL COMO LO SEMBRO el `cbct-agent`, que es lo que ha pasado hasta hoy.",
     )
     ap.add_argument("--pasos-3dgs", type=int, default=400)
+    ap.add_argument(
+        "--max-primitivas", type=int, default=1_500_000,
+        help="Tope de gaussianas del campo. El defecto del agente (500.000) esta pensado "
+             "para un FOV acotado; sobre una cabeza entera deja los dientes con el 7%% de "
+             "su volumen.",
+    )
+    ap.add_argument(
+        "--sin-recorte-apical", action="store_true",
+        help="No recortar la raiz a la longitud anatomica de su tipo. Sin el recorte las "
+             "piezas arrastran hueso alveolar (medido: 34,3 mm en un molar de ~20); con "
+             "el, el apice pasa a ser SUPUESTO y no se puede medir longitud radicular.",
+    )
+    ap.add_argument(
+        "--sin-recorte-dental", action="store_true",
+        help="No acotar el campo a la dentadura. Solo para un CBCT que YA venga acotado: "
+             "sobre uno de cabeza entera el compuesto sale en filamentos.",
+    )
     ap.add_argument(
         "--modelo", type=Path, default=None,
         help="Checkpoint del segmentador de CBCT. Con el, la etapa de SEGMENTACION corre "
@@ -203,12 +246,33 @@ def main() -> int:
 
     # Se pasa una FÁBRICA, no un `Segmenter`: la segmentación necesita las coronas ya
     # movidas al marco del CBCT, y esa pose no existe hasta que `fuse()` registra.
+    almacen = ArtifactStore(args.salida / "artifacts")
+    # ⚠️ Las etiquetas se cargan y se rellenan UNA VEZ, y las usan los dos: el segmentador
+    # y el canal del visor. Estaban duplicadas —el segmentador con los huecos cerrados y
+    # el visor con las crudas— y las dos mitades discrepaban sobre qué vértice es corona.
+    etq_ios = None
+    if args.fdi and caso.mesh:
+        import numpy as _np
+        from analysis_agents import rellena_etiquetas as _rellena
+        from ingestion_agents.mesh_agent import parse_stl as _stl
+
+        _V = _np.asarray(_stl(caso.mesh)["positions"], dtype=_np.float64)
+        _cruda = _np.load(args.fdi).astype(_np.int64)
+        etq_ios = _rellena(_V, _cruda)
+        cerrados = int((etq_ios > 0).sum()) - int((_cruda > 0).sum())
+        if cerrados:
+            print(f"  etiquetas del escáner: {int((_cruda > 0).sum()):,} → "
+                  f"{int((etq_ios > 0).sum()):,} vértices de corona "
+                  f"(+{cerrados:,} huecos cerrados)")
+
     fabrica = None
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
-        fabrica = _fabrica_segmentador(caso, args)
+        fabrica = _fabrica_segmentador(caso, args, almacen, etq_ios)
 
-    pipe = IngestionPipeline(ArtifactStore(args.salida / "artifacts"),
+    pipe = IngestionPipeline(almacen,
                             quarantine_dir=args.salida / "quarantine",
+                            cbct_recorte_dental=not args.sin_recorte_dental,
+                            cbct_max_primitivas=args.max_primitivas,
                             segmenter_factory=fabrica)
 
     print("\n--- 1 · INGESTA ---")
@@ -290,7 +354,13 @@ def main() -> int:
         print("  → " + ("APORTA" if informe["aporta"] else "NO aporta sobre la semilla"))
 
     print("\n--- 4 · EXPORTACIÓN ---")
-    fin = pipe.exportar(fus, args.salida / "export")
+    # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
+    # completas y separadas, que es lo que un clínico reconoce. El compuesto del CBCT
+    # cubre el 51 % del volumen de cada pieza y de forma desigual.
+    fin = pipe.exportar(
+        fus, args.salida / "export",
+        etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
+    )
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
               f"{'' if e.max_deviation_mm is None else f'{e.max_deviation_mm:.6f} mm'}"
