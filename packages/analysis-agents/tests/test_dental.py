@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from analysis_agents import DEFAULT_CODES, GUM_CLASS, SegmentadorDental
+from analysis_agents import (
+    DEFAULT_CODES,
+    GUM_CLASS,
+    SegmentadorDental,
+    rellena_etiquetas,
+)
 from analysis_agents.segmentation import SegmentationAgent
 
 
@@ -60,18 +65,47 @@ def test_un_punto_de_diente_sin_nombre_cuenta_como_encia():
     assert np.exp(logp[0, GUM_CLASS]) == pytest.approx(1.0)
 
 
-def test_la_probabilidad_del_modelo_decide_diente_contra_encia():
-    """El IOS dice cuál, pero no dice si hay diente ahí: eso es del modelo del CBCT."""
+def test_lejos_de_la_corona_decide_el_modelo():
+    """El IOS dice cuál, pero a distancia de la corona no dice si hay diente: eso es del
+    modelo del CBCT, que es lo único que ve por debajo del margen."""
     coronas, etq = _coronas()
     col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
-    punto = np.array([[0.0, 0, 0]])
+    lejos = np.array([[0.0, 0.0, 6.0]])   # dentro del radio de nombre, fuera del de corona
 
-    alto = SegmentadorDental(lambda p: np.full(len(p), 0.9), coronas, etq)(punto)
-    bajo = SegmentadorDental(lambda p: np.full(len(p), 0.1), coronas, etq)(punto)
+    alto = SegmentadorDental(lambda p: np.full(len(p), 0.9), coronas, etq)(lejos)
+    bajo = SegmentadorDental(lambda p: np.full(len(p), 0.1), coronas, etq)(lejos)
 
     assert int(np.argmax(alto[0])) == col[36]
     assert int(np.argmax(bajo[0])) == GUM_CLASS
     assert np.exp(alto[0, col[36]]) == pytest.approx(0.9, abs=1e-6)
+
+
+def test_JUNTO_a_la_corona_manda_el_escaner():
+    """El arreglo del hueco de la unión corona-raíz, y no es una excepción de comodidad.
+
+    La corona y la raíz se veían como dos objetos separados. Medido, no era desajuste de
+    registro —el 94 % de las coronas tiene material del CBCT a menos de 2 mm— sino que el
+    modelo no llamaba diente a ese material: a 1 mm de una corona hay 5.215 gaussianas
+    nombradas y 2.927 sin nombrar.
+
+    Ahí la superficie la midió un escáner con exactitud de decenas de micras, y la opinión
+    de un clasificador sobre un vóxel de 0,30 mm es evidencia más débil que esa medida.
+    """
+    coronas, etq = _coronas()
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+    pegado = np.array([[0.0, 0.0, 0.0]])   # en el centro de la nube de corona
+
+    bajo = SegmentadorDental(lambda p: np.full(len(p), 0.05), coronas, etq)(pegado)
+    assert int(np.argmax(bajo[0])) == col[36], "el escáner lo midió: es ese diente"
+
+
+def test_el_escaner_solo_manda_donde_MIDIO():
+    """No es una patente de corso: fuera del radio de corona el modelo recupera el mando,
+    porque ahí el escáner no vio nada."""
+    coronas, etq = _coronas()
+    seg = SegmentadorDental(lambda p: np.full(len(p), 0.05), coronas, etq,
+                            radio_corona_mm=0.5)
+    assert int(np.argmax(seg(np.array([[0.0, 0.0, 5.0]]))[0])) == GUM_CLASS
 
 
 def test_sin_ningun_codigo_falla_en_vez_de_segmentar_a_ciegas():
@@ -115,3 +149,172 @@ def test_probabilidad_1_no_produce_menos_infinito():
     assert np.isfinite(logp).all()
     assert np.allclose(np.exp(logp).sum(axis=1), 1.0, atol=1e-3)
 
+
+# --- la direccion de la raiz ------------------------------------------------- #
+def _en_oclusion() -> tuple[np.ndarray, np.ndarray]:
+    """Una corona superior y, a 1 mm por debajo, la inferior que la ocluye.
+
+    Es la geometría real: en un CBCT dental el paciente muerde, así que las dos coronas se
+    tocan. Solo la de arriba está etiquetada — el escaneo intraoral es de una arcada.
+    """
+    rng = np.random.default_rng(0)
+    return rng.normal([0, 0, 0], [1.0, 1.0, 0.5], (200, 3)), np.array([36] * 200)
+
+
+def test_sin_direccion_el_diente_de_enfrente_se_cuela(tmp_path):
+    """El fallo que esto arregla, y se veía en el visor: los dientes cruzaban la encía por
+    arriba y por abajo, con piezas de 44 y 47 mm donde una mide 20-25."""
+    coronas, etq = _en_oclusion()
+    seg = SegmentadorDental(lambda p: np.ones(len(p)), coronas, etq)
+    # Un punto 12 mm por DEBAJO de la corona: es la raíz del diente que ocluye.
+    logp = seg(np.array([[0.0, 0.0, -12.0]]))
+
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+    assert int(np.argmax(logp[0])) == col[36], "sin dirección, lo nombra igual"
+
+
+def test_con_la_direccion_medida_ya_no(tmp_path):
+    """Un diente se extiende desde su corona HACIA el hueso. Lo que queda por delante de
+    la corona, hacia la boca, es el diente que la muerde."""
+    coronas, etq = _en_oclusion()
+    seg = SegmentadorDental(
+        lambda p: np.ones(len(p)), coronas, etq, direccion_raiz=np.array([0.0, 0.0, 1.0])
+    )
+    abajo = seg(np.array([[0.0, 0.0, -12.0]]))   # el que ocluye
+    arriba = seg(np.array([[0.0, 0.0, 12.0]]))   # su propia raíz
+
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+    assert int(np.argmax(abajo[0])) == GUM_CLASS, "el de enfrente ya no se cuela"
+    assert int(np.argmax(arriba[0])) == col[36], "y la raíz propia sigue entrando"
+
+
+def test_la_tolerancia_deja_pasar_el_espesor_de_la_corona(tmp_path):
+    """No es un corte a cero: el escáner ve la superficie externa, no el esmalte entero, y
+    el registro tiene su error (medido: p50 0,8-4 mm). Por eso hay 3 mm de holgura."""
+    coronas, etq = _en_oclusion()
+    seg = SegmentadorDental(
+        lambda p: np.ones(len(p)), coronas, etq, direccion_raiz=np.array([0.0, 0.0, 1.0])
+    )
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+    assert int(np.argmax(seg(np.array([[0.0, 0.0, -2.0]]))[0])) == col[36]
+
+
+def test_la_direccion_no_hace_falta_normalizarla(tmp_path):
+    """Quien la mide la pasa tal cual —`media(encía) - media(coronas)`— y son milímetros,
+    no un unitario. Normalizarla aquí evita que el llamante tenga que acordarse."""
+    coronas, etq = _en_oclusion()
+    seg = SegmentadorDental(
+        lambda p: np.ones(len(p)), coronas, etq, direccion_raiz=np.array([0.0, 0.0, 6.9])
+    )
+    assert int(np.argmax(seg(np.array([[0.0, 0.0, -12.0]]))[0])) == GUM_CLASS
+
+
+# --- huecos del etiquetado del escaner --------------------------------------- #
+def test_un_vertice_RODEADO_de_una_pieza_es_esa_pieza():
+    """El segmentador del escáner deja vértices sueltos sin etiquetar dentro de una
+    corona, y salen pintados como encía."""
+    rng = np.random.default_rng(0)
+    v = rng.normal(0, 1.0, (300, 3))
+    e = np.full(300, 36)
+    e[[10, 50, 120]] = 0          # tres agujeros en medio de la pieza
+
+    lleno = rellena_etiquetas(v, e)
+    assert (lleno == 36).all(), "un agujero rodeado de 36 es 36"
+
+
+def test_el_MARGEN_gingival_no_se_come():
+    """⚠️ Lo que distingue este criterio de un relleno por radio.
+
+    En el margen la encía toca la corona de verdad. Medido sobre un caso real: por radio
+    de 0,5 mm entrarían 10.128 vértices; con el criterio de vecindario quedan 1.851. Esos
+    8.000 de diferencia son margen, que es justo la frontera clínica que interesa.
+    """
+    rng = np.random.default_rng(1)
+    corona = rng.normal([0, 0, 2.0], [1.0, 1.0, 0.4], (250, 3))
+    encia = rng.normal([0, 0, -0.6], [1.2, 1.2, 0.4], (250, 3))
+    v = np.vstack([corona, encia])
+    e = np.concatenate([np.full(250, 36), np.zeros(250, dtype=int)])
+
+    lleno = rellena_etiquetas(v, e)
+    invadidos = int((lleno[250:] > 0).sum())
+    assert invadidos < 25, f"se comió {invadidos} vértices de encía en el margen"
+
+
+def test_sin_agujeros_no_toca_nada():
+    """No es un filtro que reescriba por si acaso."""
+    rng = np.random.default_rng(2)
+    v = rng.normal(0, 1.0, (200, 3))
+    e = np.full(200, 36)
+    assert (rellena_etiquetas(v, e) == e).all()
+
+
+# --- el recorte apical ------------------------------------------------------- #
+def test_sin_recorte_la_raiz_sigue_hasta_donde_el_modelo_diga():
+    """El comportamiento por defecto no cambia: el recorte es opt-in porque convierte el
+    ápice en supuesto, y esa es una decisión de quien monta el caso."""
+    coronas, etq = _coronas()
+    seg = SegmentadorDental(lambda p: np.ones(len(p)), coronas, etq,
+                            direccion_raiz=np.array([0.0, 0.0, 1.0]))
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+    lejisimos = np.array([[0.0, 0.0, 14.0]])   # 14 mm hacia la raíz
+    assert int(np.argmax(seg(lejisimos)[0])) == col[36]
+
+
+def test_con_recorte_la_raiz_para_en_la_longitud_de_SU_TIPO():
+    """Medido: el 16 salía con 34,3 mm cuando un molar superior entero mide ~20. Los 14 de
+    más son seno maxilar y hueso alveolar, y el modelo no puede pararse ahí porque bajo la
+    cresta ósea no hay frontera que segmentar."""
+    coronas, etq = _coronas()          # las dos piezas son molares (36 y 37)
+    seg = SegmentadorDental(lambda p: np.ones(len(p)), coronas, etq,
+                            direccion_raiz=np.array([0.0, 0.0, 1.0]),
+                            recorta_por_longitud=True)
+    col = {fdi: c for c, fdi in DEFAULT_CODES.items()}
+
+    dentro = seg(np.array([[0.0, 0.0, 14.0]]))   # dentro de los 22 mm de un molar
+    fuera = seg(np.array([[0.0, 0.0, 30.0]]))    # más allá
+
+    assert int(np.argmax(dentro[0])) == col[36]
+    assert int(np.argmax(fuera[0])) == GUM_CLASS
+
+
+def test_el_canino_no_se_recorta_con_la_cota_del_incisivo():
+    """Es el diente más largo de la boca. Una cota única le quitaría ápice de verdad."""
+    from analysis_agents.dental import LONGITUD_MM
+
+    assert LONGITUD_MM["canino"] > LONGITUD_MM["incisivo"]
+    assert LONGITUD_MM["canino"] > LONGITUD_MM["molar"]
+
+
+def test_el_eje_de_la_cota_es_el_GLOBAL_y_esta_medido_que_tiene_que_serlo():
+    """Registro de un negativo, para que no se reintente sin datos nuevos.
+
+    Un eje por pieza deberia cortar mejor. No se puede sacar de la corona: el escaner ve un
+    casquete y sus direcciones principales las manda el contorno, no el eje del diente.
+    Medido, tres estimadores distintos dan angulos de 17 a 90 grados contra el eje de la
+    arcada y alturas de corona de 5 a 23 mm donde lo anatomico son 7-9. Puesto en
+    produccion empeoro: mediana 26,7 mm contra 25,8, ocho piezas desbordadas contra seis.
+    """
+    coronas, etq = _coronas()
+    global_ = np.array([0.0, 0.0, 1.0])
+    seg = SegmentadorDental(lambda p: np.ones(len(p)), coronas, etq,
+                            direccion_raiz=global_, recorta_por_longitud=True)
+
+    for eje, _, _ in seg._cota_apical.values():
+        assert np.allclose(eje, global_)
+
+
+def test_la_cota_arranca_en_el_extremo_oclusal_de_CADA_pieza():
+    """Dos piezas del mismo tipo a distinta altura tienen que recibir cotas distintas: la
+    longitud se cuenta desde donde empieza el diente, no desde el origen del marco."""
+    rng = np.random.default_rng(4)
+    a = rng.normal([0, 0, 0], 1.0, (200, 3))
+    b = rng.normal([10, 0, 6.0], 1.0, (200, 3))     # el 37, seis mm mas adentro
+    seg = SegmentadorDental(
+        lambda p: np.ones(len(p)), np.vstack([a, b]),
+        np.array([36] * 200 + [37] * 200),
+        direccion_raiz=np.array([0.0, 0.0, 1.0]), recorta_por_longitud=True,
+    )
+
+    (_, o36, c36), (_, o37, c37) = seg._cota_apical[36], seg._cota_apical[37]
+    # Las cotas son relativas a su propio origen; en absoluto el 37 corta seis mm mas alla.
+    assert (o37[2] + c37) - (o36[2] + c36) == pytest.approx(6.0, abs=1.0)

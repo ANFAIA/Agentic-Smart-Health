@@ -26,7 +26,11 @@ from analysis_agents.base import (
     AnalysisOutput,
     BaseAnalysisAgent,
 )
-from analysis_agents.dental import RADIO_NOMBRE_MM, SegmentadorDental
+from analysis_agents.dental import (
+    RADIO_NOMBRE_MM,
+    SegmentadorDental,
+    rellena_etiquetas,
+)
 from analysis_agents.segmentation import (
     DEFAULT_CODES,
     DEFAULT_UNASSIGNED_LIMIT,
@@ -41,6 +45,7 @@ __all__ = [
     "DEFAULT_CODES",
     "RADIO_NOMBRE_MM",
     "SegmentadorDental",
+    "rellena_etiquetas",
     "DEFAULT_HITL_THRESHOLD",
     "DEFAULT_UNASSIGNED_LIMIT",
     "GUM_CLASS",
