@@ -49,11 +49,18 @@ from export_agents.compuesto import ORIGEN_IOS
 
 # Ganancia de la transferencia sigma → alfa: `alfa = 1 - exp(-g·sigma)`.
 #
-# Con sigma normalizada en [0,1], g=3 lleva el esmalte saturado a ~0,95 de opacidad y el
-# tejido blando de 0,1 a ~0,26: se ve la anatomia densa sin que la baja densidad
-# desaparezca. **No es un parametro del dato**, es de la vista, y se escribe en el fichero
-# para que nadie lo confunda con una medida.
-GANANCIA_DISPLAY = 3.0
+# ⚠️ **Ya no es fija: se DERIVA de `ALFA_OBJETIVO` capa a capa.** Estaba clavada en 3, que
+# lleva la densidad mediana a ~0,74 de opacidad. Eso tenia sentido con splats que no se
+# solapaban —cada uno tenia que verse por si mismo— y es ruinoso ahora que se apilan
+# cuatro veces su espaciado: veinte splats a 0,74 no son una superficie, son un muro.
+#
+# Se conserva la FORMA de la transferencia, no el valor: la ganancia se ajusta para que la
+# alfa mediana caiga en el objetivo, y la variacion relativa entre tejidos densos y flojos
+# sigue ahi. Es lo unico que lleva informacion de las dos cosas.
+#
+# **No es un parametro del dato**, es de la vista, y la ganancia que salio se escribe en la
+# cabecera del fichero y en el sidecar para que nadie la confunda con una medida.
+GANANCIA_MAXIMA = 3.0
 
 # Coeficiente 0 de los armonicos esfericos. Un color RGB en [0,1] se guarda como
 # `(c - 0.5) / C0`; es la convencion del PLY de INRIA y el visor la deshace igual.
@@ -65,21 +72,96 @@ C0 = 0.28209479177387814
 # la vista— y no toca el campo.
 DENSIDAD_DISPLAY_ENCIA = 0.45
 
-# Fraccion del espaciado real a la que se lleva sigma **para la vista**.
+# Tamano del splat como MULTIPLO del espaciado entre vecinos, y opacidad que le toca.
 #
-# ⚠️ Sin esto el visor ensena polvo, no anatomia. Las gaussianas del campo tienen la sigma
-# que les puso el `cbct-agent` —medio voxel— y al decimar el espaciado entre las que quedan
-# crece: medido sobre el caso real, sigma 0,075 mm sobre un espaciado de 0,276, o sea un
-# ratio de 0,27. Los splats no llegan a tocarse y la superficie sale agujereada.
+# ⚠️ **Estos dos numeros van juntos y estaban los dos mal.** Aqui habia un
+# `MULTIPLO_ESPACIADO = 0.6` con un comentario afirmando que ahi «los splats se solapan
+# sin emborronar». Es falso, y se ve: con 0,6 y opacidad alta cada pixel recibe UN splat y
+# se dibuja como un punto. El campo se veia como polvo.
 #
-# Se infla sigma hasta ~0,6 del espaciado, que es donde los splats se solapan sin
-# emborronar. **Es una decision de la vista y va declarada**: la sigma medida sigue intacta
-# en el PLY del twin, y el factor aplicado se escribe en la cabecera y en el sidecar.
-FRACCION_ESPACIADO = 0.6
+# Medido sobre dos PLY de 3DGS entrenado de verdad (los notebooks), con las mismas
+# metricas que se aplican aqui:
+#
+#                      sigma_mayor/espaciado    alfa mediana
+#   bite2text                     4,90              0,010
+#   trained_3dgs                  3,48              0,104
+#   este exportador (antes)       0,90              0,741
+#
+# Una superficie continua de gaussianas no se hace con splats que se tocan: se hace con
+# splats GRANDES y CASI TRANSPARENTES que se apilan. Cada pixel acumula decenas y el
+# alfa-blending los promedia. Solapar mas sin bajar la opacidad daria niebla solida, y por
+# eso los dos numeros no se pueden tocar por separado.
+# ⚠️ Con 4 se ve continuo pero BORROSO: un splat de cuatro veces el espaciado promedia
+# sobre esa distancia, y el detalle fino de la corona se pierde. Bite2Text puede permitirse
+# 4,9 porque su optimizador DENSIFICA donde hace falta detalle; aqui las posiciones son
+# fijas —los vertices del escaner— asi que el tamano es el unico mando y hay que repartirlo
+# entre continuidad y detalle. 2,5 es el compromiso.
+MULTIPLO_ESPACIADO = 2.5
+
+# Opacidad objetivo, distinta para SUPERFICIE y VOLUMEN. Un solo numero para las cuatro
+# capas fue un error: la acumulacion a lo largo de un rayo no es la misma.
+#
+# Un rayo que atraviesa una capa de superficie —los vertices del escaner— cruza del orden
+# de `pi * multiplo^2` splats, unos 20 con 2,5. Uno que atraviesa el campo del CBCT los
+# cruza tambien EN PROFUNDIDAD, porque es un solido y no una hoja: del orden de
+# `multiplo^3`, unos 15 veces mas. Con la misma alfa por splat, el volumen sale opaco y la
+# superficie transparente — que es exactamente lo que se veia.
+#
+# Se resuelve `1 - (1-a)^N = 0,95` para cada N: la superficie necesita ~0,14 por splat y el
+# volumen ~0,01. No son numeros de gusto, salen de cuantos se apilan.
+ALFA_SUPERFICIE = 0.14
+# ⚠️ Por encima del `splatAlphaRemovalThreshold` del visor, que descarta todo lo que baje
+# de 5/255 = 0,0196. Con 0,02 justo encima, la mitad de las gaussianas de raices y fondo
+# caian por debajo y **el visor las tiraba**: medido, el 46 %. Un objetivo de opacidad que
+# coincide con el umbral de descarte del consumidor no es un objetivo, es una moneda al
+# aire por gaussiana.
+ALFA_VOLUMEN = 0.045
+
+# Los vertices del escaner se escriben como DISCOS TANGENTES, no como esferas.
+#
+# ⚠️ Es la diferencia entre ver una superficie y ver polvo, y esta medida. Una esfera de
+# radio 0,5 del espaciado deja hueco entre vecinas —se ven las bolas— y ademas reparte su
+# opacidad en profundidad, hacia la camara y en contra, donde no hay nada que ensenar. Un
+# disco tangente la pone toda en la superficie y embaldosa sin juntas.
+#
+# Es la forma a la que llega solo un 3DGS entrenado contra renders opacos: el gradiente
+# aplasta las gaussianas contra la superficie visible porque es lo que reduce el error.
+# Aqui no hace falta optimizar nada — **el escaner ya midio la normal de cada vertice** y
+# viene en el artefacto de la malla. Se usa la medida en vez de aprenderla.
+#
+# El CBCT es otra cosa y no lleva discos: mide densidad en todo el interior, no hay
+# superficie, y no hay normal que usar. Que se vea como una nube es honesto.
+RADIO_DISCO = MULTIPLO_ESPACIADO   # del espaciado entre vertices vecinos
+# Proporcion del disco: radio / grosor. **Un disco demasiado plano se ve peor que una
+# esfera, no mejor**, y es contraintuitivo.
+#
+# Estaba en 14:1 y el resultado eran hebras: una superficie curva —la encia— se ve en buena
+# parte DE CANTO, y un disco de 14:1 de canto se dibuja como una raya. El visor parecia
+# pelo o llamas, no tejido.
+#
+# Medido sobre 3DGS entrenado de verdad, la anisotropia mediana es **2,4** en
+# `bite2text_f1980_lower`. El optimizador no aplana tanto porque no le compensa: pierde mas
+# de canto de lo que gana de frente. Se copia esa proporcion.
+ASPECTO_DISCO = 2.4
 
 # Falso color. El CBCT no mide color: esto es para distinguir piezas a ojo, igual que el
 # `color` de las capas en el `config.ts` del visor.
-_TONOS = (188, 152, 96, 42, 8, 330, 286, 244)
+#
+# ⚠️ **Un tono por PIEZA, no por cuadrante.** Antes el tono salia del cuadrante y solo la
+# luminosidad cambiaba entre piezas: una arcada superior entera eran dos colores —turquesa
+# y verde— con siete escalones de claridad cada uno, y en pantalla eso se lee como un solo
+# color. Si el color no distingue piezas no sirve para nada, porque distinguirlas es lo
+# unico que hace.
+#
+# El tono se reparte por ANGULO AUREO sobre el indice del codigo FDI. Dos ventajas sobre
+# repartir en partes iguales: piezas contiguas caen lejos en el circulo —que es justo
+# cuando hace falta distinguirlas— y el color de un diente depende solo de su codigo, asi
+# que la misma pieza sale del mismo color en otro caso y en otra visita. Comparar dos
+# visitas lado a lado con los colores bailando seria peor que no tenerlos.
+_ANGULO_AUREO = 0.6180339887498949
+# Luminosidad y saturacion CONSTANTES: todas las piezas son la misma clase de cosa, y
+# variarlas anadiria una dimension que no codifica nada.
+_LUZ_PIEZA, _SATURACION_PIEZA = 0.46, 0.62
 _COLOR_ENCIA = (0.85, 0.52, 0.29)
 _COLOR_RESTO = (0.42, 0.45, 0.48)
 
@@ -105,6 +187,22 @@ CAPAS = (
     ("encia", "Encia (escaner)", "superficie, sin densidad medida"),
     ("resto", "Resto del campo", "hueso y craneo sin nombre"),
 )
+
+# Capa de APARIENCIA, opcional: el escaner entrenado como 3DGS. Va aparte de `CAPAS`
+# porque no es lo mismo — aquellas son lo medido y esta una reconstruccion aprendida.
+#
+# ⚠️ **Una sola capa, y el motivo es un limite MEDIDO del visor.** `dental-3dgs-viewer`
+# deja de dibujar —todas las capas, no solo la nueva— a partir de SEIS escenas: con cinco
+# renderiza y con seis el lienzo sale vacio sin ningun error en consola. Partir la
+# apariencia en coronas y encia daria seis y romperia tambien las cuatro medidas. La
+# separacion por pieza ya la dan las capas medidas; en una capa de presentacion aporta
+# poco y cuesta el paquete entero.
+CAPAS_APARIENCIA = (
+    ("escaner-gs", "Escaner (3DGS entrenado)",
+     "APARIENCIA: reconstruida contra renders, no medida"),
+)
+# Los ficheros que produce `scripts/entrena_gs_escaner.py`, fundidos en esa unica capa.
+_PARTES_APARIENCIA = ("coronas", "encia")
 
 _PROPIEDADES_INRIA = (
     "x", "y", "z", "nx", "ny", "nz",
@@ -135,6 +233,7 @@ class ViewerExportAgent(BaseExportAgent):
         *,
         motivos: list[str] | None = None,
         etiquetas_ios: np.ndarray | None = None,
+        gs_apariencia: Path | None = None,
         semilla: int = 0,
     ) -> ExportOutput:
         campo = self.store.load(snapshot.gaussian_field_ref)
@@ -146,18 +245,23 @@ class ViewerExportAgent(BaseExportAgent):
         rotaciones = np.asarray(campo["rotations"], dtype=np.float64)
         densidad = np.asarray(campo["density"], dtype=np.float64)
 
-        encia, aviso_encia = self._encia(snapshot, campo)
+        encia, normales_ios, aviso_encia = self._encia(snapshot, campo)
         sel_c, sel_e, recorte = _decima(region, len(encia), semilla=semilla)
 
-        # Las gaussianas de encia no traen elipsoide medido: el escaner da posiciones. Se
-        # les pone una esfera del tamano del espaciado de la malla y el cuaternion
-        # identidad, que es la unica rotacion que no afirma nada.
-        sigma_encia = _sigma_de(encia) if len(encia) else 0.1
+        # El escaner mide posicion Y normal, asi que sus vertices se escriben como discos
+        # tangentes en vez de esferas. Ver `RADIO_DISCO`.
+        espaciado_ios = (_sigma_de(encia) * 2.0) if len(encia) else 0.1
+        radio = espaciado_ios * RADIO_DISCO
+        grosor_ios = radio / ASPECTO_DISCO
+        sig_ios, rot_ios = _discos(normales_ios[sel_e], radio, grosor_ios)
+
+        # La inflacion es del CAMPO y solo del campo: existe porque decimar abre huecos
+        # entre gaussianas del CBCT. Los discos ya salen del espaciado medido de la malla,
+        # y meterlos en la mediana la arrastraria hacia abajo por su eje fino.
+        factor = _factor_de_escala(centros[sel_c], escalas[sel_c])
         pos = np.vstack([centros[sel_c], encia[sel_e]])
-        sig = np.vstack([escalas[sel_c], np.full((len(sel_e), 3), sigma_encia)])
-        rot = np.vstack([
-            rotaciones[sel_c], np.tile([1.0, 0.0, 0.0, 0.0], (len(sel_e), 1))
-        ])
+        sig = np.vstack([escalas[sel_c] * factor, sig_ios])
+        rot = np.vstack([rotaciones[sel_c], rot_ios])
         den = np.concatenate([
             densidad[sel_c], np.full(len(sel_e), DENSIDAD_DISPLAY_ENCIA)
         ])
@@ -171,8 +275,6 @@ class ViewerExportAgent(BaseExportAgent):
             np.full(len(sel_e), ORIGEN_IOS, dtype=np.int16),
         ])
 
-        # Sigma de la VISTA: la medida, inflada al espaciado que queda tras decimar.
-        factor = _factor_de_escala(pos, sig)
         destination.parent.mkdir(parents=True, exist_ok=True)
         # Una capa por fichero, que es como el visor las conmuta: cada una es su propia
         # escena y encenderla es cambiar un uniform, no recargar.
@@ -197,13 +299,14 @@ class ViewerExportAgent(BaseExportAgent):
             m = grupos[clave]
             ruta = destination.with_name(f"{destination.name}-{clave}.ply")
             _escribe_inria(
-                ruta, pos[m], sig[m] * factor, rot[m], den[m], fdi[m], origen[m],
+                ruta, pos[m], sig[m], rot[m], den[m], fdi[m], origen[m],
                 snapshot, factor, nombre,
             )
             capas.append({
                 "id": clave, "nombre": nombre, "detalle": detalle,
                 "ply": ruta.name, "primitivas": int(m.sum()),
             })
+        capas += self._capas_apariencia(snapshot, campo, gs_apariencia, destination)
         ply = destination.with_name(f"{destination.name}-coronas.ply")
         destination.with_suffix(".json").write_text(
             json.dumps(
@@ -242,25 +345,122 @@ class ViewerExportAgent(BaseExportAgent):
             ),
         )
 
-    def _encia(self, snapshot: TwinSnapshot, campo: dict) -> tuple[np.ndarray, list[str]]:
-        """Los vertices del escaner en el marco del twin, o vacio y el motivo."""
+    def _capas_apariencia(
+        self, snapshot: TwinSnapshot, campo: dict,
+        origen_gs: Path | None, destination: Path,
+    ) -> list[dict]:
+        """Capas de APARIENCIA: el escaner entrenado como 3DGS, llevado al marco del twin.
+
+        ⚠️ **No sustituyen a nada y no se miden encima.** Son un campo entrenado contra
+        renders de la malla: sus gaussianas NO son los vertices del escaner —el optimizador
+        las movio, dividio y podo— asi que la correspondencia 1:1 con lo medido no existe.
+        Lo que si es exacto es su codigo FDI, que viajo por el entrenamiento como parametro
+        con tasa cero. Las capas medidas siguen debajo, intactas.
+
+        El registro se aplica aqui y no al entrenar por la misma razon que la fusion no
+        reescribe blobs: el fichero entrenado vive en el marco del escaner, que es donde se
+        genero, y quien lo quiera en otro marco aplica la transformada que el snapshot
+        declara. Asi el mismo fichero sirve para los dos y deshacerlo sigue siendo exacto.
+        """
+        if origen_gs is None:
+            return []
+        t = snapshot.provenance.transform
+        if t is None:
+            return []
+        from fusion_agents.registration import apply, quaternion_to_matrix
+
+        rot_reg = np.asarray(quaternion_to_matrix(t.rotation), dtype=np.float64)
+        q_reg = np.asarray(t.rotation, dtype=np.float64)
+        desplazamiento = np.asarray(campo.get("origin", np.zeros(3)), dtype=np.float64)
+
+        capas: list[dict] = []
+        for clave, nombre, detalle in CAPAS_APARIENCIA:
+            partes = [
+                _lee_inria(f) for p in _PARTES_APARIENCIA
+                if (f := Path(origen_gs) / f"escaner_3dgs-{p}.ply").exists()
+            ]
+            if not partes:
+                continue
+            col = {q: np.concatenate([p[q] for p in partes]) for q in _PROPIEDADES_INRIA}
+            pos = np.column_stack([col["x"], col["y"], col["z"]])
+            pos = apply(rot_reg, np.asarray(t.translation, dtype=np.float64), pos)
+            col["x"], col["y"], col["z"] = (pos - desplazamiento).T
+            q = np.column_stack([col[f"rot_{i}"] for i in range(4)])
+            q = _compone_quats(np.tile(q_reg, (len(q), 1)), q)
+            for i in range(4):
+                col[f"rot_{i}"] = q[:, i]
+
+            ruta = destination.with_name(f"{destination.name}-{clave}.ply")
+            _escribe_ply(ruta, col, [
+                "ply", "format binary_little_endian 1.0",
+                "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida",
+                "comment entrenado contra renders de la malla del escaner; las gaussianas",
+                "comment NO son sus vertices. El twin medido va en las otras capas.",
+                "comment llevado al marco del twin con la transformada del registro",
+                f"element vertex {len(pos)}",
+                *(f"property float {q_}" for q_ in _PROPIEDADES_INRIA),
+                "end_header",
+            ])
+            capas.append({
+                "id": clave, "nombre": nombre, "detalle": detalle,
+                "ply": ruta.name, "primitivas": int(len(pos)), "apariencia": True,
+            })
+        return capas
+
+    def _encia(
+        self, snapshot: TwinSnapshot, campo: dict
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        """Vertices del escaner y sus NORMALES en el marco del twin, o vacio y el motivo."""
         if snapshot.surface_ref is None:
-            return np.empty((0, 3)), []
+            return np.empty((0, 3)), np.empty((0, 3)), []
         if snapshot.provenance.transform is None:
-            return np.empty((0, 3)), [
+            return np.empty((0, 3)), np.empty((0, 3)), [
                 "el snapshot trae escáner pero no transformación: sin registro no se "
                 "puede poner la encía en el mismo sistema que los dientes, así que el "
                 "paquete del visor lleva solo el campo del CBCT."
             ]
         from export_agents.compuesto import _al_marco_del_twin
+        from export_agents.stl import quaternion_to_matrix
 
-        v = np.asarray(
-            self.store.load(snapshot.surface_ref)["positions"], dtype=np.float64
-        )
+        malla = self.store.load(snapshot.surface_ref)
+        v = np.asarray(malla["positions"], dtype=np.float64)
         encia = _al_marco_del_twin(v, snapshot.provenance.transform)
         if "origin" in campo:
             encia = encia - np.asarray(campo["origin"], dtype=np.float64)
-        return encia, []
+
+        # Las normales solo ROTAN: son direcciones, no puntos. Aplicarles la traslacion
+        # las sacaria del origen y dejarian de ser normales.
+        n = np.asarray(
+            malla.get("normals", np.zeros_like(v)), dtype=np.float64
+        )
+        rot = quaternion_to_matrix(snapshot.provenance.transform.rotation)
+        return encia, n @ np.asarray(rot, dtype=np.float64).T, []
+
+
+def _discos(
+    normales: np.ndarray, radio: float, grosor: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """`(escalas, cuaterniones)` que convierten cada vertice en un disco tangente.
+
+    El tercer eje local va a lo largo de la normal y es el fino, asi que `scale_2` es el
+    grosor y los otros dos el radio en el plano tangente. El cuaternion es el giro de arco
+    minimo de `+z` a la normal — el que no introduce rotacion alrededor de ella, que aqui
+    no significaria nada porque el disco es simetrico.
+    """
+    n = np.asarray(normales, dtype=np.float64)
+    norma = np.linalg.norm(n, axis=1, keepdims=True)
+    n = np.divide(n, norma, out=np.tile([0.0, 0.0, 1.0], (len(n), 1)), where=norma > 0)
+
+    w = 1.0 + n[:, 2]
+    q = np.column_stack([w, -n[:, 1], n[:, 0], np.zeros(len(n))])
+    # Normal antipodal a +z: el arco minimo es ambiguo y `w` se anula. Media vuelta por
+    # cualquier eje perpendicular sirve, y se elige uno fijo para que sea reproducible.
+    opuesta = w < 1e-8
+    q[opuesta] = [0.0, 1.0, 0.0, 0.0]
+    q /= np.linalg.norm(q, axis=1, keepdims=True)
+
+    escalas = np.tile([radio, radio, grosor], (len(n), 1))
+    return escalas, q
 
 
 def _factor_de_escala(pos: np.ndarray, sigma: np.ndarray, *, muestra: int = 20_000) -> float:
@@ -281,7 +481,7 @@ def _factor_de_escala(pos: np.ndarray, sigma: np.ndarray, *, muestra: int = 20_0
     actual = float(np.median(sigma))
     if actual <= 0 or espaciado <= 0:
         return 1.0
-    return max(1.0, FRACCION_ESPACIADO * espaciado / actual)
+    return max(1.0, MULTIPLO_ESPACIADO * espaciado / actual)
 
 
 def _sigma_de(vertices: np.ndarray, *, muestra: int = 5000, semilla: int = 0) -> float:
@@ -386,15 +586,40 @@ def _por_pieza(pos: np.ndarray, fdi: np.ndarray, es_ios: np.ndarray) -> dict[str
     return fuera
 
 
+def tono_de(codigo: int) -> float:
+    """Tono en [0,1) de una pieza, a partir de su codigo FDI y de nada mas.
+
+    El indice es `(cuadrante-1)*8 + (pieza-1)`, o sea la posicion del diente en la boca, y
+    el tono sale de multiplicarlo por el angulo aureo. Depende solo del codigo: la misma
+    pieza sale del mismo color en cualquier caso y en cualquier visita.
+    """
+    cuadrante, pieza = divmod(int(codigo), 10)
+    return ((cuadrante - 1) * 8 + (pieza - 1)) * _ANGULO_AUREO % 1.0
+
+
 def _falso_color(fdi: np.ndarray, origen: np.ndarray) -> np.ndarray:
     """RGB en [0,1] por gaussiana. **Falso color**: el CBCT no mide color."""
     rgb = np.tile(_COLOR_RESTO, (len(fdi), 1)).astype(np.float64)
     rgb[origen == ORIGEN_IOS] = _COLOR_ENCIA
     for codigo in sorted(set(int(f) for f in np.unique(fdi)) - {0}):
-        cuadrante, pieza = divmod(codigo, 10)
-        h = _TONOS[(cuadrante - 1) % len(_TONOS)] / 360.0
-        rgb[fdi == codigo] = colorsys.hls_to_rgb(h, 0.38 + 0.05 * (pieza % 8), 0.62)
+        rgb[fdi == codigo] = colorsys.hls_to_rgb(
+            tono_de(codigo), _LUZ_PIEZA, _SATURACION_PIEZA
+        )
     return rgb
+
+
+def _ganancia(densidad: np.ndarray, origen: np.ndarray) -> float:
+    """Ganancia que lleva la alfa MEDIANA de esta capa a su objetivo.
+
+    El objetivo depende de si la capa es una SUPERFICIE (vertices del escaner) o un VOLUMEN
+    (campo del CBCT), porque no se apilan igual a lo largo de un rayo. Ver `ALFA_SUPERFICIE`.
+    """
+    es_superficie = len(origen) and float((origen == ORIGEN_IOS).mean()) > 0.5
+    objetivo = ALFA_SUPERFICIE if es_superficie else ALFA_VOLUMEN
+    mediana = float(np.median(densidad)) if len(densidad) else 0.0
+    if mediana <= 0:
+        return GANANCIA_MAXIMA
+    return min(GANANCIA_MAXIMA, -np.log(1.0 - objetivo) / mediana)
 
 
 def _escribe_inria(
@@ -411,7 +636,8 @@ def _escribe_inria(
 ) -> None:
     """PLY de 3DGS grado 0, con las tres conversiones declaradas en la cabecera."""
     n = len(pos)
-    alfa = np.clip(1.0 - np.exp(-GANANCIA_DISPLAY * densidad), 1e-4, 1 - 1e-4)
+    ganancia = _ganancia(densidad, origen)
+    alfa = np.clip(1.0 - np.exp(-ganancia * densidad), 1e-4, 1 - 1e-4)
     columnas = {
         "x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2],
         "nx": np.zeros(n), "ny": np.zeros(n), "nz": np.zeros(n),
@@ -436,7 +662,7 @@ def _escribe_inria(
         "comment perfil INRIA 3DGS grado 0 - DERIVADO de ash-twin/1.0, NO es el twin",
         f"comment acquisition_id {snapshot.acquisition_id}",
         f"comment capa: {capa}",
-        f"comment opacity = logit(1 - exp(-{GANANCIA_DISPLAY:g} * sigma)) - GANANCIA DE "
+        f"comment opacity = logit(1 - exp(-{ganancia:.4g} * sigma)) - GANANCIA DE "
         "VISUALIZACION, no es dato",
         "comment f_dc_* = falso color por codigo FDI - un CBCT NO mide color",
         "comment scale_* = log(sigma_mm); en el PLY del twin son mm lineales",
@@ -447,6 +673,11 @@ def _escribe_inria(
         *(f"property float {p}" for p in _PROPIEDADES_INRIA),
         "end_header",
     ]
+    _escribe_ply(ruta, columnas, cabecera)
+
+
+def _escribe_ply(ruta: Path, columnas: dict, cabecera: list[str]) -> None:
+    """Vuelca las 17 propiedades del perfil INRIA. La cabecera la compone quien llama."""
     texto = "\n".join(cabecera) + "\n"
     if not texto.isascii():
         raise ValueError(
@@ -457,6 +688,42 @@ def _escribe_inria(
     with ruta.open("wb") as f:
         f.write(texto.encode("ascii"))
         f.write(datos.tobytes())
+
+
+def _lee_inria(ruta: Path) -> dict[str, np.ndarray]:
+    """Lee un PLY del perfil INRIA (17 propiedades, binario little-endian)."""
+    import re
+
+    b = ruta.read_bytes()
+    fin = b.index(b"end_header\n") + 11
+    cab = b[:fin].decode("ascii", errors="replace")
+    n = int(re.search(r"element vertex (\d+)", cab).group(1))  # type: ignore[union-attr]
+    props = re.findall(r"property float (\w+)", cab)
+    if tuple(props) != _PROPIEDADES_INRIA:
+        raise ValueError(
+            f"{ruta.name} no esta en el perfil INRIA que este canal espera: "
+            f"{len(props)} propiedades en otro orden."
+        )
+    a = np.frombuffer(b, dtype=np.float32, count=n * len(props), offset=fin)
+    return {q: a.reshape(n, len(props))[:, i].astype(np.float64)
+            for i, q in enumerate(props)}
+
+
+def _compone_quats(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """`a ⊗ b` en convencion (w, x, y, z). Girar la nube gira TAMBIEN los elipsoides.
+
+    Es el paso que se olvida: llevar un campo gaussiano a otro marco no es mover los
+    centros. Una gaussiana anisotropa tiene orientacion, y sin componer el cuaternion del
+    registro con el suyo, las elipses se quedan apuntando a donde apuntaban antes.
+    """
+    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
+    return np.stack([
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ], axis=-1)
 
 
 def _fuente(ruta: str) -> str:
@@ -541,12 +808,13 @@ def _sidecar(
         "perfil_twin": snapshot.perfil_campo,
         "perfil_ply": "inria-3dgs/grado-0 (derivado)",
         "display": {
-            "opacity": f"logit(1 - exp(-{GANANCIA_DISPLAY:g} * sigma))",
+            "opacity": (f"logit(1 - exp(-g * sigma)), g por capa: alfa~{ALFA_SUPERFICIE:g} "
+                        f"en superficie, ~{ALFA_VOLUMEN:g} en volumen"),
             "f_dc": "falso color por codigo FDI; un CBCT no mide color",
             "densidad_encia": DENSIDAD_DISPLAY_ENCIA,
             "factor_escala": round(factor_escala, 3),
             "por_que_factor": "sigma inflada hasta ~"
-                              f"{FRACCION_ESPACIADO} del espaciado que queda tras "
+                              f"{MULTIPLO_ESPACIADO} del espaciado que queda tras "
                               "decimar; sin ello los splats no se tocan y la superficie "
                               "sale agujereada",
             "aviso": "opacity y f_dc_* son de la VISTA. El twin reversible es el PLY de "

@@ -23,7 +23,7 @@ from core_schemas import (
     TwinSnapshot,
 )
 from export_agents import ViewerExportAgent
-from export_agents.visor import C0, GANANCIA_DISPLAY
+from export_agents.visor import ALFA_SUPERFICIE, ALFA_VOLUMEN, C0
 
 CAMPO = "sha256:" + "a" * 64
 MALLA = "sha256:" + "b" * 64
@@ -175,12 +175,16 @@ def test_la_sigma_se_infla_para_que_los_splats_se_TOQUEN(almacen, tmp_path):
 
 
 def test_un_campo_ya_denso_no_se_infla(tmp_path):
-    """El factor nunca reduce ni infla de más: si los splats ya se tocan, se deja como
-    está. Un aviso que se aplica siempre deja de ser una decisión."""
+    """El factor nunca reduce: si los splats ya son mas grandes de lo que la vista pide, se
+    dejan como estan. Un aviso que se aplica siempre deja de ser una decision.
+
+    ⚠️ El liston es `MULTIPLO_ESPACIADO` y subio de 0,6 a 4 al medirlo contra 3DGS
+    entrenado de verdad, asi que el campo de esta prueba tuvo que engordar con el: con
+    sigma 0,5 sobre un espaciado de ~0,13 ya NO esta denso para el criterio nuevo."""
     rng = np.random.default_rng(3)
     campo = _campo(n=2000, etiquetados=100)
     campo["centers"] = rng.normal(0, 1.0, (2000, 3))   # muy juntos
-    campo["scales"] = np.full((2000, 3), 0.5)          # y muy gordos
+    campo["scales"] = np.full((2000, 3), 2.0)          # y mas gordos que 4x el espaciado
     almacen = _Almacen(**{CAMPO: campo, MALLA: {"positions": rng.normal(0, 1, (100, 3))}})
 
     salida = ViewerExportAgent(almacen).export(_snapshot(), tmp_path / "v")
@@ -192,7 +196,8 @@ def test_la_opacidad_sale_de_la_transferencia_declarada(almacen, tmp_path):
     ficheros para que nadie lo tome por una medida."""
     salida = ViewerExportAgent(almacen).export(_snapshot(), tmp_path / "v")
     assert _lado(salida.path)["display"]["opacity"] == (
-        f"logit(1 - exp(-{GANANCIA_DISPLAY:g} * sigma))"
+        f"logit(1 - exp(-g * sigma)), g por capa: alfa~{ALFA_SUPERFICIE:g} "
+        f"en superficie, ~{ALFA_VOLUMEN:g} en volumen"
     )
 
 
@@ -350,4 +355,140 @@ def test_la_altura_no_depende_de_como_estuviera_orientado_el_paciente():
 
     assert 23.0 < recta < 25.0
     assert abs(recta - girada) < 0.5
+
+
+def test_cada_pieza_tiene_su_propio_TONO_no_solo_su_claridad():
+    """El fallo que tenia: el tono salia del cuadrante y solo la claridad cambiaba entre
+    piezas, asi que una arcada superior entera eran dos colores con siete escalones cada
+    uno. En pantalla eso se lee como un solo color, y un color que no distingue piezas no
+    sirve para nada — distinguirlas es lo unico que hace."""
+    from export_agents.visor import tono_de
+
+    superior = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27, 28]
+    tonos = [tono_de(c) for c in superior]
+
+    assert len(set(tonos)) == len(superior), "hay piezas compartiendo tono"
+    # Y las CONTIGUAS lejos en el circulo, que es justo cuando hace falta distinguirlas.
+    for a, b in zip(superior, superior[1:], strict=False):
+        d = abs(tono_de(a) - tono_de(b))
+        assert min(d, 1 - d) > 0.15, f"{a} y {b} a {min(d, 1 - d):.2f} de tono"
+
+
+def test_el_color_de_una_pieza_depende_SOLO_de_su_codigo():
+    """Comparar dos visitas lado a lado con los colores bailando seria peor que no
+    tenerlos: la misma pieza tiene que salir del mismo color en cualquier caso."""
+    from export_agents.visor import _falso_color, tono_de
+
+    fdi_a = np.array([16, 16, 26, 0])
+    fdi_b = np.array([16, 11, 12, 13, 26])      # otro caso, otras piezas detectadas
+    origen = np.zeros(5, dtype=np.int16)
+
+    ca = _falso_color(fdi_a, origen[:4])
+    cb = _falso_color(fdi_b, origen)
+
+    assert np.allclose(ca[0], cb[0]), "el 16 cambia de color segun quien mas haya"
+    assert np.allclose(ca[2], cb[4]), "el 26 cambia de color segun quien mas haya"
+    assert tono_de(16) == tono_de(16)
+
+
+def test_los_vertices_del_escaner_salen_como_DISCOS_TANGENTES():
+    """La diferencia entre ver una superficie y ver polvo.
+
+    Una esfera de radio 0,5 del espaciado deja hueco entre vecinas y ademas reparte su
+    opacidad en profundidad, donde no hay nada que ensenar. Es la forma a la que llega solo
+    un 3DGS entrenado contra renders opacos; aqui la normal ya la midio el escaner.
+    """
+    from export_agents.visor import _discos
+
+    rng = np.random.default_rng(0)
+    n = rng.normal(0, 1, (500, 3))
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+
+    escalas, quats = _discos(n, radio=0.4, grosor=0.08)
+
+    # Fino en un eje y ancho en los otros dos: eso es un disco y no una esfera.
+    assert np.allclose(escalas[:, :2], 0.4)
+    assert np.allclose(escalas[:, 2], 0.08)
+    # Plano, pero no tanto como para verse de canto: ver ASPECTO_DISCO.
+    assert 2.0 < 0.4 / 0.08 < 6.0
+    assert np.allclose(np.linalg.norm(quats, axis=1), 1.0)
+
+
+def test_el_eje_FINO_del_disco_apunta_a_lo_largo_de_la_normal():
+    """Si el eje fino no fuera la normal, el disco quedaria de canto a la superficie: se
+    veria peor que una esfera, no mejor."""
+    from export_agents.visor import _discos
+
+    rng = np.random.default_rng(1)
+    n = rng.normal(0, 1, (300, 3))
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+
+    _, q = _discos(n, radio=0.4, grosor=0.08)
+
+    w, x, y, z = q.T
+    # Tercera columna de la matriz de rotacion: a donde va el eje local +z, que es el fino.
+    eje_fino = np.column_stack([2 * (x * z + w * y), 2 * (y * z - w * x),
+                                1 - 2 * (x * x + y * y)])
+    assert np.allclose(np.abs((eje_fino * n).sum(axis=1)), 1.0, atol=1e-6)
+
+
+def test_una_normal_opuesta_no_rompe_el_cuaternion():
+    """El giro de arco minimo de +z a -z es ambiguo y su cuaternion se anula. Sin tratarlo,
+    esos vertices saldrian con un cuaternion no normalizado, que no es ninguna rotacion."""
+    from export_agents.visor import _discos
+
+    n = np.array([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0]])
+
+    _, q = _discos(n, radio=0.3, grosor=0.06)
+
+    assert np.allclose(np.linalg.norm(q, axis=1), 1.0)
+    assert np.isfinite(q).all()
+
+
+def test_la_opacidad_no_es_la_misma_en_superficie_que_en_volumen():
+    """Un solo objetivo para las cuatro capas fue un error medido: un rayo atraviesa una
+    hoja de splats en un caso y un solido en el otro, asi que con la misma alfa por splat
+    el volumen sale opaco y la superficie transparente."""
+    from export_agents.compuesto import ORIGEN_IOS
+    from export_agents.visor import ALFA_SUPERFICIE, ALFA_VOLUMEN, _ganancia
+
+    d = np.full(200, 0.5)
+    g_sup = _ganancia(d, np.full(200, ORIGEN_IOS, dtype=np.int16))
+    g_vol = _ganancia(d, np.zeros(200, dtype=np.int16))
+
+    assert g_sup > g_vol, "la superficie necesita MAS opacidad por splat, no menos"
+    assert 1 - np.exp(-g_sup * 0.5) == pytest.approx(ALFA_SUPERFICIE, rel=1e-6)
+    assert 1 - np.exp(-g_vol * 0.5) == pytest.approx(ALFA_VOLUMEN, rel=1e-6)
+
+
+def test_una_capa_sin_densidad_no_dispara_la_ganancia():
+    """Sin la cota, una capa con densidad ~0 pediria ganancia infinita para llegar al
+    objetivo y saldria opaca justo donde no hay nada que ensenar."""
+    from export_agents.visor import GANANCIA_MAXIMA, _ganancia
+
+    assert _ganancia(np.zeros(10), np.zeros(10, dtype=np.int16)) == GANANCIA_MAXIMA
+    assert _ganancia(np.array([]), np.array([], dtype=np.int16)) == GANANCIA_MAXIMA
+
+
+def test_el_paquete_no_pasa_de_CINCO_capas():
+    """Limite medido del visor, no una preferencia.
+
+    `dental-3dgs-viewer` deja de dibujar a partir de SEIS escenas: con cinco renderiza y
+    con seis el lienzo sale vacio —todas las capas, no solo la nueva— y sin ningun error en
+    consola. Un fallo silencioso del consumidor es justo el que hay que fijar aqui, porque
+    anadir una capa parece inocuo hasta que rompe el paquete entero.
+    """
+    from export_agents.visor import CAPAS, CAPAS_APARIENCIA
+
+    assert len(CAPAS) + len(CAPAS_APARIENCIA) <= 5
+
+
+def test_la_capa_de_apariencia_se_declara_como_tal():
+    """Si no se distingue de las medidas, alguien medira encima de una reconstruccion."""
+    from export_agents.visor import CAPAS, CAPAS_APARIENCIA
+
+    for _, _nombre, detalle in CAPAS_APARIENCIA:
+        assert "APARIENCIA" in detalle
+        assert "no medida" in detalle
+    assert not any("APARIENCIA" in d for _, _, d in CAPAS)
 
