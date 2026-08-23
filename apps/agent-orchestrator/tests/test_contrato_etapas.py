@@ -131,6 +131,7 @@ def test_todas_las_etapas_tienen_contrato():
         "export-campo",
         "export-compuesto",
         "export-visor",
+        "export-uos",
         "export-render",
     }
 

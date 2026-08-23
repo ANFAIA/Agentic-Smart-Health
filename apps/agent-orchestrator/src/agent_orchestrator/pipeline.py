@@ -74,6 +74,7 @@ from ingestion_agents import (
     pseudonymize,
 )
 from ingestion_agents.base import BaseIngestionAgent
+from uos import UOSExportAgent
 
 # Por debajo de esta confianza una modalidad no se da por buena sola: pasa por
 # revisión humana. Es el gate de human-in-the-loop en su forma más simple —
@@ -133,6 +134,14 @@ CONTRATOS: dict[str, ContratoEtapa] = {
     # segmentación enseña geometría y lo dice. Su trabajo es ENSEÑAR lo que hay, incluido
     # el hecho de que falte algo — declararle requisitos duros lo dejaría mudo justo en
     # los casos donde más hace falta mirar.
+    # UOS empaqueta el caso ENTERO con sus relaciones declaradas, asi que solo exige la
+    # malla —el frame canonico del spec es el escaner— y no toca el campo: referencia los
+    # ficheros tal cual y anota como se alinean.
+    "export-uos": ContratoEtapa(
+        nombre="uos-export-agent",
+        requiere_arrays=frozenset(),
+        conserva_arrays=False,  # su salida es un contenedor
+    ),
     "export-visor": ContratoEtapa(
         nombre="viewer-export-agent",
         requiere_arrays=frozenset({"centers", "density"}),
@@ -618,6 +627,10 @@ class IngestionPipeline:
         *,
         marco_malla: str = "source",
         etiquetas_ios: Any | None = None,
+        gs_apariencia: Any | None = None,
+        malla: Any | None = None,
+        escena_gs: Any | None = None,
+        imagenes: Any | None = None,
         render: bool = True,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
@@ -659,7 +672,7 @@ class IngestionPipeline:
         previos = [
             m
             for clave in ("export-malla", "export-campo", "export-compuesto",
-                          "export-visor", "export-render")
+                          "export-visor", "export-uos", "export-render")
             for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
         ]
 
@@ -683,6 +696,26 @@ class IngestionPipeline:
                 # Las etiquetas del escáner, si el llamante las tiene: son lo que permite
                 # enseñar las coronas COMPLETAS y separadas en vez del compuesto parcial
                 # del CBCT. Ver `viewer-export-agent`.
+                etiquetas_ios=etiquetas_ios,
+                # Las capas de APARIENCIA, si el llamante entrenó el escáner como 3DGS.
+                # Van AÑADIDAS, nunca en sustitución: lo medido sigue en sus capas.
+                gs_apariencia=gs_apariencia,
+            ),
+            # UOS: el caso entero como escena, con sus relaciones declaradas. Va DESPUES
+            # del visor porque puede referenciar lo que aquel escribio.
+            UOSExportAgent(self.store).export(
+                snapshot,
+                destino / snapshot.acquisition_id,
+                # El seudonimo sale del pipeline, NO del identificador de adquisicion:
+                # aquel es un hash y este el nombre del directorio del caso.
+                pseudonimo=result.patient_pseudonym,
+                malla=malla,
+                escena_gs=escena_gs,
+                imagenes=list(imagenes or []),
+                motivos=list(result.hitl_reasons),
+                # Las mismas etiquetas que el visor, y por otro motivo: aquí son lo único
+                # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda
+                # lo oclusal, cuál es la derecha del paciente— para nombrar las vistas.
                 etiquetas_ios=etiquetas_ios,
             ),
         ]
