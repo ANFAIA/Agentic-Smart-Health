@@ -151,6 +151,8 @@ agentic-smart-health/          ← workspace root
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
 │   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
 │   ├── export-agents/         ← regeneración de malla, campo y render desde el twin, con el error medido
+│   ├── gaussian-engine/       ← ajuste de elipsoides anisótropos a la densidad que midió el CBCT
+│   ├── uos/                   ← contenedor Unified Oral Scene: el caso entero con sus relaciones declaradas
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
@@ -357,7 +359,9 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/desplazamiento_relativo.py`](scripts/desplazamiento_relativo.py) | ¿Se puede decir «esta pieza se desplazó X mm»? Referencia leave-one-out y umbral. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
 | [`scripts/entrena_diente_cbct.py`](scripts/entrena_diente_cbct.py) | Segmentador de diente en CBCT, contra el listón del umbral. |
+| [`scripts/entrena_gs_escaner.py`](scripts/entrena_gs_escaner.py) | 3DGS de verdad sobre la superficie del escaner. |
 | [`scripts/entrenar_3dgs.py`](scripts/entrenar_3dgs.py) | EXPERIMENTO con resultado NEGATIVO: 3DGS entrenado de una arcada. |
+| [`scripts/eval_informes.py`](scripts/eval_informes.py) | ¿Cuánto de lo que dice un informe acaba en el contrato? |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
 | [`scripts/prepara_toothfairy.py`](scripts/prepara_toothfairy.py) | Descarga ToothFairy2 caso a caso y lo deja entrenable. |
@@ -457,6 +461,7 @@ que la llamada no lleva valor por defecto (el módulo puede tener su propio resp
 | `ASH_PSEUDONYM_SALT` | `packages/ingestion-agents/src/ingestion_agents/cbct_agent.py` | `dev-salt-no-usar-en-produccion` |
 | `OLLAMA_HOST` | `apps/research-agent/src/main_local.py` | `http://localhost:11434` |
 | `QDRANT_PATH` | `apps/research-agent/src/rag.py` | — |
+| `REPORT_AGENT_LOCAL_MODEL` | `packages/ingestion-agents/src/ingestion_agents/report_agent.py` | `qwen3:14b` |
 | `RESEARCH_AGENT_LOCAL_MODEL` | `apps/research-agent/src/main_local.py` | `qwen2.5:7b` |
 | `RESEARCH_AGENT_MODEL` | `apps/research-agent/src/main.py` | `claude-opus-4-8` |
 <!-- /generado: env-vars -->

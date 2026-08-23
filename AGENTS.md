@@ -35,6 +35,7 @@ herramientas son prosa y se escriben a mano.
 | `report-agent` | [`packages/ingestion-agents/src/ingestion_agents/report_agent.py`](packages/ingestion-agents/src/ingestion_agents/report_agent.py) |
 | `segmentation-agent` | [`packages/analysis-agents/src/analysis_agents/segmentation.py`](packages/analysis-agents/src/analysis_agents/segmentation.py) |
 | `semantic-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/semantic.py`](packages/fusion-agents/src/fusion_agents/semantic.py) |
+| `uos-export-agent` | [`packages/uos/src/uos/agente.py`](packages/uos/src/uos/agente.py) |
 | `viewer-export-agent` | [`packages/export-agents/src/export_agents/visor.py`](packages/export-agents/src/export_agents/visor.py) |
 <!-- /generado: agentes -->
 
@@ -445,7 +446,7 @@ frase, el CI lo dice con el fichero y la línea. Hoy hay 13 números marcados.
 |---|---|---|---|---|---|
 | `mesh-agent` | OBJ / STL intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
 | `cbct-agent` | directorio de serie DICOM | `cbct` | volumétrico | `gaussian_field_ref` (campo σ semilla) | determinista |
-| `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH por FDI) | determinista (`rules`) · LLM opcional (`llm`) |
+| `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH, anatomía radicular y hallazgos por FDI) + `list[Medida]` | determinista (`rules`) · LLM opcional (`llm`), **mismos campos** |
 | `image-agent` (PoC) | foto JPG / PNG / HEIC | `image` | superficial | `artifact_ref` (píxeles RGB, **sin EXIF**) | determinista |
 
 **Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
@@ -986,11 +987,109 @@ ExportOutput
 
 ---
 
+### `uos-export-agent` — El caso entero como escena UOS
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | `IngestionPipeline.exportar(...)`; sin seudónimo declara `FAILED`, sin malla `MISSING` |
+
+**Rol / Propósito**
+
+> Los otros cinco canales materializan **una** cosa —la malla, el campo, el compuesto, el
+> paquete del visor, el render—. Este empaqueta el caso entero con sus relaciones
+> declaradas: qué asset viene de qué visita, en qué marco vive cada uno y con qué
+> transformada se alinean. Es la diferencia entre entregar ficheros y entregar una escena.
+
+Implementa el nivel **UOS-Core** del borrador de spec *Unified Oral Scene* v0.2: un ZIP
+**sin comprimir** cuya primera entrada física es `manifest.json`, que **referencia los
+formatos nativos intactos** en vez de transcodificarlos. Ningún formato existente hace eso
+—DICOM no modela gaussianas ni se transmite bien en web, glTF no modela volúmenes ni
+metadatos clínicos, OpenUSD es ajeno al ecosistema clínico—, y por eso el contenedor es
+propio y el validador puede correr sobre un fichero que escribió otro.
+
+**Reglas específicas**
+
+- ⚠️ **Referencia, no transcodifica.** Los ficheros entran tal cual y su `sha256` va en el
+  manifiesto: lo que sale es byte-idéntico a lo que entró. La desviación cero que reporta
+  está **medida** —se relee el contenedor y se recomputa el hash de cada asset—, no
+  afirmada. Sobre el caso real: malla de 11.004.334 bytes dentro y fuera.
+- ⚠️ **Sin seudónimo se declara `FAILED`, y NO se cae al `acquisition_id`.** Ese
+  identificador sale del nombre del directorio del caso, que en un sistema real lleva el
+  nombre del paciente o su número de historia. Un seudónimo por defecto que resulta ser el
+  dato identificable es peor que no tener ninguno, porque `phi_state` diría
+  `pseudonymized` mintiendo.
+- ⚠️ **Ningún nombre de fichero del proveedor viaja dentro.** Los de verdad llevan
+  identificadores —la malla de este caso se llamaba `1574 UpperJawScan.stl` y `1574` es el
+  número de caso—. Dentro todo se nombra por su papel: `scene/scan.stl`,
+  `scene/appearance.ply`, `images/img_000.jpg`. La trazabilidad la da el `sha256`, que es
+  más fuerte que un nombre y no identifica a nadie.
+- **El marco canónico es el ESCÁNER, no el CBCT**, y eso invierte lo que hace el pipeline.
+  Aquí se trabaja centrado en el CBCT porque es donde vive el campo gaussiano; UOS pone el
+  escáner de hub porque es la geometría de referencia de un caso dental —micras frente a
+  vóxeles de 0,3 mm—. La inversión se hace en el borde y **se declara** como
+  `reg.ct_to_ios`, con su matriz, su método y su error, en vez de reescribir geometría. Es
+  coherente con que la fusión anote en lugar de transformar.
+- **Los ejes anatómicos de las vistas se MIDEN, no se suponen.** Es la misma regla que rige
+  el eje ápico-coronal del CBCT, que se lee del `ImagePositionPatient`. Una malla de
+  escáner no trae cabecera que lo diga, así que cada dirección sale de las etiquetas FDI:
+  *oclusal* de la encía hacia las coronas, *derecha* del centroide de los cuadrantes 2 y 3
+  al de los cuadrantes 1 y 4, *anterior* de los molares a los incisivos. **Sin etiquetas no
+  hay vistas y se dice**: bautizar los ejes principales de la nube produce nombres
+  plausibles y a veces invertidos, y una vista que se llama «vestibular derecha» y enseña
+  la izquierda es peor que no tenerla. Es el mismo motivo por el que el
+  `render-export-agent` nombra las suyas por ángulo.
+- **Solo tienen vista propia las piezas ANOTADAS.** Una por diente etiquetado serían
+  dieciséis entradas equivalentes; lo que hace útil un deep-link es que apunte a donde
+  alguien miró. Las piezas que el informe cita y el escáner no trae se agrupan en **un**
+  aviso, no en uno por diente: el gate ya lleva uno que lo explica entero, y repetirlo
+  entierra los motivos que solo aparecen una vez.
+- **Un `.uos` es append-only lógico.** Modificar no es editar: es escribir una versión
+  nueva del manifiesto que apunta al `sha256` de la anterior. La autoridad está en
+  `prev_manifest_sha256`, dentro del manifiesto; `provenance/chain.json` la materializa
+  para poder recorrerla sin abrir todas las versiones. El validador comprueba que la cadena
+  y los manifiestos **cuenten la misma historia** — retocar un manifiesto, arrancar un
+  eslabón o pegar la cadena de otro caso invalidan.
+- **Lo estructurado vive solo en el manifiesto.** `ExportOutput` es `extra="forbid"` y lo
+  comparten seis canales: ensancharlo con `n_assets` o `conformidad` daría dos sitios donde
+  la misma verdad puede divergir y obligaría a los otros cinco a cargar con campos que no
+  usan.
+- **Layer 3 vive en `derived/` y solo ahí.** Es lo que permite desmontar el módulo de IA
+  borrando un directorio y sus entradas del manifiesto, y distribuir el caso en
+  jurisdicciones donde no está habilitado. El validador lo comprueba en los dos sentidos.
+
+**Lo que NO está, y se dice para que nadie lo dé por hecho**
+
+- El **volumen** y las **señales** — son los niveles `UOS-Vol` y `UOS-Sig`. Hoy el
+  contenedor lleva la malla y la apariencia, no el CBCT del que salió todo.
+- El **`fhir_map`**, que se declara vacío: poblarlo exige decidir a qué recurso FHIR R4
+  mapea cada asset.
+- Las **firmas Ed25519**. No falta el código: falta decidir qué clave firma —la clínica
+  emisora, la plataforma, o ambas— y dónde vive. Firmar con una clave inventada daría un
+  `.uos` que *parece* firmado, que es peor que uno que declara no estarlo. El validador
+  avisa si encuentra `provenance/signatures/` para no ignorarlas en silencio.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-24 | 0.1.0 | Registro inicial. Nivel UOS-Core: manifiesto, contenedor ZIP/STORE, validador con niveles de conformidad, vistas con ejes anatómicos medidos y cadena de procedencia entre versiones. Verificado sobre el caso clínico real: `VALIDO`, 10 assets, 19 vistas, malla byte-idéntica. |
+
+
+---
+
 ### La fase 6 en el orquestador
 
-`IngestionPipeline.exportar(result, destino)` dispara los tres canales sobre un
+`IngestionPipeline.exportar(result, destino)` dispara los **seis** canales sobre un
 `PipelineResult` y devuelve otro **nuevo**, con `exports` y los motivos de revisión
-acumulados. Va en un método aparte —no dentro de `run`— por contrato: exportar **escribe
+acumulados. Cinco materializan una pieza del gemelo —STL, campo, compuesto, paquete del
+visor, render— y el sexto, `uos-export-agent`, empaqueta el caso entero como escena.
+
+Va en un método aparte —no dentro de `run`— por contrato: exportar **escribe
 ficheros**, y `run`/`fuse` son puras respecto al disco salvo por el almacén de artefactos.
 
 Tres reglas que conviene tener a mano:
