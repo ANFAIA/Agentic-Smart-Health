@@ -6,12 +6,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from core_schemas import Modality, ModalityStatus, Support
+from core_schemas import ClinicalAttributes, Hallazgo, Modality, ModalityStatus, Support
 from ingestion_agents import ReportAgent
 from ingestion_agents.report_agent import (
+    _EXTRACTION_TOOL,
+    _limite,
     extract_ph_by_rules,
     extract_text,
     report_date,
+    valida_propuestas,
 )
 
 
@@ -301,3 +304,143 @@ def test_el_backend_llm_sin_clave_falla_declarando(
     path.write_text("Diente 16: pH 5.4\n", encoding="utf-8")
     outcome = ReportAgent(backend="llm").ingest(path)
     assert outcome.status is ModalityStatus.FAILED
+
+
+# --- backend LLM: la política, sin red ------------------------------------- #
+# `valida_propuestas` es pura a propósito, así que todo lo que decide qué entra al
+# contrato se prueba sin `anthropic` instalado y sin clave. Lo único que queda sin
+# cubrir es la llamada HTTP, que no toma ninguna decisión.
+def test_un_diente_completo_pasa_entero() -> None:
+    extraccion = valida_propuestas([
+        {"fdi": "16", "ph": 5.2, "n_raices": 3, "n_conductos": 4,
+         "hallazgos": ["caries"], "confianza": 0.8},
+    ])
+    assert extraccion.findings == {"16": (5.2, 0.8)}
+    assert extraccion.clinicos == {
+        "16": {"n_raices": 3, "n_conductos": 4, "hallazgos": [Hallazgo.CARIES]}
+    }
+    assert extraccion.discards == []
+
+
+def test_un_campo_malo_no_se_lleva_los_buenos_del_mismo_diente() -> None:
+    """El motivo de validar campo a campo: «3 raíces, pH 74» son dos datos buenos."""
+    extraccion = valida_propuestas([
+        {"fdi": "16", "ph": 74, "n_raices": 3, "n_conductos": 4, "confianza": 0.9},
+    ])
+    assert extraccion.findings == {}
+    assert extraccion.clinicos == {"16": {"n_raices": 3, "n_conductos": 4}}
+    assert len(extraccion.discards) == 1
+    assert "fuera del rango plausible" in extraccion.discards[0].reason
+
+
+def test_un_fdi_inexistente_tumba_el_diente_y_lo_registra() -> None:
+    extraccion = valida_propuestas([{"fdi": "19", "ph": 6.0, "confianza": 0.9}])
+    assert extraccion.findings == {} and extraccion.clinicos == {}
+    assert "FDI inexistente" in extraccion.discards[0].reason
+
+
+@pytest.mark.parametrize(
+    ("campo", "valor"), [("n_raices", 9), ("n_conductos", 0), ("n_raices", -1)]
+)
+def test_un_entero_fuera_del_rango_del_contrato_se_descarta(campo: str, valor: int) -> None:
+    """Y se descarta AQUÍ: dejarlo pasar lo convertiría en un `ValidationError` que
+    tumbaría el informe entero a `FAILED` por un solo valor."""
+    extraccion = valida_propuestas([{"fdi": "16", campo: valor, "confianza": 0.9}])
+    assert extraccion.clinicos == {}
+    assert "fuera del rango del contrato" in extraccion.discards[0].reason
+
+
+def test_un_valor_implausible_no_impide_construir_el_contrato() -> None:
+    """La consecuencia de lo anterior, comprobada de verdad."""
+    extraccion = valida_propuestas([
+        {"fdi": "16", "n_raices": 9, "n_conductos": 4, "confianza": 0.9},
+    ])
+    assert ClinicalAttributes(**extraccion.clinicos["16"]).n_conductos == 4
+
+
+def test_un_hallazgo_fuera_del_vocabulario_cae_y_los_validos_siguen() -> None:
+    extraccion = valida_propuestas([
+        {"fdi": "21", "hallazgos": ["caries", "fractura_radicular"], "confianza": 0.7},
+    ])
+    assert extraccion.clinicos == {"21": {"hallazgos": [Hallazgo.CARIES]}}
+    assert "fuera del vocabulario controlado" in extraccion.discards[0].reason
+
+
+def test_un_diente_sin_nada_declarado_no_crea_entrada() -> None:
+    """Devolver el campo vacío es correcto; inventarlo no. Tampoco lo es apuntarlo."""
+    extraccion = valida_propuestas([{"fdi": "16", "hallazgos": [], "confianza": 0.9}])
+    assert extraccion.findings == {} and extraccion.clinicos == {}
+    assert extraccion.discards == []
+
+
+def test_un_ph_repetido_se_registra_como_descarte() -> None:
+    extraccion = valida_propuestas([
+        {"fdi": "16", "ph": 5.2, "confianza": 0.9},
+        {"fdi": "16", "ph": 6.4, "confianza": 0.9},
+    ])
+    assert extraccion.findings == {"16": (5.2, 0.9)}
+    assert "ya tenía un pH" in extraccion.discards[0].reason
+
+
+@pytest.mark.parametrize(("declarada", "esperada"), [(None, 0.5), (1.4, 1.0), (-2, 0.0)])
+def test_la_confianza_se_acota_y_tiene_respaldo(declarada: float | None, esperada: float) -> None:
+    """Sin confianza declarada no hay extracción segura: el respaldo es bajo aposta."""
+    propuesta = {"fdi": "16", "ph": 5.2}
+    if declarada is not None:
+        propuesta["confianza"] = declarada
+    assert valida_propuestas([propuesta]).findings["16"][1] == esperada
+
+
+def test_los_limites_los_pone_el_contrato_y_no_una_copia() -> None:
+    """Si alguien cambia el rango en `core-schemas`, la barrera del agente le sigue."""
+    assert _limite("n_raices") == (1, 5)
+    assert _limite("n_conductos") == (1, 8)
+
+
+def test_el_esquema_de_la_tool_declara_el_vocabulario_completo() -> None:
+    """El `enum` se genera desde `Hallazgo`: no puede quedarse atrás del contrato."""
+    diente = _EXTRACTION_TOOL["input_schema"]["properties"]["dientes"]["items"]  # type: ignore[index]
+    assert set(diente["properties"]["hallazgos"]["items"]["enum"]) == {
+        h.value for h in Hallazgo
+    }
+    # El pH dejó de ser obligatorio: un informe de CBCT con IA no lo mide.
+    assert diente["required"] == ["fdi", "confianza"]
+
+
+# --- backend local (Ollama) ------------------------------------------------ #
+@pytest.mark.parametrize(
+    ("backend", "esperado"), [("llm", "claude-sonnet-5"), ("ollama", "qwen3:14b")]
+)
+def test_cada_backend_trae_su_modelo_por_defecto(backend: str, esperado: str) -> None:
+    """No hay un modelo que sirva a los dos, así que el defecto es por backend."""
+    assert ReportAgent(backend=backend).model == esperado
+
+
+def test_el_modelo_se_puede_fijar_a_mano() -> None:
+    assert ReportAgent(backend="ollama", model="gemma3:12b").model == "gemma3:12b"
+
+
+def test_el_backend_rules_no_necesita_modelo() -> None:
+    assert ReportAgent().model == ""
+
+
+def test_el_esquema_del_backend_local_es_el_mismo_que_el_de_la_tool() -> None:
+    """Ollama recibe como `format` el `input_schema` de la tool, sin copiarlo.
+
+    Es la razón de que los dos backends sean comparables valor a valor en
+    `scripts/eval_informes.py`: si cada uno declarase su propio esquema, la
+    diferencia medida incluiría la diferencia entre los esquemas.
+    """
+    assert _EXTRACTION_TOOL["input_schema"]["required"] == ["dientes"]  # type: ignore[index]
+
+
+def test_el_backend_local_falla_declarando_si_no_hay_servidor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sin Ollama levantado, el informe cae a `FAILED` y a cuarentena — no revienta."""
+    monkeypatch.setenv("OLLAMA_HOST", "http://localhost:1")  # puerto muerto
+    path = tmp_path / "informe.txt"
+    path.write_text("Diente 16: pH 5.4\n", encoding="utf-8")
+    salida = ReportAgent(backend="ollama", quarantine_dir=tmp_path / "q").ingest(path)
+    assert salida.status is ModalityStatus.FAILED
+    assert salida.quarantine_ref is not None
