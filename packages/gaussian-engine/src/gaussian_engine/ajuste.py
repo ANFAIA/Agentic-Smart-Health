@@ -12,7 +12,7 @@ dato, así que el error se puede convertir a HU y decir si importa clínicamente
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -74,6 +74,48 @@ LOTE = 131_072
 # porque debajo solo queda variacion a escala de voxel. Los 159,6 estan a un 11 % de el.
 ITERACIONES = 2_000
 
+# Tasa de aprendizaje por defecto. Es la que uso la tabla de arriba: dejarla en otro valor
+# haria que los numeros documentados no describieran lo que el codigo hace por defecto, que
+# es peor que no documentarlos. Medido en el pipeline con 0,02: 70,2 HU donde 0,05 da 56,0.
+TASA = 0.05
+
+# Compresion por defecto del FONDO — la region sin nombre, que es hueso y craneo.
+#
+# ⚠️ **Es asimetrica a proposito, y comprimir todo por igual fue un error medido.** Con un
+# 13 uniforme las raices bajaron a 7.902 gaussianas y su espaciado subio a 0,883 mm: una
+# raiz mide ~4 mm de ancho, o sea CINCO gaussianas de lado a lado. A esa resolucion no se
+# ve una raiz, se ve una cadena de esferas — y no lo arregla ningun rasterizador, porque a
+# esa resolucion *es* una cadena de esferas.
+#
+# El espaciado va con n^(-1/3), asi que recuperar los 0,276 mm que tenia la semilla exige
+# ~25 veces mas gaussianas. Comprimir y resolver son la misma moneda; en los dientes no se
+# gasta. El fondo es otra cosa: no tiene nombre, no se mide encima, y antes el visor lo
+# decimaba al 10 % de todas formas.
+COMPRESION_FONDO = 13.0
+
+# Compresion de las regiones con nombre. Medido sobre el caso real, con el fondo fijo en
+# 13 (semilla: 102.436 gaussianas en los dientes, espaciado 0,212 mm):
+#
+#     cr   dientes   espaciado    UNION   dientes   fondo
+#      1   102.436     0,212 mm   118,5 HU    ~400      66      <- degenerado
+#      2    51.881     0,401 mm    44,9 HU      27      46
+#      4    25.886     0,554 mm    44,6 HU      19      46
+#      8    12.898     0,745 mm    45,5 HU      31      47
+#     13     8.011     0,908 mm    47,2 HU      47      47
+#
+# ⚠️ **El error es PLANO de 2 a 13**, asi que no hay nada que negociar: se elige por
+# resolucion. Con 13 una raiz de 4 mm de ancho eran cuatro gaussianas y se veia como una
+# cadena de bolas; con 2 son diez. Y las piezas ajustan MEJOR con mas gaussianas, no peor.
+#
+# El 1 esta fuera y por una razon distinta: una gaussiana por punto es un problema
+# degenerado —ocho casi superpuestas tienen infinitas formas de sumar lo mismo— y es
+# literalmente lo que hace el campo semilla, que da 365 HU. En 2 ya esta bien planteado.
+COMPRESION_REGION = 2.0
+
+# Gaussianas minimas por region. Por debajo de esto una pieza saldria representada por
+# cuatro elipsoides y dejaria de poder seleccionarse en el visor.
+MINIMO_POR_REGION = 64
+
 
 @dataclass(frozen=True)
 class Ajuste:
@@ -92,15 +134,23 @@ class Ajuste:
     rmse_hu: float
     compresion: float
     iteraciones: int
+    # Presentes solo al ajustar por region. `region_id` es exacto POR CONSTRUCCION: cada
+    # gaussiana se ajusto usando unicamente puntos de su region, asi que no hereda ninguna
+    # etiqueta ni vota nada. Es la diferencia entre una etiqueta medida y una inferida.
+    region_id: np.ndarray | None = None
+    rmse_hu_por_region: dict[int, float] = field(default_factory=dict)
 
     def como_artefacto(self) -> dict[str, np.ndarray]:
         """Las claves que espera el almacén, con los mismos nombres que el campo semilla."""
-        return {
+        arrays = {
             "centers": self.centers.astype(np.float32),
             "scales": self.scales.astype(np.float32),
             "rotations": self.rotations.astype(np.float32),
             "density": self.density.astype(np.float32),
         }
+        if self.region_id is not None:
+            arrays["region_id"] = self.region_id.astype(np.int16)
+        return arrays
 
 
 def siembra_por_rejilla(
@@ -128,15 +178,20 @@ def siembra_por_rejilla(
     esquina = centros.min(axis=0)
     rel = centros - esquina
     lo, hi = 1e-3, float(rel.max()) * 2.0
-    paso = hi
+    # ⚠️ Se guarda el paso mas GRANDE que llega al objetivo, y nunca uno que se quede
+    # corto. Con la tolerancia simetrica de antes, pedir 64 devolvia 63: un minimo que no
+    # es un minimo no sirve de nada, y quien lo pide lo pide porque por debajo se rompe
+    # algo — aqui, que una pieza deje de poder seleccionarse en el visor.
+    paso = lo
     for _ in range(40):
-        paso = 0.5 * (lo + hi)
-        n = len(np.unique(np.floor(rel / paso).astype(np.int64), axis=0))
-        if n > n_objetivo:
-            lo = paso
+        medio = 0.5 * (lo + hi)
+        n = len(np.unique(np.floor(rel / medio).astype(np.int64), axis=0))
+        if n >= n_objetivo:
+            paso = medio
+            lo = medio
         else:
-            hi = paso
-        if abs(n - n_objetivo) <= max(1, n_objetivo // 100):
+            hi = medio
+        if n_objetivo <= n <= n_objetivo + max(1, n_objetivo // 100):
             break
 
     celda = np.floor(rel / paso).astype(np.int64)
@@ -199,13 +254,14 @@ def ajusta(
     centros: np.ndarray,
     densidad: np.ndarray,
     *,
-    n_objetivo: int,
+    n_objetivo: int = 0,
     hu_range: tuple[float, float] | np.ndarray = (0.0, 1.0),
     iteraciones: int = ITERACIONES,
     k: int = K_VECINOS,
-    tasa: float = 0.01,
+    tasa: float = TASA,
     dispositivo: str | None = None,
     traza: bool = False,
+    siembra: tuple[np.ndarray, np.ndarray, np.ndarray | float] | None = None,
 ) -> Ajuste:
     """Ajusta `n_objetivo` elipsoides a la densidad de las semillas.
 
@@ -229,7 +285,10 @@ def ajusta(
             "suya, y emparejarlas mal ajustaría a un campo que nadie midió."
         )
 
-    medias0, amplitudes0, paso = siembra_por_rejilla(centros, densidad, n_objetivo)
+    medias0, amplitudes0, paso = (
+        siembra if siembra is not None
+        else siembra_por_rejilla(centros, densidad, n_objetivo)
+    )
     dev = torch.device(
         dispositivo or ("cuda" if torch.cuda.is_available() else "cpu")
     )
@@ -246,11 +305,21 @@ def ajusta(
     mu = tensor(medias0).requires_grad_(True)
     # Se arranca isótropa con media celda: es la misma hipótesis que hace la semilla, así
     # que el ajuste sólo puede mejorarla. La anisotropía la tiene que ganar el dato.
-    # El parámetro es la preimagen de la sigmoide, no sigma: así el arranque cae dentro
-    # del intervalo por construcción en vez de depender de que el paso de rejilla lo haga.
-    sigma0 = float(np.clip(paso * 0.5, SIGMA_MIN_MM * 1.01, SIGMA_MAX_MM * 0.99))
+    # ⚠️ **Sigma inicial POR GAUSSIANA, no una para todas.** Al sembrar por region cada una
+    # tiene su propio paso de rejilla, y en un caso real van de 0,077 mm en un premolar a
+    # 0,958 en el fondo — un factor 12. Con un solo escalar (la mediana) las gaussianas del
+    # fondo arrancaban diez veces mas pequenas de lo que les toca y tenian que crecer un
+    # orden de magnitud a base de gradiente: medido, el error subia de 70 a 121 HU *con mas
+    # gaussianas*. Un buen arranque no es un lujo cuando el espacio de busqueda es este.
+    #
+    # El parametro es la preimagen de la sigmoide, no sigma: asi el arranque cae dentro del
+    # intervalo por construccion en vez de depender de que el paso de rejilla lo haga.
+    paso_g = np.broadcast_to(np.asarray(paso, dtype=np.float64).ravel(), (m,))
+    sigma0 = np.clip(paso_g * 0.5, SIGMA_MIN_MM * 1.01, SIGMA_MAX_MM * 0.99)
     frac = (sigma0 - SIGMA_MIN_MM) / (SIGMA_MAX_MM - SIGMA_MIN_MM)
-    theta = tensor(np.full((m, 3), np.log(frac / (1.0 - frac)))).requires_grad_(True)
+    theta = tensor(
+        np.repeat(np.log(frac / (1.0 - frac))[:, None], 3, axis=1)
+    ).requires_grad_(True)
     q = tensor(np.tile([1.0, 0.0, 0.0, 0.0], (m, 1))).requires_grad_(True)
     a = tensor(amplitudes0).requires_grad_(True)
 
@@ -337,3 +406,88 @@ def _adelante(
     tt = torch.cross(u, delta, dim=-1)
     local = (delta - 2.0 * w * tt + 2.0 * torch.cross(u, tt, dim=-1)) / sigma
     return (amps * torch.exp(-0.5 * (local**2).sum(dim=-1))).sum(dim=1)
+
+
+def ajusta_por_region(
+    centros: np.ndarray,
+    densidad: np.ndarray,
+    region_id: np.ndarray,
+    *,
+    compresion: float = COMPRESION_FONDO,
+    compresion_region: float = COMPRESION_REGION,
+    hu_range: tuple[float, float] | np.ndarray = (0.0, 1.0),
+    minimo: int = MINIMO_POR_REGION,
+    fondo: int = 0,
+    **kwargs: Any,
+) -> Ajuste:
+    """Siembra por región, ajuste conjunto, etiqueta congelada.
+
+    **El presupuesto es asimétrico**: el fondo se comprime y las piezas con nombre no. Ver
+    `COMPRESION_FONDO` — comprimir todo por igual costaba la resolución justo donde importa.
+
+    **La etiqueta.** Cada gaussiana nace de una celda de rejilla que contiene puntos de
+    **una sola región**, y esa etiqueta no vuelve a tocarse. La alternativa —ajustar todo
+    junto y luego etiquetar por el vecino más cercano— produciría una etiqueta heredada,
+    que se ve exactamente igual que una medida: el visor pintaría una raíz con el color de
+    su diente sin que nadie haya comprobado que le pertenece.
+
+    **Y por qué el ajuste es conjunto y no región a región.** Porque las regiones se
+    renderizan sumadas. Ajustando cada una por separado, sus gaussianas se optimizan para
+    reproducir su densidad *ellas solas*, y al sumar todo la densidad sale por encima:
+    una gaussiana no se para en la frontera de su región. Medido sobre el caso real, con
+    ajuste independiente cada región aislada daba 76-120 HU pero la unión daba **337 HU**,
+    sobreestimando el 60 % de los puntos.
+
+    El daño no se reparte igual, y ahí está la trampa: en el fondo el exceso era +71 HU,
+    y dentro del diente 24 **+1.068 HU sobre el 94 % de sus puntos**. Un diente es una isla
+    pequeña rodeada de hueso, así que *todos* sus puntos son frontera — justo las regiones
+    que interesan son las que peor lo pasan. Ajustando conjuntamente, cada gaussiana ve lo
+    que aportan sus vecinas y deja de contarlo dos veces.
+    """
+    centros = np.asarray(centros, dtype=np.float64)
+    densidad = np.asarray(densidad, dtype=np.float64)
+    region_id = np.asarray(region_id).astype(np.int64)
+    if not (len(centros) == len(densidad) == len(region_id)):
+        raise ValueError(
+            f"{len(centros)} centros, {len(densidad)} densidades y {len(region_id)} "
+            "regiones: las tres tienen que emparejarse punto a punto."
+        )
+    for nombre, valor in (("compresion", compresion), ("compresion_region", compresion_region)):
+        if valor < 1.0:
+            raise ValueError(
+                f"{nombre}={valor}: comprimir por debajo de 1 pediría más gaussianas que "
+                "semillas, que no es ajustar sino duplicar."
+            )
+
+    medias: list[np.ndarray] = []
+    amplitudes: list[np.ndarray] = []
+    etiquetas: list[np.ndarray] = []
+    pasos: list[np.ndarray] = []
+    for codigo in np.unique(region_id):
+        m = region_id == codigo
+        ratio = compresion if int(codigo) == fondo else compresion_region
+        n = min(max(round(int(m.sum()) / ratio), minimo), int(m.sum()))
+        mu, amp, paso = siembra_por_rejilla(centros[m], densidad[m], n)
+        medias.append(mu)
+        amplitudes.append(amp)
+        etiquetas.append(np.full(len(mu), int(codigo), dtype=np.int64))
+        # Cada gaussiana se lleva el paso de SU region: es su sigma inicial.
+        pasos.append(np.full(len(mu), paso))
+
+    region_gauss = np.concatenate(etiquetas)
+    r = ajusta(
+        centros, densidad, hu_range=hu_range,
+        siembra=(np.vstack(medias), np.concatenate(amplitudes), np.concatenate(pasos)),
+        **kwargs,
+    )
+
+    escala = float(hu_range[1]) - float(hu_range[0])
+    residuo = evalua(centros, r.centers, r.scales, r.rotations, r.density) - densidad
+    return replace(
+        r,
+        region_id=region_gauss,
+        rmse_hu_por_region={
+            int(c): float(np.sqrt((residuo[region_id == c] ** 2).mean())) * escala
+            for c in np.unique(region_id)
+        },
+    )
