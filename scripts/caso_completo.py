@@ -28,9 +28,12 @@ from dataclasses import replace
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-for paquete in ("core-schemas", "ingestion-agents", "fusion-agents", "analysis-agents",
-                "export-agents", "tooth-aggregation"):
-    sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))
+# Todos los paquetes del workspace, descubiertos. Estaba escrito a mano y se olvido
+# `gaussian-engine` al anadirlo: el caso corrio los tres primeros minutos y murio en la
+# etapa de ajuste con un ModuleNotFoundError. Una lista de paquetes que hay que acordarse
+# de actualizar es una lista que se queda vieja.
+for src in sorted(RAIZ.glob("packages/*/src")):
+    sys.path.insert(0, str(src))
 sys.path.insert(0, str(RAIZ / "apps/agent-orchestrator/src"))
 
 from agent_orchestrator import CaseInput, IngestionPipeline  # noqa: E402
@@ -210,6 +213,30 @@ def main() -> int:
              "su volumen.",
     )
     ap.add_argument(
+        "--gs-apariencia", type=Path, default=None,
+        help="Directorio con el escaner ya entrenado como 3DGS (lo produce "
+             "scripts/entrena_gs_escaner.py). Anade dos capas de APARIENCIA al paquete "
+             "del visor, llevadas al marco del twin. No sustituye a las capas medidas.",
+    )
+    ap.add_argument(
+        "--ajusta-campo", action="store_true",
+        help="Ajustar elipsoides anisotropos a la densidad medida. El campo resultante es "
+             "DERIVADO: su escala deja de ser el voxel que produjo la gaussiana y pasa a "
+             "ser la forma que reconstruye la densidad, asi que NO se puede medir encima.",
+    )
+    ap.add_argument(
+        "--compresion", type=float, default=13.0,
+        help="Compresion del FONDO (la region sin nombre: hueso y craneo). Por defecto 13.",
+    )
+    ap.add_argument(
+        "--compresion-dientes", type=float, default=2.0,
+        help="Compresion de las piezas con nombre. Por defecto 1: mismo numero de "
+             "gaussianas que semillas, pero elipsoides ajustados en vez de esferas del "
+             "tamano del voxel. Medido: de 2 a 13 el error es PLANO (45-47 HU), asi que "
+             "se elige por resolucion — con 13 el espaciado sube a 0,908 mm y una raiz de "
+             "4 mm son cuatro gaussianas; con 2 son diez. Por debajo de 2 es degenerado.",
+    )
+    ap.add_argument(
         "--sin-recorte-apical", action="store_true",
         help="No recortar la raiz a la longitud anatomica de su tipo. Sin el recorte las "
              "piezas arrastran hueso alveolar (medido: 34,3 mm en un molar de ~20); con "
@@ -353,6 +380,34 @@ def main() -> int:
               f"{informe['vistas_retenidas']} vistas RETENIDAS")
         print("  → " + ("APORTA" if informe["aporta"] else "NO aporta sobre la semilla"))
 
+    if args.ajusta_campo:
+        print("\n--- 3b · AJUSTE DEL CAMPO (elipsoides contra la densidad medida) ---")
+        # Complementario de `--refina-3dgs`, no alternativo: aquel optimiza contra los DRR
+        # del volumen y este contra la densidad de las propias semillas, sin renderizador
+        # de por medio. Aquí la pérdida sale en HU, que es la unidad del dato.
+        #
+        # Va DESPUÉS de la segmentación a propósito. Con `region_id` el ajuste se hace
+        # región a región, y entonces la etiqueta de cada elipsoide es exacta por
+        # construcción en vez de heredada del vecino más cercano — que es lo que el visor
+        # necesita para poder seleccionar una pieza sin mentir sobre cuál es.
+        from gaussian_engine import ajusta_campo
+
+        antes = pipe.store.load(fus.snapshot.gaussian_field_ref)
+        snap, aj = ajusta_campo(fus.snapshot, pipe.store, compresion=args.compresion,
+                                compresion_region=args.compresion_dientes)
+        motivos_aj = revisa_conservacion(
+            ContratoEtapa(nombre="ajuste-campo"),
+            antes, pipe.store.load(snap.gaussian_field_ref),
+        )
+        fus = replace(fus, snapshot=snap, hitl_reasons=[*fus.hitl_reasons, *motivos_aj])
+        print(f"  → {len(antes['centers']):,} → {len(aj.centers):,} gaussianas "
+              f"(×{aj.compresion:.1f}) · error de reconstrucción {aj.rmse_hu:.1f} HU")
+        peor = sorted(aj.rmse_hu_por_region.items(), key=lambda kv: -kv[1])[:3]
+        if peor:
+            print("  → peores regiones: " +
+                  " · ".join(f"{'fondo' if c == 0 else c}: {e:.0f} HU" for c, e in peor))
+        print(f"  → perfil `{snap.perfil_campo}`: DERIVADO, la escala ya no es el vóxel")
+
     print("\n--- 4 · EXPORTACIÓN ---")
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
     # completas y separadas, que es lo que un clínico reconoce. El compuesto del CBCT
@@ -360,6 +415,14 @@ def main() -> int:
     fin = pipe.exportar(
         fus, args.salida / "export",
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
+        gs_apariencia=args.gs_apariencia,
+        # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
+        # y las fotos tal como entraron, con su sha256, para que quien lo reciba pueda
+        # verificar que no los tocamos.
+        malla=caso.mesh,
+        escena_gs=(None if args.gs_apariencia is None
+                   else args.gs_apariencia / "escaner_3dgs-coronas.ply"),
+        imagenes=list(caso.images),
     )
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
