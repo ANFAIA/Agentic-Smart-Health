@@ -20,6 +20,7 @@ members = [
     "ingestion-agents",
     "research-agent",
     "tooth-aggregation",
+    "uos",
 ]
 
 [[package]]
@@ -37,6 +38,7 @@ dependencies = [
     { name = "export-agents" },
     { name = "fusion-agents" },
     { name = "ingestion-agents" },
+    { name = "uos" },
 ]
 
 [package.metadata]
@@ -46,6 +48,7 @@ requires-dist = [
     { name = "export-agents", editable = "packages/export-agents" },
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
+    { name = "uos", editable = "packages/uos" },
 ]
 
 [[package]]
@@ -61,6 +64,7 @@ dependencies = [
     { name = "gaussian-engine" },
     { name = "ingestion-agents" },
     { name = "tooth-aggregation" },
+    { name = "uos" },
 ]
 
 [package.dev-dependencies]
@@ -69,6 +73,7 @@ dev = [
     { name = "jupyter" },
     { name = "mypy" },
     { name = "numpy" },
+    { name = "ollama" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -85,6 +90,7 @@ requires-dist = [
     { name = "gaussian-engine", editable = "packages/gaussian-engine" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
     { name = "tooth-aggregation", editable = "packages/tooth-aggregation" },
+    { name = "uos", editable = "packages/uos" },
 ]
 
 [package.metadata.requires-dev]
@@ -93,6 +99,7 @@ dev = [
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "mypy", specifier = "==2.3.0" },
     { name = "numpy", specifier = ">=2.5.1" },
+    { name = "ollama", specifier = ">=0.4" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = "==0.15.21" },
@@ -1102,12 +1109,16 @@ heic = [
 llm = [
     { name = "anthropic" },
 ]
+local = [
+    { name = "ollama" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'llm'", specifier = ">=0.40" },
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "ollama", marker = "extra == 'local'", specifier = ">=0.4" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pillow-heif", marker = "extra == 'heic'", specifier = ">=0.16" },
     { name = "pydicom", specifier = ">=3.0" },
@@ -1115,7 +1126,7 @@ requires-dist = [
     { name = "pylibjpeg-libjpeg", specifier = ">=2.1" },
     { name = "pypdf", specifier = ">=5.0" },
 ]
-provides-extras = ["llm", "heic"]
+provides-extras = ["llm", "local", "heic"]
 
 [[package]]
 name = "iniconfig"
@@ -3420,6 +3431,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/92/ff/5a28bdfd8c3ebec42564ac7d0e54ca3db65044a9314a97f9564fa7a1e926/tzdata-2026.3.tar.gz", hash = "sha256:4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415", size = 198674, upload-time = "2026-07-10T08:50:37.887Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl", hash = "sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931", size = 348168, upload-time = "2026-07-10T08:50:36.46Z" },
+]
+
+[[package]]
+name = "uos"
+version = "0.2.0"
+source = { editable = "packages/uos" }
+dependencies = [
+    { name = "core-schemas" },
+    { name = "export-agents" },
+    { name = "fusion-agents" },
+    { name = "numpy" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "export-agents", editable = "packages/export-agents" },
+    { name = "fusion-agents", editable = "packages/fusion-agents" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2.7" },
 ]
 
 [[package]]
