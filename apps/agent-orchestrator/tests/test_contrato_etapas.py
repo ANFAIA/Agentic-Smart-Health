@@ -92,7 +92,10 @@ def test_el_ply_tiene_que_llevar_todo_array_por_gaussiana(pipeline, caso, tmp_pa
     ply = fuera.export("field-export-agent")
     assert ply.ok, ply.detail
     assert "region_id" in lee_ply(ply.path), "la columna tiene que estar en el fichero"
-    assert not any("no lleva" in m for m in fuera.hitl_reasons)
+    # ⚠️ Atado al mensaje del CONTRATO, no al substring «no lleva». Otros canales lo usan
+    # para cosas que no tienen nada que ver —el visor cuando no hay escáner, el compuesto
+    # cuando no hay pieza etiquetada— y este test pasaba por que ninguno de ellos saltara.
+    assert not any("el PLY exportado no lleva" in m for m in fuera.hitl_reasons)
 
     # Y el contrato caza el PLY sin la columna, que es como salía antes del arreglo.
     del arrays["region_id"]
