@@ -1128,8 +1128,8 @@ capas, cotas sobre el modelo y encuadre por caso.
 
 | Campo | Valor |
 |---|---|
-| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py`) |
-| **Versión** | `0.2.0` |
+| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
+| **Versión** | `0.3.0` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
@@ -1196,6 +1196,33 @@ propio y el validador puede correr sobre un fichero que escribió otro.
   comparten seis canales: ensancharlo con `n_assets` o `conformidad` daría dos sitios donde
   la misma verdad puede divergir y obligaría a los otros cinco a cargar con campos que no
   usan.
+- ⚠️ **El contenedor lleva el GEMELO, no sólo las entradas.** Durante un tiempo llevó la
+  malla del escáner, las fotos y el DICOM —o sea lo que la clínica ya tenía— y el campo
+  gaussiano ajustado se quedaba en un PLY al lado. Era una lectura equivocada del §1.1: ahí
+  pone que UOS no re-encodea **datos fuente**, y nombra el DICOM; el §3.1 dibuja la malla
+  como «STL convertido». Hoy viajan el campo, el compuesto y la apariencia.
+- ⚠️ **Tres capas de gaussianas comparten `kind` y por eso cada una lleva descriptor.** El
+  campo es densidad **medida** por el CBCT; el compuesto, medida de dos modalidades con su
+  columna `origen`; la apariencia, reconstrucción contra renders. Sin el `.gs.json` un
+  consumidor ve tres `mesh_gs_scene` y no puede saber cuál puede usar para medir. El
+  descriptor arrastra el `esquema_campo` del contrato, que es lo que impide el fallo
+  callado: el PLY de facto de 3DGS usa `scale_0..2` con los mismos nombres y guarda el
+  **logaritmo**; aquí van milímetros lineales, y un visor estándar exponenciaría nuestros
+  milímetros y renderizaría basura con muy buen aspecto.
+- **La escena es un glTF binario y los GS cuelgan de ella** (§5.1). El nodo raíz de la malla
+  **es** el marco canónico y cada capa de gaussianas va debajo con su `matrix`, que es la
+  registración. ⚠️ glTF guarda las matrices **por columnas** y el manifiesto por filas:
+  confundirlas no revienta, coloca la nube girada y espejada. Los payloads van apuntados con
+  `extras.uos_gs_uri`, que es el fallback declarado mientras `KHR_gaussian_splatting` no se
+  ratifique — el §13 dice que en v1.0 se retira.
+- **El STL original va como `document`, no como escena.** Lo dice el §5.1. La conversión a
+  glTF pierde —`float32` desde `float64`— así que el original se queda: el convertido es
+  presentación y el reversible es el fichero del escáner, byte a byte.
+- ⚠️ **`extras.uos_fdi` NO se emite**, aunque el §5.1 lo contemple «si el mesh viene
+  segmentado». El nuestro no viene segmentado: lo segmentamos con un modelo, y eso es Layer
+  3. Horneado en la escena, quitar `derived/` dejaría de quitar la inferencia y se rompe la
+  regla dura del §5.5. Las etiquetas van en `derived/`, indexadas por vértice — exacto
+  porque la escena conserva el orden de la malla ingerida.
 - ⚠️ **La serie DICOM viaja ENTERA y se verifica corte a corte.** El asset del volumen es
   un directorio (`volume/ct_001/`) y el manifiesto declara una `Parte` por fichero, con su
   nombre y su hash. No basta un hash del conjunto: ése dice «esta serie no cuadra», y éstos
@@ -1232,6 +1259,21 @@ propio y el validador puede correr sobre un fichero que escribió otro.
   UOS-Core.
 - **El volumen va detrás de una bandera** (`--con-volumen`), por peso: son cientos de megas
   que multiplican por diez el contenedor. Llevarlos es decisión de quien exporta.
+- **La capa clínica es EXTENSIÓN nuestra, y se declara como tal.** El borrador no define
+  atributos clínicos por pieza: su §9 los manda a `Observation` de FHIR, o sea a un
+  servidor, y entonces un `.uos` suelto no puede contestar «qué dice el informe del 24».
+  Va en `clinical/observations.json` con las 32 observaciones, las medidas que no caben en
+  una pieza y los motivos del gate. **Layer 1, no `derived/`**: es la transcripción de un
+  informe que firmó una persona, y meterla en `derived/` la haría desmontable. Cómo se
+  extrajo cada valor lo dice su `derivation` — `deterministic`, `inferred`, o `null`, que
+  significa **no declarado** y no lo mismo que determinista.
+- **El manifiesto declara sus extensiones** (`extensions`, `extensions_used`,
+  `extensions_required`), y esto **no está en v0.2**: es propuesta nuestra, copiada de
+  glTF, sobre el que UOS se apoya. Sin ella, un lector ajeno ignora lo que añadimos **sin
+  enterarse de que lo ignora**, y un formato abierto se vuelve uno que sólo lee entero su
+  emisor. ⚠️ **Nada nuestro va en `required`**: todo lo que añadimos suma información, y un
+  visor conforme tiene que poder abrir el caso sin entender ninguna de ellas. Hay un test
+  con ese nombre para que, si algún día algo entra ahí, sea deliberado y visible.
 - **El `fhir_map` declara el TIPO de recurso, no una referencia.** El ejemplo del spec
   escribe `ImagingStudy/is-9911`, o sea un recurso que existe en un servidor concreto; este
   caso no ha pasado por ningún PMS y no hay identificador que citar. Inventar uno haría que
@@ -1245,6 +1287,8 @@ propio y el validador puede correr sobre un fichero que escribió otro.
 **Lo que NO está, y se dice para que nadie lo dé por hecho**
 
 - Las **señales** — el nivel `UOS-Sig`. No hay T-Scan ni nada que registrar todavía.
+- El **renderizado** de las gaussianas en el visor de referencia: el paso 3 del §11.2.
+  La escena ya las declara; falta el rasterizador.
 - Las **firmas Ed25519**. No falta el código: falta decidir qué clave firma —la clínica
   emisora, la plataforma, o ambas— y dónde vive. Firmar con una clave inventada daría un
   `.uos` que *parece* firmado, que es peor que uno que declara no estarlo. El validador
@@ -1255,6 +1299,7 @@ propio y el validador puede correr sobre un fichero que escribió otro.
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Registro inicial. Nivel UOS-Core: manifiesto, contenedor ZIP/STORE, validador con niveles de conformidad, vistas con ejes anatómicos medidos y cadena de procedencia entre versiones. Verificado sobre el caso clínico real: `VALIDO`, 10 assets, 19 vistas, malla byte-idéntica. |
+| 2026-08-24 | 0.3.0 | El contenedor lleva el **gemelo** y no sólo las entradas: escena glTF con los nodos GS colgando y su registración como `matrix`, campo y compuesto con descriptor que declara si están **medidos**, segmentación en `derived/`, capa clínica, y un **mecanismo de extensiones** propuesto al borrador. |
 | 2026-08-24 | 0.2.0 | Nivel **UOS-Vol**: la serie DICOM entera como asset-directorio, verificada corte a corte, con su sidecar §5.2 leído de las cabeceras que viajan, y rechazada si esas cabeceras desmienten el `phi_state`. Y el `fhir_map` poblado por tipo de recurso. |
 
 

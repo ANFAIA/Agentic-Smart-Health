@@ -461,7 +461,6 @@ que la llamada no lleva valor por defecto (el módulo puede tener su propio resp
 | `ASH_PSEUDONYM_SALT` | `packages/ingestion-agents/src/ingestion_agents/cbct_agent.py` | `dev-salt-no-usar-en-produccion` |
 | `OLLAMA_HOST` | `apps/research-agent/src/main_local.py` | `http://localhost:11434` |
 | `QDRANT_PATH` | `apps/research-agent/src/rag.py` | — |
-| `REPORT_AGENT_LOCAL_MODEL` | `packages/ingestion-agents/src/ingestion_agents/report_agent.py` | `qwen3:14b` |
 | `RESEARCH_AGENT_LOCAL_MODEL` | `apps/research-agent/src/main_local.py` | `qwen2.5:7b` |
 | `RESEARCH_AGENT_MODEL` | `apps/research-agent/src/main.py` | `claude-opus-4-8` |
 <!-- /generado: env-vars -->
