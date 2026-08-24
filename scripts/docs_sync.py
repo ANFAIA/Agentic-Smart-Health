@@ -364,8 +364,26 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, tuple[str, str]]:
 
 
 def _ficha_de(texto: str, nombre: str) -> str | None:
-    """La ficha de `nombre`: el bloque `###` que lo menciona y declara versión."""
-    for seccion in re.split(r"\n(?=### )", texto):
+    """La ficha de `nombre`: el bloque `###` cuyo TITULAR lo nombra y declara versión.
+
+    ⚠️ Antes valía con que la sección lo mencionara en cualquier sitio, y eso escogía la
+    ficha equivocada: la de `export-agent` nombra a `render-export-agent` en su tabla de
+    canales, y es anterior en el documento. La comprobación de versiones pasaba en verde
+    comparando contra la versión del vecino — invisible mientras todos declararan `0.1.0`,
+    y silenciosamente rota en cuanto uno subiera. Un guardián que valida contra la fuente
+    equivocada es peor que no tenerlo, porque da confianza sin darla.
+
+    El titular es el criterio correcto también para las fichas compartidas: la de fusión se
+    llama «Agentes de fusión — `geometric-fusion-agent` · `semantic-fusion-agent`», o sea
+    nombra a los dos. La regla vieja queda de respaldo por si alguna ficha futura no lo
+    hiciera.
+    """
+    secciones = re.split(r"\n(?=### )", texto)
+    for seccion in secciones:
+        titular = seccion.split("\n", 1)[0]
+        if f"`{nombre}`" in titular and "**Versión**" in seccion:
+            return seccion
+    for seccion in secciones:
         if f"`{nombre}`" in seccion and "**Versión**" in seccion:
             return seccion
     return None
