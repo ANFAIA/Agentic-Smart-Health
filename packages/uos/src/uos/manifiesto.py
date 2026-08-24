@@ -71,6 +71,20 @@ class Adquisicion(BaseModel):
     device: dict[str, str] = Field(default_factory=dict)
 
 
+class Parte(BaseModel):
+    """Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).
+
+    Existe para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que
+    algo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie
+    no cuadra» y «el corte 214 esta corrupto».
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    bytes: int = Field(ge=0)
+
+
 class Asset(BaseModel):
     """El sobre comun a todo asset (§4.1).
 
@@ -90,6 +104,12 @@ class Asset(BaseModel):
     acquisition: Adquisicion = Field(default_factory=lambda: Adquisicion())
     load_priority: int = 30
     regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
+    # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Parte` y
+    # `digesto_de_partes`.
+    parts: list[Parte] = Field(default_factory=list)
+    # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
+    # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
+    sidecar_uri: str | None = None
 
     @field_validator("uri")
     @classmethod
@@ -104,6 +124,26 @@ class Asset(BaseModel):
                 f"uri {v!r}: las rutas internas son relativas, ASCII y sin '..'"
             )
         return v
+
+
+def digesto_de_partes(partes: list[Parte]) -> str:
+    """El `sha256` de un asset-directorio: hash sobre `nombre\0hash\n` ordenado.
+
+    El spec da un `sha256` por asset y no dice como se calcula cuando el asset es una serie
+    entera. Se define aqui, y **se define en vez de elegirse en el escritor**: si el
+    validador lo calculara de otra forma, un contenedor valido daria invalido y nadie
+    sabria cual de los dos tiene razon.
+
+    Va sobre los NOMBRES y los hashes, no sobre los bytes concatenados: asi renombrar un
+    corte cambia el digesto —que es lo correcto, el orden de una serie es dato— y no hace
+    falta releer 259 MB para comprobarlo.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    for p in sorted(partes, key=lambda x: x.name):
+        h.update(f"{p.name}\0{p.sha256}\n".encode())
+    return h.hexdigest()
 
 
 class Frame(BaseModel):
@@ -160,6 +200,28 @@ class Sujeto(BaseModel):
     fhir_patient: str | None = None
 
 
+class RecursoFHIR(BaseModel):
+    """A que recurso FHIR R4 corresponde un asset (§9), para el conector con el PMS.
+
+    ⚠️ **`resource` es una referencia y `resource_type` un TIPO, y no son lo mismo.** El
+    ejemplo del spec escribe `"resource": "ImagingStudy/is-9911"`, o sea una referencia a un
+    recurso que existe en un servidor concreto. Nosotros no tenemos ese servidor: el caso no
+    ha pasado por ningun PMS y no hay identificador que citar. Declarar uno inventado seria
+    exactamente el fallo del ADR 003 —plausible, silencioso y ya dentro del contrato—,
+    porque un conector que lo leyera intentaria resolverlo.
+
+    Asi que se declara lo que SI se sabe: el tipo de recurso al que corresponde cada asset.
+    Es una afirmacion de tipo, verdadera hoy y sin servidor, y es lo que un conector
+    necesita para saber que crear. `resource` queda para cuando el caso viva en un PMS de
+    verdad y alguien pueda rellenarlo.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    resource_type: str
+    resource: str | None = None
+    note: str = ""
+
+
 class Procedencia(BaseModel):
     """Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
 
@@ -183,7 +245,7 @@ class Manifiesto(BaseModel):
     visits: list[Visita] = Field(default_factory=list)
     assets: list[Asset] = Field(default_factory=list)
     registrations: list[Registro] = Field(default_factory=list)
-    fhir_map: dict[str, dict[str, str]] = Field(default_factory=dict)
+    fhir_map: dict[str, RecursoFHIR] = Field(default_factory=dict)
     provenance: Procedencia = Field(default_factory=lambda: Procedencia())
 
     def json_canonico(self) -> str:

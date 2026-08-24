@@ -16,7 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from uos.contenedor import MANIFIESTO
-from uos.manifiesto import Clase, Manifiesto
+from uos.manifiesto import Clase, Manifiesto, digesto_de_partes
 from uos.procedencia import CADENA, FIRMAS, Cadena, revisa_cadena
 from uos.vistas import VISTAS, Vista
 
@@ -95,8 +95,7 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
     dentro = set(z.namelist())
     for a in m.assets:
         if a.uri.endswith("/"):
-            if not any(n.startswith(a.uri) for n in dentro):
-                inf.errores.append(f"asset {a.id}: el directorio {a.uri} esta vacio")
+            _valida_serie(z, a, dentro, inf)
             continue
         if a.uri not in dentro:
             inf.errores.append(f"asset {a.id}: {a.uri} no esta en el contenedor")
@@ -111,6 +110,59 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
             inf.errores.append(
                 f"asset {a.id}: declara {a.bytes} bytes y tiene {len(crudo)}"
             )
+
+
+def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Informe) -> None:
+    """Un asset que es un DIRECTORIO: cada `Parte` existe y cuadra, y el digesto tambien.
+
+    Se comprueba fichero a fichero y no solo el digesto del conjunto: la diferencia es
+    entre poder decir «esta serie no cuadra» y poder decir «el corte 214 esta corrupto».
+    Y se comprueba **en los dos sentidos** — un corte que esta dentro y que el manifiesto
+    no declara es tan grave como uno declarado que falta: significa que la serie que sale
+    no es la que se dice que entro.
+    """
+    hijos = {n for n in dentro if n.startswith(a.uri) and not n.endswith("/")}
+    if not hijos:
+        inf.errores.append(f"asset {a.id}: el directorio {a.uri} esta vacio")
+        return
+    if not a.parts:
+        inf.errores.append(
+            f"asset {a.id}: es un directorio con {len(hijos)} fichero(s) y no declara "
+            "`parts`, asi que no hay contra que verificarlos uno a uno"
+        )
+        return
+    declarados = {a.uri + p.name for p in a.parts}
+    if sobran := hijos - declarados:
+        inf.errores.append(
+            f"asset {a.id}: {len(sobran)} fichero(s) dentro de {a.uri} que el manifiesto "
+            f"no declara ({sorted(sobran)[0]}…)"
+        )
+    for parte in a.parts:
+        ruta = a.uri + parte.name
+        if ruta not in hijos:
+            inf.errores.append(f"asset {a.id}: falta {ruta}, que el manifiesto declara")
+            continue
+        crudo = z.read(ruta)
+        if hashlib.sha256(crudo).hexdigest() != parte.sha256:
+            inf.errores.append(f"asset {a.id}: el sha256 de {parte.name} no cuadra")
+        if len(crudo) != parte.bytes:
+            inf.errores.append(
+                f"asset {a.id}: {parte.name} declara {parte.bytes} bytes y tiene {len(crudo)}"
+            )
+    if (real := digesto_de_partes(a.parts)) != a.sha256:
+        inf.errores.append(
+            f"asset {a.id}: el digesto declarado del directorio no es el de sus partes "
+            f"({a.sha256[:12]}… vs {real[:12]}…)"
+        )
+    if sum(p.bytes for p in a.parts) != a.bytes:
+        inf.errores.append(
+            f"asset {a.id}: declara {a.bytes} bytes y sus partes suman "
+            f"{sum(p.bytes for p in a.parts)}"
+        )
+    if a.sidecar_uri is not None and a.sidecar_uri not in dentro:
+        inf.errores.append(
+            f"asset {a.id}: declara el sidecar {a.sidecar_uri} y no esta en el contenedor"
+        )
 
 
 def _valida_frames(m: Manifiesto, inf: Informe) -> None:

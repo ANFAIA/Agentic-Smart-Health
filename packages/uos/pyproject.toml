@@ -12,6 +12,10 @@ dependencies = [
     "export-agents",
     "fusion-agents",
     "numpy>=2.0",
+    # Solo para el sidecar del volumen (§5.2): se leen CABECERAS, nunca pixeles. El
+    # DICOM viaja intacto y quien lo abra usara su propio parser; esto existe para que
+    # un visor web no necesite uno solo para saber que le llega.
+    "pydicom>=3.0",
 ]
 
 [build-system]

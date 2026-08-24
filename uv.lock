@@ -3443,6 +3443,7 @@ dependencies = [
     { name = "fusion-agents" },
     { name = "numpy" },
     { name = "pydantic" },
+    { name = "pydicom" },
 ]
 
 [package.metadata]
@@ -3452,6 +3453,7 @@ requires-dist = [
     { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydicom", specifier = ">=3.0" },
 ]
 
 [[package]]

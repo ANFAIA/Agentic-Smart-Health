@@ -1,0 +1,203 @@
+"""§5.2 — el sidecar `<id>.volume.json` de una serie DICOM.
+
+**Para que existe.** El DICOM va intacto dentro del `.uos`, que es el punto del formato:
+la fuente de verdad no se transcodifica. Pero un visor web no deberia necesitar un parser
+DICOM completo —397 ficheros, sintaxis de transferencia, rescale por corte— solo para
+saber que dimensiones tiene el volumen y en que rango estan sus valores. El sidecar es esa
+descripcion, y **se lee de los mismos bytes que viajan**, no de una copia derivada que
+alguien calculo antes en otro sitio.
+
+⚠️ **El sidecar declara el frame, y NADA MAS sobre la alineacion.** La transformada del
+CBCT al canonico vive en `registrations` (§6) y no se duplica aqui. Un sistema con dos
+sitios donde vive la misma transformada acaba teniendo dos transformadas distintas, y la
+que se aplique dependera de a quien le toque leer.
+
+⚠️ **La orientacion se LEE del `ImageOrientationPatient`, no se supone.** Es la misma regla
+que en el resto del proyecto: el eje anatomico sale de la cabecera del DICOM o no sale. Un
+volumen al que se le supone la orientacion se renderiza igual de bien y espejado.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+SIDECAR = "volume/{id}.volume.json"
+
+# Tags DICOM que identifican a una persona o al sitio donde se le atendio. No es la lista
+# completa del perfil de confidencialidad de DICOM (PS3.15 E.1) —esa tiene mas de cien
+# entradas y muchas son de equipamiento—, es el nucleo que un export clinico trae poblado
+# cuando NO se ha anonimizado. Si alguno de estos tiene valor, la serie no esta
+# seudonimizada y el `.uos` no puede decir que si.
+#
+# ⚠️ `PatientID` NO esta aqui a proposito. Un export anonimizado lo rellena con un
+# identificador opaco —el de esta serie es un UUID— y exigir que este vacio rechazaria
+# series perfectamente anonimas. Lo que delata es el NOMBRE, la fecha de nacimiento y la
+# institucion; el identificador es justo lo que sobrevive a una seudonimizacion correcta.
+TAGS_IDENTIFICABLES = (
+    "PatientName",
+    "PatientBirthDate",
+    "PatientAddress",
+    "PatientTelephoneNumbers",
+    "OtherPatientNames",
+    "OtherPatientIDs",
+    "InstitutionName",
+    "InstitutionAddress",
+    "ReferringPhysicianName",
+    "PerformingPhysicianName",
+    "OperatorsName",
+    "AccessionNumber",
+)
+
+# Valores que un anonimizador deja como marcador y que NO son un nombre. Se comparan en
+# minusculas y sin espacios: `Anonymized3`, `ANONYMOUS`, `Patient^^^^`.
+_MARCADORES = ("anonymous", "anonymized", "anonimo", "removed", "none", "unknown", "test")
+
+# Presets de funcion de transferencia que el spec nombra (§5.2). Se declaran porque el
+# visor los ofrece, no porque este fichero los traiga: son nombres, no datos.
+PRESETS = ("cbct_bone", "cbct_soft", "cbct_metal_suppress")
+
+
+def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[str]]:
+    """`(sidecar, avisos)` de la serie en `carpeta`, leyendo sus cabeceras.
+
+    No carga los pixeles de los 397 cortes: para las dimensiones y la geometria basta la
+    cabecera de cada uno, y el rango de valores sale del que el propio DICOM declara
+    cuando lo declara. Cuando no, se dice que no se sabe en vez de barrer 259 MB o —peor—
+    inventar un rango plausible.
+    """
+    import pydicom
+
+    ficheros = sorted(p for p in carpeta.rglob("*") if p.is_file())
+    cabeceras = []
+    for f in ficheros:
+        try:
+            cabeceras.append(pydicom.dcmread(str(f), stop_before_pixels=True))
+        except Exception:  # noqa: BLE001 — un fichero que no es DICOM no es un corte
+            continue
+    if not cabeceras:
+        raise ValueError(f"{carpeta} no contiene ninguna cabecera DICOM legible.")
+
+    avisos: list[str] = []
+    primera = cabeceras[0]
+
+    def _z(ds: object) -> float:
+        ipp = getattr(ds, "ImagePositionPatient", None)
+        return float(ipp[2]) if ipp is not None else float(getattr(ds, "InstanceNumber", 0))
+
+    cabeceras.sort(key=_z)
+    primera = cabeceras[0]
+
+    px = [float(v) for v in getattr(primera, "PixelSpacing", [1.0, 1.0])]
+    dz = float(getattr(primera, "SliceThickness", 1.0) or 1.0)
+    if len(cabeceras) > 1:
+        medido = abs(_z(cabeceras[1]) - _z(cabeceras[0]))
+        if medido > 0:
+            # El espaciado REAL manda sobre el declarado, igual que en el `cbct-agent`.
+            dz = medido
+
+    iop = getattr(primera, "ImageOrientationPatient", None)
+    if iop is None:
+        avisos.append(
+            f"la serie de {frame} no trae `ImageOrientationPatient`: el sidecar declara la "
+            "orientacion identidad, que es una SUPOSICION y no una medida"
+        )
+        orientacion = np.eye(3)
+    else:
+        fila = np.asarray([float(v) for v in iop[:3]], dtype=np.float64)
+        columna = np.asarray([float(v) for v in iop[3:]], dtype=np.float64)
+        orientacion = np.stack([fila, columna, np.cross(fila, columna)])
+
+    ipp = getattr(primera, "ImagePositionPatient", None)
+    if ipp is None:
+        avisos.append(
+            f"la serie de {frame} no trae `ImagePositionPatient`: sin el, el origen del "
+            "volumen en milimetros no se puede declarar y el sidecar lo deja nulo"
+        )
+    origen = None if ipp is None else [float(v) for v in ipp]
+
+    bajo = getattr(primera, "SmallestImagePixelValue", None)
+    alto = getattr(primera, "LargestImagePixelValue", None)
+    pendiente = float(getattr(primera, "RescaleSlope", 1.0))
+    corte = float(getattr(primera, "RescaleIntercept", 0.0))
+    if bajo is None or alto is None:
+        # ⚠️ Se deja NULO. La alternativa —barrer los pixeles de la serie entera— cuesta
+        # leer 259 MB en cada exportacion, y la otra —poner el rango tipico de un CBCT—
+        # seria inventarse un dato que un visor usaria para su ventana.
+        rango = None
+        avisos.append(
+            f"la serie de {frame} no declara `Smallest/LargestImagePixelValue`: el "
+            "sidecar deja `value_range` nulo, y un visor tendra que calcular su ventana"
+        )
+    else:
+        rango = [float(bajo) * pendiente + corte, float(alto) * pendiente + corte]
+
+    return {
+        "frame": frame,
+        "dimensions": [int(primera.Columns), int(primera.Rows), len(cabeceras)],
+        "spacing_mm": [px[1], px[0], dz],
+        "orientation": [[round(float(x), 9) for x in fila] for fila in orientacion],
+        "origin_mm": origen,
+        "rescale": {"slope": pendiente, "intercept": corte},
+        "value_range": rango,
+        "pixel_encoding": _codificacion(primera),
+        "modality": str(getattr(primera, "Modality", "") or ""),
+        "transfer_function_presets": list(PRESETS),
+        "nota": (
+            "leido de las cabeceras de la serie que viaja en este contenedor. La "
+            "transformada al frame canonico NO esta aqui: vive en `registrations`."
+        ),
+    }, avisos
+
+
+def _codificacion(cabecera: object) -> str:
+    """`int16-le` y demas: cuantos bits y en que orden vienen los pixeles.
+
+    El orden de bytes lo fija la sintaxis de transferencia del fichero, no una convencion:
+    casi todo el DICOM moderno es little-endian, pero «casi todo» no es «todo», y un visor
+    que lo suponga lee basura con muy buen aspecto en el que no lo sea.
+    """
+    bits = int(getattr(cabecera, "BitsAllocated", 16))
+    signo = "int" if int(getattr(cabecera, "PixelRepresentation", 1)) == 1 else "uint"
+    meta = getattr(cabecera, "file_meta", None)
+    sintaxis = str(getattr(meta, "TransferSyntaxUID", "") or "")
+    orden = "be" if "Big Endian" in sintaxis else "le"
+    return f"{signo}{bits}-{orden}"
+
+
+def identificables_en(carpeta: Path, *, muestra: int = 8) -> list[str]:
+    """Los tags identificables poblados en la serie, o vacio si esta seudonimizada.
+
+    **Por que hace falta.** El DICOM viaja INTACTO, que es el punto del formato, y sus
+    cabeceras llevan el nombre del paciente, su fecha de nacimiento y la institucion. El
+    manifiesto afirma `phi_state: pseudonymized`; sin mirar los tags, esa afirmacion es una
+    suposicion sobre el trabajo de otro. Un contenedor que dice estar seudonimizado y lleva
+    el nombre dentro es peor que uno que declara `identified`, porque quien lo reciba
+    confiara en el campo y no abrira 397 cabeceras a comprobarlo.
+
+    ⚠️ **No se miran todos los cortes.** Un export clinico es homogeneo: los tags de
+    paciente vienen del mismo estudio y se repiten corte a corte. Se toma una muestra
+    repartida —principio, medio y final— porque leer 397 cabeceras para encontrar el mismo
+    nombre 397 veces no anade nada, y porque un tag que solo aparece en un corte suelto es
+    un fichero intruso, que es otro problema y lo caza el validador por su cuenta.
+    """
+    import pydicom
+
+    ficheros = sorted(p for p in carpeta.rglob("*") if p.is_file())
+    if not ficheros:
+        return []
+    paso = max(1, len(ficheros) // muestra)
+    poblados: set[str] = set()
+    for f in ficheros[::paso][:muestra]:
+        try:
+            ds = pydicom.dcmread(str(f), stop_before_pixels=True)
+        except Exception:  # noqa: BLE001
+            continue
+        for tag in TAGS_IDENTIFICABLES:
+            valor = str(getattr(ds, tag, "") or "").strip()
+            limpio = valor.replace("^", "").replace(" ", "").lower()
+            if limpio and not any(m in limpio for m in _MARCADORES):
+                poblados.add(tag)
+    return sorted(poblados)

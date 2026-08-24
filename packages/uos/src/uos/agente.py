@@ -24,8 +24,9 @@ import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
 
-from uos.contenedor import asset_de, escribe_uos, json_de
+from uos.contenedor import asset_de, asset_de_directorio, escribe_uos, json_de
 from uos.manifiesto import (
+    MEDIA_TYPE,
     UOS_VERSION,
     Adquisicion,
     Clase,
@@ -33,12 +34,38 @@ from uos.manifiesto import (
     Frame,
     Manifiesto,
     Procedencia,
+    RecursoFHIR,
     Registro,
     Sujeto,
     Visita,
 )
 from uos.procedencia import CADENA, encadena, lee_version_previa
 from uos.vistas import VISTAS, Vista, construye_vistas
+from uos.volumen import SIDECAR, describe_serie, identificables_en
+
+# A que recurso FHIR R4 corresponde cada clase de asset (§9). El conector con el PMS
+# —Open Dental primero— necesita saber QUE crear, y eso se puede decir sin servidor.
+#
+# ⚠️ Lo que NO se declara es una referencia concreta. El ejemplo del spec escribe
+# `ImagingStudy/is-9911`, un recurso que existe en algun sitio; este caso no ha pasado por
+# ningun PMS y no hay identificador que citar. Inventar uno haria que un conector intentara
+# resolverlo. Se afirma el tipo, que es verdad hoy, y se deja `resource` vacio.
+_RECURSO = {
+    # El spec lo fija: el `.uos` entero se publica como adjunto con su media type (§9).
+    Clase.IMAGE2D: ("Media", "foto clinica; `Media` es el recurso de imagen no-DICOM"),
+    Clase.VOLUME: ("ImagingStudy", "serie DICOM intacta"),
+    Clase.MESH_GS_SCENE: (
+        "DocumentReference",
+        "malla y apariencia 3D: FHIR R4 no tiene recurso para geometria dental, y `Media` "
+        "es para foto, video y audio. `DocumentReference` es el sobre generico de binarios "
+        "clinicos, que es lo que son",
+    ),
+    Clase.DOCUMENT: ("DocumentReference", "informe u otro documento del caso"),
+    Clase.DERIVED_SEG: (
+        "Observation",
+        "salida de inferencia: no es una adquisicion, es una lectura sobre ella",
+    ),
+}
 
 FRAME_IOS = "frame.ios_master"
 FRAME_CBCT = "frame.ct_001"
@@ -64,7 +91,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.1.0"
+    version = "0.2.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -81,6 +108,7 @@ class UOSExportAgent(BaseExportAgent):
         imagenes: list[Path] | None = None,
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
+        cbct: Path | None = None,
         previo: Path | None = None,
     ) -> ExportOutput:
         if not pseudonimo:
@@ -151,6 +179,52 @@ class UOSExportAgent(BaseExportAgent):
             ))
 
         registros = self._registros(snapshot)
+        directorios: dict[str, Path] = {}
+        extras: dict[str, str] = {}
+        aviso_volumen: list[str] = []
+        if cbct is not None and cbct.is_dir() and not registros:
+            # ⚠️ **El volumen se queda fuera, y el resto del caso sale igual.** Sin la
+            # registracion CBCT→escaner su frame no conecta con el canonico, asi que un
+            # visor no sabria donde ponerlo: lo colocaria en el sitio equivocado sin poder
+            # detectarlo, que es peor que no llevarlo. Y tirar la exportacion entera por
+            # esto seria desproporcionado — la malla, las fotos y las vistas estan bien.
+            aviso_volumen.append(
+                "el CBCT NO viaja en el .uos: el snapshot no trae la transformada de la "
+                "fusion, asi que su frame no conecta con el canonico y el contenedor se "
+                "queda en UOS-Core. Registrar el escaner contra el CBCT lo desbloquea."
+            )
+        elif cbct is not None and cbct.is_dir() and (
+            identificables := identificables_en(cbct)
+        ):
+            # ⚠️ **La serie lleva datos identificables en sus cabeceras y se queda fuera.**
+            # El DICOM viaja intacto —es el punto del formato— asi que sus tags viajarian
+            # con el, y el manifiesto afirma `phi_state: pseudonymized`. Un contenedor que
+            # dice estar seudonimizado y lleva el nombre del paciente dentro es PEOR que
+            # uno que declara `identified`: quien lo reciba se fia del campo y no abre 397
+            # cabeceras a comprobarlo. El resto del caso sale igual, en UOS-Core.
+            aviso_volumen.append(
+                "el CBCT NO viaja en el .uos: su serie DICOM trae "
+                + ", ".join(f"`{t}`" for t in identificables)
+                + " con valor, y el contenedor declara `phi_state: pseudonymized`. "
+                "Anonimizar la serie en origen lo desbloquea."
+            )
+        elif cbct is not None and cbct.is_dir():
+            # ⚠️ La serie DICOM entra ENTERA y sin tocar (§5.2). Es lo unico que hace
+            # afirmable que el contenedor no degrada la fuente: si viajara recodificada,
+            # «byte-identico» seria una afirmacion sobre nuestro codec y no sobre el dato.
+            uri = "volume/ct_001/"
+            sidecar_uri = SIDECAR.format(id="ct_001")
+            sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
+            directorios[uri] = cbct
+            extras[sidecar_uri] = json_de(sidecar)
+            assets.append(asset_de_directorio(
+                cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
+                frame=FRAME_CBCT, media_type="application/dicom",
+                acquisition=Adquisicion(time=snapshot.timestamp),
+                sidecar_uri=sidecar_uri,
+            ))
+
+        fhir = self._fhir(assets)
         vistas, aviso_vistas = self._vistas(snapshot, visita, etiquetas_ios,
                                             con_apariencia="asset.gs" in
                                             {a.id for a in assets})
@@ -174,6 +248,7 @@ class UOSExportAgent(BaseExportAgent):
             visits=[visita],
             assets=assets,
             registrations=registros,
+            fhir_map=fhir,
             provenance=Procedencia(prev_manifest_sha256=previo_sha, chain=CADENA),
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -191,9 +266,11 @@ class UOSExportAgent(BaseExportAgent):
             note=f"{len(vistas)} vista(s), {len(registros)} registracion(es)",
         )
         escribe_uos(salida, manifiesto, ficheros.items(),
+                    directorios=directorios,
                     json_manifiesto=json_manifiesto, extras={
             VISTAS: json_de({"views": [v.model_dump(mode="json") for v in vistas]}),
             CADENA: cadena.json_canonico(),
+            **extras,
         })
 
         # Se RELEE y se valida lo que se acaba de escribir, igual que hace el exportador
@@ -209,7 +286,8 @@ class UOSExportAgent(BaseExportAgent):
                 + "; ".join(informe.errores[:3])
             )
 
-        avisos = list(motivos or []) + aviso_vistas + list(informe.avisos)
+        avisos = (list(motivos or []) + aviso_vistas + aviso_volumen
+                  + list(informe.avisos))
         # Lo estructurado vive en el MANIFIESTO, que es el registro del caso. Meterlo
         # tambien en `ExportOutput` daria dos sitios donde la misma verdad puede divergir,
         # y el contrato de exportacion es compartido: ensancharlo por un canal obliga a
@@ -283,3 +361,21 @@ class UOSExportAgent(BaseExportAgent):
             piezas=sorted({obs.region_id for obs in snapshot.regional}),
             con_apariencia=con_apariencia,
         )
+
+    def _fhir(self, assets: list) -> dict[str, RecursoFHIR]:
+        """El mapeo a FHIR R4 (§9): un TIPO de recurso por asset, y el caso entero.
+
+        `case` no es un asset: es el `.uos` completo, que el spec publica como
+        `DocumentReference` con el media type del formato en el adjunto. Va con la misma
+        clave que usa el ejemplo del spec para no inventarse una.
+        """
+        fuera = {
+            "case": RecursoFHIR(
+                resource_type="DocumentReference",
+                note=f"el .uos entero como adjunto, content_type {MEDIA_TYPE}",
+            )
+        }
+        for a in assets:
+            tipo, nota = _RECURSO[a.kind]
+            fuera[a.id] = RecursoFHIR(resource_type=tipo, note=nota)
+        return fuera

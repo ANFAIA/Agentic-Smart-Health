@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from uos.manifiesto import Asset, Manifiesto
+from uos.manifiesto import Asset, Manifiesto, Parte, digesto_de_partes
 
 MANIFIESTO = "manifest.json"
 
@@ -37,6 +37,7 @@ def escribe_uos(
     manifiesto: Manifiesto,
     ficheros: Iterable[tuple[str, Path]],
     *,
+    directorios: dict[str, Path] | None = None,
     extras: dict[str, str] | None = None,
     json_manifiesto: str | None = None,
 ) -> Path:
@@ -55,9 +56,15 @@ def escribe_uos(
     serializar aqui dejaria el hash apuntando a una segunda copia que solo se le parece.
     """
     mapa = dict(ficheros)
+    dirs = dict(directorios or {})
     declaradas = {a.uri for a in manifiesto.assets}
     # Un asset puede ser un DIRECTORIO (una serie DICOM): su uri acaba en "/" y agrupa.
     sueltas = {u for u in declaradas if not u.endswith("/")}
+    if faltan := {u for u in declaradas if u.endswith("/")} - set(dirs):
+        raise ValueError(
+            f"el manifiesto referencia {len(faltan)} directorio(s) que no se aportaron: "
+            + ", ".join(sorted(faltan))
+        )
     if faltan := sueltas - set(mapa):
         raise ValueError(
             f"el manifiesto referencia {len(faltan)} asset(s) que no se aportaron: "
@@ -76,6 +83,9 @@ def escribe_uos(
         z.writestr(MANIFIESTO, json_manifiesto or manifiesto.json_canonico())
         for uri, ruta in sorted(mapa.items()):
             z.write(ruta, uri)
+        for prefijo, carpeta in sorted(dirs.items()):
+            for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
+                z.write(hijo, prefijo + hijo.relative_to(carpeta).as_posix())
         for uri, texto in (extras or {}).items():
             z.writestr(uri, texto)
     tmp.replace(destino)
@@ -110,3 +120,41 @@ def asset_de(
 
 def json_de(obj: object) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False)
+
+
+def partes_de(carpeta: Path) -> list[Parte]:
+    """Una `Parte` por fichero del directorio, con su nombre RELATIVO y su hash."""
+    return [
+        Parte(
+            name=hijo.relative_to(carpeta).as_posix(),
+            sha256=sha256(hijo),
+            bytes=hijo.stat().st_size,
+        )
+        for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file())
+    ]
+
+
+def asset_de_directorio(
+    carpeta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
+    media_type: str, **extra,
+) -> Asset:
+    """El sobre de un asset que es una SERIE entera, midiendo fichero a fichero.
+
+    ⚠️ Los nombres de los cortes viajan tal cual, y aqui eso es correcto aunque en el resto
+    del contenedor no lo sea: el orden de una serie DICOM es dato clinico, y renombrarlos a
+    `IM0001.dcm…` seria reescribir el fichero que decimos entregar intacto. Los nombres que
+    trae un export de CBCT son del equipo (`3DSlice100.dcm`), no del paciente — si algun
+    proveedor los emitiera con identificador dentro, eso hay que cazarlo en la ingesta y no
+    aqui, porque para entonces el DICOM ya lo lleva en sus tags.
+    """
+    from uos.manifiesto import PRIORIDAD
+
+    partes = partes_de(carpeta)
+    if not partes:
+        raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
+    return Asset(
+        id=id_, kind=kind, visit=visit, uri=uri if uri.endswith("/") else uri + "/",
+        media_type=media_type, sha256=digesto_de_partes(partes),
+        bytes=sum(p.bytes for p in partes), frame=frame, parts=partes,
+        load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
+    )

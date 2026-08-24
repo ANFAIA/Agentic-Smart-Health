@@ -22,12 +22,13 @@ nueva del manifiesto que apunta al hash de la anterior (§8). Los assets no se t
 in place. `provenance/chain.json` materializa esa cadena y el validador comprueba que
 cuente la misma historia que los manifiestos.
 
-Implementa el nivel **UOS-Core** del spec v0.2 (§12): manifiesto + `mesh_gs_scene` +
-`image2d`, con vistas (§7) y cadena de procedencia (§8).
+Implementa los niveles **UOS-Core** y **UOS-Vol** del spec v0.2 (§12): manifiesto,
+`mesh_gs_scene`, `image2d` y el volumen DICOM entero, con vistas (§7), cadena de
+procedencia (§8) y mapeo FHIR por tipo de recurso (§9).
 
-Lo que NO esta, y se dice para que nadie lo de por hecho: el volumen y las senales
-(`UOS-Vol` y `UOS-Sig`), el `fhir_map` (§9), que se declara vacio, y las firmas Ed25519
-del §8 — a estas les falta la decision de que clave firma y donde vive, no el codigo.
+Lo que NO esta, y se dice para que nadie lo de por hecho: las senales (`UOS-Sig`), y las
+firmas Ed25519 del §8 — a estas les falta la decision de que clave firma y donde vive,
+no el codigo.
 """
 
 from uos.agente import UOSExportAgent
@@ -44,10 +45,11 @@ from uos.manifiesto import (
 from uos.procedencia import CADENA, Cadena, Eslabon
 from uos.validador import Conformidad, valida
 from uos.vistas import VISTAS, Camara, Vista, construye_vistas, marco_anatomico
+from uos.volumen import describe_serie
 
 __all__ = [
     "CADENA", "UOS_VERSION", "VISTAS", "Asset", "Cadena", "Camara", "Conformidad",
     "Eslabon", "Frame", "Manifiesto", "Registro", "Sujeto", "UOSExportAgent", "Vista",
     "Visita", "construye_vistas", "escribe_uos", "lee_manifiesto", "marco_anatomico",
-    "valida",
+    "describe_serie", "valida",
 ]
