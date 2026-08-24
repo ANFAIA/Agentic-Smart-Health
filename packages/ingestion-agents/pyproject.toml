@@ -25,9 +25,6 @@ dependencies = [
 # El `report-agent` solo necesita un LLM cuando se le pide el backend `llm`;
 # su backend por defecto (`rules`) es determinista y no requiere red ni clave.
 llm = ["anthropic>=0.40"]
-# Backend `ollama`: mismo agente, modelo local. Gratis y sin que el informe salga de
-# la máquina, que en la única modalidad de prosa libre pesa más que el coste.
-local = ["ollama>=0.4"]
 # HEIC (fotos de iPhone): el `image-agent` lee JPG/PNG sin esto; HEIC lo necesita.
 heic = ["pillow-heif>=0.16"]
 

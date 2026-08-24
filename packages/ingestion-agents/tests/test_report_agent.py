@@ -6,8 +6,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from core_schemas import ClinicalAttributes, Hallazgo, Modality, ModalityStatus, Support
-from ingestion_agents import ReportAgent
+from core_schemas import (
+    ClinicalAttributes,
+    Derivation,
+    Hallazgo,
+    Modality,
+    ModalityStatus,
+    Support,
+)
+from ingestion_agents import ArtifactStore, ReportAgent
 from ingestion_agents.report_agent import (
     _EXTRACTION_TOOL,
     _limite,
@@ -407,40 +414,51 @@ def test_el_esquema_de_la_tool_declara_el_vocabulario_completo() -> None:
     assert diente["required"] == ["fdi", "confianza"]
 
 
-# --- backend local (Ollama) ------------------------------------------------ #
-@pytest.mark.parametrize(
-    ("backend", "esperado"), [("llm", "claude-sonnet-5"), ("ollama", "qwen3:14b")]
-)
-def test_cada_backend_trae_su_modelo_por_defecto(backend: str, esperado: str) -> None:
-    """No hay un modelo que sirva a los dos, así que el defecto es por backend."""
-    assert ReportAgent(backend=backend).model == esperado
-
-
-def test_el_modelo_se_puede_fijar_a_mano() -> None:
-    assert ReportAgent(backend="ollama", model="gemma3:12b").model == "gemma3:12b"
-
-
-def test_el_backend_rules_no_necesita_modelo() -> None:
-    assert ReportAgent().model == ""
-
-
-def test_el_esquema_del_backend_local_es_el_mismo_que_el_de_la_tool() -> None:
-    """Ollama recibe como `format` el `input_schema` de la tool, sin copiarlo.
-
-    Es la razón de que los dos backends sean comparables valor a valor en
-    `scripts/eval_informes.py`: si cada uno declarase su propio esquema, la
-    diferencia medida incluiría la diferencia entre los esquemas.
-    """
-    assert _EXTRACTION_TOOL["input_schema"]["required"] == ["dientes"]  # type: ignore[index]
-
-
-def test_el_backend_local_falla_declarando_si_no_hay_servidor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Sin Ollama levantado, el informe cae a `FAILED` y a cuarentena — no revienta."""
-    monkeypatch.setenv("OLLAMA_HOST", "http://localhost:1")  # puerto muerto
+# --- procedencia: qué cerebro produjo cada valor --------------------------- #
+def test_el_backend_de_reglas_declara_determinismo(tmp_path: Path) -> None:
     path = tmp_path / "informe.txt"
-    path.write_text("Diente 16: pH 5.4\n", encoding="utf-8")
-    salida = ReportAgent(backend="ollama", quarantine_dir=tmp_path / "q").ingest(path)
-    assert salida.status is ModalityStatus.FAILED
-    assert salida.quarantine_ref is not None
+    path.write_text("Fecha: 2026-03-14\nDiente 16: pH 5.4\n", encoding="utf-8")
+    prov = ReportAgent().ingest(path).regional[0].provenance
+    assert prov.derivation is Derivation.DETERMINISTIC
+    assert prov.model is None
+
+
+def test_el_backend_de_modelo_declara_cuál() -> None:
+    """No basta con «inferido»: dentro de un año importará saber con qué modelo.
+
+    El twin persistido es lo único que quedará para distinguir un `claude-sonnet-5`
+    de cualquier otro cerebro que se enchufe aquí más adelante.
+    """
+    assert ReportAgent(backend="llm")._derivation() == (
+        Derivation.INFERRED,
+        "llm:claude-sonnet-5",
+    )
+
+
+def test_los_indices_no_son_inferidos_ni_con_backend_de_modelo(tmp_path: Path) -> None:
+    """El caso que obliga a que `derivation` sea por valor y no por agente.
+
+    `extract_medidas_by_rules` corre con los dos backends. Si la procedencia se
+    tomase del agente, un informe ingerido con modelo llevaría sus índices de
+    oclusión marcados como inferidos — mintiendo en el sentido contrario al hueco
+    que este campo vino a tapar.
+    """
+    agente = ReportAgent(backend="llm")
+    prov = agente._provenance(
+        tmp_path / "informe.txt",
+        confidence=0.9,
+        derivation=Derivation.DETERMINISTIC,
+    )
+    assert prov.derivation is Derivation.DETERMINISTIC
+    assert prov.model is None
+    # …mientras que lo que sí produce el modelo se declara inferido.
+    assert agente._provenance(tmp_path / "informe.txt").model == "llm:claude-sonnet-5"
+
+
+def test_los_agentes_deterministas_lo_declaran(mesh_path: Path, store: ArtifactStore) -> None:
+    """El defecto afirma determinismo porque para estos agentes es verdad."""
+    from ingestion_agents import MeshAgent
+
+    prov = MeshAgent(store).ingest(mesh_path).provenance
+    assert prov is not None
+    assert prov.derivation is Derivation.DETERMINISTIC

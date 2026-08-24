@@ -11,9 +11,6 @@ Dos backends, misma salida (`list[RegionalObservation]`):
 | `rules` (por defecto) | regex sobre el texto, línea a línea | informes tabulados;
   **determinista**, sin red, sin coste — es el que corre en CI |
 | `llm` | Claude con *structured output* (tool use) | prosa libre, sinónimos, negaciones |
-| `ollama` | modelo local con esquema forzado por gramática | lo mismo, **sin coste y sin
-  que el informe salga de la máquina** — que en la modalidad de prosa libre es lo que
-  manda (ADR de anonimización §3) |
 
 Los dos cubren los mismos campos —pH, anatomía radicular y hallazgos— y devuelven la
 misma forma. Lo único que cambia es quién lee el texto.
@@ -39,7 +36,6 @@ clínico silencioso que el ADR 003 nombra como riesgo.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -50,6 +46,7 @@ from typing import Any, NamedTuple
 
 from core_schemas import (
     ClinicalAttributes,
+    Derivation,
     Hallazgo,
     Medida,
     Modality,
@@ -71,15 +68,7 @@ _PH_RE = re.compile(r"\bpH\b\s*[:=]?\s*(\d{1,2}(?:[.,]\d+)?)", re.IGNORECASE)
 _DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 _LLM_MODEL = "claude-sonnet-5"
-# Modelo local por defecto. Qwen3 14B a Q4_K_M ocupa ~9 GB —entra en una GPU de 12 GB—
-# y es el mejor en español de su clase de tamaño, que es el eje real de esta tarea:
-# los informes son de 300 caracteres, así que ni el contexto ni la velocidad mandan.
-_LOCAL_MODEL = os.getenv("REPORT_AGENT_LOCAL_MODEL", "qwen3:14b")
-_OLLAMA_HOST_DEFAULT = "http://localhost:11434"
-# Ventana de contexto del backend local. Un informe cabe de sobra; se fija explícita
-# porque el defecto de Ollama puede truncar el esquema + el informe sin avisar.
-_LOCAL_NUM_CTX = 8192
-_BACKENDS = ("rules", "llm", "ollama")
+_BACKENDS = ("rules", "llm")
 # Confianza que se asigna a una extracción por regex: alta pero no 1.0 — el patrón
 # acertó, pero nadie ha verificado que el informe dijera lo que parece decir.
 _RULES_CONFIDENCE = 0.9
@@ -577,67 +566,6 @@ def extract_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
     return valida_propuestas(propuestas)
 
 
-def extract_by_local_llm(
-    text: str, *, model: str = _LOCAL_MODEL, host: str | None = None
-) -> LLMExtraction:
-    """Igual que `extract_by_llm`, con un modelo local servido por Ollama.
-
-    **Gratis en las dos monedas.** Cero coste por token y —lo que aquí pesa más— el
-    informe no sale de la máquina. El informe es la única modalidad cuya entrada es
-    prosa libre: el `cbct-agent` puede quitar identificadores porque el DICOM los
-    tiene en campos con nombre, pero un nombre o una fecha de nacimiento pueden estar
-    en cualquier frase de un informe. Mandarlo a un tercero es justo lo que minimiza
-    el §3 del ADR de anonimización.
-
-    **Y es reproducible.** `temperature=0` con semilla fija da el mismo resultado hoy
-    y dentro de un año; una API no lo garantiza. En un repo cuyo eje es la
-    reversibilidad, eso no es un detalle de coste.
-
-    **El esquema lo impone el runtime, no el modelo.** Ollama compila el JSON Schema a
-    una gramática y anula los tokens que la romperían, así que la salida *estructura*
-    válida está garantizada con cualquier modelo. Lo que sigue dependiendo del modelo
-    —y lo que mide `scripts/eval_informes.py`— son los **valores**: si lee bien una
-    negación, si distingue un antecedente del estado actual, si respeta el vocabulario.
-    Por eso se reutiliza `valida_propuestas` sin cambiar una línea: la barrera semántica
-    es la misma venga de donde venga la propuesta.
-    """
-    try:
-        from ollama import Client
-    except ImportError as exc:  # pragma: no cover - depende del extra `local`
-        raise RuntimeError(
-            "El backend `ollama` requiere el extra `local` de `ingestion-agents` (ollama)."
-        ) from exc
-
-    # `OLLAMA_HOST` se lee **al llamar**, no al importar: si se fijase como constante
-    # de módulo, apuntar a otro servidor exigiría reimportar el paquete.
-    servidor = host or os.getenv("OLLAMA_HOST", _OLLAMA_HOST_DEFAULT)
-    respuesta = Client(host=servidor).chat(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
-        # El esquema de la tool vale tal cual como esquema de respuesta: es el mismo
-        # objeto `{dientes: [...]}`. Una sola definición para los dos backends.
-        format=_EXTRACTION_TOOL["input_schema"],
-        # Determinismo: mismo informe, mismo resultado. Y `think=False` porque el
-        # razonamiento en voz alta de los modelos híbridos no cabe en un esquema
-        # cerrado — aquí no se pide criterio, se pide leer lo que pone.
-        options={"temperature": 0, "seed": 0, "num_ctx": _LOCAL_NUM_CTX},
-        think=False,
-    )
-    contenido = respuesta.message.content or ""
-    try:
-        propuestas = json.loads(contenido).get("dientes", [])
-    except json.JSONDecodeError as exc:
-        # No debería pasar con decodificación restringida, pero si pasa es un fallo
-        # del backend, no un descarte: que lo vea el envoltorio fail-loud.
-        raise RuntimeError(
-            f"El modelo local devolvió algo que no es JSON: {contenido[:200]}"
-        ) from exc
-    return valida_propuestas(propuestas)
-
-
 # --------------------------------------------------------------------------- #
 # Agente
 # --------------------------------------------------------------------------- #
@@ -664,8 +592,20 @@ class ReportAgent(BaseIngestionAgent):
             )
         self.backend = backend
         # El modelo por defecto depende del backend: no hay uno que sirva a los tres.
-        self.model = model or {"llm": _LLM_MODEL, "ollama": _LOCAL_MODEL}.get(backend, "")
+        self.model = model or (_LLM_MODEL if backend == "llm" else "")
         self.default_timestamp = default_timestamp
+
+    def _derivation(self) -> tuple[Derivation, str | None]:
+        """El único agente de ingesta cuya respuesta depende de cómo se le construyó.
+
+        `rules` es un patrón: reproducible y auditable leyendo el regex. Los otros dos
+        son un modelo interpretando prosa, y el twin tiene que poder decir **cuál** —
+        no es lo mismo `claude-sonnet-5` que un 7B local, y dentro de un año importará
+        saber con cuál se ingirió este informe.
+        """
+        if self.backend == "rules":
+            return Derivation.DETERMINISTIC, None
+        return Derivation.INFERRED, f"{self.backend}:{self.model}"
 
     def _ingest(self, source: Path) -> IngestionOutput:
         text = extract_text(source)
@@ -695,16 +635,25 @@ class ReportAgent(BaseIngestionAgent):
             }
             clinicos = extract_hallazgos_by_rules(text)
             discards = extraction.discards
-        elif self.backend == "llm":
-            findings, clinicos, discards = extract_by_llm(text, model=self.model)
         else:
-            findings, clinicos, discards = extract_by_local_llm(text, model=self.model)
+            findings, clinicos, discards = extract_by_llm(text, model=self.model)
 
         # Y lo que el contrato NO interpreta. Va aparte de `findings`/`clinicos` porque no
         # es por diente y porque no está validado contra ningún rango clínico nuestro: lo
         # único que lo acota es el intervalo que el propio informe imprime. Ver `Medida`.
         medidas = [
-            Medida(**m, provenance=self._provenance(source, confidence=_RULES_CONFIDENCE))
+            # `derivation` explícito y no el del agente: los índices los saca
+            # `extract_medidas_by_rules` **con los tres backends**, así que un informe
+            # ingerido con modelo llevaría índices marcados como inferidos sin serlo.
+            # El campo existe para no mentir, y mentiría en el sentido contrario.
+            Medida(
+                **m,
+                provenance=self._provenance(
+                    source,
+                    confidence=_RULES_CONFIDENCE,
+                    derivation=Derivation.DETERMINISTIC,
+                ),
+            )
             for m in extract_medidas_by_rules(text)
         ]
 
