@@ -44,6 +44,11 @@ from typing import Any
 import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 
+from export_agents.anatomia import (
+    distancia_para_encuadrar,
+    marco_anatomico,
+    normaliza,
+)
 from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
 from export_agents.compuesto import ORIGEN_IOS
 
@@ -220,7 +225,7 @@ class ViewerExportAgent(BaseExportAgent):
     """
 
     name = "viewer-export-agent"
-    version = "0.2.0"
+    version = "0.3.0"
 
     def __init__(self, store: SurfaceStore, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -307,6 +312,7 @@ class ViewerExportAgent(BaseExportAgent):
                 "ply": ruta.name, "primitivas": int(m.sum()),
             })
         capas += self._capas_apariencia(snapshot, campo, gs_apariencia, destination)
+        encuadre, aviso_encuadre = _encuadre(pos, fdi, es_ios)
         ply = destination.with_name(f"{destination.name}-coronas.ply")
         destination.with_suffix(".json").write_text(
             json.dumps(
@@ -318,13 +324,14 @@ class ViewerExportAgent(BaseExportAgent):
                          _centroides(pos, np.where(es_ios, fdi, 0))
                          if etiquetas_ios is not None else _centroides(pos, fdi),
                          capas,
-                         _por_pieza(pos, fdi, es_ios)),
+                         _por_pieza(pos, fdi, es_ios),
+                         encuadre),
                 ensure_ascii=False, indent=1,
             ),
             encoding="utf-8",
         )
 
-        avisos = list(aviso_encia)
+        avisos = list(aviso_encia) + aviso_encuadre
         if int((region > 0).sum()) == 0:
             avisos.append(
                 "el paquete del visor no lleva ni un diente etiquetado: la segmentación "
@@ -586,6 +593,75 @@ def _por_pieza(pos: np.ndarray, fdi: np.ndarray, es_ios: np.ndarray) -> dict[str
     return fuera
 
 
+# Campo vertical de la camara del visor. Lo fija `gaussian-splats-3d`
+# (`THREE_CAMERA_FOV = 50`), no nosotros: la distancia que se emite abajo solo encuadra si
+# es la misma, asi que se declara en el sidecar en vez de quedarse aqui de constante muda.
+FOV_VISOR = 50.0
+
+# Ni pegado ni perdido: la arcada ocupa el encuadre dejando sitio a las cotas y al panel.
+MARGEN_ENCUADRE = 1.25
+
+
+def _encuadre(
+    pos: np.ndarray, fdi: np.ndarray, es_ios: np.ndarray
+) -> tuple[dict | None, list[str]]:
+    """El encuadre inicial del visor, MEDIDO sobre los ejes anatomicos de la arcada.
+
+    ⚠️ **Lo que arregla es la orbita, no la primera imagen.** El visor gira alrededor de su
+    `cameraUp`, y hasta ahora eso era un eje del mundo escrito a mano en el `config.ts`
+    (`[0, 0, 1]`). Cuando el eje oclusal de la arcada no coincide con el, girar el raton
+    no da la vuelta a la arcada: la vuelca. Con el eje medido, la orbita gira por donde un
+    clinico espera y se puede llegar a cualquier cara de cualquier pieza.
+
+    ⚠️ **Se mide sobre los vertices del ESCANER y solo ellos.** En el compuesto,
+    `fdi == 0` incluye la encia del escaner *y* el hueso y el craneo del CBCT; meter
+    aquello arrastraria el centroide de «lo no dental» hacia arriba y podria invertir el
+    signo del eje oclusal. La encia es lo que hay al otro lado de las coronas, y es lo que
+    da el signo.
+    """
+    if not es_ios.any():
+        return None, [
+            "el paquete del visor no lleva escaner, asi que no hay con que medir los ejes "
+            "anatomicos: el encuadre y la orbita se quedan en los del `config.ts`"
+        ]
+    marco, motivo = marco_anatomico(pos[es_ios], fdi[es_ios])
+    if marco is None:
+        return None, [
+            f"el encuadre del visor no se pudo medir ({motivo}), asi que la orbita se "
+            "queda en el eje del mundo que el `config.ts` traiga escrito a mano"
+        ]
+    # Frontal ligeramente desde arriba: es como se mira una arcada, y ademas deja la
+    # direccion de vista bien separada del eje de orbita.
+    direccion = normaliza(marco.anterior * 0.85 + marco.superior * 0.4)
+    return {
+        "centro": [round(float(x), 3) for x in marco.centro],
+        # ⚠️ El eje de ORBITA es el SUPERIOR, no el oclusal. En un maxilar son opuestos —
+        # las coronas cuelgan hacia abajo— y usar el oclusal pone la cabeza boca abajo: la
+        # arcada superior se ve exactamente como una inferior, y nadie que no conozca el
+        # caso lo nota. Se midio, se emitio el eje equivocado, y se vio en el visor.
+        "arriba": [round(float(x), 4) for x in marco.superior],
+        "direccion": [round(float(x), 4) for x in direccion],
+        "distancia": round(distancia_para_encuadrar(
+            pos[es_ios], marco.centro, direccion,
+            fov_grados=FOV_VISOR, margen=MARGEN_ENCUADRE,
+        ), 1),
+        "fov_grados": FOV_VISOR,
+        "arcada": marco.arcada,
+        "ejes": {
+            "oclusal": [round(float(x), 4) for x in marco.oclusal],
+            "superior": [round(float(x), 4) for x in marco.superior],
+            "derecha": [round(float(x), 4) for x in marco.derecha],
+            "anterior": [round(float(x), 4) for x in marco.anterior],
+        },
+        "medido": (
+            "ejes anatomicos deducidos de las etiquetas FDI del escaner, no de los ejes "
+            "del fichero: oclusal de la encia a las coronas, superior hacia la coronilla "
+            "(opuesto al oclusal en el maxilar), derecha de los cuadrantes 2 y 3 a los "
+            "1 y 4, anterior de los molares a los incisivos"
+        ),
+    }, []
+
+
 def tono_de(codigo: int) -> float:
     """Tono en [0,1) de una pieza, a partir de su codigo FDI y de nada mas.
 
@@ -767,6 +843,7 @@ def _sidecar(
     centroides: dict[str, list[float]],
     capas: list[dict],
     geometria: dict[str, dict],
+    encuadre: dict | None,
 ) -> dict:
     """La capa clinica y el `region_id` por gaussiana. Nada se interpreta aqui.
 
@@ -829,6 +906,9 @@ def _sidecar(
         # Las capas, para que el visor sepa que ficheros cargar y en que orden sin que
         # nadie los liste a mano en dos sitios.
         "capas": capas,
+        # El encuadre y el eje de orbita, MEDIDOS. Si falta, el visor se queda con lo que
+        # su `config.ts` traiga escrito a mano — que es de donde venimos.
+        **({"encuadre": encuadre} if encuadre else {}),
         "recorte": recorte,
         # Un diente puede estar segmentado y NO tener informe, o al reves. Se declaran los
         # dos lados: `centroides` son los que el modelo encontro y se pueden pinchar;

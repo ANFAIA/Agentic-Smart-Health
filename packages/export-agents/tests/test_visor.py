@@ -492,3 +492,119 @@ def test_la_capa_de_apariencia_se_declara_como_tal():
         assert "no medida" in detalle
     assert not any("APARIENCIA" in d for _, _, d in CAPAS)
 
+
+
+# --- el encuadre: el eje de ORBITA, que era lo que estaba mal ----------------- #
+def _arcada(giro: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Una herradura de dientes sobre una encía, girada por `giro`.
+
+    Los ejes se eligen a propósito para que NO sean los del fichero: si el código se
+    apoyara en que +Z es lo oclusal, este test daría un eje de órbita invertido.
+    """
+    pos, etq = [], []
+    for cuadrante, signo in ((1, +1.0), (2, -1.0)):
+        for pieza in range(1, 9):
+            ang = np.deg2rad(10 + (pieza - 1) * 11)
+            centro = [signo * 25.0 * np.sin(ang), 25.0 * np.cos(ang), 4.0]
+            pos.append(np.random.default_rng(cuadrante * 10 + pieza).normal(
+                centro, [1.5, 1.5, 3.0], size=(40, 3)))
+            etq += [cuadrante * 10 + pieza] * 40
+    t = np.linspace(0, np.pi, 240)
+    pos.append(np.stack([28 * np.cos(t), 28 * np.sin(t), np.full_like(t, -3.0)], axis=1))
+    etq += [0] * 240
+    return np.vstack(pos) @ giro.T, np.array(etq, dtype=np.int16)
+
+
+def test_el_eje_de_ORBITA_es_el_oclusal_medido_y_no_un_eje_del_fichero(tmp_path):
+    """La queja original: «la arcada no se deja girar hacia todos los lados».
+
+    El visor orbita alrededor de su `cameraUp`, y eso era `[0, 0, 1]` escrito a mano en el
+    `config.ts`. Cuando el eje oclusal de la arcada no coincide con él, arrastrar el ratón
+    no da la vuelta a la arcada: la vuelca. Aquí la arcada va girada 90° sobre X, así que
+    lo oclusal es −Y — si alguien volviera a suponerlo, este test lo dice.
+    """
+    giro = np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])
+    vertices, etiquetas = _arcada(giro)
+    almacen = _Almacen(**{CAMPO: _campo(), MALLA: {"positions": vertices}})
+
+    salida = ViewerExportAgent(almacen).export(
+        _snapshot(), tmp_path / "caso", etiquetas_ios=etiquetas
+    )
+
+    assert salida.ok, salida.detail
+    enc = _lado(salida.path)["encuadre"]
+    oclusal_real = giro @ np.array([0.0, 0.0, 1.0])
+    assert np.asarray(enc["ejes"]["oclusal"]) @ oclusal_real > 0.9
+    assert np.asarray(enc["ejes"]["derecha"]) @ (giro @ [1.0, 0, 0]) > 0.9
+    assert np.asarray(enc["ejes"]["anterior"]) @ (giro @ [0, 1.0, 0]) > 0.9
+    # ⚠️ Y el eje de ÓRBITA es el SUPERIOR, que en un maxilar es el OPUESTO del oclusal.
+    # Las coronas de arriba cuelgan hacia abajo; usar el oclusal pone la cabeza boca abajo
+    # y la arcada superior se ve exactamente como una inferior. Pasó, y se vio en el visor.
+    assert enc["arcada"] == "upper"
+    assert np.asarray(enc["arriba"]) @ oclusal_real < -0.9
+    assert np.allclose(enc["arriba"], -np.asarray(enc["ejes"]["oclusal"]))
+
+
+def test_la_direccion_de_vista_no_es_paralela_al_eje_de_orbita(tmp_path):
+    """Una cámara mirando a lo largo de su propio `up` es una base degenerada: no se
+    renderiza nada. Fue un bug real de este proyecto."""
+    giro = np.eye(3)
+    vertices, etiquetas = _arcada(giro)
+    almacen = _Almacen(**{CAMPO: _campo(), MALLA: {"positions": vertices}})
+
+    salida = ViewerExportAgent(almacen).export(
+        _snapshot(), tmp_path / "caso", etiquetas_ios=etiquetas
+    )
+
+    enc = _lado(salida.path)["encuadre"]
+    coseno = abs(np.asarray(enc["direccion"]) @ np.asarray(enc["arriba"]))
+    assert coseno < 0.8
+    assert enc["distancia"] > 0
+    # El FOV con el que se calculó la distancia se DECLARA: encuadrar con otro no encuadra.
+    assert enc["fov_grados"] == 50.0
+
+
+def test_sin_etiquetas_del_escaner_NO_se_inventa_un_encuadre_y_se_dice(almacen, tmp_path):
+    """Deducir los ejes de la nube da nombres plausibles y a veces invertidos. Se prefiere
+    dejar el `config.ts` como estaba y decirlo, que fingir una medida."""
+    salida = ViewerExportAgent(almacen).export(_snapshot(), tmp_path / "caso")
+
+    assert salida.ok, salida.detail
+    assert "encuadre" not in _lado(salida.path)
+    assert any("el encuadre del visor no se pudo medir" in m
+               for m in salida.hitl_reasons)
+
+
+def test_en_una_MANDIBULA_el_eje_de_orbita_coincide_con_el_oclusal(tmp_path):
+    """La otra mitad de la regla: abajo las coronas apuntan hacia la coronilla, así que
+    superior y oclusal son el mismo. Sin este caso, «superior = −oclusal» sería una
+    constante disfrazada de medida."""
+    pos, etq = _arcada(np.eye(3))
+    etq = np.where(etq > 0, etq + 20, 0).astype(np.int16)  # cuadrantes 1,2 → 3,4
+    almacen = _Almacen(**{CAMPO: _campo(), MALLA: {"positions": pos}})
+
+    salida = ViewerExportAgent(almacen).export(
+        _snapshot(), tmp_path / "caso", etiquetas_ios=etq
+    )
+
+    enc = _lado(salida.path)["encuadre"]
+    assert enc["arcada"] == "lower"
+    assert np.allclose(enc["arriba"], enc["ejes"]["oclusal"])
+
+
+def test_con_las_DOS_arcadas_no_hay_signo_oclusal_y_se_dice(tmp_path):
+    """Las coronas de arriba miran al lado contrario que las de abajo, así que la medida
+    «de la encía a las coronas» se cancela. No se elige una ni se promedia."""
+    pos, etq = _arcada(np.eye(3))
+    # Cuadrante 2 (superior izquierdo) → 3 (inferior izquierdo). Quedan el 1 y el 3, que
+    # cubren los dos LADOS —si no, saltaría antes la comprobación de la derecha— y las dos
+    # ARCADAS, que es lo que este test quiere provocar.
+    etq = np.where(etq > 20, etq + 10, etq).astype(np.int16)
+    almacen = _Almacen(**{CAMPO: _campo(), MALLA: {"positions": pos}})
+
+    salida = ViewerExportAgent(almacen).export(
+        _snapshot(), tmp_path / "caso", etiquetas_ios=etq
+    )
+
+    assert "encuadre" not in _lado(salida.path)
+    assert any("las dos arcadas" in m for m in salida.hitl_reasons)
