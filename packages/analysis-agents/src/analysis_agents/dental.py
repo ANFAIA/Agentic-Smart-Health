@@ -372,3 +372,79 @@ class SegmentadorDental:
         filas = np.flatnonzero(~sin_nombre)
         prob[filas, columna[filas]] = p[filas]
         return np.log(prob)
+
+
+# Tamaño por debajo del cual una pieza del escaner se sospecha ISLA, en fraccion del
+# tamano mediano de las piezas del caso. Medido sobre un caso clinico: el parche fantasma
+# estaba en 0,06 y el diente real mas pequeno —un premolar mal cubierto— en 0,25, o sea
+# cuatro veces por encima. El umbral va en fraccion y no en vertices porque el numero de
+# vertices depende de la resolucion del escaner, y la proporcion entre piezas no.
+FRACCION_ISLA = 0.15
+
+# Y cuanto tienen que coincidir sus vecinos ajenos para que la absorcion sea de UNA pieza
+# concreta. El tamano solo no basta: el 17 del mismo caso tambien tiene el 100% de sus
+# vecinos en el 16 —esta al final de la arcada y solo tiene un vecino— y es un diente de
+# verdad. Es el tamano el que separa; esto solo decide EN QUE pieza se absorbe.
+ACUERDO_ISLA = 0.90
+
+
+def absorbe_islas(
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    k: int = K_VECINDARIO,
+    fraccion: float = FRACCION_ISLA,
+    acuerdo: float = ACUERDO_ISLA,
+) -> tuple[np.ndarray, list[tuple[int, int, int]]]:
+    """Absorbe las piezas diminutas metidas dentro de otra. Devuelve `(etiquetas, actas)`.
+
+    El fallo que arregla, y que sólo se vio porque alguien contó los dientes del escaneo:
+    el segmentador del escáner puso el código de un tercer molar a **275 vértices pegados
+    a la cara distal del vecino** —mediana 0,85 mm de distancia—. No era un diente: era un
+    parche. Y el daño no se quedaba ahí, porque esas etiquetas son las SEMILLAS con las
+    que se nombra el CBCT: el código creció hacia la raíz y aterrizó sobre la tuberosidad
+    del maxilar, que tiene tamaño y forma de molar. A partir de ahí el fantasma viajaba al
+    visor, a las vistas y a la capa clínica como una pieza más.
+
+    ⚠️ **Cada absorción se devuelve como acta, no se hace en silencio.** Un tercer molar
+    parcialmente erupcionado se parece mucho a esto: pequeño y con un solo vecino. El
+    tamaño los separa con holgura en el caso medido, pero la decisión de que un diente
+    deja de existir es de las que un clínico tiene que poder mirar, así que sale en el
+    gate y no en un log.
+
+    `absorbe_islas` es lo contrario de `rellena_etiquetas` y por eso van juntas: aquella
+    da etiqueta a lo que no la tiene, ésta se la quita a lo que la tiene mal.
+    """
+    from scipy.spatial import cKDTree
+
+    v = np.asarray(vertices, dtype=np.float64)
+    e = np.asarray(etiquetas).astype(np.int64).copy()
+    piezas = sorted({int(x) for x in np.unique(e) if x > 0})
+    if len(piezas) < 2 or len(v) != len(e):
+        return e, []
+
+    mediana = float(np.median([int((e == f).sum()) for f in piezas]))
+    if mediana <= 0:
+        return e, []
+
+    _, vecinos = cKDTree(v).query(v, k=min(k + 1, len(v)))
+    vecinos = np.atleast_2d(vecinos)[:, 1:]
+
+    actas: list[tuple[int, int, int]] = []
+    for fdi in piezas:
+        suyos = np.flatnonzero(e == fdi)
+        if len(suyos) >= fraccion * mediana:
+            continue
+        # Sólo los vecinos que son de OTRA pieza: la encía no absorbe, porque una isla
+        # rodeada de encía es un diente pequeño y suelto, no un trozo de su vecino.
+        ajenos = e[vecinos[suyos]].ravel()
+        ajenos = ajenos[(ajenos > 0) & (ajenos != fdi)]
+        if len(ajenos) == 0:
+            continue
+        codigos, cuenta = np.unique(ajenos, return_counts=True)
+        if cuenta.max() / len(ajenos) < acuerdo:
+            continue
+        destino = int(codigos[cuenta.argmax()])
+        e[suyos] = destino
+        actas.append((fdi, destino, len(suyos)))
+    return e, actas

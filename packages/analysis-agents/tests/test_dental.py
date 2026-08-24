@@ -12,6 +12,7 @@ from analysis_agents import (
     DEFAULT_CODES,
     GUM_CLASS,
     SegmentadorDental,
+    absorbe_islas,
     rellena_etiquetas,
 )
 from analysis_agents.segmentation import SegmentationAgent
@@ -318,3 +319,77 @@ def test_la_cota_arranca_en_el_extremo_oclusal_de_CADA_pieza():
     (_, o36, c36), (_, o37, c37) = seg._cota_apical[36], seg._cota_apical[37]
     # Las cotas son relativas a su propio origen; en absoluto el 37 corta seis mm mas alla.
     assert (o37[2] + c37) - (o36[2] + c36) == pytest.approx(6.0, abs=1.0)
+
+
+# --- islas de etiquetado ---------------------------------------------------- #
+def _dos_dientes_y_un_parche() -> tuple[np.ndarray, np.ndarray]:
+    """Dos piezas separadas y un parche pegado a la cara de una de ellas.
+
+    Reproduce la forma del fallo real: 275 vértices a menos de un milímetro del vecino,
+    contra piezas de miles. Aquí a escala, pero con las mismas proporciones.
+    """
+    rng = np.random.default_rng(0)
+    a = rng.uniform(-2, 2, (900, 3))
+    b = rng.uniform(-2, 2, (900, 3)) + np.array([10.0, 0.0, 0.0])
+    # El parche: pegado a la cara +x de `b`, con su propio código.
+    parche = rng.uniform(-0.4, 0.4, (55, 3)) + np.array([12.3, 0.0, 0.0])
+    pos = np.concatenate([a, b, parche])
+    etq = np.concatenate([
+        np.full(900, 26, dtype=np.int64),
+        np.full(900, 27, dtype=np.int64),
+        np.full(55, 28, dtype=np.int64),
+    ])
+    return pos, etq
+
+
+def test_una_isla_pegada_a_su_vecino_se_absorbe():
+    """El fallo exacto: un parche con código propio convertía un caso de 14 dientes en
+    uno de 15, y ese código era la SEMILLA con la que se nombraba el CBCT."""
+    pos, etq = _dos_dientes_y_un_parche()
+    nuevo, actas = absorbe_islas(pos, etq)
+
+    assert actas == [(28, 27, 55)]
+    assert sorted({int(x) for x in nuevo}) == [26, 27]
+
+
+def test_la_absorcion_deja_ACTA_y_no_se_hace_en_silencio():
+    """Un tercer molar parcialmente erupcionado se parece mucho a una isla: pequeño y
+    con un solo vecino. Que un diente deje de existir es de las decisiones que un
+    clínico tiene que poder mirar."""
+    pos, etq = _dos_dientes_y_un_parche()
+    _, actas = absorbe_islas(pos, etq)
+
+    origen, destino, n = actas[0]
+    assert (origen, destino) == (28, 27)
+    assert n == int((etq == 28).sum()), "el acta tiene que decir cuántos vértices se movieron"
+
+
+def test_un_diente_pequeno_de_verdad_NO_se_absorbe():
+    """El 17 del caso real tiene el 100 % de sus vecinos ajenos en el 16 —está al final
+    de la arcada— y es un diente. Lo que separa es el TAMAÑO, no el acuerdo."""
+    pos, etq = _dos_dientes_y_un_parche()
+    # El parche pasa a tener tamaño de pieza: mismo vecindario, otro tamaño.
+    grande = np.random.default_rng(1).uniform(-2, 2, (700, 3)) + np.array([14.0, 0.0, 0.0])
+    pos = np.concatenate([pos[:1800], grande])
+    etq = np.concatenate([etq[:1800], np.full(700, 28, dtype=np.int64)])
+
+    _, actas = absorbe_islas(pos, etq)
+    assert actas == []
+
+
+def test_una_isla_rodeada_de_ENCIA_no_se_absorbe():
+    """Una pieza pequeña y suelta en la encía es un diente pequeño y suelto, no un trozo
+    de su vecino: no hay a quién absorberla, y adivinar sería inventarse anatomía."""
+    rng = np.random.default_rng(2)
+    pos = np.concatenate([
+        rng.uniform(-2, 2, (900, 3)),
+        rng.uniform(-2, 2, (900, 3)) + np.array([10.0, 0.0, 0.0]),
+        rng.uniform(-0.4, 0.4, (55, 3)) + np.array([30.0, 0.0, 0.0]),
+    ])
+    etq = np.concatenate([
+        np.full(900, 26, dtype=np.int64), np.full(900, 27, dtype=np.int64),
+        np.full(55, 28, dtype=np.int64),
+    ])
+    nuevo, actas = absorbe_islas(pos, etq)
+    assert actas == []
+    assert int((nuevo == 28).sum()) == 55, "la pieza suelta ha perdido su código"

@@ -287,6 +287,7 @@ def main() -> int:
     etq_ios = None
     if args.fdi and caso.mesh:
         import numpy as _np
+        from analysis_agents import absorbe_islas as _absorbe
         from analysis_agents import rellena_etiquetas as _rellena
         from ingestion_agents.mesh_agent import parse_stl as _stl
 
@@ -298,6 +299,15 @@ def main() -> int:
             print(f"  etiquetas del escáner: {int((_cruda > 0).sum()):,} → "
                   f"{int((etq_ios > 0).sum()):,} vértices de corona "
                   f"(+{cerrados:,} huecos cerrados)")
+        # ⚠️ Va DESPUÉS de rellenar y ANTES de que nadie las use: estas etiquetas son las
+        # SEMILLAS con las que se nombra el CBCT, así que una isla mal etiquetada aquí se
+        # convierte allí en una pieza entera que viaja al visor, a las vistas y a la capa
+        # clínica. El sitio barato de matarla es éste.
+        etq_ios, _islas = _absorbe(_V, etq_ios)
+        for _origen, _destino, _n in _islas:
+            print(f"  ⚠ FDI {_origen}: {_n:,} vértices metidos dentro del {_destino}, no "
+                  f"son una pieza. Absorbidos — el caso pasa a tener "
+                  f"{len({int(x) for x in etq_ios if x > 0})} dientes.")
 
     fabrica = None
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
