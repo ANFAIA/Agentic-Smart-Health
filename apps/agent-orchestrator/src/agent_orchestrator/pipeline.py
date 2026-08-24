@@ -37,6 +37,7 @@ from typing import Any
 from analysis_agents import AnalysisOutput, SegmentationAgent, Segmenter
 from core_schemas import (
     ContratoEtapa,
+    Derivation,
     Modality,
     ModalityStatus,
     PatientDigitalTwin,
@@ -635,6 +636,9 @@ class IngestionPipeline:
         # cientos de megas que multiplican por diez el tamaño del contenedor, así que
         # llevarlos es una decisión de quien exporta y no un valor por defecto.
         cbct: Any | None = None,
+        # Los pesos del segmentador, sólo para declarar su `sha256` en el `meta.json`
+        # de `derived/` (§5.5). Sin ellos el campo va a `null`, que es la verdad.
+        modelo_segmentacion: Any | None = None,
         render: bool = True,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
@@ -680,16 +684,24 @@ class IngestionPipeline:
             for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
         ]
 
+        # ⚠️ Los tres primeros van a VARIABLES y no dentro de la lista, porque el canal de
+        # UOS **referencia lo que escribieron**: el campo y el compuesto entran en el
+        # contenedor como assets. Dentro de un literal el orden de evaluación seguiría
+        # siendo el correcto, pero sus rutas no estarían disponibles para pasárselas, y la
+        # dependencia quedaría escrita sólo en un comentario.
+        malla_stl = ExportAgent(self.store, frame=marco_malla).export(  # type: ignore[arg-type]
+            snapshot, destino / f"{snapshot.acquisition_id}.stl"
+        )
+        campo = FieldExportAgent(self.store).export(
+            snapshot, destino / f"{snapshot.acquisition_id}.ply"
+        )
+        compuesto = CompositeExportAgent(self.store).export(
+            snapshot, destino / f"{snapshot.acquisition_id}-compuesto.ply"
+        )
         salidas: list[ExportOutput] = [
-            ExportAgent(self.store, frame=marco_malla).export(  # type: ignore[arg-type]
-                snapshot, destino / f"{snapshot.acquisition_id}.stl"
-            ),
-            FieldExportAgent(self.store).export(
-                snapshot, destino / f"{snapshot.acquisition_id}.ply"
-            ),
-            CompositeExportAgent(self.store).export(
-                snapshot, destino / f"{snapshot.acquisition_id}-compuesto.ply"
-            ),
+            malla_stl,
+            campo,
+            compuesto,
             # Al visor se le pasan los motivos del gate: es lo único que un clínico no
             # puede deducir mirando el modelo, y esconderlo detrás de la geometría sería
             # entregar un twin que parece más firme de lo que es.
@@ -719,6 +731,11 @@ class IngestionPipeline:
                 # La serie DICOM entera, si el llamante la pide: sube el contenedor a
                 # UOS-Vol. Sin ella el `.uos` es UOS-Core y lo declara.
                 cbct=cbct,
+                # El GEMELO y la fusión, que hasta ahora se quedaban fuera del
+                # contenedor: el campo gaussiano medido y el compuesto CBCT+escáner.
+                campo=campo.path if campo.ok else None,
+                compuesto=compuesto.path if compuesto.ok else None,
+                modelo_segmentacion=modelo_segmentacion,
                 motivos=list(result.hitl_reasons),
                 # Las mismas etiquetas que el visor, y por otro motivo: aquí son lo único
                 # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda
@@ -952,6 +969,13 @@ class IngestionPipeline:
                 confidence=min(
                     (o.provenance.confidence for o in outcomes if o.provenance), default=0.0
                 ),
+                # Describe **el ensamblado**, que es código tipado sin modelo por medio —
+                # no las observaciones que ensambla. Un informe ingerido con backend de
+                # modelo entra aquí con sus `RegionalObservation` marcadas `inferred`, y
+                # es ahí donde hay que mirarlo. Poner `inferred` en el snapshot porque
+                # una de sus partes lo sea contagiaría la etiqueta a la malla y al CBCT,
+                # que nadie infirió.
+                derivation=Derivation.DETERMINISTIC,
             ),
         )
 

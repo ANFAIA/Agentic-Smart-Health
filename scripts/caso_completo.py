@@ -432,6 +432,8 @@ def main() -> int:
         imagenes=list(caso.images),
         # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
         cbct=caso.cbct if args.con_volumen else None,
+        # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
+        modelo_segmentacion=args.modelo,
     )
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
