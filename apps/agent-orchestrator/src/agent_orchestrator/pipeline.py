@@ -631,6 +631,10 @@ class IngestionPipeline:
         malla: Any | None = None,
         escena_gs: Any | None = None,
         imagenes: Any | None = None,
+        # La serie DICOM, para que el `.uos` suba a UOS-Vol. Es OPCIONAL y por peso: son
+        # cientos de megas que multiplican por diez el tamaño del contenedor, así que
+        # llevarlos es una decisión de quien exporta y no un valor por defecto.
+        cbct: Any | None = None,
         render: bool = True,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
@@ -712,6 +716,9 @@ class IngestionPipeline:
                 malla=malla,
                 escena_gs=escena_gs,
                 imagenes=list(imagenes or []),
+                # La serie DICOM entera, si el llamante la pide: sube el contenedor a
+                # UOS-Vol. Sin ella el `.uos` es UOS-Core y lo declara.
+                cbct=cbct,
                 motivos=list(result.hitl_reasons),
                 # Las mismas etiquetas que el visor, y por otro motivo: aquí son lo único
                 # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda

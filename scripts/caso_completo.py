@@ -254,6 +254,13 @@ def main() -> int:
              "sencillamente no se ejecuta, que es lo que ha pasado hasta hoy.",
     )
     ap.add_argument(
+        "--con-volumen", action="store_true",
+        help="Mete la serie DICOM ENTERA en el .uos y sube su conformidad a UOS-Vol. "
+             "Va detrás de una bandera por PESO: la serie de un CBCT son cientos de "
+             "megas y multiplica por diez el tamaño del contenedor. Sin esto el .uos es "
+             "UOS-Core y lo declara, en vez de fingir que lleva el volumen.",
+    )
+    ap.add_argument(
         "--fdi", type=Path, default=None,
         help="`region_id` por vertice del escaneo intraoral. Es la mitad que dice CUAL es "
              "cada diente: el modelo del CBCT es binario y no puede darla.",
@@ -423,6 +430,8 @@ def main() -> int:
         escena_gs=(None if args.gs_apariencia is None
                    else args.gs_apariencia / "escaner_3dgs-coronas.ply"),
         imagenes=list(caso.images),
+        # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
+        cbct=caso.cbct if args.con_volumen else None,
     )
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
