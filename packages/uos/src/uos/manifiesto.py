@@ -222,6 +222,34 @@ class RecursoFHIR(BaseModel):
     note: str = ""
 
 
+class Extension(BaseModel):
+    """Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).
+
+    **Por que hace falta.** UOS se apoya en glTF, que resolvio esto hace anos con
+    `extensionsUsed` / `extensionsRequired`: un lector abre el fichero, ve que extensiones
+    trae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese
+    mecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde
+    decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
+
+    La consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,
+    los descriptores de gaussianas medidas— viven en directorios propios y **un lector
+    ajeno las ignora sin enterarse de que las ignora**. Eso convierte un formato abierto en
+    uno que solo el emisor lee entero, que es justo lo que UOS existe para evitar.
+
+    ⚠️ La distincion entre `used` y `required` es el corazon del mecanismo, no burocracia:
+    `required` dice «sin entender esto NO abras el fichero». Una extension que solo anade
+    informacion va en `used` y nunca en `required` — si estuviera, un visor conforme se
+    negaria a abrir un caso que podria enseniar perfectamente.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    version: str
+    uri: str | None = None
+    schema_id: str | None = None
+    description: str = ""
+
+
 class Procedencia(BaseModel):
     """Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
 
@@ -246,6 +274,11 @@ class Manifiesto(BaseModel):
     assets: list[Asset] = Field(default_factory=list)
     registrations: list[Registro] = Field(default_factory=list)
     fhir_map: dict[str, RecursoFHIR] = Field(default_factory=dict)
+    # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.2.
+    extensions: dict[str, Extension] = Field(default_factory=dict)
+    extensions_used: list[str] = Field(default_factory=list)
+    # Vacio a proposito en todo lo que emitimos: nada de lo nuestro impide abrir el caso.
+    extensions_required: list[str] = Field(default_factory=list)
     provenance: Procedencia = Field(default_factory=lambda: Procedencia())
 
     def json_canonico(self) -> str:
