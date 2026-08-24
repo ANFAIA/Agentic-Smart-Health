@@ -73,7 +73,6 @@ dev = [
     { name = "jupyter" },
     { name = "mypy" },
     { name = "numpy" },
-    { name = "ollama" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -99,7 +98,6 @@ dev = [
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "mypy", specifier = "==2.3.0" },
     { name = "numpy", specifier = ">=2.5.1" },
-    { name = "ollama", specifier = ">=0.4" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = "==0.15.21" },
@@ -1109,16 +1107,12 @@ heic = [
 llm = [
     { name = "anthropic" },
 ]
-local = [
-    { name = "ollama" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'llm'", specifier = ">=0.40" },
     { name = "core-schemas", editable = "packages/core-schemas" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "ollama", marker = "extra == 'local'", specifier = ">=0.4" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pillow-heif", marker = "extra == 'heic'", specifier = ">=0.16" },
     { name = "pydicom", specifier = ">=3.0" },
@@ -1126,7 +1120,7 @@ requires-dist = [
     { name = "pylibjpeg-libjpeg", specifier = ">=2.1" },
     { name = "pypdf", specifier = ">=5.0" },
 ]
-provides-extras = ["llm", "local", "heic"]
+provides-extras = ["llm", "heic"]
 
 [[package]]
 name = "iniconfig"
