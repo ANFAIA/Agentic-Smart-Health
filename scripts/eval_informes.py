@@ -2,7 +2,6 @@
 """eval_informes.py — ¿Cuánto de lo que dice un informe acaba en el contrato?
 
     uv run python scripts/eval_informes.py                    # backend determinista
-    uv run python scripts/eval_informes.py --backend ollama   # modelo local, gratis
     uv run python scripts/eval_informes.py --backend llm      # requiere ANTHROPIC_API_KEY
     uv run python scripts/eval_informes.py --detalle          # caso a caso
 
@@ -27,6 +26,9 @@ siempre fue así: hasta que se amplió el esquema de la tool, el LLM solo produc
 campos clínicos salían del regex incluso con `backend="llm"`, lo que dejaba al modelo
 enchufado al campo tabulado y ausente del que viene en prosa. Esa asimetría la descubrió
 este script.
+
+**Está apagado por defecto y no se ha medido.** Requiere `ANTHROPIC_API_KEY`, que CI no
+tiene. La única columna con cifras hoy es la determinista.
 """
 
 from __future__ import annotations
@@ -79,11 +81,9 @@ def extrae(caso: ReportCase, backend: str) -> tuple[dict, dict]:
     if backend == "rules":
         return extract_ph_by_rules(caso.text).findings, extract_hallazgos_by_rules(caso.text)
 
-    from ingestion_agents.report_agent import extract_by_llm, extract_by_local_llm
+    from ingestion_agents.report_agent import extract_by_llm
 
-    extraccion = (
-        extract_by_llm(caso.text) if backend == "llm" else extract_by_local_llm(caso.text)
-    )
+    extraccion = extract_by_llm(caso.text)
     return (
         {code: valor for code, (valor, _) in extraccion.findings.items()},
         extraccion.clinicos,
@@ -103,7 +103,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--backend", choices=("rules", "llm", "ollama"), default="rules")
+    ap.add_argument("--backend", choices=("rules", "llm"), default="rules")
     ap.add_argument("--detalle", action="store_true", help="Una línea por caso.")
     ap.add_argument(
         "--volcar", type=Path, default=None, help="Escribe el corpus como .txt en este directorio."
