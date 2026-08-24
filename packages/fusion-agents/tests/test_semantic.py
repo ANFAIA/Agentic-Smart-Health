@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from core_schemas import (
     ClinicalAttributes,
+    Hallazgo,
     Modality,
     ModalityStatus,
     PatientDigitalTwin,
@@ -19,10 +20,16 @@ from core_schemas import (
 from fusion_agents import SemanticFusionAgent, insert_snapshot
 
 
-def _obs(fdi: str, *, confianza: float = 1.0, ph: float = 6.5) -> RegionalObservation:
+def _obs(
+    fdi: str,
+    *,
+    confianza: float = 1.0,
+    ph: float = 6.5,
+    hallazgos: list | None = None,
+) -> RegionalObservation:
     return RegionalObservation(
         region_id=fdi,
-        attributes=ClinicalAttributes(ph=ph),
+        attributes=ClinicalAttributes(ph=ph, hallazgos=hallazgos or []),
         timestamp=datetime.now(UTC),
         provenance=Provenance(
             source_file="informe.pdf",
@@ -199,3 +206,37 @@ def test_insertar_no_muta_el_twin_de_entrada():
     twin = _twin([_snap([], aid="A1")])
     insert_snapshot(twin, _snap([], aid="A2"))
     assert len(twin.snapshots) == 1
+
+
+# --- dientes que el informe da por AUSENTES --------------------------------- #
+def test_un_diente_declarado_ausente_que_no_se_encuentra_NO_es_desacuerdo():
+    """El falso positivo que esto arregla, y que avisaba justo cuando el pipeline
+    acertaba.
+
+    «El informe lo referencia» no es «el informe dice que existe»: una ficha dental
+    habla de las 32 posiciones, incluidas las que declara ausentes. Medido sobre un caso
+    real: el informe daba la 28 por ausente con confianza 0,877, el escáner no la traía
+    —el paciente no tiene cordales— y el gate lo denunciaba como conflicto.
+    """
+    obs = _obs("28", hallazgos=[Hallazgo.AUSENTE])
+    salida = SemanticFusionAgent().fuse(_snap([obs]), detected={"27": 0.9})
+
+    assert not any("28" in m for m in salida.hitl_reasons), salida.hitl_reasons
+
+
+def test_un_diente_declarado_ausente_que_SI_se_encuentra_es_desacuerdo():
+    """El otro lado, que antes pasaba callado: uno de los dos se equivoca sobre si al
+    paciente le falta una pieza, y eso no es un matiz."""
+    obs = _obs("28", hallazgos=[Hallazgo.AUSENTE])
+    salida = SemanticFusionAgent().fuse(_snap([obs]), detected={"28": 0.9})
+
+    assert any("AUSENTE" in m and "28" in m for m in salida.hitl_reasons), salida.hitl_reasons
+
+
+def test_un_diente_normal_que_no_se_encuentra_sigue_siendo_desacuerdo():
+    """El arreglo no puede desactivar el aviso de verdad: si el informe habla de un
+    diente con hallazgos y la segmentación no lo encuentra, eso hay que mirarlo."""
+    obs = _obs("26", hallazgos=[Hallazgo.CARIES])
+    salida = SemanticFusionAgent().fuse(_snap([obs]), detected={"27": 0.9})
+
+    assert any("26" in m and "no lo encontró" in m for m in salida.hitl_reasons)

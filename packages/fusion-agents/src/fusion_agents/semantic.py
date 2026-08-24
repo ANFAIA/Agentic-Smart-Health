@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from core_schemas import ModalityStatus, Provenance, RegionalObservation, TwinSnapshot
+from core_schemas import (
+    Hallazgo,
+    ModalityStatus,
+    Provenance,
+    RegionalObservation,
+    TwinSnapshot,
+)
 from ingestion_agents.ontology import describe, is_valid_fdi
 
 from fusion_agents.base import BaseFusionAgent, FusionOutput
@@ -71,9 +77,25 @@ class SemanticFusionAgent(BaseFusionAgent):
 
         for obs in snapshot.regional:
             fdi = obs.region_id
+            # ⚠️ **«El informe lo referencia» no es lo mismo que «el informe dice que
+            # existe».** Un informe dental es una ficha de 32 posiciones y habla de todas,
+            # incluidas las que declara `ausente`. Cuando el hallazgo es ese, que la
+            # segmentación no encuentre el diente es ACUERDO, no desacuerdo — y llamarlo
+            # conflicto avisaba justo cuando el pipeline acertaba. Medido sobre un caso
+            # real: el informe daba la 28 por ausente con confianza 0,877, el escáner no
+            # la traía y el gate lo denunciaba igual.
+            declarado_ausente = Hallazgo.AUSENTE in obs.attributes.hallazgos
             if fdi in detected:
                 confianza = min(obs.provenance.confidence, detected[fdi])
-                if confianza < self.hitl_threshold:
+                if declarado_ausente:
+                    # Y el desacuerdo de verdad es el otro: el informe dice que no está y
+                    # el modelo lo encuentra. Uno de los dos se equivoca sobre si al
+                    # paciente le falta una pieza, que no es un matiz.
+                    motivos.append(
+                        f"FDI {fdi}: el informe lo da por AUSENTE y la segmentación sí lo "
+                        f"encontró (confianza {detected[fdi]:.2f})"
+                    )
+                elif confianza < self.hitl_threshold:
                     motivos.append(
                         f"FDI {fdi}: confianza {confianza:.2f} bajo el umbral "
                         f"{self.hitl_threshold:.2f}"
@@ -81,7 +103,12 @@ class SemanticFusionAgent(BaseFusionAgent):
             else:
                 confianza = 0.0
                 arco = _arcada_de(fdi)
-                if arco in cubiertas:
+                if declarado_ausente:
+                    # Las dos fuentes coinciden en que ese diente no está. No hay nada que
+                    # revisar, y la observación se ancla igual con confianza 0: sigue
+                    # siendo lo que el informe dijo de esa posición.
+                    pass
+                elif arco in cubiertas:
                     # Aquí sí se miró y no estaba: es un desacuerdo real entre el informe
                     # y el modelo, y va uno por uno porque cada uno es una decisión.
                     motivos.append(
