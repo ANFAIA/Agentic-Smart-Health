@@ -26,6 +26,7 @@ herramientas son prosa y se escriben a mano.
 |---|---|
 | `cbct-agent` | [`packages/ingestion-agents/src/ingestion_agents/cbct_agent.py`](packages/ingestion-agents/src/ingestion_agents/cbct_agent.py) |
 | `composite-export-agent` | [`packages/export-agents/src/export_agents/compuesto.py`](packages/export-agents/src/export_agents/compuesto.py) |
+| `composite-mesh-export-agent` | [`packages/export-agents/src/export_agents/malla_compuesta.py`](packages/export-agents/src/export_agents/malla_compuesta.py) |
 | `export-agent` | [`packages/export-agents/src/export_agents/stl.py`](packages/export-agents/src/export_agents/stl.py) |
 | `field-export-agent` | [`packages/export-agents/src/export_agents/field.py`](packages/export-agents/src/export_agents/field.py) |
 | `geometric-fusion-agent` | [`packages/fusion-agents/src/fusion_agents/geometric.py`](packages/fusion-agents/src/fusion_agents/geometric.py) |
@@ -713,11 +714,20 @@ SegmentationOutput
   el umbral, el mismo FDI en dos instancias, una clase sin código FDI en el mapeo, y
   más de un 10% de los puntos de diente descartados por fragmentación — que la
   agregación se los coma **en silencio** es el riesgo, no que se los coma.
+- ⚠️ **Las etiquetas del escáner son SEMILLAS, así que una isla mal etiquetada allí se
+  convierte aquí en un diente entero.** Medido sobre un caso real: el segmentador del
+  escáner puso el código de un tercer molar a 275 vértices pegados a la cara distal del
+  vecino —mediana 0,85 mm— y ese código creció hacia la raíz y aterrizó sobre la
+  tuberosidad del maxilar. El caso pasó a tener 15 dientes en vez de 14, y el fantasma
+  viajaba al visor, a las vistas y a la capa clínica. `analysis_agents.absorbe_islas` lo
+  mata antes de sembrar, y **deja acta de cada absorción**: un tercer molar parcialmente
+  erupcionado se parece mucho a una isla, así que la decisión sale al gate y no a un log.
 
 **Historial de cambios**
 
 | Fecha | Versión | Cambio |
 |---|---|---|
+| 2026-08-24 | 0.1.0 | `absorbe_islas`: las piezas diminutas metidas dentro de otra dejan de sembrar un diente fantasma en el CBCT. Sin cambio de contrato. |
 | 2026-08-06 | 0.1.0 | Registro inicial. Paquete `analysis-agents` con su contrato base; agregación punto → diente sobre `tooth-aggregation`; `region_id` persistido como artefacto aditivo; enganche en `IngestionPipeline.fuse()` entre las dos etapas de fusión. |
 
 ---
@@ -1047,6 +1057,100 @@ punto más. El comentario era verdad sobre la intención y mentira sobre el cont
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-18 | 0.1.0 | Registro inicial. Compuesto CBCT + IOS en un PLY, con `origen` por gaussiana, `density = 0` declarada para la encía y su σ medida del espaciado de la malla. |
+
+---
+
+### `composite-mesh-export-agent` — La arcada imprimible y un diente por fichero
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`malla_compuesta.py` · `solido.py` · `anatomia.py` · `compuesto.py` · `stl.py` · `base.py`) |
+| **Versión** | `0.3.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | `IngestionPipeline.exportar(..., etiquetas_ios=...)`; sin escáner, sin registro o sin segmentación sale `MISSING` y se dice cuál falta |
+
+**Rol / Propósito**
+
+> Es el exportador que justifica el gemelo, y por eso conviene decir primero lo que **no**
+> es. Los demás canales devuelven lo que entró: el `export-agent` reconstruye el STL desde
+> `surface_ref` con error de formato, y eso demuestra que el contenedor es **honesto**, no
+> que el twin sirva para algo. Un clínico que sólo quiera imprimir la arcada que escaneó
+> ya tiene su fichero. Lo que no tiene, y ninguna máquina le da, es **un diente con su
+> raíz**.
+
+**Dos salidas, y la diferencia entre ellas es una decisión clínica, no técnica.** La
+**arcada** sale como la midió el escáner, **sin raíces y cerrada en sólido con base
+plana**: un modelo de estudio o una guía asientan sobre una base, y quince raíces colgando
+lo impiden. Cada **pieza** va en su propio fichero con corona medida + raíz reconstruida,
+que sí se imprime —planificar una extracción compleja, un canino incluido, un modelo
+docente— y apoya sobre la corona.
+
+**Reglas específicas**
+
+- ⚠️ **La arcada se CIERRA, porque un escaneo intraoral es una cáscara** — mide la
+  superficie que la cámara ve, sin interior y sin fondo. Se ve bien en pantalla (ya nos
+  mordió una vez: el paladar salía como un agujero negro por pintar sólo la cara frontal)
+  y no se imprime, porque un laminador necesita saber qué es dentro. Ver `solido`.
+- ⚠️ **La base es perpendicular al eje ANATÓMICO, no al Z del fichero.** El Z de un
+  escaneo es el que tenía la máquina y no significa nada: una base construida sobre él
+  sale inclinada y el modelo se cae de la bandeja. El eje se mide de los códigos FDI del
+  propio escaneo, y **sin ellos se entrega la cáscara declarándolo** en vez de inventarse
+  una vertical.
+- ⚠️ **Un cuerpo sin ESMALTE no es un diente, por mucho que lo parezca.** El pipeline
+  llegó a exportar una pieza «28» sobre un caso real con tamaño de diente (19,4 mm), forma
+  de diente y la misma separación del vecino que dos molares contiguos: era la tuberosidad
+  del maxilar. Lo que la delata es la densidad — los catorce dientes reales daban p95 =
+  1,000 exacto y el intruso 0,747, a un pelo del 0,710 del hueso sin etiquetar. Se
+  comprueba **antes** de reconstruir: reconstruir primero produciría un STL con nombre de
+  diente hecho de mandíbula.
+- **Se declara, no se recorta, cuando una raíz es más larga de lo que su tipo admite.**
+  Recortar convertiría el ápice en supuesto y medir longitud radicular encima sería medir
+  lo que se ha supuesto. El aviso va agrupado en una línea y no en doce: el ruido es como
+  se desactiva un gate.
+- ⚠️ **Una pieza impresa no lleva cabecera, y ningún fichero lo arregla.** Todo lo que este
+  agente declara sobre el reconstructor desaparece en cuanto el objeto sale de la
+  impresora: quien lo tiene en la mano ve una raíz sin saber que es inferida. Por eso lo
+  reconstruido va SÓLO en los ficheros por pieza, que alguien pide a propósito, y nunca en
+  lo que se imprime por defecto.
+- ⚠️ **No es marching cubes, y no por gusto.** El campo del twin es una nube de gaussianas
+  con covarianza, no un volumen de vóxeles: mallar por isosuperficie exigiría rasterizarlo
+  a una rejilla primero, o sea tirar la representación. Y está medido en
+  `scripts/resolucion_modalidades.py` que sobre hueso trabecular el área de la
+  isosuperficie **no existe como magnitud**.
+- ⚠️ **Por pieza, nunca en bloque.** Una reconstrucción global uniría dientes vecinos por
+  donde sus alfa-complejos se tocan y saldría una barra de dientes fundidos.
+- ⚠️ **La corona sale del ESCÁNER**, recortando su malla por el `region_id` que el escaneo
+  trae por vértice. Donde ambas modalidades ven la misma superficie manda la que la mide a
+  decenas de micras, no la de 0,4 mm de vóxel — misma regla que el `viewer-export-agent`.
+  Sin `etiquetas_ios` la pieza sale con la raíz sola y **se declara**, en vez de rellenar
+  con la corona del CBCT.
+- ⚠️ **Lo que declara como `max_deviation_mm` es el error del RECONSTRUCTOR, no el del
+  formato.** El `float32` del STL da ~1e-5 mm, que parecería excelente y no diría nada de
+  la mitad del fichero que puede estar mal. Se mide el mismo método **en la banda de
+  corona**, donde el escáner es referencia, y se extrapola a la raíz **declarándolo como
+  hipótesis**: nada más mide raíces.
+- ⚠️ **Este canal NO cuenta para `PipelineResult.reversible`**, por lo contrario que el
+  visor. Los demás re-materializan lo que entró y su desviación mide el viaje de ida y
+  vuelta; éste escribe geometría que no entró, así que su número responde a otra pregunta.
+  Juntarlos ponía el recorrido en rojo por 0,37 mm de una superficie que nadie había medido
+  mientras los canales que sí prometen reversibilidad daban 0,000000 mm.
+- ⚠️ **El sesgo se declara aparte del p95 y con signo**, y el signo NO sale de las normales
+  de la malla: una normal apunta hacia donde diga el bobinado de sus caras, que es
+  convención del fichero y no anatomía. Sale de la dirección radial del propio diente.
+- **Los cuerpos no se sueldan.** Coser corona y raíz exigiría decidir dónde acaba una y
+  empieza la otra, que es lo que este agente no sabe contestar.
+- **Sobre datos sintéticos sale `MISSING`, y es correcto:** `synthetic.write_case` genera
+  malla y campo describiendo la misma superficie, o sea una boca sin nada bajo la encía.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-24 | 0.3.0 | La arcada se cierra en sólido con base plana perpendicular al eje anatómico. Guardarraíl de esmalte: un cuerpo sin corona de esmalte no se exporta como diente. Y se declara cuando una raíz reconstruida es más larga de lo que su tipo admite. |
+| 2026-08-24 | 0.2.0 | La arcada pasa a salir SIN raíces —es lo que se imprime y una pieza impresa no lleva procedencia— y lo reconstruido se muda a un STL por pieza con su corona medida del escáner. |
+| 2026-08-24 | 0.1.0 | Registro inicial. STL del compuesto por complejo alfa por pieza, con el error del reconstructor medido en la banda de corona y el sesgo declarado con signo. |
 
 ---
 
