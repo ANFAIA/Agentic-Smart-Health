@@ -278,7 +278,7 @@ versión nueva encuentre.
 | Campo | Valor |
 |---|---|
 | **Nombre** | `docs-guardian` |
-| **Versión** | `0.3.0` |
+| **Versión** | `0.6.0` |
 | **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Estado** | `active` |
 | **Disparo** | Hook `pre-commit` (**no bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -362,6 +362,7 @@ frase, el CI lo dice con el fichero y la línea. Hoy hay 13 números marcados.
 | 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
 | 2026-08-17 | 0.4.0 | Comprobación de **constantes**: los números citados en la documentación contra el valor real en el código, atados con un marcador `<!--const:NOMBRE-->`. Era la extensión que esta misma ficha declaraba pendiente. |
 | 2026-08-18 | 0.5.0 | `constantes` admite **cadenas**, no solo números. Lo pidió `SCHEMA_VERSION`: el README anunciaba el esquema `1.2.0` con el contrato ya en `1.3.0`, y la comprobación pasaba en verde porque «1.2.0» no es un número. |
+| 2026-08-24 | 0.6.0 | `versiones` busca la ficha por su **titular** y no por una mención cualquiera. La de `export-agent` nombra a `render-export-agent` en su tabla de canales y es anterior, así que la comprobación validaba contra la versión del vecino: invisible mientras todos declararan `0.1.0`. De paso, el campo **Versión** de esta ficha, que se había quedado en `0.3.0` con el historial ya en `0.5.0`. |
 
 ---
 
@@ -937,7 +938,7 @@ ExportOutput
 | Campo | Valor |
 |---|---|
 | **Ubicación** | `packages/export-agents/` (`render.py` · `base.py`) |
-| **Versión** | `0.1.0` |
+| **Versión** | `0.1.1` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
@@ -971,6 +972,16 @@ ExportOutput
   significado anatómico de un eje depende de cómo el equipo escriba el DICOM, y en este
   proyecto suponerlo en vez de leerlo salió mal tres veces sobre el mismo paciente. Un
   nombre como `az090_el+00` no puede mentir; `oclusal` sí.
+- ⚠️ **El marco del PLY se LEE de su cabecera, no se deduce de los datos.** El
+  verificador recentraba restando el centroide de la nube, lo cual era exacto *mientras*
+  `origin` fuese la media —el `cbct-agent` la escribe así—. El `gaussian-engine` ajusta
+  elipsoides a la densidad y **mueve** el centroide: medido, `[0,04, −1,84, 3,97]` mm.
+  Aquella resta inocua se volvió una traslación de 4,4 mm sobre una escena de 87 mm y el
+  ciclo cayó a **14,3 dB** frente a un presupuesto de 40, en silencio y con las imágenes de
+  buen aspecto. Ahora se lee `comment frame twin|cbct` de la cabecera, que el exportador ya
+  escribía y no leía nadie; un PLY que no declara su marco es un **error**, no un caso por
+  defecto. Es la misma regla que la de los nombres de vista: lo que el fichero dice no se
+  supone.
 - **El encuadre es común a todas las vistas.** Si cada imagen eligiese el suyo, dos
   renders del mismo campo no serían comparables píxel a píxel y el SSIM mediría el
   encuadre; además una vista podría recortar lo que otra muestra.
@@ -984,6 +995,7 @@ ExportOutput
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. | <!--const:RENDER_PSNR_BUDGET_DB--> <!--const:RENDER_SSIM_BUDGET-->
+| 2026-08-24 | 0.1.1 | El verificador **lee** el marco de la cabecera del PLY en vez de recentrar por el centroide. La deducción era exacta solo mientras `origin` fuese la media; con el campo ajustado el ciclo caía a 14,3 dB. Verificado sobre el caso real: de 14,3 dB a **exacto**. |
 
 ---
 
