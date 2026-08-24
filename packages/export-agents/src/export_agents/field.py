@@ -190,6 +190,39 @@ def escribe_ply(destino: Path, columnas: dict[str, np.ndarray], *, comentarios: 
         fh.write(filas.tobytes())
 
 
+def metadatos_ply(ruta: Path) -> dict[str, str]:
+    """Las lineas `comment` de la cabecera, indexadas por su primera palabra.
+
+    `comment frame twin` sale como `{"frame": "twin"}`. La cabecera ya declaraba estas
+    cosas —el marco, el `origin_mm`, el `hu_range`— y hasta hoy no las leia nadie: eran
+    prosa para una persona. Que sean legibles es lo que permite a un consumidor **leer**
+    en que marco viene el fichero en vez de deducirlo de los datos.
+
+    ⚠️ Esa deduccion es justo el fallo que este lector existe para cerrar. El verificador
+    del render recentraba restando el centroide de la nube, lo cual era exacto **mientras**
+    `origin` fuese la media —el `cbct-agent` la escribe asi—. El `gaussian-engine` ajusta
+    elipsoides y mueve el centroide 4,4 mm, y aquella resta inocua paso a ser una
+    traslacion: el ciclo caia a 14,1 dB comparando dos encuadres distintos. Un dato que el
+    fichero DECLARA no se adivina.
+    """
+    fuera: dict[str, str] = {}
+    with ruta.open("rb") as fh:
+        while True:
+            linea = fh.readline()
+            if not linea:
+                raise ValueError(f"{ruta} se acaba sin `end_header`: no es un PLY completo.")
+            texto = linea.decode("ascii", errors="replace").strip()
+            if texto == "end_header":
+                return fuera
+            if texto.startswith("comment "):
+                partes = texto[len("comment "):].split(maxsplit=1)
+                if partes:
+                    # Se conserva la PRIMERA: la cabecera lleva varias lineas de prosa y
+                    # una clave repetida significaria que alguien anadio una frase que
+                    # empieza igual, no que el valor haya cambiado.
+                    fuera.setdefault(partes[0], partes[1] if len(partes) > 1 else "")
+
+
 def lee_ply(ruta: Path) -> dict[str, np.ndarray]:
     """Relee lo escrito por `escribe_ply`. Es la mitad que hace medible el round-trip.
 
@@ -299,14 +332,18 @@ class FieldExportAgent(BaseExportAgent):
                 )
             origin = np.asarray(arrays["origin"], dtype=np.float64)
             centers = centers + origin
-            comentarios.append(f"origin_mm {origin[0]!r} {origin[1]!r} {origin[2]!r}")
+            comentarios.append(
+                "origin_mm " + " ".join(repr(float(v)) for v in origin)
+            )
             comentarios.append("coordenadas en mm del DICOM (centers + origin)")
         else:
             comentarios.append("coordenadas centradas en el origen; suma `origin` para el CBCT")
 
         if "hu_range" in arrays:
             bajo, alto = np.asarray(arrays["hu_range"], dtype=np.float64)
-            comentarios.append(f"hu_range {bajo!r} {alto!r}  (hu = density*(alto-bajo)+bajo)")
+            comentarios.append(
+                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(alto-bajo)+bajo)"
+            )
 
         escalas = np.asarray(arrays["scales"], dtype=np.float32)
         rotaciones = np.asarray(arrays["rotations"], dtype=np.float32)
