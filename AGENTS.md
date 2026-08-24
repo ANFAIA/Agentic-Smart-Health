@@ -999,12 +999,137 @@ ExportOutput
 
 ---
 
+### `composite-export-agent` — Dientes del CBCT + encía del escáner
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`compuesto.py` · `base.py`) |
+| **Versión** | `0.1.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | `IngestionPipeline.exportar(...)`; sin escáner o sin registro sale solo el campo y se dice |
+
+**Rol / Propósito**
+
+> El modelo que persigue el proyecto: cada modalidad aporta lo único que sabe medir y
+> ninguna vale sola. El **CBCT** ve por debajo del margen gingival —es lo único que da la
+> raíz— pero su superficie de tejido blando es ruido a 0,30 mm de vóxel; el **escáner
+> intraoral** mide la encía con decenas de micras y no ve nada bajo el margen. Por separado
+> son un diente sin encía y una encía con dientes truncados.
+
+**Por qué hace falta y no bastaba con lo que había.** El PLY del `field-export-agent` ya
+llevaba los dientes con su `region_id`, así que parecía hecho. No lo estaba: **la encía
+nunca se escribía**. El script que decía producirlo contaba los vértices de encía, los
+anunciaba en un comentario del propio fichero —`compuesto dientes-CBCT + encia-IOS`— y
+luego emitía `element vertex 498407`, exactamente el tamaño del campo del CBCT y ni un
+punto más. El comentario era verdad sobre la intención y mentira sobre el contenido.
+
+**Reglas específicas**
+
+- ⚠️ **La encía entra con `density = 0.0`, y es una declaración, no un valor.** Un vértice
+  del escáner no trae atenuación radiológica: el IOS mide forma, no densidad. Ponerle una
+  σ plausible lo haría indistinguible de una gaussiana medida en el CBCT, y cualquiera que
+  después proyectara el campo estaría integrando un número que nadie midió.
+- ⚠️ **Cada gaussiana declara su `origen`** (`0` = CBCT, densidad medida; `1` = IOS, forma
+  medida). Un compuesto que no distingue sus dos mitades miente por omisión, y es lo que
+  permite al canal del visor separarlas en capas.
+- **La escala de la encía sale del espaciado real de la malla**, no de una constante: un
+  escáner intraoral tiene resolución muy distinta a la del CBCT, y usar la σ del volumen
+  daría una encía o pixelada o hinchada. Se mide como la distancia mediana al vecino más
+  próximo, que es la σ natural de esa nube.
+- **Se relee lo que se acaba de escribir**, como los otros canales, y aquí con más motivo:
+  el compuesto mezcla dos fuentes con marcos distintos, así que un error de encaje entre
+  ellas es justo lo que un número de round-trip caza y una inspección visual no.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-18 | 0.1.0 | Registro inicial. Compuesto CBCT + IOS en un PLY, con `origen` por gaussiana, `density = 0` declarada para la encía y su σ medida del espaciado de la malla. |
+
+---
+
+### `viewer-export-agent` — El paquete que abre `dental-3dgs-viewer`
+
+| Campo | Valor |
+|---|---|
+| **Ubicación** | `packages/export-agents/` (`visor.py` · `anatomia.py` · `base.py`) |
+| **Versión** | `0.3.0` |
+| **Estado** | `active` |
+| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
+| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
+| **Orquestador** | `IngestionPipeline.exportar(...)`; recibe los motivos del gate y las etiquetas del escáner |
+
+**Rol / Propósito**
+
+> Emite lo que un visor de splats necesita para enseñar el caso: **N ficheros PLY en perfil
+> INRIA**, uno por capa conmutable, y un **sidecar JSON** con la capa clínica —dientes,
+> hallazgos, medidas no regionales, motivos del gate—, el `region_id` por gaussiana y el
+> encuadre medido.
+
+**Por qué no un visor propio.** Se escribió uno, con WebGL a pelo, y se retiró: dibujaba
+`gl.POINTS` redondos de tamaño uniforme, que no es splatting sino una nube de puntos con
+buena presentación. `dental-3dgs-viewer` ya rasteriza splats de verdad, tiene panel de
+capas, cotas sobre el modelo y encuadre por caso.
+
+**Reglas específicas**
+
+- ⚠️ **El PLY del visor NO es el twin, y esa línea no se puede borrar.** Para que un
+  rasterizador lo abra hay que darle tres cosas que el CBCT no midió:
+
+  | propiedad INRIA | de dónde sale | ¿es dato? |
+  |---|---|---|
+  | `opacity` | `alfa = 1 − exp(−g·sigma)`, luego logit | **no**: ganancia de visualización |
+  | `f_dc_*` | falso color por código FDI | **no**: un CBCT no mide color |
+  | `scale_*` | `log(sigma_mm)` | sí, la misma medida en otra escala |
+
+  Las dos primeras van **declaradas en la cabecera del propio fichero** y el sidecar repite
+  la función de transferencia. El twin reversible sigue siendo el PLY de
+  `field-export-agent`, con `density` sin cota y escalas en mm; éste es para mirar.
+- ⚠️ **Las coronas salen del ESCÁNER, no del CBCT.** El escáner ya trae los dientes
+  separados y con código FDI, con decenas de micras y sin huecos; el campo del CBCT cubre
+  el 51 % del volumen de cada pieza y de forma desigual. Enseñar el compuesto del CBCT como
+  si fuera «el diente» presenta como completo algo que no lo está. Lo que el CBCT sí aporta
+  y el escáner no puede es la **raíz**, que va en su propia capa y declarada como parcial.
+- ⚠️ **El eje de ÓRBITA se mide, no se escribe a mano.** El visor gira alrededor de su
+  `cameraUp`, y eso era un eje del mundo puesto a ojo en su `config.ts` — `[0, 0, 1]`.
+  Cuando el eje oclusal de la arcada no coincide con él, arrastrar el ratón no da la vuelta
+  a la arcada: **la vuelca**, y no hay forma de llegar a la cara vestibular de una pieza. El
+  sidecar lleva ahora un bloque `encuadre` con el eje oclusal deducido de las etiquetas FDI
+  (ver `export_agents/anatomia.py`), y el `fov_grados` con el que se calculó la distancia,
+  porque con otro campo no encuadra. **Se mide sobre los vértices del escáner y solo
+  ellos**: en el compuesto, `fdi == 0` incluye la encía *y* el hueso y el cráneo del CBCT, y
+  meter aquello podría invertir el signo del eje oclusal. Sin etiquetas no se inventa nada y
+  el gate lo dice.
+- **El tamaño y la opacidad de los splats salen del régimen 3DGS medido**, no de lo que se
+  vea bien: σ inflada hasta ~2,5 veces el espaciado que queda tras decimar —sin eso los
+  splats no se tocan y la superficie sale agujereada— y α por encima del umbral de descarte
+  del visor (`5/255 = 0,0196`), que estaba tirando el 46 % de los splats de raíz y fondo.
+- **Un color por pieza, estable entre casos.** El tono sale del código FDI multiplicado por
+  el ángulo áureo, así que la misma pieza sale del mismo color en cualquier caso y en
+  cualquier visita, sin una tabla que mantener.
+- **El nombre del paciente no viaja**, ni en el PLY ni en el sidecar: a los motivos del gate
+  se les quita la ruta y queda el hash, que identifica el fichero sin identificar a nadie.
+- **El paquete NO es reversible y lo declara.** Está decimado a propósito, su opacidad y su
+  color son interpretación. Los ficheros reversibles son el STL y el PLY del twin, con su
+  desviación medida.
+
+**Historial de cambios**
+
+| Fecha | Versión | Cambio |
+|---|---|---|
+| 2026-08-21 | 0.2.0 | Registro inicial del canal: capas conmutables por procedencia y anatomía, PLY en perfil INRIA derivado del campo, y sidecar con la capa clínica y el `region_id` por gaussiana. |
+| 2026-08-24 | 0.3.0 | Tamaño y opacidad de los splats ajustados al **régimen 3DGS medido** —la α anterior se apoyaba en el umbral de descarte del visor y tiraba el 46 % de raíz y fondo—, color por pieza estable entre casos, y bloque `encuadre` con el eje de órbita anatómico. |
+
+---
+
 ### `uos-export-agent` — El caso entero como escena UOS
 
 | Campo | Valor |
 |---|---|
-| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py`) |
-| **Versión** | `0.1.0` |
+| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py`) |
+| **Versión** | `0.2.0` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
@@ -1017,7 +1142,8 @@ ExportOutput
 > declaradas: qué asset viene de qué visita, en qué marco vive cada uno y con qué
 > transformada se alinean. Es la diferencia entre entregar ficheros y entregar una escena.
 
-Implementa el nivel **UOS-Core** del borrador de spec *Unified Oral Scene* v0.2: un ZIP
+Implementa los niveles **UOS-Core** y **UOS-Vol** del borrador de spec *Unified Oral
+Scene* v0.2: un ZIP
 **sin comprimir** cuya primera entrada física es `manifest.json`, que **referencia los
 formatos nativos intactos** en vez de transcodificarlos. Ningún formato existente hace eso
 —DICOM no modela gaussianas ni se transmite bien en web, glTF no modela volúmenes ni
@@ -1070,16 +1196,55 @@ propio y el validador puede correr sobre un fichero que escribió otro.
   comparten seis canales: ensancharlo con `n_assets` o `conformidad` daría dos sitios donde
   la misma verdad puede divergir y obligaría a los otros cinco a cargar con campos que no
   usan.
+- ⚠️ **La serie DICOM viaja ENTERA y se verifica corte a corte.** El asset del volumen es
+  un directorio (`volume/ct_001/`) y el manifiesto declara una `Parte` por fichero, con su
+  nombre y su hash. No basta un hash del conjunto: ése dice «esta serie no cuadra», y éstos
+  dicen **cuál** de los 397 cortes. Se comprueba en los dos sentidos — un corte que está
+  dentro y no se declara es tan grave como uno declarado que falta, porque significa que la
+  serie que sale no es la que entró. El `sha256` del directorio se define como el hash
+  sobre `nombre\0hash` ordenado, y **se define en el contrato y no en el escritor**: si el
+  validador lo calculara de otra forma, un contenedor válido daría inválido y nadie sabría
+  cuál de los dos tiene razón.
+- **Los nombres de los cortes SÍ viajan, y es lo correcto** aunque en el resto del
+  contenedor no lo sea: el orden de una serie DICOM es dato clínico, y renombrarlos a
+  `IM0001.dcm…` sería reescribir el fichero que decimos entregar intacto.
+- **El sidecar del volumen (§5.2) se lee de los mismos bytes que viajan**, no de una copia
+  derivada calculada antes en otro sitio. Existe para que un visor web no necesite un
+  parser DICOM completo solo para saber qué le llega, y declara el frame y **nada más sobre
+  la alineación**: la transformada al canónico vive en `registrations` y no se duplica. La
+  orientación se lee del `ImageOrientationPatient`; si no está, se declara la identidad
+  **como aviso**, porque un volumen al que se le supone la orientación se renderiza igual de
+  bien y espejado. El `value_range` se deja nulo cuando el DICOM no lo declara, en vez de
+  barrer 259 MB o de poner el rango típico de un CBCT — que un visor usaría para su ventana.
+- ⚠️ **Una serie con datos identificables en sus cabeceras NO viaja.** El DICOM va intacto
+  —es el punto del formato— así que sus tags irían con él, y el manifiesto afirma
+  `phi_state: pseudonymized`. Un contenedor que dice estar seudonimizado y lleva el nombre
+  del paciente dentro es **peor** que uno que declara `identified`: quien lo reciba se fía
+  del campo y no abre 397 cabeceras a comprobarlo. Se comprueban `PatientName`,
+  `PatientBirthDate`, la institución, los médicos y el número de acceso; el volumen se queda
+  fuera, el caso baja a UOS-Core y el gate dice **qué tag**, nunca su valor. `PatientID`
+  queda fuera de la lista a propósito: un export anonimizado lo rellena con un identificador
+  opaco, y exigir que esté vacío rechazaría series perfectamente anónimas.
+- ⚠️ **Sin registro, el volumen se queda fuera y el resto del caso sale igual.** Su frame no
+  conectaría con el canónico, así que un visor lo colocaría en el sitio equivocado sin poder
+  detectarlo — peor que no llevarlo. Y tirar la exportación entera por eso sería
+  desproporcionado: la malla, las fotos y las vistas están bien. Se declara y se baja a
+  UOS-Core.
+- **El volumen va detrás de una bandera** (`--con-volumen`), por peso: son cientos de megas
+  que multiplican por diez el contenedor. Llevarlos es decisión de quien exporta.
+- **El `fhir_map` declara el TIPO de recurso, no una referencia.** El ejemplo del spec
+  escribe `ImagingStudy/is-9911`, o sea un recurso que existe en un servidor concreto; este
+  caso no ha pasado por ningún PMS y no hay identificador que citar. Inventar uno haría que
+  un conector intentara resolverlo. Se afirma lo que sí es verdad hoy —`Media` para las
+  fotos, `ImagingStudy` para el volumen, `DocumentReference` para la malla y para el `.uos`
+  entero— y `resource` queda vacío.
 - **Layer 3 vive en `derived/` y solo ahí.** Es lo que permite desmontar el módulo de IA
   borrando un directorio y sus entradas del manifiesto, y distribuir el caso en
   jurisdicciones donde no está habilitado. El validador lo comprueba en los dos sentidos.
 
 **Lo que NO está, y se dice para que nadie lo dé por hecho**
 
-- El **volumen** y las **señales** — son los niveles `UOS-Vol` y `UOS-Sig`. Hoy el
-  contenedor lleva la malla y la apariencia, no el CBCT del que salió todo.
-- El **`fhir_map`**, que se declara vacío: poblarlo exige decidir a qué recurso FHIR R4
-  mapea cada asset.
+- Las **señales** — el nivel `UOS-Sig`. No hay T-Scan ni nada que registrar todavía.
 - Las **firmas Ed25519**. No falta el código: falta decidir qué clave firma —la clínica
   emisora, la plataforma, o ambas— y dónde vive. Firmar con una clave inventada daría un
   `.uos` que *parece* firmado, que es peor que uno que declara no estarlo. El validador
@@ -1090,6 +1255,7 @@ propio y el validador puede correr sobre un fichero que escribió otro.
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Registro inicial. Nivel UOS-Core: manifiesto, contenedor ZIP/STORE, validador con niveles de conformidad, vistas con ejes anatómicos medidos y cadena de procedencia entre versiones. Verificado sobre el caso clínico real: `VALIDO`, 10 assets, 19 vistas, malla byte-idéntica. |
+| 2026-08-24 | 0.2.0 | Nivel **UOS-Vol**: la serie DICOM entera como asset-directorio, verificada corte a corte, con su sidecar §5.2 leído de las cabeceras que viajan, y rechazada si esas cabeceras desmienten el `phi_state`. Y el `fhir_map` poblado por tipo de recurso. |
 
 
 ---
