@@ -48,6 +48,7 @@ from core_schemas import (
 )
 from export_agents import (
     CompositeExportAgent,
+    CompositeMeshExportAgent,
     ExportAgent,
     ExportOutput,
     FieldExportAgent,
@@ -130,6 +131,16 @@ CONTRATOS: dict[str, ContratoEtapa] = {
         nombre="composite-export-agent",
         requiere_arrays=frozenset({"centers", "scales", "rotations", "density"}),
         conserva_arrays=False,  # su salida mezcla dos fuentes; no es el campo
+    ),
+    # La malla del compuesto exige lo mismo que el compuesto MENOS las covarianzas: el
+    # reconstructor trabaja sobre los centros. Lo que sí necesita y los demás no es
+    # `region_id`, porque reconstruye pieza a pieza — pero eso no se declara aquí: que
+    # una adquisición no traiga segmentación es normal, y el agente ya sale MISSING
+    # diciéndolo. El contrato es para lo que saldría mal EN SILENCIO.
+    "export-malla-compuesta": ContratoEtapa(
+        nombre="composite-mesh-export-agent",
+        requiere_arrays=frozenset({"centers"}),
+        conserva_arrays=False,  # su salida es una malla, no el campo
     ),
     # El visor solo exige el campo: sin escáner enseña el CBCT y lo dice, y sin
     # segmentación enseña geometría y lo dice. Su trabajo es ENSEÑAR lo que hay, incluido
@@ -269,18 +280,32 @@ class PipelineResult:
         """
         if any(e.status is ModalityStatus.FAILED for e in self.exports):
             return False
-        # ⚠️ El visor **no cuenta**, y no es una excepción de conveniencia.
+        # ⚠️ Dos canales **no cuentan**, y no es una excepción de conveniencia.
         #
         # `reversible` pregunta si el twin se puede reconstruir desde lo que se escribió.
-        # El paquete del visor es una **vista**: está decimado a propósito, su opacidad es
+        # El paquete del **visor** es una vista: está decimado a propósito, su opacidad es
         # una ganancia de visualización y su color es falso. Exigirle una desviación
         # obligaría a inventarse un número; darlo por reversible afirmaría que de él se
         # recupera el campo, que es falso — y lo dice él mismo en su sidecar. Un artefacto
         # que nunca prometió ser reversible no puede hacer fracasar la comprobación de que
         # los que sí lo prometieron la cumplen.
+        #
+        # La **malla del compuesto** queda fuera por lo contrario, y conviene no
+        # confundirlo con dejar pasar un número feo. Los demás canales re-materializan lo
+        # que entró y su desviación mide el viaje de ida y vuelta; ese exportador escribe
+        # geometría que NO entró —la raíz, que ninguna otra medida cubre— así que su
+        # `max_deviation_mm` no responde «¿sale lo que metí?» sino «¿cuánto se aleja el
+        # reconstructor de la superficie escaneada, allí donde hay con qué comparar?».
+        # Son preguntas distintas con la misma unidad, y medirlas en el mismo cajón hacía
+        # que el recorrido entero saliera en rojo por 0,37 mm de una superficie que nadie
+        # había medido antes, mientras los canales que sí prometen reversibilidad daban
+        # 0,000000 mm. La mitad de ESE fichero que sí venía del twin —la corona del
+        # escáner— se verifica dentro del propio agente releyendo el STL.
         hechos = [
-            e for e in self.exports
-            if e.ok and not e.agent.startswith("viewer-export-agent")
+            e
+            for e in self.exports
+            if e.ok
+            and not e.agent.startswith(("viewer-export-agent", "composite-mesh-export-agent"))
         ]
         if not hechos:
             return False
@@ -680,7 +705,8 @@ class IngestionPipeline:
         previos = [
             m
             for clave in ("export-malla", "export-campo", "export-compuesto",
-                          "export-visor", "export-uos", "export-render")
+                          "export-malla-compuesta", "export-visor", "export-uos",
+                          "export-render")
             for m in revisa_requisitos(CONTRATOS[clave], snapshot, arrays)
         ]
 
@@ -698,10 +724,23 @@ class IngestionPipeline:
         compuesto = CompositeExportAgent(self.store).export(
             snapshot, destino / f"{snapshot.acquisition_id}-compuesto.ply"
         )
+        # La arcada imprimible (sin raíces) y un STL por pieza con corona medida + raíz
+        # reconstruida: los únicos ficheros de esta lista que un clínico no podía tener ya
+        # sin el twin. Va a variable como los tres anteriores porque entra en el `.uos`.
+        malla_compuesta = CompositeMeshExportAgent(self.store).export(
+            snapshot,
+            destino / f"{snapshot.acquisition_id}-compuesto.stl",
+            # Las etiquetas del escáner son lo que permite recortar la corona MEDIDA por
+            # pieza. Sin ellas cada diente sale con la raíz sola y el agente lo declara:
+            # rellenar el hueco con la corona del CBCT haría pasar por medido algo que a
+            # 0,4 mm de vóxel no lo está.
+            etiquetas_ios=etiquetas_ios,
+        )
         salidas: list[ExportOutput] = [
             malla_stl,
             campo,
             compuesto,
+            malla_compuesta,
             # Al visor se le pasan los motivos del gate: es lo único que un clínico no
             # puede deducir mirando el modelo, y esconderlo detrás de la geometría sería
             # entregar un twin que parece más firme de lo que es.

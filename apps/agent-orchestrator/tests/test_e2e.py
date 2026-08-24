@@ -30,11 +30,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 from agent_orchestrator import CaseInput, IngestionPipeline
+from agent_orchestrator.pipeline import PipelineResult
 from core_schemas import ModalityStatus
 from export_agents import (
     RENDER_PSNR_BUDGET_DB,
     RENDER_SSIM_BUDGET,
     REVERSIBILITY_BUDGET_MM,
+    ExportOutput,
     lee_ply,
 )
 from ingestion_agents import ArtifactStore, synthetic
@@ -151,8 +153,24 @@ def test_un_caso_entra_como_ficheros_y_sale_como_ficheros(recorrido) -> None:
     assert resultado.snapshot.provenance.transform is not None
     assert any(a.agent.startswith("segmentation-agent") for a in resultado.analysis)
     assert any(o.agent.startswith("semantic-fusion-agent") for o in resultado.fusion)
-    assert len(resultado.exports) == 6, "malla, campo, compuesto, visor, uos y render"
-    assert all(e.ok for e in resultado.exports), [e.detail for e in resultado.exports]
+    assert len(resultado.exports) == 7, (
+        "malla, campo, compuesto, malla del compuesto, visor, uos y render"
+    )
+    # ⚠️ El STL del compuesto sale MISSING sobre datos SINTÉTICOS, y es la respuesta
+    # correcta: `synthetic.write_case` genera una malla y un campo que describen la
+    # misma superficie, o sea una boca sin nada bajo la encía. Sin raíz que el escáner
+    # no cubra ya, no hay compuesto que valga la pena imprimir — y el agente lo dice en
+    # vez de escribir un STL que sería la malla del escáner con otro nombre. Que este
+    # canal se ponga en verde aquí significaría que el sintético empezó a traer raíces,
+    # no que el agente mejoró.
+    compuesto_stl = next(
+        e for e in resultado.exports if e.agent.startswith("composite-mesh-export-agent")
+    )
+    assert compuesto_stl.status is ModalityStatus.MISSING
+    assert "raíz" in (compuesto_stl.detail or "")
+    assert all(e.ok for e in resultado.exports if e is not compuesto_stl), [
+        e.detail for e in resultado.exports
+    ]
     assert resultado.reversible, [
         (e.agent, e.max_deviation_mm, e.psnr_db, e.ssim) for e in resultado.exports
     ]
@@ -184,7 +202,9 @@ def test_el_gate_humano_avisa_pero_no_bloquea_la_materializacion(recorrido) -> N
     assert resultado.hitl_required
     assert any("confianza" in m for m in resultado.hitl_reasons)
     assert resultado.reversible
-    assert all(e.ok for e in resultado.exports)
+    # Todo lo que llegó a escribirse está en verde. El STL del compuesto no cuenta
+    # porque sobre el sintético no hay raíz que componer: ver el test del recorrido.
+    assert all(e.ok for e in resultado.exports if e.status is not ModalityStatus.MISSING)
 
 
 def test_las_metricas_de_reversibilidad_estan_en_verde(recorrido) -> None:
@@ -344,14 +364,14 @@ def test_exportar_no_muta_el_resultado_de_entrada(recorrido, pipeline, tmp_path:
     antes = len(resultado.exports)
     otro = pipeline.exportar(resultado, tmp_path / "otra-salida")
     assert len(resultado.exports) == antes
-    assert len(otro.exports) == antes + 6
+    assert len(otro.exports) == antes + 7
 
 
 def test_el_render_se_puede_desactivar(pipeline, case_dir: Path, tmp_path: Path) -> None:
     """Es el canal más caro; quien solo quiera geometría no debería pagarlo."""
     resultado = pipeline.run(CaseInput.from_case_dir(case_dir))
     fuera = pipeline.exportar(resultado, tmp_path / "export", render=False)
-    assert len(fuera.exports) == 5
+    assert len(fuera.exports) == 6
     assert fuera.export("render-export-agent") is None
     assert fuera.reversible
 
@@ -387,3 +407,40 @@ def test_la_fusion_desbloquea_el_marco_del_twin(pipeline, case_dir: Path, tmp_pa
     assert stl.ok, stl.detail
     assert stl.frame == "twin"
     assert stl.within_budget, stl.max_deviation_mm
+
+
+def test_la_malla_reconstruida_no_decide_si_el_recorrido_es_reversible() -> None:
+    """Dos preguntas distintas que comparten unidad, y que juntarlas rompía el gate.
+
+    Los canales que re-materializan lo que entró miden el viaje de ida y vuelta: su
+    desviación responde «¿sale lo que metí?» y el presupuesto de 0,1 mm del brief va
+    sobre eso. El `composite-mesh-export-agent` escribe geometría que **no entró** —la
+    raíz, que ninguna otra medida cubre— y su número responde a otra cosa: cuánto se
+    aleja el reconstructor de la superficie escaneada allí donde hay con qué comparar.
+
+    Medidas en el mismo cajón, el recorrido entero salía en rojo por 0,37 mm de una
+    superficie que nadie había medido antes, mientras los canales que sí prometen
+    reversibilidad daban 0,000000 mm. Esto no es dejar pasar un número feo: es la misma
+    razón por la que el visor tampoco cuenta.
+    """
+    reconstruida = ExportOutput(
+        agent="composite-mesh-export-agent@0.1.0",
+        status=ModalityStatus.OK,
+        format="stl",
+        max_deviation_mm=0.371742,  # el valor real medido sobre un caso clínico
+    )
+    medido = ExportOutput(
+        agent="export-agent@0.1.0",
+        status=ModalityStatus.OK,
+        format="stl",
+        max_deviation_mm=0.0,
+    )
+
+    assert not reconstruida.within_budget, "el presupuesto sigue siendo 0,1 mm"
+    assert PipelineResult(snapshot=None, exports=[medido, reconstruida]).reversible
+    # Y el canal que SÍ promete reversibilidad sigue pudiendo tumbarlo.
+    fuera = ExportOutput(
+        agent="export-agent@0.1.0", status=ModalityStatus.OK, format="stl",
+        max_deviation_mm=0.5,
+    )
+    assert not PipelineResult(snapshot=None, exports=[fuera, reconstruida]).reversible

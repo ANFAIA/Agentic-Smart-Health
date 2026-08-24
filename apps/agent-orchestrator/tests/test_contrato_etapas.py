@@ -133,6 +133,7 @@ def test_todas_las_etapas_tienen_contrato():
         "export-malla",
         "export-campo",
         "export-compuesto",
+        "export-malla-compuesta",
         "export-visor",
         "export-uos",
         "export-render",
