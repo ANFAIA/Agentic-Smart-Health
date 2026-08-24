@@ -185,6 +185,45 @@ Permite responder: *"¿de qué fichero, qué agente y con qué confianza salió 
 del diente 16?"* — la explicabilidad que exigen RGPD/HIPAA. `patient_id` es siempre
 un **seudónimo**, nunca un identificador directo (soberanía del dato).
 
+### 4.5.1 `derivation`: leído no es lo mismo que inferido
+
+`Provenance` respondía «qué fichero, qué agente, qué confianza». Con el
+`report-agent` teniendo **un backend por reglas y otro por modelo** (`llm`, apagado
+por defecto), «lo produjo `report-agent@0.1.0`» dejó de ser una respuesta: el mismo
+agente y la misma versión producen las dos cosas.
+
+Se añaden dos campos, y se validan **como par**:
+
+| campo | qué dice |
+|---|---|
+| `derivation` | `deterministic` (regla, patrón, cálculo) · `inferred` (un modelo lo propuso) · `None` |
+| `model` | `backend:modelo` — obligatorio si `inferred`, prohibido en otro caso |
+
+Tres decisiones que no son obvias:
+
+1. **`None` significa «no declarado», no «determinista».** Es la misma distinción que
+   §4.8 hace entre `MISSING` y `FAILED`: el silencio no puede pasar por una
+   afirmación. Si el defecto afirmase determinismo, un agente que infiere y olvida
+   declararlo produciría un valor que **miente** en vez de uno que calla.
+2. **El par se valida junto.** Por separado admiten estados sin significado:
+   «inferido por no se sabe quién» no es auditable, y «determinista, con modelo» es
+   una contradicción que alguien acabaría creyéndose. *Fail-loud* (§4.7): si el
+   contrato no puede ser cierto, no se construye.
+3. **Describe el paso que produjo ESE valor, no lo que hay aguas arriba.** Un
+   `TwinSnapshot` con `derivation=deterministic` afirma que el **ensamblado** fue
+   determinista, no sus observaciones — cada una lleva la suya. Contagiar la etiqueta
+   del informe al CBCT y a la malla, que nadie infirió, sería tan falso como callarla.
+
+El caso que fija el diseño: con backend de modelo, el `report-agent` **sigue
+sacando los índices de oclusión por regex**. Esos se declaran `deterministic`
+explícitamente, valor a valor. Si la procedencia se tomase del agente en vez del
+valor, mentiría en el sentido contrario al hueco que este campo vino a tapar.
+
+**Lo que esto NO hace:** no cambia el gate de human-in-the-loop. Un valor inferido no
+para el flujo por serlo — lo para su `confidence`, como antes. Convertir
+`derivation` en criterio del gate es una decisión de política clínica, no de
+contrato, y se tomaría en el ADR del orquestador.
+
 ### 4.6 `region_id` (FDI) como ancla semántica
 
 El código ISO-FDI es el **pegamento** que une las tres capas: una gaussiana

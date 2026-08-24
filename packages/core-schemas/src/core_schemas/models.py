@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Versión del contrato de datos (SemVer). Se serializa en cada `TwinSnapshot`
 # para que un JSON persistido declare bajo qué esquema se escribió y no quede
@@ -85,6 +85,25 @@ class ModalityStatus(str, Enum):
     OK = "ok"            # ingerida y traducida al contrato
     MISSING = "missing"  # no se aportó el fichero de esta modalidad
     FAILED = "failed"    # se intentó pero falló (corrupto, no parseable…)
+
+
+class Derivation(str, Enum):
+    """Cómo se obtuvo un valor: **leyéndolo** o **infiriéndolo**.
+
+    No es lo mismo un pH que un patrón encontró escrito en el informe que uno que un
+    modelo dedujo de la frase. Los dos pueden ser correctos, pero solo el primero se
+    puede volver a obtener exactamente, auditar leyendo el patrón y defender diciendo
+    «lo pone aquí». El segundo hay que defenderlo diciendo «un modelo lo interpretó
+    así», que es una afirmación distinta y más débil — y la diferencia importa cuando
+    lo que cuelga del valor es una decisión clínica.
+
+    **Por qué no basta con `confidence`.** La confianza dice *cuánto* fiarse; esto dice
+    *de qué*. Un regex con confianza 0,9 y un modelo con confianza 0,9 no son la misma
+    afirmación, y sin este campo el twin los guarda idénticos.
+    """
+
+    DETERMINISTIC = "deterministic"  # regla, patrón o cálculo: reproducible byte a byte
+    INFERRED = "inferred"            # un modelo lo propuso a partir del texto o la imagen
 
 
 class Support(str, Enum):
@@ -199,10 +218,22 @@ def _rotar(
 
 
 class Provenance(BaseModel):
-    """Procedencia de un valor: qué fichero, qué agente y con qué confianza.
+    """Procedencia de un valor: qué fichero, qué agente, cómo lo obtuvo y con qué confianza.
 
     Se adjunta a cada observación para garantizar la explicabilidad exigida:
     "qué dato se ingirió, qué transformación se aplicó y por qué".
+
+    **Describe el paso que produjo ESTE valor, no todo lo que hay aguas arriba.** Un
+    `TwinSnapshot` cuya `provenance` dice `deterministic` afirma que el ensamblado fue
+    determinista, no que lo fueran sus observaciones: cada una lleva la suya, y es ahí
+    donde hay que mirar. Es la misma granularidad que el ADR 001 §4.5 fija para la
+    trazabilidad, aplicada ahora también a *cómo* se obtuvo el dato.
+
+    **`derivation` puede ser `None`, y eso significa algo.** Significa **no declarado**,
+    no «determinista». Es la misma distinción que `ModalityStatus` hace entre `MISSING`
+    y `FAILED`: el silencio no puede pasar por una afirmación. Un valor sin `derivation`
+    es un valor del que nadie dijo cómo salió, y quien lo consuma no debe darlo por
+    reproducible.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -224,6 +255,43 @@ class Provenance(BaseModel):
             "sea reversible. ADR 004 §2.2."
         ),
     )
+    derivation: Derivation | None = Field(
+        default=None,
+        description=(
+            "Cómo obtuvo el agente este valor. `None` = **no declarado**, que NO es lo "
+            "mismo que determinista: es un valor del que nadie afirmó nada."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Identificador del modelo que infirió el valor, como `backend:modelo` "
+            "(p. ej. `llm:claude-sonnet-5`). Obligatorio si `derivation` es "
+            "`inferred`, prohibido en cualquier otro caso."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _el_modelo_y_la_derivacion_van_juntos(self) -> Provenance:
+        """Una inferencia sin modelo no es auditable; un modelo sin inferencia, mentira.
+
+        Se valida como par y no como dos campos sueltos porque por separado admiten
+        estados que no significan nada: «inferido por no se sabe quién» no permite
+        reproducir ni revisar, y «determinista, con modelo» es una contradicción que
+        alguien acabaría creyéndose. *Fail-loud* del ADR 001 §4.7: si el contrato no
+        puede ser cierto, no se construye.
+        """
+        if self.derivation is Derivation.INFERRED and not self.model:
+            raise ValueError(
+                "`derivation='inferred'` exige declarar `model`: una inferencia sin "
+                "modelo identificado no se puede auditar ni reproducir."
+            )
+        if self.model and self.derivation is not Derivation.INFERRED:
+            raise ValueError(
+                f"`model={self.model!r}` solo tiene sentido con `derivation='inferred'` "
+                f"(está a {self.derivation!r})."
+            )
+        return self
 
 
 # --------------------------------------------------------------------------- #
