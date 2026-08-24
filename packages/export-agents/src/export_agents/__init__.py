@@ -64,6 +64,10 @@ from export_agents.field import (
     esquema_del_campo,
     lee_ply,
 )
+from export_agents.malla_compuesta import (
+    CompositeMeshExportAgent,
+    superficie_alfa,
+)
 from export_agents.render import (
     VISTAS_POR_DEFECTO,
     RenderExportAgent,
@@ -97,6 +101,7 @@ __all__ = [
     "VISTAS_POR_DEFECTO",
     "BaseExportAgent",
     "CompositeExportAgent",
+    "CompositeMeshExportAgent",
     "ViewerExportAgent",
     "DENSIDAD_ENCIA",
     "ORIGEN_CBCT",
@@ -124,4 +129,5 @@ __all__ = [
     "ssim",
     "stl_header",
     "write_binary_stl",
+    "superficie_alfa",
 ]

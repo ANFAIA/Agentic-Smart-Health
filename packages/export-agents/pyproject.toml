@@ -12,6 +12,12 @@ dependencies = [
     # rompería la reversibilidad **en silencio**. La flecha apunta bien —la fase 6
     # va después de la 2— así que se importa en vez de copiar.
     "fusion-agents",
+    # La cota de longitud por tipo de diente (`LONGITUD_MM`) y el mapeo FDI → tipo viven
+    # en los agentes de análisis, que es donde se midieron. Este exportador las necesita
+    # para poder decir que una raíz reconstruida es más larga de lo que ese diente puede
+    # ser. Copiarlas aquí sería tener dos anatomías que pueden divergir; la flecha apunta
+    # bien —la fase 6 va después de la 4— así que se importan.
+    "analysis-agents",
     "numpy>=2.0",
     # El render del campo escribe PNG. `pillow` está declarado también en
     # `ingestion-agents`, pero ese paquete NO es dependencia de éste (solo de sus
