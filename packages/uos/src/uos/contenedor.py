@@ -38,7 +38,7 @@ def escribe_uos(
     ficheros: Iterable[tuple[str, Path]],
     *,
     directorios: dict[str, Path] | None = None,
-    extras: dict[str, str] | None = None,
+    extras: dict[str, str | bytes] | None = None,
     json_manifiesto: str | None = None,
 ) -> Path:
     """Escribe el `.uos`. `ficheros` es `(uri interna, ruta en disco)`.
@@ -65,12 +65,16 @@ def escribe_uos(
             f"el manifiesto referencia {len(faltan)} directorio(s) que no se aportaron: "
             + ", ".join(sorted(faltan))
         )
-    if faltan := sueltas - set(mapa):
+    # Un asset puede venir de un fichero del caso o generarse aqui —la escena convertida,
+    # la segmentacion—, y para el contenedor son lo mismo: bytes con su hash. Lo que no
+    # puede es faltar.
+    aportadas = set(mapa) | set(extras or {})
+    if faltan := sueltas - aportadas:
         raise ValueError(
             f"el manifiesto referencia {len(faltan)} asset(s) que no se aportaron: "
             + ", ".join(sorted(faltan)[:3])
         )
-    if sobran := set(mapa) - declaradas - set(extras or {}):
+    if sobran := set(mapa) - declaradas:
         raise ValueError(
             f"se aportaron {len(sobran)} fichero(s) que el manifiesto no declara: "
             + ", ".join(sorted(sobran)[:3])
@@ -156,5 +160,25 @@ def asset_de_directorio(
         id=id_, kind=kind, visit=visit, uri=uri if uri.endswith("/") else uri + "/",
         media_type=media_type, sha256=digesto_de_partes(partes),
         bytes=sum(p.bytes for p in partes), frame=frame, parts=partes,
+        load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
+    )
+
+
+def asset_de_bytes(
+    crudo: bytes, uri: str, *, id_: str, kind, visit: str, frame: str,
+    media_type: str, **extra,
+) -> Asset:
+    """El sobre de un asset que se GENERA aqui y no sale de un fichero del caso.
+
+    La escena convertida y la segmentacion no existen en disco: se construyen al exportar.
+    Su `sha256` es el de los bytes que van a acabar en el ZIP, igual que el de los demas, y
+    por eso el validador los comprueba sin saber que unos vinieron de un fichero y otros de
+    memoria.
+    """
+    from uos.manifiesto import PRIORIDAD
+
+    return Asset(
+        id=id_, kind=kind, visit=visit, uri=uri, media_type=media_type,
+        sha256=hashlib.sha256(crudo).hexdigest(), bytes=len(crudo), frame=frame,
         load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
     )

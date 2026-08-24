@@ -47,7 +47,7 @@ def serie(tmp_path_factory) -> Path:
 @pytest.fixture
 def malla(tmp_path) -> Path:
     p = tmp_path / "scan.stl"
-    p.write_bytes(b"ASH fake stl" + bytes(200))
+    p.write_bytes(_stl_binario())
     return p
 
 
@@ -333,3 +333,21 @@ def test_un_identificador_OPACO_no_cuenta_como_dato_identificable(serie, malla, 
 
     assert Conformidad.VOL in valida(salida.path).niveles
     assert not any("el CBCT NO viaja" in m for m in salida.hitl_reasons)
+
+
+def _stl_binario(triangulos: int = 4) -> bytes:
+    """Un STL binario mínimo y VÁLIDO.
+
+    Antes las fixtures escribían bytes sueltos y colaban porque el fichero sólo se hasheaba.
+    Desde que la escena se construye convirtiéndolo (§5.1), tiene que ser un STL de verdad.
+    """
+    import struct
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    crudo = b"ASH fixture" + bytes(69) + struct.pack("<I", triangulos)
+    for _ in range(triangulos):
+        v = rng.normal(0, 10, (3, 3)).astype("<f4")
+        crudo += np.zeros(3, dtype="<f4").tobytes() + v.tobytes() + b"\x00\x00"
+    return crudo

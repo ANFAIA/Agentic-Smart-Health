@@ -80,6 +80,7 @@ def valida(ruta: Path) -> Informe:
 
     _valida_frames(m, inf)
     _valida_regulatorio(m, inf)
+    _valida_extensiones(m, inf)
     if m.canonical_frame.units != "mm":
         inf.errores.append(
             f"el frame canonico declara unidades {m.canonical_frame.units!r}; "
@@ -284,3 +285,44 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
             inf.errores.append(f"vista {v.id}: identificador repetido en {VISTAS}")
         vistos.add(v.id)
     inf.vistas = len(vistas)
+
+
+def _valida_extensiones(m: Manifiesto, inf: Informe) -> None:
+    """Lo que se usa se declara, y lo que se exige se usa.
+
+    ⚠️ Una extension `required` que este lector no conoce es un ERROR, no un aviso: el
+    emisor esta diciendo «sin entender esto no abras el fichero», y abrirlo igual seria
+    desobedecer la unica instruccion que el formato da al respecto. Una `used` que no se
+    conoce es un aviso — se puede leer el caso sin ella y se dice que se esta ignorando.
+    """
+    declaradas = set(m.extensions)
+    if huerfanas := set(m.extensions_used) - declaradas:
+        inf.errores.append(
+            f"el manifiesto usa {sorted(huerfanas)} y no las declara en `extensions`: "
+            "un lector no tiene forma de saber que son"
+        )
+    if fuera := set(m.extensions_required) - set(m.extensions_used):
+        inf.errores.append(
+            f"el manifiesto EXIGE {sorted(fuera)} y no las declara como usadas: "
+            "exigir algo que el fichero no usa deja el caso sin abrir para nada"
+        )
+    if sobran := declaradas - set(m.extensions_used):
+        inf.avisos.append(
+            f"el manifiesto declara {sorted(sobran)} y no las usa: sobran en `extensions`"
+        )
+    for nombre in m.extensions_required:
+        inf.avisos.append(
+            f"la extension `{nombre}` es OBLIGATORIA: un lector que no la implemente no "
+            "debe abrir este contenedor"
+        )
+    dentro = None
+    for nombre, ext in m.extensions.items():
+        if ext.uri is None:
+            continue
+        if dentro is None:
+            dentro = {a.uri for a in m.assets}
+        if ext.uri not in dentro:
+            inf.errores.append(
+                f"la extension `{nombre}` apunta a `{ext.uri}`, que no es ningun asset "
+                "declarado: una extension que referencia lo que no esta no se puede leer"
+            )

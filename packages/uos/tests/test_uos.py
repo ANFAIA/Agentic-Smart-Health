@@ -42,7 +42,7 @@ def _manifiesto(assets: list[Asset], **kw) -> Manifiesto:
 def malla(tmp_path) -> Path:
     # Nombre con identificador, como los de verdad: es lo que NO debe viajar.
     p = tmp_path / "1574 UpperJawScan.stl"
-    p.write_bytes(b"ASH fake stl" + bytes(200))
+    p.write_bytes(_stl_binario())
     return p
 
 
@@ -302,13 +302,22 @@ def _snapshot(**kw):
 
 
 class _Almacen:
-    """Devuelve la malla SIN transformar, que es lo que la deja en el frame canonico."""
+    """Devuelve la malla SIN transformar, que es lo que la deja en el frame canonico.
+
+    Con `faces`, como la guarda el `mesh-agent`: desde que la escena se construye de aquí
+    (§5.1), una malla sin topología no es una malla — el agente cae al respaldo de convertir
+    el STL y pierde las etiquetas, que es exactamente lo que este doble existe para evitar.
+    """
 
     def __init__(self, posiciones):
+        import numpy as np
+
         self.posiciones = posiciones
+        n = len(posiciones) - (len(posiciones) % 3)
+        self.caras = np.arange(n, dtype="int32").reshape(-1, 3)
 
     def load(self, _ref):
-        return {"positions": self.posiciones}
+        return {"positions": self.posiciones, "faces": self.caras}
 
 
 def _arcada_de_juguete():
@@ -434,3 +443,21 @@ def test_dos_vistas_con_el_mismo_id_invalidan(tmp_path, malla):
 
     assert not inf.valido
     assert any("repetido" in e for e in inf.errores)
+
+
+def _stl_binario(triangulos: int = 4) -> bytes:
+    """Un STL binario mínimo y VÁLIDO.
+
+    Antes las fixtures escribían bytes sueltos y colaban porque el fichero sólo se hasheaba.
+    Desde que la escena se construye convirtiéndolo (§5.1), tiene que ser un STL de verdad.
+    """
+    import struct
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    crudo = b"ASH fixture" + bytes(69) + struct.pack("<I", triangulos)
+    for _ in range(triangulos):
+        v = rng.normal(0, 10, (3, 3)).astype("<f4")
+        crudo += np.zeros(3, dtype="<f4").tobytes() + v.tobytes() + b"\x00\x00"
+    return crudo

@@ -24,18 +24,35 @@ import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
 
-from uos.contenedor import asset_de, asset_de_directorio, escribe_uos, json_de
+from uos.clinico import OBSERVACIONES, capa_clinica
+from uos.contenedor import (
+    asset_de,
+    asset_de_bytes,
+    asset_de_directorio,
+    escribe_uos,
+    json_de,
+)
+from uos.derivados import (
+    SEGMENTACION,
+    SEGMENTACION_META,
+    codifica_etiquetas,
+    meta_segmentacion,
+    sha256_de_fichero,
+)
+from uos.escena import MEDIA_GLB, NodoGS, construye_glb, lee_stl_binario
 from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
     Adquisicion,
     Clase,
     EstadoPHI,
+    Extension,
     Frame,
     Manifiesto,
     Procedencia,
     RecursoFHIR,
     Registro,
+    Regulatorio,
     Sujeto,
     Visita,
 )
@@ -91,7 +108,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.2.0"
+    version = "0.3.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -105,9 +122,12 @@ class UOSExportAgent(BaseExportAgent):
         pseudonimo: str | None = None,
         malla: Path | None = None,
         escena_gs: Path | None = None,
+        campo: Path | None = None,
+        compuesto: Path | None = None,
         imagenes: list[Path] | None = None,
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
+        modelo_segmentacion: Path | None = None,
         cbct: Path | None = None,
         previo: Path | None = None,
     ) -> ExportOutput:
@@ -141,6 +161,8 @@ class UOSExportAgent(BaseExportAgent):
         visita = Visita(id="v1", date=snapshot.timestamp.date().isoformat(),
                         label="Baseline")
         ficheros: dict[str, Path] = {}
+        extras_escena: dict[str, bytes | str] = {}
+        aviso_derivados: list[str] = []
         assets = []
 
         # ⚠️ El nombre del fichero NO viaja, tampoco el de la malla. Los de un proveedor
@@ -149,22 +171,137 @@ class UOSExportAgent(BaseExportAgent):
         # trazabilidad la da el sha256, que es mas fuerte que un nombre.
         uri = f"scene/scan{malla.suffix.lower()}"
         ficheros[uri] = malla
+        # ⚠️ `document`, no `mesh_gs_scene`. Lo dice el §5.1: la escena es el `.glb`, y el
+        # STL original «PUEDE incluirse como asset document para trazabilidad». Declararlo
+        # escena haria que un visor viera dos escenas y no supiera cual montar.
         assets.append(asset_de(
-            malla, uri, id_="asset.ios", kind=Clase.MESH_GS_SCENE, visit=visita.id,
+            malla, uri, id_="asset.ios", kind=Clase.DOCUMENT, visit=visita.id,
             frame=FRAME_IOS, media_type=_MEDIA.get(malla.suffix.lower(), "model/stl"),
             acquisition=Adquisicion(time=snapshot.timestamp),
         ))
-        if escena_gs is not None and escena_gs.exists():
-            # Fallback declarado del spec (§5.1): mientras KHR_gaussian_splatting siga sin
-            # ratificar, la capa de apariencia va como asset externo apuntado desde la
-            # escena, no embebida. Es el camino real hoy, no el plan B.
-            uri = f"scene/appearance{escena_gs.suffix.lower()}"
-            ficheros[uri] = escena_gs
-            assets.append(asset_de(
-                escena_gs, uri, id_="asset.gs", kind=Clase.MESH_GS_SCENE, visit=visita.id,
-                frame=FRAME_IOS, media_type="application/octet-stream",
-                load_priority=25,
+        # ⚠️ **La ESCENA, ademas del STL.** El §3.1 dibuja `scene/scene.glb` como «STL
+        # convertido» y el §1.1 dice que UOS no re-encodea datos fuente: las dos cosas solo
+        # son compatibles si el convertido es presentacion y el original se queda. glTF hace
+        # falta porque un STL no puede llevar ni indices ni atributos, y el §11.3 pide una
+        # malla a la que colgarle cosas. Se construye desde la malla INGERIDA para que el
+        # orden de vertices —y con el las etiquetas— se conserve.
+        # ⚠️ **La registracion se calcula ANTES que la escena**, y no es un detalle de
+        # orden: el §5.1 pide que la relacion GS→malla vaya codificada como `matrix` del
+        # nodo de gaussianas colgado bajo el de la malla. Sin la transformada no se puede
+        # construir la escena, solo un `.glb` con la malla suelta.
+        registros = self._registros(snapshot)
+        al_canonico = registros[0].transform_4x4_row_major if registros else None
+        nodos_gs: list[NodoGS] = []
+
+        # Las capas de gaussianas. Son tres cosas distintas con el mismo `kind`, asi que
+        # cada una lleva su descriptor: el campo es densidad MEDIDA, el compuesto es medida
+        # de dos modalidades, y la apariencia es reconstruccion contra renders.
+        for ruta, id_, papel, medido, marco, nota in (
+            (campo, "asset.field", "campo gaussiano del twin", True, FRAME_CBCT,
+             "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
+             "las escalas van en milimetros lineales, NO en logaritmo"),
+            (compuesto, "asset.composite", "compuesto CBCT + escaner", True, FRAME_CBCT,
+             "dos modalidades en un fichero, con una columna `origen` por gaussiana. La "
+             "encia lleva `density = 0` porque el escaner no mide atenuacion"),
+            (escena_gs, "asset.gs", "apariencia del escaner", False, FRAME_IOS,
+             "reconstruida entrenando 3DGS contra renders de la malla, NO medida. Su "
+             "color y su opacidad son del modelo, no del paciente"),
+        ):
+            if ruta is None or not ruta.exists():
+                continue
+            # El nombre dentro del contenedor describe QUE es, no de que variable sale.
+            # `asset.gs` daria `scene/gs.ply`, que no dice nada a quien lo abra.
+            corto = {"asset.gs": "appearance"}.get(id_, id_.split(".")[1])
+            uri = f"scene/{corto}{ruta.suffix.lower()}"
+            descriptor = f"scene/{corto}.gs.json"
+            ficheros[uri] = ruta
+            extras_escena[descriptor] = json_de(self._descriptor_gs(
+                snapshot, papel=papel, medido=medido, marco=marco, nota=nota,
             ))
+            assets.append(asset_de(
+                ruta, uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                frame=marco, media_type="application/octet-stream",
+                # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
+                load_priority=25, sidecar_uri=descriptor,
+            ))
+            nodos_gs.append(NodoGS(
+                uri=uri, nombre=papel,
+                # Lo que esta en el marco del CBCT necesita la transformada al canonico;
+                # la apariencia ya vive en el del escaner, que ES el canonico.
+                matriz_fila=(al_canonico if marco == FRAME_CBCT else None),
+                extras={"uos_descriptor_uri": descriptor, "uos_measured": medido},
+            ))
+
+        # La ESCENA, con la malla y los nodos GS colgando de ella.
+        malla_ingerida = self._malla_ingerida(snapshot)
+        if malla_ingerida is None:
+            # Respaldo: convertir el fichero del escaner. Sale una sopa de triangulos y,
+            # sobre todo, SIN etiquetas — indexan el orden deduplicado del `mesh-agent`.
+            try:
+                pos_stl, caras_stl = lee_stl_binario(malla.read_bytes())
+                malla_ingerida = {"positions": pos_stl, "faces": caras_stl}
+                if etiquetas_ios is not None:
+                    aviso_derivados.append(
+                        "la segmentacion NO viaja: la escena se construyo del fichero STL "
+                        "y no de la malla ingerida, asi que las etiquetas no indexan sus "
+                        "vertices"
+                    )
+                    etiquetas_ios = None
+            except ValueError as e:
+                aviso_derivados.append(
+                    f"el .uos no lleva escena (`scene/scene.glb`) y se queda por debajo de "
+                    f"UOS-Core: {e}"
+                )
+        if malla_ingerida is not None:
+            glb = construye_glb(
+                malla_ingerida["positions"], malla_ingerida["faces"],
+                malla_ingerida.get("normals"), nombre="scan",
+                generador=f"{self.name}@{self.version}",
+                nodos_gs=nodos_gs,
+                extras={
+                    "uos_frame": FRAME_IOS,
+                    "uos_units": "mm",
+                    "uos_source_asset": "asset.ios",
+                    "uos_note": (
+                        "presentacion: float32 desde float64. El asset reversible es "
+                        "asset.ios, byte-identico al fichero del escaner"
+                    ),
+                },
+            )
+            extras_escena["scene/scene.glb"] = glb
+            assets.append(asset_de_bytes(
+                glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
+                visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
+                load_priority=10,
+            ))
+
+            # `derived/` — la segmentacion, Layer 3 y desmontable (§5.5).
+            if etiquetas_ios is not None:
+                etq = np.asarray(etiquetas_ios)
+                if len(etq) == len(malla_ingerida["positions"]):
+                    crudo = codifica_etiquetas(etq)
+                    meta = meta_segmentacion(
+                        etq, asset_origen="asset.scene",
+                        modelo="ash-seg-teeth",
+                        version=str(getattr(self, "version", "0")),
+                        pesos_sha256=(None if modelo_segmentacion is None
+                                      else sha256_de_fichero(modelo_segmentacion)),
+                    )
+                    extras_escena[SEGMENTACION] = crudo
+                    extras_escena[SEGMENTACION_META] = json_de(meta)
+                    assets.append(asset_de_bytes(
+                        crudo, SEGMENTACION, id_="asset.seg_teeth",
+                        kind=Clase.DERIVED_SEG, visit=visita.id, frame=FRAME_IOS,
+                        media_type="application/octet-stream",
+                        regulatory=Regulatorio(layer=3, status="investigational"),
+                        sidecar_uri=SEGMENTACION_META,
+                    ))
+                else:
+                    aviso_derivados.append(
+                        f"la segmentacion NO viaja en `derived/`: trae {len(etq)} "
+                        f"etiquetas y la escena {len(malla_ingerida['positions'])} "
+                        "vertices, asi que no se pueden cruzar por indice"
+                    )
         for i, foto in enumerate(imagenes or []):
             if not foto.exists():
                 continue
@@ -176,6 +313,18 @@ class UOSExportAgent(BaseExportAgent):
                 foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
+            ))
+
+        # La capa clinica: lo que el informe dice de cada pieza, las medidas que no caben
+        # en una pieza, y los motivos del gate. Ver `clinico.py` — es EXTENSION nuestra.
+        clinico = capa_clinica(snapshot, list(motivos or []))
+        if clinico["teeth"] or clinico["measurements"]:
+            crudo_clinico = json_de(clinico)
+            extras_escena[OBSERVACIONES] = crudo_clinico
+            assets.append(asset_de_bytes(
+                crudo_clinico.encode("utf-8"), OBSERVACIONES, id_="asset.clinical",
+                kind=Clase.DOCUMENT, visit=visita.id, frame=FRAME_IOS,
+                media_type="application/json", load_priority=15,
             ))
 
         registros = self._registros(snapshot)
@@ -225,6 +374,7 @@ class UOSExportAgent(BaseExportAgent):
             ))
 
         fhir = self._fhir(assets)
+        extensiones = self._extensiones(assets)
         vistas, aviso_vistas = self._vistas(snapshot, visita, etiquetas_ios,
                                             con_apariencia="asset.gs" in
                                             {a.id for a in assets})
@@ -249,6 +399,11 @@ class UOSExportAgent(BaseExportAgent):
             assets=assets,
             registrations=registros,
             fhir_map=fhir,
+            # ⚠️ Nada nuestro va en `extensions_required`. Todo lo que anadimos SUMA
+            # informacion; un visor conforme tiene que poder abrir el caso sin
+            # entender ninguna de ellas y ensenar la escena, el volumen y las fotos.
+            extensions=extensiones,
+            extensions_used=sorted(extensiones),
             provenance=Procedencia(prev_manifest_sha256=previo_sha, chain=CADENA),
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +425,7 @@ class UOSExportAgent(BaseExportAgent):
                     json_manifiesto=json_manifiesto, extras={
             VISTAS: json_de({"views": [v.model_dump(mode="json") for v in vistas]}),
             CADENA: cadena.json_canonico(),
+            **extras_escena,
             **extras,
         })
 
@@ -287,7 +443,7 @@ class UOSExportAgent(BaseExportAgent):
             )
 
         avisos = (list(motivos or []) + aviso_vistas + aviso_volumen
-                  + list(informe.avisos))
+                  + aviso_derivados + list(informe.avisos))
         # Lo estructurado vive en el MANIFIESTO, que es el registro del caso. Meterlo
         # tambien en `ExportOutput` daria dos sitios donde la misma verdad puede divergir,
         # y el contrato de exportacion es compartido: ensancharlo por un canal obliga a
@@ -376,6 +532,94 @@ class UOSExportAgent(BaseExportAgent):
             )
         }
         for a in assets:
+            if a.id == "asset.clinical":
+                # ⚠️ NO `DocumentReference` como el resto de documentos: lo que lleva son
+                # medidas por diente, y el recurso de FHIR para una medida clinica es
+                # `Observation`. Mapearlo como adjunto lo dejaria fuera del alcance de
+                # cualquier consulta del PMS, que es el punto del §9.
+                fuera[a.id] = RecursoFHIR(
+                    resource_type="Observation",
+                    note="una Observation por pieza y por medida, con su `subject` y su "
+                         "`bodySite` en FDI",
+                )
+                continue
             tipo, nota = _RECURSO[a.kind]
             fuera[a.id] = RecursoFHIR(resource_type=tipo, note=nota)
+        return fuera
+
+    def _malla_ingerida(self, snapshot: TwinSnapshot) -> dict | None:
+        """La malla tal como la guardo el `mesh-agent`: vertices, caras y normales.
+
+        ⚠️ **Esta y no el fichero STL**, y la diferencia importa: el STL es sopa de
+        triangulos y esta es la malla deduplicada cuyo ORDEN DE VERTICES indexan las
+        etiquetas FDI. Construir la escena del STL daria tres veces mas vertices y ninguna
+        forma de casar la segmentacion con ellos.
+        """
+        if snapshot.surface_ref is None or self.store is None:
+            return None
+        try:
+            malla = self.store.load(snapshot.surface_ref)
+        except (KeyError, OSError, ValueError):
+            return None
+        return malla if "positions" in malla and "faces" in malla else None
+
+    def _descriptor_gs(
+        self, snapshot: TwinSnapshot, *, papel: str, medido: bool, marco: str,
+        nota: str,
+    ) -> dict[str, Any]:
+        """El sidecar de un asset de gaussianas: que es y con que semantica.
+
+        ⚠️ **`esquema_campo` viaja tal cual**, y es la pieza que evita el fallo silencioso
+        que el contrato del twin ya documenta: el PLY de facto de 3DGS usa `scale_0..2` y
+        `rot_0..3` con los MISMOS nombres y guarda el LOGARITMO de la escala; aqui van
+        milimetros lineales. Un visor estandar abriendo esto no fallaria — exponenciaria
+        nuestros milimetros y renderizaria basura con muy buen aspecto. Por eso las
+        columnas se declaran en vez de suponerse.
+        """
+        return {
+            "role": papel,
+            "measured": medido,
+            "note": nota,
+            "profile": snapshot.perfil_campo,
+            "frame": marco,
+            "units": "mm",
+            "n_primitives": snapshot.n_primitives,
+            "columns": [
+                {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
+                 "measured": c.medido, "derived_from": c.derivado_de,
+                 "meaning": c.significado, "vocabulary": c.vocabulario}
+                for c in snapshot.esquema_campo
+            ],
+        }
+
+    def _extensiones(self, assets: list) -> dict[str, Extension]:
+        """Lo que este emisor anade al borrador, dicho en voz alta.
+
+        Sin esto, un lector ajeno ignora nuestras extensiones **sin enterarse de que las
+        ignora**, que convierte un formato abierto en uno que solo su emisor lee entero.
+        Con esto puede decidir: leerlas, saltarlas a sabiendas, o avisar al usuario.
+        """
+        ids = {a.id: a.uri for a in assets}
+        fuera: dict[str, Extension] = {}
+        if "asset.clinical" in ids:
+            fuera["ash_clinical"] = Extension(
+                name="ash_clinical", version="1.0", uri=ids["asset.clinical"],
+                schema_id="ash-clinical/1.0",
+                description=(
+                    "atributos clinicos por pieza (pH, raices, conductos, hallazgos) y "
+                    "medidas no regionales, con la procedencia de cada valor. El borrador "
+                    "los manda a FHIR (§9) y entonces un .uos suelto no puede contestar "
+                    "que dice el informe de una pieza"
+                ),
+            )
+        if any(a.id in ("asset.field", "asset.composite") for a in assets):
+            fuera["ash_gs_measured"] = Extension(
+                name="ash_gs_measured", version="1.0",
+                description=(
+                    "descriptor `.gs.json` por capa de gaussianas: declara si es MEDIDA o "
+                    "reconstruida y el esquema de sus columnas. El borrador trata el 3DGS "
+                    "como apariencia en marco de reconstruccion; aqui hay campos ajustados "
+                    "a la densidad del CBCT, en el marco del paciente y con error en HU"
+                ),
+            )
         return fuera
