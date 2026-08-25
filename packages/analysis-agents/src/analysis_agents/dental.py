@@ -138,6 +138,22 @@ LONGITUD_MM: dict[str, float] = {
 # colocado corre la cota entera.
 PERCENTIL_OCLUSAL = 2.0
 
+# ⚠️ **El eje POR PIEZA sacado del CBCT se probo y NO vale.** Quedaba escrito arriba que
+# el eje tendria que venir del CBCT, «donde la raiz si se ve», y se implemento: una
+# segunda pasada que media el eje mayor de la nube ya nombrada de cada diente y recortaba
+# sobre el. Medido sobre un caso clinico, la idea se cae por donde no se esperaba —no por
+# la circularidad, sino porque la nube esta tan contaminada de hueso que su direccion
+# principal sigue la elongacion del bulto y no la del diente: `eje·global` salia entre
+# 0,29 y 0,50, o sea 60 grados, y la corona —un casquete de 8 mm— se proyectaba sobre ese
+# eje a lo largo de 14 a 25 mm. Filtrar la nube por densidad para quedarse solo con el
+# tejido dental tampoco lo endereza (0,29-0,50 igual).
+#
+# Con un eje asi, el plano de corte queda oblicuo y quita raiz buena dejando hueso. Se
+# deja el eje GLOBAL, y la consecuencia —12 de 14 raices mas largas de lo que su tipo
+# admite— la DECLARA el `composite-mesh-export-agent` en vez de taparla con un recorte
+# que no se sostiene. Cerrarlo de verdad necesita un eje que no salga de esta nube: una
+# anotacion, o una segmentacion del CBCT que separe diente de hueso mejor que la actual.
+
 
 # Suelo y techo de probabilidad. **No es cosmética**: `SegmentationAgent` rechaza valores
 # no finitos, y `log(0)` es `-inf`. Pasa en cuanto el modelo devuelve exactamente 1,0 para
@@ -156,6 +172,11 @@ K_VECINDARIO = 16
 FRACCION_RODEADO = 0.85
 FRACCION_ACUERDO = 0.85
 
+# Pasadas de relleno. Rellenar un hueco deja al descubierto el siguiente, asi que una sola
+# deja residuo: medido, los huecos van 3.299 → 1.519 → 1.198 → 1.096 → 1.051 y el proceso
+# converge solo. Se para cuando deja de cambiar, no al agotar las pasadas.
+PASADAS_RELLENO = 4
+
 
 def rellena_etiquetas(
     vertices: np.ndarray,
@@ -164,6 +185,7 @@ def rellena_etiquetas(
     k: int = K_VECINDARIO,
     rodeado: float = FRACCION_RODEADO,
     acuerdo: float = FRACCION_ACUERDO,
+    pasadas: int = PASADAS_RELLENO,
 ) -> np.ndarray:
     """Cierra los agujeros del etiquetado del escaner. No extiende las piezas.
 
@@ -180,7 +202,34 @@ def rellena_etiquetas(
 
     Que el numero salga pequeno es el resultado, no un fallo del metodo: los huecos de
     verdad son pocos, y lo que parecia hueco era la banda del margen.
+
+    **Se itera, porque rellenar un hueco deja al descubierto el siguiente.** Con una sola
+    pasada quedaba residuo y en el visor se veia: puntos de encia salpicados sobre las
+    coronas. Medido sobre un caso clinico, los huecos van 3.299 → 1.519 → 1.198 → 1.096 →
+    1.051, y el total de corona sube de 78.662 a 81.041 vertices, un 3%. Los incrementos
+    caen en progresion (1.851, 358, 115, 55), que es la firma de estar cerrando agujeros y
+    no de comerse el margen: si estuviera avanzando sobre la encia el numero no convergeria.
     """
+
+    v = np.asarray(vertices, dtype=np.float64)
+    e = np.asarray(etiquetas).astype(np.int64).copy()
+    for _ in range(max(1, pasadas)):
+        nuevo = _rellena_una_pasada(v, e, k=k, rodeado=rodeado, acuerdo=acuerdo)
+        if np.array_equal(nuevo, e):
+            break
+        e = nuevo
+    return e
+
+
+def _rellena_una_pasada(
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    k: int,
+    rodeado: float,
+    acuerdo: float,
+) -> np.ndarray:
+    """Una pasada de relleno. Ver `rellena_etiquetas`, que la repite hasta que converge."""
     from scipy.spatial import cKDTree
 
     v = np.asarray(vertices, dtype=np.float64)
@@ -333,6 +382,19 @@ class SegmentadorDental:
             pendiente[idx[ok]] = False
         return fuera, cerca
 
+    @staticmethod
+    def _recorta(
+        puntos: np.ndarray,
+        fdi: np.ndarray,
+        cotas: dict[int, tuple[np.ndarray, np.ndarray, float]],
+    ) -> None:
+        """Quita de cada pieza lo que pasa de su cota apical. **Muta `fdi`.**"""
+        for codigo, (eje, origen, cota) in cotas.items():
+            idx = np.flatnonzero(fdi == codigo)
+            if not len(idx):
+                continue
+            fdi[idx[(puntos[idx] - origen) @ eje > cota]] = 0
+
     def __call__(self, points: np.ndarray) -> np.ndarray:
         puntos = np.asarray(points, dtype=np.float64)
         n, c = len(puntos), max(self.codes) + 1
@@ -350,11 +412,7 @@ class SegmentadorDental:
 
         # Mas alla de la longitud que el tipo de diente admite, no es ese diente: es el
         # hueso que lo rodea. Ver `LONGITUD_MM` — y el apice pasa a ser SUPUESTO.
-        for codigo, (eje, origen, cota) in self._cota_apical.items():
-            idx = np.flatnonzero(fdi == codigo)
-            if not len(idx):
-                continue
-            fdi[idx[(puntos[idx] - origen) @ eje > cota]] = 0
+        self._recorta(puntos, fdi, self._cota_apical)
 
         # Junto a una corona medida, el escaner manda. Ver `RADIO_CORONA_MM`.
         junto_a_corona = (fdi > 0) & (dist_corona <= self.radio_corona_mm)
@@ -448,3 +506,203 @@ def absorbe_islas(
         e[suyos] = destino
         actas.append((fdi, destino, len(suyos)))
     return e, actas
+
+
+# Vecinos con los que se vota el codigo de un vertice al afinar la frontera entre piezas
+# contiguas, y que fraccion de ellos tiene que coincidir para cambiarlo. Medido sobre un
+# caso clinico: con k=16 y 0,6 el area de caras que mezclan DOS dientes baja de 308 a 92
+# mm2 reasignando 3.624 vertices; con k=24 baja a 88 —no compensa el coste— y subiendo el
+# acuerdo a 0,7 sube a 136, porque deja de tocar justo la banda difusa que hay que afinar.
+K_FRONTERA = 16
+ACUERDO_FRONTERA = 0.6
+PASADAS_FRONTERA = 3
+
+
+def afina_fronteras(
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    k: int = K_FRONTERA,
+    acuerdo: float = ACUERDO_FRONTERA,
+    pasadas: int = PASADAS_FRONTERA,
+) -> tuple[np.ndarray, int]:
+    """Afila la frontera entre dientes CONTIGUOS. Devuelve `(etiquetas, reasignados)`.
+
+    El fallo que arregla se ve al encender una pieza en el visor: se enciende tambien un
+    trozo de la de al lado. Medido sobre un caso clinico, el **7,0% del area del escaneo**
+    (308 mm2) esta en caras cuyos vertices pertenecen a dos dientes distintos, y los pares
+    son todos vecinos —(26,27), (15,16), (21,22), (11,21)—. El contacto interproximal es
+    una superficie continua en la malla, asi que el modelo no tiene ahi ningun borde
+    geometrico al que agarrarse y la etiqueta sale difuminada.
+
+    Se vota por mayoria entre los vecinos mas proximos y se repite unas pocas pasadas. Es
+    deliberadamente tonto: la alternativa —un corte de grafo con termino de curvatura—
+    haria falta si el problema fuera decidir DONDE esta el borde, y no lo es. El borde
+    esta donde las dos mayorias se encuentran; lo que sobra es el ruido de alrededor.
+
+    ⚠️ **Solo se vota entre DIENTES.** Un vertice de encia no se convierte en diente ni al
+    reves: la banda corona/encia es el margen gingival, que es una frontera clinica de
+    verdad —12,8% del area en el mismo caso— y difuminarla o moverla seria borrar el dato
+    que un periodoncista viene a mirar. De dar etiqueta a lo que no la tiene ya se ocupa
+    `rellena_etiquetas`, con su propio criterio.
+    """
+    from scipy.spatial import cKDTree
+
+    v = np.asarray(vertices, dtype=np.float64)
+    e = np.asarray(etiquetas).astype(np.int64).copy()
+    codigos = np.array(sorted({int(x) for x in np.unique(e) if x > 0}), dtype=np.int64)
+    if len(codigos) < 2 or len(v) != len(e) or k < 1:
+        return e, 0
+
+    _, vecinos = cKDTree(v).query(v, k=min(k + 1, len(v)))
+    vecinos = np.atleast_2d(vecinos)[:, 1:]
+
+    original = e.copy()
+    for _ in range(pasadas):
+        alrededor = e[vecinos]
+        # Cuantos vecinos de cada codigo tiene cada vertice. Con una quincena de codigos
+        # sale mas barato contar por codigo que buscar la moda fila a fila.
+        cuenta = np.stack([(alrededor == c).sum(axis=1) for c in codigos], axis=1)
+        total = cuenta.sum(axis=1)
+        mayoria = codigos[cuenta.argmax(axis=1)]
+        fraccion = np.divide(
+            cuenta.max(axis=1), total, out=np.zeros(len(e), dtype=float), where=total > 0
+        )
+        cambia = (e > 0) & (total > 0) & (mayoria != e) & (fraccion >= acuerdo)
+        if not cambia.any():
+            break
+        e[cambia] = mayoria[cambia]
+    return e, int((e != original).sum())
+
+
+# Pasadas de limpieza de motas. Quitar una deja al descubierto a sus vecinas, asi que una
+# sola pasada deja siempre residuo; se para cuando deja de cambiar.
+PASADAS_MOTAS = 4
+
+
+def quita_motas(
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    k: int = K_VECINDARIO,
+    rodeado: float = FRACCION_RODEADO,
+    pasadas: int = PASADAS_MOTAS,
+) -> tuple[np.ndarray, int]:
+    """Un vertice de diente rodeado de encia es encia. Devuelve `(etiquetas, quitados)`.
+
+    Es el **simetrico exacto** de `rellena_etiquetas`, y existe porque aquella solo va en
+    un sentido: da etiqueta a lo que no la tiene y nunca se la quita a lo que la tiene mal.
+    El resultado, medido sobre un caso clinico tras pasar el pipeline entero, eran **692
+    vertices de diente flotando en la encia** que nadie tocaba. En el visor eso es lo que
+    se ve: motas color hueso salpicadas sobre el rosa, y una linea de encia que parece
+    sucia aunque las coronas esten bien.
+
+    ⚠️ **Esto NO mueve el margen gingival**, y el umbral es el mismo que usa
+    `rellena_etiquetas` justamente para eso: un vertice del margen tiene vecinos de las dos
+    clases, asi que no llega al 0,85 y no se toca. Lo que se quita esta en mitad de la
+    encia, lejos de cualquier corona. Medido: a 0,85 se van 340 vertices —37 mm2— y
+    ninguna pieza pierde mas del 1,1% de los suyos.
+
+    Se itera porque quitar una mota deja al descubierto a sus vecinas: con una sola pasada
+    siempre queda residuo. Se para cuando deja de cambiar, no al agotar las pasadas.
+    """
+    from scipy.spatial import cKDTree
+
+    v = np.asarray(vertices, dtype=np.float64)
+    e = np.asarray(etiquetas).astype(np.int64).copy()
+    if len(v) != len(e) or not (e > 0).any():
+        return e, 0
+
+    _, vecinos = cKDTree(v).query(v, k=min(k + 1, len(v)))
+    vecinos = np.atleast_2d(vecinos)[:, 1:]
+
+    quitados = 0
+    for _ in range(pasadas):
+        sola = (e > 0) & ((e[vecinos] == 0).mean(axis=1) >= rodeado)
+        if not sola.any():
+            break
+        e[sola] = 0
+        quitados += int(sola.sum())
+    return e, quitados
+
+
+# Tamano maximo de una componente de encia para considerarla un HUECO, en fraccion de la
+# componente mayor. La encia de una arcada es UNA region conectada; una isla de encia
+# suelta dentro de una corona no lo es. El umbral es una salvaguarda por si un escaneo
+# trae la encia partida en dos trozos legitimos, no un ajuste fino: medido sobre un caso
+# clinico, la mayor tiene 30.000 vertices y la siguiente 300, dos ordenes de magnitud.
+FRACCION_HUECO = 0.05
+
+
+def rellena_huecos_interiores(
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    k: int = K_VECINDARIO,
+    fraccion: float = FRACCION_HUECO,
+) -> tuple[np.ndarray, int]:
+    """Una isla de encia dentro de una corona es un hueco. Devuelve `(etiquetas, n)`.
+
+    `rellena_etiquetas` cierra huecos **por vecindario**, y por eso se para donde el hueco
+    es mayor que el vecindario: quedan islas de encia en mitad de un diente que ninguna
+    pasada alcanza. En el visor eso es lo que mas se ve, porque el color va por vertice y
+    se interpola: un solo vertice mal puesto mancha los seis triangulos que lo tocan, asi
+    que mil huecos son unos seis mil triangulos con una mota rosa encima.
+
+    ⚠️ **El criterio es la CONECTIVIDAD, y el primer intento fue por distancia a «encia de
+    verdad» definida como estar rodeado de encia. Eso es circular y se cayo en cuanto se
+    probo:** un hueco lo bastante grande tiene su interior rodeado de si mismo, se
+    clasifica como encia buena, y entonces el resto del hueco esta pegadisimo a «encia» y
+    no se rellena. Sobre datos reales colaba porque los huecos son pequenos e irregulares
+    — que es la peor clase de fallo, el que solo aparece cuando el dato cambia.
+
+    La encia de una arcada es **una sola region conectada**, margen incluido. Cualquier
+    otra componente de encia esta rodeada de diente por todos lados, y eso no es anatomia.
+    El margen no puede entrar: forma parte de la componente grande.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    v = np.asarray(vertices, dtype=np.float64)
+    e = np.asarray(etiquetas).astype(np.int64).copy()
+    if len(v) != len(e) or not (e > 0).any() or not (e == 0).any():
+        return e, 0
+
+    _, vecinos = cKDTree(v).query(v, k=min(k + 1, len(v)))
+    vecinos = np.atleast_2d(vecinos)[:, 1:]
+
+    encia = np.flatnonzero(e == 0)
+    indice = {int(x): i for i, x in enumerate(encia)}
+    filas, columnas = [], []
+    for i, x in enumerate(encia):
+        for y in vecinos[x]:
+            j = indice.get(int(y))
+            if j is not None:
+                filas.append(i)
+                columnas.append(j)
+    if not filas:
+        return e, 0
+    grafo = coo_matrix(
+        (np.ones(len(filas)), (filas, columnas)), shape=(len(encia), len(encia))
+    )
+    n_comp, etiqueta_comp = connected_components(grafo, directed=False)
+    if n_comp < 2:
+        return e, 0
+
+    tamanos = np.bincount(etiqueta_comp)
+    tope = fraccion * tamanos.max()
+    islas = np.flatnonzero(tamanos <= tope)
+    if not len(islas):
+        return e, 0
+
+    n = 0
+    for i in encia[np.isin(etiqueta_comp, islas)]:
+        d = e[vecinos[i]]
+        d = d[d > 0]
+        if len(d) == 0:
+            continue
+        codigos, cuenta = np.unique(d, return_counts=True)
+        e[i] = int(codigos[cuenta.argmax()])
+        n += 1
+    return e, n

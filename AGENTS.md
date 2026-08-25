@@ -714,6 +714,14 @@ SegmentationOutput
   el umbral, el mismo FDI en dos instancias, una clase sin código FDI en el mapeo, y
   más de un 10% de los puntos de diente descartados por fragmentación — que la
   agregación se los coma **en silencio** es el riesgo, no que se los coma.
+- ⚠️ **Una isla de encía dentro de una corona es un hueco, y se cierra por CONECTIVIDAD.**
+  El relleno por vecindario se para donde el hueco es mayor que el vecindario, y en el
+  visor eso es lo que más se ve: el color va por vértice y se interpola, así que un vértice
+  mal puesto mancha los seis triángulos que lo tocan. La encía de una arcada es **una sola
+  región conectada**, margen incluido; cualquier otra componente está rodeada de diente y
+  eso no es anatomía. El primer intento fue por distancia a «encía de verdad» definida como
+  estar rodeado de encía, y **es circular**: un hueco grande tiene su interior rodeado de sí
+  mismo y pasa por encía buena. Sobre datos reales colaba — la peor clase de fallo.
 - ⚠️ **Y el simétrico: un vértice de diente rodeado de encía es encía.** `rellena_etiquetas`
   sólo iba en un sentido —daba etiqueta a lo que no la tenía y nunca se la quitaba a lo que
   la tenía mal—, así que tras el pipeline entero quedaban **692 vértices de diente flotando

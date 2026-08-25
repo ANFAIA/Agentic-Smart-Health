@@ -13,7 +13,10 @@ from analysis_agents import (
     GUM_CLASS,
     SegmentadorDental,
     absorbe_islas,
+    afina_fronteras,
+    quita_motas,
     rellena_etiquetas,
+    rellena_huecos_interiores,
 )
 from analysis_agents.segmentation import SegmentationAgent
 
@@ -393,3 +396,181 @@ def test_una_isla_rodeada_de_ENCIA_no_se_absorbe():
     nuevo, actas = absorbe_islas(pos, etq)
     assert actas == []
     assert int((nuevo == 28).sum()) == 55, "la pieza suelta ha perdido su código"
+
+
+# --- frontera entre dientes contiguos --------------------------------------- #
+def _dos_contiguos_con_frontera_sucia() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Dos piezas que se tocan, con la etiqueta salpicada a los dos lados del contacto.
+
+    Es la forma del fallo real: el contacto interproximal es superficie continua en la
+    malla, así que el modelo no tiene ahí ningún borde geométrico y la etiqueta sale
+    difuminada. Medido sobre un caso clínico, el 7,0 % del área del escaneo estaba en
+    caras con dos dientes distintos.
+    """
+    rng = np.random.default_rng(0)
+    a = rng.uniform(-3, 0, (600, 3))
+    b = rng.uniform(0, 3, (600, 3))
+    pos = np.concatenate([a, b])
+    limpio = np.concatenate([np.full(600, 26), np.full(600, 27)]).astype(np.int64)
+    sucio = limpio.copy()
+    # Salpica: cerca del contacto, uno de cada tres vértices lleva el código del vecino.
+    cerca = np.flatnonzero(np.abs(pos[:, 0]) < 0.8)
+    sucio[cerca[::3]] = np.where(limpio[cerca[::3]] == 26, 27, 26)
+    return pos, sucio, limpio
+
+
+def test_la_frontera_entre_vecinos_se_afila():
+    """Sin esto, encender una pieza en el visor enciende también un trozo de la de al
+    lado — que es exactamente como se descubrió."""
+    pos, sucio, limpio = _dos_contiguos_con_frontera_sucia()
+    antes = int((sucio != limpio).sum())
+
+    afinado, reasignados = afina_fronteras(pos, sucio)
+
+    despues = int((afinado != limpio).sum())
+    assert despues < antes / 3, f"apenas ha afilado: {antes} → {despues}"
+    assert reasignados > 0
+
+
+def test_afinar_no_puede_crear_ni_borrar_una_pieza():
+    """Vota entre los códigos que ya hay: es un filtro de frontera, no un clasificador.
+    Si pudiera hacer desaparecer una pieza sería otra cosa y necesitaría otro gate."""
+    pos, sucio, _ = _dos_contiguos_con_frontera_sucia()
+    afinado, _ = afina_fronteras(pos, sucio)
+
+    assert {int(x) for x in afinado} == {int(x) for x in sucio}
+
+
+def test_el_margen_gingival_NO_se_toca():
+    """La banda corona/encía es una frontera clínica de verdad —12,8 % del área en el
+    caso medido— y es lo que un periodoncista viene a mirar. Difuminarla o moverla sería
+    borrar el dato."""
+    rng = np.random.default_rng(1)
+    diente = rng.uniform(0, 3, (600, 3))
+    encia = rng.uniform(-3, 0, (600, 3))
+    pos = np.concatenate([diente, encia])
+    etq = np.concatenate([np.full(600, 26), np.zeros(600)]).astype(np.int64)
+
+    afinado, _ = afina_fronteras(pos, etq)
+    assert int((afinado == 0).sum()) == 600, "la encía ha perdido vértices"
+    assert int((afinado == 26).sum()) == 600, "el diente ha ganado vértices de encía"
+
+
+def test_una_sola_pieza_no_se_toca():
+    """Con un solo código no hay frontera entre vecinos que afilar."""
+    rng = np.random.default_rng(2)
+    pos = rng.uniform(0, 3, (300, 3))
+    etq = np.full(300, 26, dtype=np.int64)
+
+    afinado, n = afina_fronteras(pos, etq)
+    assert n == 0
+    assert np.array_equal(afinado, etq)
+
+
+# --- motas de diente en la encía -------------------------------------------- #
+def test_una_mota_de_diente_en_mitad_de_la_encia_se_quita():
+    """El simétrico de `rellena_etiquetas`, que sólo iba en un sentido. Medido tras el
+    pipeline entero quedaban 692 vértices de diente flotando en la encía que nadie
+    tocaba, y en el visor eso son motas color hueso salpicadas sobre el rosa."""
+    rng = np.random.default_rng(0)
+    encia = rng.uniform(-4, 4, (900, 3))
+    etq = np.zeros(900, dtype=np.int64)
+    # Media docena de motas sueltas, cada una lejos de las demás.
+    motas = np.array([0, 150, 300, 450, 600, 750])
+    etq[motas] = 26
+
+    limpio, quitados = quita_motas(encia, etq)
+    assert quitados == len(motas)
+    assert not (limpio > 0).any()
+
+
+def test_el_margen_gingival_sobrevive_a_quitar_motas():
+    """El umbral es el mismo que usa `rellena_etiquetas` justamente para esto: un vértice
+    del margen tiene vecinos de las dos clases, no llega al 0,85 y no se toca. Lo que se
+    quita está en mitad de la encía, lejos de cualquier corona."""
+    rng = np.random.default_rng(1)
+    diente = rng.uniform(0.05, 4, (700, 3))
+    encia = rng.uniform(-4, -0.05, (700, 3))
+    pos = np.concatenate([diente, encia])
+    etq = np.concatenate([np.full(700, 26), np.zeros(700)]).astype(np.int64)
+
+    limpio, quitados = quita_motas(pos, etq)
+    assert quitados == 0, "se ha comido el borde del diente"
+    assert int((limpio == 26).sum()) == 700
+
+
+def test_rellenar_CONVERGE_y_no_avanza_sobre_la_encia():
+    """Rellenar un hueco deja al descubierto el siguiente, asi que la funcion itera.
+
+    Lo que hay que atar de una iteracion no es que rellene mas —sobre un hueco esferico
+    aislado una sola pasada ya lo cierra— sino que **pare**. Medido sobre un caso clinico
+    los huecos van 3.299 → 1.519 → 1.198 → 1.096 → 1.051 y los incrementos caen en
+    progresion; si en vez de cerrar agujeros estuviera avanzando sobre la encia, el numero
+    no convergeria y cada pasada se comeria un poco mas de margen.
+    """
+    rng = np.random.default_rng(2)
+    pos = rng.uniform(0, 4, (4000, 3))
+    etq = np.full(4000, 26, dtype=np.int64)
+    etq[rng.choice(4000, 400, replace=False)] = 0
+
+    estable = rellena_etiquetas(pos, etq)
+    otra_vez = rellena_etiquetas(pos, estable)
+
+    assert np.array_equal(estable, otra_vez), "no es punto fijo: seguiria creciendo"
+    assert int((estable > 0).sum()) < len(etq), "se ha comido la encia entera"
+
+
+# --- huecos en mitad de una corona ------------------------------------------- #
+def test_un_hueco_en_mitad_de_la_corona_se_rellena():
+    """Lo que más se ve en el visor, porque el color va por vértice y se interpola: un
+    solo vértice mal puesto mancha los seis triángulos que lo tocan. `rellena_etiquetas`
+    no los alcanza porque son mayores que el vecindario."""
+    rng = np.random.default_rng(0)
+    diente = rng.uniform(0, 6, (2500, 3))
+    encia = rng.uniform(-6, -2, (1200, 3))
+    pos = np.concatenate([diente, encia])
+    etq = np.concatenate([np.full(2500, 26), np.zeros(1200)]).astype(np.int64)
+    # Un hueco macizo en el centro del diente, lejísimos de la encía.
+    hueco = np.linalg.norm(diente - 3.0, axis=1) < 1.0
+    etq[: 2500][hueco] = 0
+
+    relleno, n = rellena_huecos_interiores(pos, etq)
+    assert n > 0
+    assert int((relleno[:2500] == 26).sum()) > int((etq[:2500] == 26).sum())
+    assert int((relleno[2500:] == 0).sum()) == 1200, "se ha comido encía de verdad"
+
+
+def test_el_margen_no_entra_porque_esta_PEGADO_a_la_encia():
+    """El criterio es la distancia a encía real, y eso es lo que lo hace seguro: un
+    vértice del margen gingival está pegado a la encía —lo es por definición— así que
+    nunca supera el umbral."""
+    rng = np.random.default_rng(1)
+    diente = rng.uniform(0.05, 4, (900, 3))
+    encia = rng.uniform(-4, -0.05, (900, 3))
+    pos = np.concatenate([diente, encia])
+    etq = np.concatenate([np.full(900, 26), np.zeros(900)]).astype(np.int64)
+
+    relleno, n = rellena_huecos_interiores(pos, etq)
+    assert n == 0, "ha movido el margen"
+    assert np.array_equal(relleno, etq)
+
+
+def test_el_hueco_toma_el_codigo_de_la_pieza_QUE_LO_RODEA():
+    """Si el hueco está dentro de la corona del 26, es del 26. Ponerle cualquier otro
+    código sería inventar una pieza donde no la hay."""
+    rng = np.random.default_rng(2)
+    a = rng.uniform(0, 4, (1200, 3))
+    b = rng.uniform(20, 24, (1200, 3))
+    # La encía tiene que ser MUCHO mayor que el hueco: el criterio es la conectividad y
+    # el tope está en el 5 % de la componente mayor, así que una encía pequeña convierte
+    # al hueco en una componente respetable y deja de serlo.
+    lejos = rng.uniform(-30, -24, (4000, 3))
+    pos = np.concatenate([a, b, lejos])
+    etq = np.concatenate([np.full(1200, 26), np.full(1200, 27), np.zeros(4000)]).astype(np.int64)
+    dentro = np.linalg.norm(b - 22.0, axis=1) < 0.9
+    etq[1200:2400][dentro] = 0
+
+    relleno, n = rellena_huecos_interiores(pos, etq)
+    assert n > 0
+    assert int((relleno[1200:2400] == 27).sum()) == 1200
+    assert int((relleno[1200:2400] == 26).sum()) == 0
