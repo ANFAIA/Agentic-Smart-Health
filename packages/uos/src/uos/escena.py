@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import struct
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -71,6 +71,66 @@ class NodoGS(NamedTuple):
     extras: dict | None = None
 
 
+def _primitivas(
+    idx: np.ndarray,
+    atributos: dict[str, int],
+    etiquetas: np.ndarray | None,
+    n_vertices: int,
+    _anade: Any,
+    accesos: list[dict],
+) -> list[dict]:
+    """Un *primitive* por diente, mas uno con el resto. Comparten POSITION y NORMAL.
+
+    Una cara pertenece a una pieza cuando sus **tres** vertices lo son. Con dos bastaria
+    para no perder el borde, pero arrastraria triangulos que cruzan al diente vecino y la
+    corona saldria con rebabas hacia los lados — mismo criterio que el exportador de la
+    malla compuesta, y por la misma razon.
+
+    Las caras que no son de ninguna pieza —encia, y las que cruzan de un diente a otro—
+    van a un primitive SIN `uos_fdi`. No se reparten ni se descartan: repartirlas
+    inventaria frontera y descartarlas dejaria agujeros en la malla que un visor pintaria
+    como perforaciones del escaneo.
+    """
+    def _accesor(indices: np.ndarray) -> int:
+        datos = np.ascontiguousarray(indices, dtype=np.uint32)
+        accesos.append({
+            "bufferView": _anade(datos, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
+            "count": int(datos.size), "type": "SCALAR",
+        })
+        return len(accesos) - 1
+
+    if etiquetas is None or len(etiquetas) != n_vertices or idx.size == 0:
+        return [{"attributes": atributos, "indices": _accesor(idx), "mode": 4}]
+
+    etq = np.asarray(etiquetas, dtype=np.int64)
+    caras = idx.reshape(-1, 3)
+    por_cara = etq[caras]
+    misma = (
+        (por_cara[:, 0] > 0)
+        & (por_cara[:, 0] == por_cara[:, 1])
+        & (por_cara[:, 1] == por_cara[:, 2])
+    )
+    suya = np.where(misma, por_cara[:, 0], 0)
+
+    primitivas: list[dict] = []
+    resto = caras[suya == 0]
+    if len(resto):
+        primitivas.append(
+            {"attributes": atributos, "indices": _accesor(resto.reshape(-1)), "mode": 4}
+        )
+    for fdi in sorted({int(x) for x in suya if x > 0}):
+        trozo = caras[suya == fdi].reshape(-1)
+        primitivas.append({
+            "attributes": atributos,
+            "indices": _accesor(trozo),
+            "mode": 4,   # TRIANGLES
+            # El codigo va como CADENA, igual que en el ejemplo del §5.1 (`"16"`): un FDI
+            # no es una cantidad y escribirlo como numero invita a sumarlo.
+            "extras": {"uos_fdi": str(fdi)},
+        })
+    return primitivas
+
+
 def construye_glb(
     posiciones: np.ndarray,
     caras: np.ndarray,
@@ -80,12 +140,24 @@ def construye_glb(
     generador: str = "agentic-smart-health",
     extras: dict | None = None,
     nodos_gs: list[NodoGS] | None = None,
+    etiquetas: np.ndarray | None = None,
 ) -> bytes:
     """La escena en un solo `bytes`. Indexada: el orden de vertices se conserva.
 
     Que se conserve no es un detalle de eficiencia: es lo que permite que
     `derived/seg_teeth` sea una lista de codigos indexada por vertice y que el visor los
     case sin nada mas. Reordenar aqui romperia esa union en silencio.
+
+    **`etiquetas`** (codigo FDI por vertice) parte la malla en un *primitive* por diente,
+    cada uno con `extras.uos_fdi`, que es lo que §5.1 llama «metadata odontologica por
+    sub-mesh». No es decoracion: el picking semantico de §11.3 esta definido SOBRE ese
+    campo, asi que sin el un visor ajeno abre el contenedor y no puede seleccionar un
+    diente por mucho que las etiquetas viajen en `derived/`. Nuestro visor las lee de
+    ahi; el de otro no tiene por que saber que existen.
+
+    ⚠️ **Lo que se parte es el indice, nunca las posiciones.** Todos los primitives
+    comparten el mismo accesor de POSITION y el mismo de NORMAL, asi que el orden de
+    vertices —y con el la union con `derived/seg_teeth`— se queda exactamente igual.
     """
     pos = np.ascontiguousarray(posiciones, dtype=np.float32)
     idx = np.ascontiguousarray(caras, dtype=np.uint32).reshape(-1)
@@ -135,10 +207,7 @@ def construye_glb(
         })
         atributos["NORMAL"] = len(accesos) - 1
 
-    accesos.append({
-        "bufferView": _anade(idx, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
-        "count": int(idx.size), "type": "SCALAR",
-    })
+    primitivas = _primitivas(idx, atributos, etiquetas, len(pos), _anade, accesos)
 
     # El nodo 0 es la malla y ES el marco canonico (§5.1). Los GS van de hijos suyos.
     nodos: list[dict] = [{"mesh": 0, "name": nombre}]
@@ -164,14 +233,7 @@ def construye_glb(
         "scene": 0,
         "scenes": [{"nodes": [0]}],
         "nodes": nodos,
-        "meshes": [{
-            "name": nombre,
-            "primitives": [{
-                "attributes": atributos,
-                "indices": len(accesos) - 1,
-                "mode": 4,   # TRIANGLES
-            }],
-        }],
+        "meshes": [{"name": nombre, "primitives": primitivas}],
         "accessors": accesos,
         "bufferViews": vistas,
         "buffers": [{"byteLength": desplazamiento}],
