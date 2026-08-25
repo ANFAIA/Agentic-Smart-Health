@@ -162,11 +162,20 @@ def test_el_fallo_no_se_propaga_como_excepcion(agente, tmp_path):
 
 
 def test_la_cuarentena_no_guarda_dato_clinico(agente, tmp_path):
+    """El registro de cuarentena lleva el identificador, no la medida.
+
+    ⚠️ La comprobación NO puede ser `"5.1" not in json.dumps(registro)`: el registro
+    lleva una marca de tiempo ISO, y una de cada tantas ejecuciones cae en un instante
+    cuyos microsegundos contienen «5.1» —`…:25.196498`— y la prueba falla sin que nada
+    se haya filtrado. Buscar el valor en los campos, y no en el texto entero, mide lo
+    que se quiere medir en vez de medir la hora a la que se ejecutó.
+    """
     con_cuarentena = SemanticFusionAgent(quarantine_dir=tmp_path)
     out = con_cuarentena.fuse(_snap([_obs("46", ph=5.1)]), detected={"46": object()})
     registro = json.loads(Path(out.quarantine_ref).read_text())
     assert registro["acquisition_id"] == "A1"
-    assert "5.1" not in json.dumps(registro)  # el pH no se filtra a la cuarentena
+    hojas = json.dumps([v for k, v in registro.items() if k != "quarantined_at"])
+    assert "5.1" not in hojas  # el pH no se filtra a la cuarentena
 
 
 def test_mide_latencia(agente):
