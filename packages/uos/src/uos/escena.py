@@ -26,10 +26,20 @@ es release candidate de Khronos y el §13 dice que en v1.0, tras ratificarse, es
 retira. Hasta entonces el payload va como fichero aparte DENTRO del contenedor y el nodo
 apunta a el.
 
-⚠️ **`extras.uos_fdi` NO se emite**, aunque el §5.1 lo contemple «si el mesh viene
-segmentado». El nuestro no viene segmentado: lo segmentamos con un modelo, y eso es Layer 3.
-Horneado aqui, quitar `derived/` dejaria de quitar la inferencia y se rompe la regla dura
-del §5.5. Las etiquetas van en `derived/`, indexadas por vertice.
+⚠️ **`extras.uos_fdi` SI se emite, y tiene un precio que hay que decir.** El §11.3 define el
+picking semantico SOBRE ese campo, asi que sin el un visor ajeno abre el contenedor y no
+puede seleccionar un diente por mucho que las etiquetas viajen en `derived/` — el nuestro
+sabe que existen, el de otro no tiene por que. Interoperar exige emitirlo.
+
+El precio es que la particion en *primitives* sale de un modelo, o sea de Layer 3, y queda
+horneada en una escena de Layer 1: **quitar `derived/` ya no borra todo rastro de la
+inferencia**, deja la malla partida en catorce trozos con su codigo. Lo que si borra es la
+etiqueta POR VERTICE, que es la que tiene resolucion para pintar y para medir; lo que
+queda es la granularidad de un *primitive*, que solo sirve para seleccionar.
+
+Es un compromiso, no una regla limpia, y se documenta como tal. Si algun dia hay que
+cerrarlo del todo, la salida es emitir la escena sin partir cuando no haya etiquetas y
+declarar en el manifiesto que el picking exige `derived/`.
 """
 
 from __future__ import annotations
