@@ -29,11 +29,15 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 > 📐 **Mapa completo de las 6 capas y el recorrido del dato** (pensado para quien
 > llega nuevo): [`docs/architecture/multi-agent-pipeline.md` §0](docs/architecture/multi-agent-pipeline.md#0-vista-de-conjunto-para-quien-llega-nuevo).
 
-## Estado actual (semanas 1–4)
+## Estado actual — MVP cerrado (semana 8)
 
-La **ingesta, la fusión, la segmentación y los tres canales de exportación están
+La **ingesta, la fusión, la segmentación y los cuatro canales de exportación están
 construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
-integración; lo que queda del camino es el análisis clínico. Lo que ya funciona hoy:
+integración.
+
+> 📋 **El inventario honesto del cierre** —qué está medido, qué no está resuelto y en qué
+> orden atacarlo— está en [`docs/cierre-mvp.md`](docs/cierre-mvp.md). Lo que sigue es lo
+> que funciona; lo que no, está allí con su medida.
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.6.0`**). El <!--const:SCHEMA_VERSION-->
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
@@ -88,12 +92,20 @@ que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escrib
 ningún número a mano: los recuentos manuales envejecen solos.
 
 > **Lo que el CI no verifica, dicho antes de que haga falta preguntarlo.** El runner no
-> tiene GPU. Eso **no** deja partes del pipeline sin probar: `packages/` y `apps/` no
-> importan `torch` en ninguna línea, a propósito — los modelos entran por los `Protocol`
-> `Segmenter` y `Registrar`, así que lo que se ejecuta en producción es numpy y se prueba
-> entero. Lo que queda fuera son tres scripts de investigación
+> tiene GPU. Eso **no** deja partes del pipeline sin probar: **ningún módulo de
+> `packages/` ni de `apps/` importa `torch` al importarse**, a propósito — los modelos
+> entran por los `Protocol` `Segmenter` y `Registrar`, así que lo que se ejecuta en
+> producción es numpy y se prueba entero. La única excepción es
+> [`gaussian_engine.ajuste`](packages/gaussian-engine/src/gaussian_engine/ajuste.py), que
+> importa `torch` **dentro de la función** que ajusta elipsoides y con un mensaje que dice
+> qué extra falta: así el paquete se instala y se prueba sin CUDA. Lo que queda fuera son
+> los **siete scripts de investigación** que sí lo necesitan
 > ([`entrenar_3dgs.py`](scripts/entrenar_3dgs.py),
+> [`refina_3dgs.py`](scripts/refina_3dgs.py),
 > [`segmentar_fdi.py`](scripts/segmentar_fdi.py),
+> [`entrena_diente_cbct.py`](scripts/entrena_diente_cbct.py),
+> [`entrena_gs_escaner.py`](scripts/entrena_gs_escaner.py),
+> [`composicion_cbct_ios.py`](scripts/composicion_cbct_ios.py),
 > [`ablacion_recetas.py`](scripts/ablacion_recetas.py)) y los notebooks: se ejecutan a
 > mano en una máquina con GPU y su producto es una **medida**, no un servicio. Cuando un
 > número de esta página sale de ahí, la sección lo dice y enlaza el script que lo produjo.
@@ -119,7 +131,7 @@ El STL sale en el sistema del escáner o en el del twin; el PLY, centrado o en m
 del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del propio
 fichero**.
 
-⚠️ **La distinción que separa las cuatro primeras filas de la última.** Los canales
+⚠️ **La distinción que separa las tres primeras filas de la última.** Los canales
 reversibles re-materializan lo que entró: su desviación responde «¿sale lo que metí?» y el
 presupuesto de 0,1 mm del brief va sobre eso. El último escribe geometría que **no entró**
 —la raíz, que ninguna otra medida cubre— y su número responde a otra pregunta con la misma
@@ -127,10 +139,22 @@ unidad. Medirlas en el mismo cajón ponía el recorrido entero en rojo por 0,37 
 superficie que nadie había medido antes, mientras los canales que sí prometen
 reversibilidad daban 0,000000 mm.
 
-**Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
-sin calibración), `pathology-agent`. Sigue pendiente del ADR de motor de render
-**de dónde sale el color** de un campo de densidad — el contenedor ya está resuelto, pero
-un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
+**El contenedor `.uos` y su visor** — el entregable, y lo que el resto alimenta. Un caso
+clínico real cierra en **419 entradas · 397 cortes DICOM · conformidad UOS-Core + UOS-Vol ·
+0 errores y 0 avisos · 18 vistas**, con la serie CBCT byte a byte y **hash por corte**
+—hay tests que lo comprueban quitando un corte, colando uno de más y alterando uno—. El
+[visor de referencia](https://github.com/lgarbayo/uos-viewer) (repo aparte) lo abre en el
+navegador **por rangos y sin subir nada**: malla, capa clínica por pieza, vistas guardadas
+y las capas del campo gaussiano. Qué lleva dentro y a quién le sirve:
+[`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md).
+
+**Todavía no**: color **per-píxel** y `pathology-agent`. Sobre el color, la pregunta se ha
+estrechado y conviene el matiz: la **señal está medida** —un umbral sobre `a*` separa
+diente de encía con 3,4–4,3 σ en las cuatro fotos de arcada que el contenedor ya lleva
+([`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md))—
+y lo que falta es la **pose de cámara**, que hoy va a `projection: null` con el campo ya
+definido en el esquema. Sigue pendiente del ADR de motor de render **de dónde sale el
+color** de un campo de densidad: un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
 placeholder: la reconstrucción vive en los notebooks + `gsplat`.
 
 ---
@@ -184,9 +208,9 @@ agentic-smart-health/          ← workspace root
 Orquestador central del sistema multiagente. Coordina los agentes de cada fase del pipeline:
 
 - **Ingesta** ✅ *(implementado)*: dispara los 4 agentes de `ingestion-agents` en paralelo sobre una adquisición (STL + CBCT + informe + N fotos), ensambla el `TwinSnapshot` y aplica el gate de revisión humana; presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
-- **Fusión** *(pendiente)*: integración multimodal y temporal de los datos en el Digital Twin.
-- **Análisis** *(pendiente)*: razonamiento clínico sobre el estado del gemelo digital.
-- **Exportación** ✅ *(los tres canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Los dispara el orquestador con `IngestionPipeline.exportar(result, destino)`, y el recorrido completo **entrada → twin → fichero** está probado de punta a punta en `tests/test_e2e.py`.
+- **Fusión** ✅ *(implementado)*: `IngestionPipeline.fuse()` encadena **dos** `GeometricFusionAgent` —registro escáner↔escáner y el ICP IOS↔CBCT, con su `rms_error_mm` y su estado de verificación— y el `SemanticFusionAgent`, que cuelga los hallazgos del informe de códigos FDI y marca el conflicto cuando informe y geometría discrepan.
+- **Análisis** 🟡 *(la parte anatómica, sí; la clínica, no)*: el `segmentation-agent` corre **dentro de `fuse()`**, entre las dos etapas de fusión, y llena `PipelineResult.analysis`. ⚠️ Su calidad está medida y es el hueco principal del MVP: **11 de 14 piezas se descartan por anatomía** ([`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md)). El razonamiento clínico —`pathology-agent`— sigue `planned`, y va con revisión humana obligatoria por diseño.
+- **Exportación** ✅ *(los cuatro canales)*: `export-agents` regenera desde el `TwinSnapshot` la **malla** en STL, el **campo gaussiano** en PLY (en el marco del twin o en mm reales del CBCT) y un **render multivista** en PNG por Beer-Lambert, cada uno con su error medido —desviación máxima y media para la geometría, PSNR/SSIM para la imagen—. Los dispara el orquestador con `IngestionPipeline.exportar(result, destino)`, y el recorrido completo **entrada → twin → fichero** está probado de punta a punta en `tests/test_e2e.py`.
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
@@ -257,7 +281,7 @@ No depende de `core-schemas`; mantiene sus propios modelos internos para RAG.
 
 ### `core-schemas`
 
-Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones del workspace. Define los modelos de datos canónicos del sistema: el `TwinSnapshot`, la `Provenance`, las observaciones regionales por diente FDI y los contratos entre agentes. Actúa como **fuente única de verdad** de los tipos de datos del proyecto (esquema versionado, hoy `1.2.0`).
+Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones del workspace. Define los modelos de datos canónicos del sistema: el `TwinSnapshot`, la `Provenance`, las observaciones regionales por diente FDI y los contratos entre agentes. Actúa como **fuente única de verdad** de los tipos de datos del proyecto (esquema versionado, hoy `1.6.0`). <!--const:SCHEMA_VERSION-->
 
 ### `ingestion-agents`
 
@@ -265,9 +289,31 @@ Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones de
 
 ### `export-agents`
 
-**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. Tres canales, y **los tres miden lo que producen releyéndolo**, no estimándolo: `export-agent` → **STL** desde `surface_ref` (desviación máxima y Chamfer), `field-export-agent` → **PLY** desde `gaussian_field_ref`, `render-export-agent` → **PNG multivista** con PSNR/SSIM del ciclo. Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`.
+**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. Cuatro canales, y **todos miden lo que producen releyéndolo**, no estimándolo: `export-agent` → **STL** desde `surface_ref` (desviación máxima y Chamfer), `field-export-agent` → **PLY** desde `gaussian_field_ref`, `render-export-agent` → **PNG multivista** con PSNR/SSIM del ciclo, y `composite-mesh-export-agent` → **arcada imprimible cerrada en sólido + un STL por diente**, cuyo número mide otra cosa y por eso queda fuera de la comprobación de reversibilidad (ver «Estado actual»). Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`.
 
 Dos decisiones que se ven raras hasta que se leen: el PLY del campo **no es un `.ply` de 3D Gaussian Splatting** y el render **no rasteriza splats**. `density` es atenuación radiológica, no opacidad, y un CBCT no mide color — así que el fichero declara las propiedades que existen y el render compone por **Beer-Lambert**, que además es independiente del orden de las primitivas y por eso reproducible byte a byte. Fichas completas en [`AGENTS.md`](AGENTS.md).
+
+### `uos`
+
+**El contenedor y su manifiesto** — el entregable del proyecto. Un `.uos` es un ZIP **sin comprimir** (STORE, `manifest.json` primero) que lleva un caso dental entero **con las relaciones entre sus partes declaradas**: los ficheros nativos intactos y verificables por hash, los marcos de coordenadas y las registraciones que los unen, las vistas guardadas, la capa clínica colgada de códigos FDI, la procedencia encadenada y el estado PHI. Módulos por responsabilidad: `contenedor` · `manifiesto` · `escena` · `volumen` · `vistas` · `clinico` · `derivados` · `procedencia` · `validador` · `esquema`.
+
+La regla que lo sostiene: **lo medido y lo inferido no se mezclan**. Todo lo que sale de un modelo vive solo bajo `derived/` con `regulatory.layer: 3` y su sidecar, y **un `.uos` sin `derived/` sigue siendo válido y completo**. Esquema publicado en [`schemas/`](schemas/); qué lleva y a quién le sirve, en [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md).
+
+### `fusion-agents`
+
+**Capa de fusión** (ADR 004): `GeometricFusionAgent` registra escáner↔escáner y CBCT↔intraoral por ICP —declarando siempre su `rms_error_mm` y si alguien lo ha verificado— y `SemanticFusionAgent` ancla los hallazgos del informe a códigos FDI, marcando el **conflicto** cuando informe y geometría discrepan. Incluye `marco` (el marco anatómico medido, no supuesto) y `preparacion` (qué dos nubes se registran, elegido por código y no a mano).
+
+### `analysis-agents`
+
+**Capa de análisis anatómico**: el `segmentation-agent` produce `region_id` por gaussiana y el mapa `FDI → confianza` que consume la fusión semántica, y `dental` limpia las etiquetas por vértice del escáner con una prohibición explícita — **no mover el margen gingival**, que es una frontera clínica. ⚠️ Su calidad está medida y es el hueco principal del MVP: ver [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md).
+
+### `gaussian-engine`
+
+**Ajuste del campo**: de semillas isótropas del tamaño del vóxel a elipsoides medidos. Es el único paquete que toca `torch`, y lo importa **dentro de la función**, para que se instale y se pruebe sin CUDA.
+
+### `tooth-aggregation`
+
+**Agregación punto → diente** (instancias + FDI) para el `segmentation-agent`. Escrito **sin depender de `torch`** a propósito: el *forward* del modelo es cosa de quien llama, así que la agregación se instala y se testea en el workspace normal.
 
 ### `3dgs-engine`
 
@@ -507,21 +553,37 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 
 ## Hitos del proyecto
 
-| Semana | Hito |
-|---|---|
-| 2 | Revisión de arquitectura multiagente y esquema de atributos clínicos del Digital Twin |
-| 4 | Demo PoC: agentes de ingesta + primera versión del Digital Twin con datos sintéticos |
-| 6 | Sistema integrado: agentes de fusión y exportación, regeneración STL desde el Digital Twin |
-| 8 | MVP testado, validación preliminar con la organización partner, documentación técnica final |
+| Semana | Hito | |
+|---|---|---|
+| 2 | Revisión de arquitectura multiagente y esquema de atributos clínicos del Digital Twin | ✅ |
+| 4 | Demo PoC: agentes de ingesta + primera versión del Digital Twin con datos sintéticos | ✅ |
+| 6 | Sistema integrado: agentes de fusión y exportación, regeneración STL desde el Digital Twin | ✅ |
+| 8 | MVP testado, validación preliminar con la organización partner, documentación técnica final | 🟡 |
+
+🟡 **La semana 8 va a medias, y la mitad que falta es la que no depende del código.** El MVP
+está testado y la documentación técnica cerrada ([`docs/cierre-mvp.md`](docs/cierre-mvp.md));
+lo que no ha ocurrido es la **validación con la organización partner**, que necesita que
+alguien de fuera abra un `.uos` que no hayamos escrito nosotros.
 
 ---
 
 ## Métricas de éxito
 
-- Cobertura de pruebas automatizadas > 80% del código de agentes y pipeline.
-- Fidelidad de reconstrucción STL desde el Digital Twin: error de malla < 0,1 mm. <!--const:REVERSIBILITY_BUDGET_MM-->
-- Latencia de ingesta de un conjunto completo (STL + CBCT + informe clínico): < 60 segundos. <!--const:LATENCY_BUDGET_S-->
-- Fiabilidad de los agentes de ingesta: > 95% en el dataset de validación.
+Las cuatro del brief, **medidas** con [`scripts/metricas.py`](scripts/metricas.py) y no
+prometidas. Tres cumplen; la cuarta no, y se declara:
+
+| Compromiso | Objetivo | Medido | |
+|---|---|---|---|
+| Latencia de ingesta de un conjunto completo (STL + CBCT + informe) | < 60 s <!--const:LATENCY_BUDGET_S--> | **12,7 s** | cumple |
+| Fidelidad de la malla regenerada desde el Digital Twin | < 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM--> | **4,59 × 10⁻⁶ mm** | cumple |
+| Cobertura de pruebas automatizadas | > 80 % | **95,1 %** | cumple |
+| Fiabilidad de los agentes de ingesta | > 95 % | **93,8 %** (N = 16) | **no cumple** |
+
+⚠️ **El fallo de fiabilidad es un informe escaneado sin capa de texto**: el agente no
+extrae nada y se declara `FAILED`, que es el comportamiento correcto. Con N = 16 casos
+reales un solo fallo son 6,2 puntos. Se publica así en vez de subir el N con casos
+sintéticos hasta que el porcentaje quede bien. Por separado, el `mesh-agent` sobre **120
+mallas** de Teeth3DS+ da **100 %**: las dos cifras van con su N al lado a propósito.
 
 ---
 
