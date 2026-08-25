@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
 
 from core_schemas import (
+    Derivation,
+    Medida,
     Modality,
     ModalityIngestion,
     ModalityStatus,
@@ -81,6 +83,11 @@ class IngestionOutput(BaseModel):
     regional: list[RegionalObservation] = Field(
         default_factory=list,
         description="Observaciones por región FDI (soporte REGIONAL, p. ej. pH).",
+    )
+    medidas: list[Medida] = Field(
+        default_factory=list,
+        description="Valores del informe que el contrato NO interpreta y que no son por "
+        "diente (índices de oclusión, cargas por lado). Ver `core_schemas.Medida`.",
     )
 
     # --- trazabilidad y métrica ------------------------------------------ #
@@ -171,12 +178,43 @@ class BaseIngestionAgent(ABC):
         """Traduce el fichero crudo al contrato. Puede lanzar: `ingest` lo captura."""
 
     # --- utilidades para las subclases ----------------------------------- #
-    def _provenance(self, source: Path, confidence: float = 1.0) -> Provenance:
+    def _derivation(self) -> tuple[Derivation, str | None]:
+        """Cómo obtiene sus valores este agente. Determinista salvo que diga otra cosa.
+
+        Es un método y no una constante de clase porque un agente puede tener varios
+        cerebros según cómo se le construya —el `report-agent` los tiene— y entonces la
+        respuesta depende de la instancia, no de la clase.
+
+        El defecto afirma `DETERMINISTIC` en vez de callar porque para estos agentes es
+        **verdad**: leen un DICOM, una malla o un JPG con código tipado, sin modelo por
+        medio. Callar aquí dejaría sin declarar los tres soportes del twin para no
+        molestar a un cuarto agente que sí infiere.
+        """
+        return Derivation.DETERMINISTIC, None
+
+    def _provenance(
+        self,
+        source: Path,
+        confidence: float = 1.0,
+        *,
+        derivation: Derivation | None = None,
+        model: str | None = None,
+    ) -> Provenance:
+        """La procedencia de un valor de este agente.
+
+        `derivation`/`model` se pasan **por valor** solo cuando un agente produce cosas
+        por vías distintas en la misma ingesta: el `report-agent` con backend de modelo
+        sigue sacando los índices de oclusión por regex, y esos no son inferidos.
+        """
+        if derivation is None:
+            derivation, model = self._derivation()
         return Provenance(
             source_file=str(source),
             modality=self.modality,
             agent=f"{self.name}@{self.version}",
             confidence=confidence,
+            derivation=derivation,
+            model=model,
         )
 
     def _outcome(self, status: ModalityStatus, **kwargs: object) -> IngestionOutput:

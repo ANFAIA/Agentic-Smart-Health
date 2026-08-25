@@ -115,7 +115,7 @@ def test_secuencial_y_paralelo_dan_el_mismo_resultado(
 # --- modalidades ausentes y fallidas --------------------------------------- #
 def test_modalidad_no_aportada_es_missing(pipeline: IngestionPipeline, case_dir: Path) -> None:
     case = CaseInput.from_case_dir(case_dir)
-    case.report = None
+    case.reports = []
     result = pipeline.run(case)
     report = result.outcome(Modality.REPORT)
     assert report is not None and report.status is ModalityStatus.MISSING
@@ -186,7 +186,7 @@ def test_un_hallazgo_descartado_del_informe_dispara_el_gate(
     informe = tmp_path / "informe.txt"
     informe.write_text("Diente 16: pH 5.1\nDiente 47: pH 74\n", encoding="utf-8")
     case = CaseInput.from_case_dir(case_dir)
-    case.report = informe
+    case.reports = [informe]
 
     result = pipeline.run(case)
 
@@ -255,12 +255,12 @@ def test_from_case_dir_descubre_las_modalidades(case_dir: Path) -> None:
     assert case.acquisition_id == "acq-001"
     assert case.mesh is not None and case.mesh.suffix == ".obj"
     assert case.cbct is not None and case.cbct.is_dir()
-    assert case.report is not None
+    assert case.reports
 
 
 def test_from_case_dir_en_directorio_vacio(tmp_path: Path) -> None:
     case = CaseInput.from_case_dir(tmp_path)
-    assert (case.mesh, case.cbct, case.report) == (None, None, None)
+    assert (case.mesh, case.cbct, case.reports) == (None, None, [])
 
 
 # --- imagen: 0..N fotos → image_refs (lista) ------------------------------- #
@@ -378,12 +378,17 @@ def test_la_fusion_semantica_ancla_las_observaciones(
 def test_el_conflicto_de_fdi_llega_al_gate_del_orquestador(
     pipeline: IngestionPipeline, case_dir: Path
 ) -> None:
-    """La cadena completa: el agente marca con confianza 0 y el orquestador lo eleva."""
+    """La cadena completa: el agente marca con confianza 0 y el orquestador lo eleva.
+
+    El informe sintético es todo maxilar (11, 16, 21, 26) y aquí no se detecta nada de esa
+    arcada, así que el motivo es **de arcada** y no diente a diente — ver
+    `test_una_arcada_sin_cubrir_es_un_motivo_y_no_dieciseis`.
+    """
     result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
     fusionado = pipeline.fuse(result, detected={"99": 0.9})  # ningún FDI del informe
 
     assert fusionado.hitl_required
-    assert any("segmentación no lo encontró" in m for m in fusionado.hitl_reasons)
+    assert any("no cubrió NINGÚN diente" in m for m in fusionado.hitl_reasons)
 
 
 def test_las_dos_etapas_corren_en_el_orden_del_pipeline(
@@ -399,6 +404,76 @@ def test_las_dos_etapas_corren_en_el_orden_del_pipeline(
     assert agentes[1].startswith("semantic-fusion-agent")
     # La transformación de la etapa 1 sobrevive a la etapa 2.
     assert fusionado.snapshot.provenance.transform is not None
+
+
+# --- preparación del registro dentro del orquestador ------------------------ #
+def test_con_la_malla_el_orquestador_elige_las_nubes_el_solo(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """La prueba de que la #39 está cerrada: `fuse` sin `registration`, solo la ruta.
+
+    Antes, para registrar un caso había que traer las dos nubes ya elegidas —aislar la
+    arcada, quedarse con la corona, submuestrear— y eso vivía en un script. Si esto pasa,
+    el pegamento ya no hace falta.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, malla=case_dir / "arcada.obj")
+
+    assert [o.agent.split("@")[0] for o in fusionado.fusion] == ["geometric-fusion-agent"]
+    assert fusionado.snapshot.provenance.transform is not None
+
+
+def test_un_escaneo_que_no_dice_su_arcada_llega_al_gate(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """No basta con registrar igualmente: hay que decir contra qué se registró.
+
+    Sin arcada el ICP encaja contra las dos y puede meter la mandíbula en el maxilar
+    puntuando bien —está medido: 0,490 vs 0,509 mm, un 3,8 %—. El residuo no lo va a
+    decir, así que lo dice el gate.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, malla=case_dir / "arcada.obj")
+
+    assert any("no declara arcada" in m for m in fusionado.hitl_reasons)
+
+
+def test_las_nubes_dadas_a_mano_mandan_sobre_la_preparacion(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`registration=` sigue siendo la puerta de un registro preparado fuera."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    nube = _nube()
+    fusionado = pipeline.fuse(result, registration=(nube, nube), malla=case_dir / "x.obj")
+
+    assert fusionado.snapshot.provenance.confidence == pytest.approx(1.0)
+    # No se preparó nada, así que no hay nada que declarar sobre la preparación.
+    assert not any("no declara arcada" in m for m in fusionado.hitl_reasons)
+
+
+def test_sin_malla_no_hay_nada_que_preparar_y_no_es_un_fallo(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """Una adquisición solo-CBCT es normal: `None`, no una excepción ni un motivo."""
+    result = pipeline.run(
+        CaseInput(acquisition_id="solo-cbct", cbct=case_dir / "cbct")
+    )
+    assert result.snapshot is not None and result.snapshot.surface_ref is None
+    assert pipeline.prepara_registro(result, malla=case_dir / "arcada.obj") is None
+
+
+def test_la_arcada_se_puede_declarar_a_mano_cuando_el_nombre_no_la_trae(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """Porque la etiqueta es del operador, y a veces no está o está mal."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    preparado = pipeline.prepara_registro(result, malla=case_dir / "arcada.obj")
+    assert preparado is not None and preparado[2]["arcada"] is None
+
+    declarado = pipeline.prepara_registro(
+        result, malla=case_dir / "arcada.obj", arcada="maxilar"
+    )
+    assert declarado is not None and declarado[2]["arcada"] == "maxilar"
 
 
 def test_fuse_no_muta_el_resultado_de_entrada(
@@ -505,15 +580,58 @@ def test_la_segmentacion_produce_el_ancla_sin_pasarla_a_mano(con_segmentacion) -
 
 
 def test_el_diente_que_el_modelo_no_encuentra_llega_al_gate(con_segmentacion) -> None:
-    """El informe cita cuatro dientes y el modelo encuentra otros: nadie decide solo."""
+    """El informe cita cuatro dientes y el modelo encuentra otros: nadie decide solo.
+
+    El modelo encuentra el 48 —mandibular— y el informe es todo maxilar, así que ninguna
+    observación se ancla y el gate lo dice. Los cuatro códigos siguen nombrados, que es lo
+    que hace el motivo accionable.
+    """
     pipeline, result, fdis = con_segmentacion
     pipeline.segmentation.segmenter = _segmentador(["48"])  # ninguno de los del informe
     salida = pipeline.fuse(result)
 
     assert salida.hitl_required
     assert all(
-        any(f"FDI {fdi}" in m for m in salida.hitl_reasons) for fdi in fdis
+        any(f"FDI {fdi}" in m or fdi in m for m in salida.hitl_reasons) for fdi in fdis
     )
+
+
+def test_una_arcada_sin_cubrir_es_un_motivo_y_no_dieciseis(con_segmentacion) -> None:
+    """La limpieza del gate, medida sobre lo que la motivó.
+
+    Un caso clínico real con solo escaneo maxilar producía **22 motivos, 16 de ellos la
+    misma frase** para dientes mandibulares que nadie había mirado. Entre ellos quedaban
+    enterrados los que sí importaban —el registro sin converger, la confianza bajo umbral—.
+    Un aviso que salta en bloque es como se desactiva un gate.
+    """
+    pipeline, result, fdis = con_segmentacion
+    pipeline.segmentation.segmenter = _segmentador(["48"])
+    salida = pipeline.fuse(result)
+
+    de_arcada = [m for m in salida.hitl_reasons if "no cubrió NINGÚN diente" in m]
+    por_diente = [m for m in salida.hitl_reasons if "no lo encontró" in m]
+    assert len(de_arcada) == 1, "una línea por arcada, no una por diente"
+    assert por_diente == [], "no se miró esa arcada: no hay desacuerdo que declarar"
+    # Y no se pierde nada: los cuatro códigos siguen en el motivo.
+    assert all(fdi in de_arcada[0] for fdi in fdis)
+
+
+def test_en_la_arcada_que_si_se_miro_el_desacuerdo_va_diente_a_diente(
+    con_segmentacion,
+) -> None:
+    """La otra mitad, y la que hace que la agrupación no sea una excusa para callar.
+
+    Si la segmentación **sí** cubrió la arcada y aun así falta un diente que el informe
+    cita, eso es un desacuerdo real entre dos fuentes clínicas y cada uno es una decisión
+    distinta. Ahí sigue habiendo una línea por diente.
+    """
+    pipeline, result, fdis = con_segmentacion
+    pipeline.segmentation.segmenter = _segmentador(["17"])  # maxilar, pero no del informe
+    salida = pipeline.fuse(result)
+
+    por_diente = [m for m in salida.hitl_reasons if "no lo encontró" in m]
+    assert len(por_diente) == len(fdis)
+    assert not any("no cubrió NINGÚN diente" in m for m in salida.hitl_reasons)
 
 
 def test_las_etiquetas_revisadas_mandan_sobre_el_modelo(con_segmentacion) -> None:
@@ -570,3 +688,182 @@ def test_si_la_segmentacion_falla_no_se_ancla_contra_un_ancla_inexistente(
     assert salida.fusion == []  # la fusión semántica no llega a correr
     assert salida.snapshot is not None  # y la ingesta sobrevive
     assert any("falló" in m for m in salida.hitl_reasons)
+
+
+# --- la fábrica de segmentador (la costura registro → segmentación) --------- #
+def test_la_fabrica_recibe_el_snapshot_YA_REGISTRADO(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """La costura que esto existe para coser.
+
+    Un `Segmenter` del campo necesita las coronas del escáner movidas al marco del CBCT, y
+    esa pose la calcula la fusión geométrica **dentro de `fuse()`**. Con el parámetro
+    `segmenter` a secas, quien lo construía tenía que registrar por su cuenta: trabajo
+    duplicado y, peor, una pose distinta de la que el snapshot declara y de la que se
+    exporta en el STL — dos verdades sobre el mismo paciente sin nada que las compare.
+    """
+    vistos = []
+
+    def fabrica(snapshot):
+        vistos.append(snapshot.provenance.transform)
+        return lambda puntos: np.log(
+            np.full((len(puntos), max(DEFAULT_CODES) + 1), 1.0 / (max(DEFAULT_CODES) + 1))
+        )
+
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"), segmenter_factory=fabrica
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    pipe.fuse(resultado, registration=(_nube(), _nube()))
+
+    assert len(vistos) == 1, "la fábrica se llama una vez, tras la fusión geométrica"
+    assert vistos[0] is not None, "y con la transformación ya puesta en la procedencia"
+
+
+def test_una_fabrica_que_devuelve_none_no_rompe_el_recorrido(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Sin registro no se puede saber DÓNDE está cada corona, y no segmentar es la
+    respuesta correcta — no segmentar mal."""
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"), segmenter_factory=lambda s: None
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    salida = pipe.fuse(resultado)
+
+    assert salida.analysis == []
+    assert salida.snapshot is not None
+
+
+# --- varios informes por adquisición ---------------------------------------- #
+def test_dos_informes_aportan_los_dos_sus_observaciones(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """El hueco que esto cierra, y costó dato clínico.
+
+    Con `report` como campo único, el orquestador se quedaba con uno y el resto
+    desaparecía **sin que nada lo dijera**. Medido sobre un caso real: tres PDF, y el que
+    se perdía era un informe de oclusión/ATM con análisis de contacto dental — otra
+    modalidad clínica, no un duplicado.
+    """
+    uno = tmp_path / "cbct.txt"
+    uno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    dos = tmp_path / "oclusion.txt"
+    dos.write_text("Diente 47: pH 6.2\n", encoding="utf-8")
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [uno, dos]
+    result = pipeline.run(case)
+
+    assert len(result.report_outcomes) == 2
+    fdis = {o.region_id for o in result.snapshot.regional}
+    assert {"16", "47"} <= fdis, "ninguno de los dos manda sobre el otro"
+
+
+def test_un_informe_ilegible_se_declara_en_vez_de_desaparecer(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """Y el resto sigue entrando: fail-loud, no fail-fast.
+
+    Un PDF escaneado sin capa de texto es normal en una carpeta de clínica. Lo que no es
+    normal es que se filtre antes de que ningún agente lo vea — el `report-agent` ya sabe
+    decir «no contiene texto extraíble», y que lo haya es justo lo que un clínico
+    necesita saber.
+    """
+    bueno = tmp_path / "bueno.txt"
+    bueno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    # Un PDF de verdad pero sin capa de texto, que es lo que sale de un escáner de
+    # sobremesa. Un `.txt` no sirve para este test: por esa rama el agente devuelve OK con
+    # cero hallazgos, y hace bien — un informe sin pH es legítimo.
+    ilegible = tmp_path / "escaneado.pdf"
+    ilegible.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\ntrailer<<>>\n%%EOF\n")
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [bueno, ilegible]
+    result = pipeline.run(case)
+
+    estados = {o.status for o in result.report_outcomes}
+    assert ModalityStatus.FAILED in estados, "el ilegible se declara"
+    assert result.snapshot is not None, "y no tumba al que sí se pudo leer"
+    assert any(o.region_id == "16" for o in result.snapshot.regional)
+    assert result.hitl_required
+
+
+def test_sin_ningun_informe_la_modalidad_sigue_siendo_missing(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`missing` = no había fichero, `failed` = lo había y no se pudo leer. La
+    distinción no se pierde al pasar a lista."""
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = []
+    result = pipeline.run(case)
+
+    assert len(result.report_outcomes) == 1
+    assert result.report_outcomes[0].status is ModalityStatus.MISSING
+
+
+# --- el twin describe su propio campo ---------------------------------------- #
+def test_el_snapshot_dice_QUE_es_cada_columna(pipeline: IngestionPipeline, case_dir: Path):
+    """Lo que convierte «un fichero que sabemos leer» en un formato.
+
+    Todo esto vivía en líneas `comment` del PLY: las personas las leen y los programas no.
+    """
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    por_nombre = {c.nombre: c for c in snapshot.esquema_campo}
+
+    assert {"x", "scale_0", "rot_0", "density"} <= set(por_nombre)
+    assert por_nombre["density"].unidad == "sigma_normalizada"
+    assert "NO es opacidad" in por_nombre["density"].significado
+
+
+def test_la_escala_declara_que_son_MILIMETROS_y_no_su_logaritmo(
+    pipeline: IngestionPipeline, case_dir: Path
+):
+    """El detalle que evita una mala interpretación silenciosa.
+
+    El PLY de facto de 3DGS usa `scale_0..2` con el MISMO nombre y guarda el logaritmo. Un
+    visor estándar abriendo esto no fallaría: exponenciaría nuestros milímetros y
+    renderizaría basura con buen aspecto. Por eso `escala` es una columna del esquema y no
+    un comentario.
+    """
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    escala = next(c for c in snapshot.esquema_campo if c.nombre == "scale_0")
+
+    assert escala.unidad == "mm"
+    assert escala.escala == "lineal"
+    assert snapshot.perfil_campo == "ash-twin/1.0", "y el perfil se declara, para poder rechazarlo"
+
+
+def test_un_campo_sin_segmentar_no_declara_region_id(
+    pipeline: IngestionPipeline, case_dir: Path
+):
+    """Declarar de más sería tan mentira como declarar de menos."""
+    snapshot = pipeline.run(CaseInput.from_case_dir(case_dir)).snapshot
+    assert not any(c.nombre == "region_id" for c in snapshot.esquema_campo)
+
+
+def test_el_esquema_SIGUE_al_campo_cuando_una_etapa_lo_cambia(
+    case_dir: Path, tmp_path: Path
+):
+    """El que de verdad importa.
+
+    Las etapas cambian las columnas: la segmentación añade `region_id`. Un esquema
+    calculado solo en la ingesta describiría un artefacto que ya no es el referenciado, y
+    eso es peor que no tener esquema — es un contrato que miente con precisión.
+    """
+    pipe = IngestionPipeline(
+        ArtifactStore(tmp_path / "art"),
+        segmenter=_segmentador(sorted({"11", "16"})),
+    )
+    resultado = pipe.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    assert not any(c.nombre == "region_id" for c in resultado.snapshot.esquema_campo)
+
+    fusionado = pipe.fuse(resultado)
+    region = next(
+        (c for c in fusionado.snapshot.esquema_campo if c.nombre == "region_id"), None
+    )
+    assert region is not None, "la segmentación la añadió y el esquema tiene que decirlo"
+    assert region.vocabulario == "ISO-3950"
+    assert region.medido is False, "no es una medida: la derivó un agente"
+    assert region.derivado_de == "segmentation-agent"
+

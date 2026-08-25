@@ -217,7 +217,7 @@ CODIGO = """\
 REVERSIBILITY_BUDGET_MM = 0.1
 RENDER_PSNR_BUDGET_DB = 40.0
 DESPLAZAMIENTO_MM: float = -0.5
-NO_ES_NUMERO = "texto"
+VERSION_CONTRATO = "1.4.0"
 minusculas = 3.0
 """
 
@@ -240,14 +240,26 @@ def repo_falso(tmp_path: Path, monkeypatch):
     return revisar
 
 
-def test_lee_las_constantes_numericas_por_ast(repo_falso, tmp_path: Path):
+def test_lee_las_constantes_por_ast(repo_falso, tmp_path: Path):
     """Por AST y no importando: un guardián que ejecuta lo que vigila falla por otra cosa."""
     constantes = ds.constantes_del_codigo({"pkg/src/pkg/base.py"})
     assert constantes["REVERSIBILITY_BUDGET_MM"] == {0.1}
     assert constantes["RENDER_PSNR_BUDGET_DB"] == {40.0}
     assert constantes["DESPLAZAMIENTO_MM"] == {-0.5}, "el negativo es un unario, no un literal"
-    assert "NO_ES_NUMERO" not in constantes
+    assert constantes["VERSION_CONTRATO"] == {"1.4.0"}, "las cadenas también, por SCHEMA_VERSION"
     assert "minusculas" not in constantes
+
+
+def test_una_version_de_contrato_desincronizada_se_declara(repo_falso):
+    """El caso que motivó admitir cadenas.
+
+    El README anunciaba el esquema `1.2.0` cuando el código iba por `1.3.0`, y esta
+    comprobación pasaba en verde porque solo miraba números — «1.2.0» ni siquiera es uno.
+    """
+    assert repo_falso("contrato en **`1.4.0`** <!--const:VERSION_CONTRATO-->") == []
+    problemas = repo_falso("contrato en **`1.2.0`** <!--const:VERSION_CONTRATO-->")
+    assert len(problemas) == 1
+    assert "1.4.0" in problemas[0] and "VERSION_CONTRATO" in problemas[0]
 
 
 def test_el_numero_que_cuadra_no_da_problema(repo_falso):
@@ -302,3 +314,46 @@ def test_el_numero_dentro_de_comillas_invertidas_si_cuenta(repo_falso):
 def test_el_repositorio_no_miente_hoy_en_ningun_numero_marcado():
     """El guardián aplicado a sí mismo, una vez más."""
     assert ds.revisar_constantes(ds.versionados()) == []
+
+
+# --- componentes documentados y vacíos --------------------------------------- #
+def _monta(tmp_path: Path, monkeypatch, codigo: str, ficha: str) -> list[str]:
+    """Un repo de mentira con un componente y su sección del README."""
+    (tmp_path / "apps" / "algo" / "src").mkdir(parents=True)
+    (tmp_path / "apps" / "algo" / "src" / "server.py").write_text(codigo, encoding="utf-8")
+    (tmp_path / "README.md").write_text(f"### `algo`\n\n{ficha}\n", encoding="utf-8")
+    monkeypatch.setattr(ds, "__file__", str(tmp_path / "scripts" / "docs_sync.py"))
+    return ds.revisar_componentes_vacios({"apps/algo/src/server.py", "README.md"})
+
+
+def test_un_componente_vacio_documentado_en_presente_se_declara(tmp_path, monkeypatch):
+    """El fantasma exacto: `apps/slicer-mcp-server` tenía un `server.py` de 0 líneas y el
+    README decía «expone una interfaz» y «permite que los agentes interactúen». Ninguna
+    comprobación lo vio — la de rutas pasaba porque el directorio existía."""
+    problemas = _monta(
+        tmp_path, monkeypatch, "", "Servidor MCP que expone una interfaz y permite X."
+    )
+    assert len(problemas) == 1
+    assert "ni una linea de codigo" in problemas[0]
+
+
+def test_un_placeholder_declarado_es_legitimo(tmp_path, monkeypatch):
+    """`3dgs-engine` lo es, y lleva años siéndolo sin mentir. Lo que se exige no es que
+    haya código: es que si no lo hay, la ficha lo diga."""
+    assert _monta(tmp_path, monkeypatch, "", "Hoy es un **placeholder**: vive en notebooks.") == []
+
+
+def test_con_codigo_no_hace_falta_declarar_nada(tmp_path, monkeypatch):
+    """No es un aviso permanente: en cuanto el componente existe de verdad, calla."""
+    assert _monta(tmp_path, monkeypatch, "def x():\n    return 1\n", "Hace cosas.") == []
+
+
+def test_sin_ficha_no_hay_mentira_que_cazar(tmp_path, monkeypatch):
+    """Un directorio vacío que nadie documenta no afirma nada. Es `inventario` quien
+    decide si algo debería estar citado, no esta comprobación."""
+    (tmp_path / "apps" / "algo" / "src").mkdir(parents=True)
+    (tmp_path / "apps" / "algo" / "src" / "server.py").write_text("", encoding="utf-8")
+    (tmp_path / "README.md").write_text("### `otra cosa`\n\nnada\n", encoding="utf-8")
+    monkeypatch.setattr(ds, "__file__", str(tmp_path / "scripts" / "docs_sync.py"))
+    assert ds.revisar_componentes_vacios({"apps/algo/src/server.py", "README.md"}) == []
+

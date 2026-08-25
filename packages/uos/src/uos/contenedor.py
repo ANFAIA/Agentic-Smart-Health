@@ -1,0 +1,184 @@
+"""El contenedor fisico: un `.uos` es un ZIP **sin comprimir** (§3).
+
+**Por que STORE.** Los payloads ya vienen comprimidos —DICOM JPEG-LS/J2K, SPZ, GLB con
+Draco— asi que comprimir el ZIP no ahorra y si rompe el acceso aleatorio. Con STORE y el
+directorio central al final, un cliente HTTP con *range requests* lee el indice y baja un
+asset suelto sin traerse el caso entero. Es el mismo precedente que `.usdz`.
+
+**Y por que `manifest.json` va primero.** Es la identificacion positiva del formato: un
+lector abre los primeros bytes, ve la entrada y su `uos_version`, y ya sabe que tiene
+delante sin adivinar por la extension.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import zipfile
+from collections.abc import Iterable
+from pathlib import Path
+
+from uos.manifiesto import Asset, Manifiesto, Parte, digesto_de_partes
+
+MANIFIESTO = "manifest.json"
+
+
+def sha256(ruta: Path) -> str:
+    """Hash del fichero, por bloques: un DICOM de 400 MB no se carga en memoria."""
+    h = hashlib.sha256()
+    with ruta.open("rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            h.update(bloque)
+    return h.hexdigest()
+
+
+def escribe_uos(
+    destino: Path,
+    manifiesto: Manifiesto,
+    ficheros: Iterable[tuple[str, Path]],
+    *,
+    directorios: dict[str, Path] | None = None,
+    extras: dict[str, str | bytes] | None = None,
+    json_manifiesto: str | None = None,
+) -> Path:
+    """Escribe el `.uos`. `ficheros` es `(uri interna, ruta en disco)`.
+
+    Se escribe de forma **atomica** —temporal y `replace`, como el `ArtifactStore`—: un
+    contenedor a medio escribir por un disco lleno no debe quedar donde alguien lo confunda
+    con el bueno.
+
+    ⚠️ Se verifica que toda `uri` del manifiesto tenga fichero y al reves. Un manifiesto
+    que referencia algo que no esta es exactamente la referencia colgante que el resto del
+    sistema trata como error y no como hueco.
+
+    `json_manifiesto` deja al llamante aportar la serializacion que ya hizo. Lo necesita
+    la cadena de procedencia (§8): su eslabon lleva el hash de estos bytes, y volver a
+    serializar aqui dejaria el hash apuntando a una segunda copia que solo se le parece.
+    """
+    mapa = dict(ficheros)
+    dirs = dict(directorios or {})
+    declaradas = {a.uri for a in manifiesto.assets}
+    # Un asset puede ser un DIRECTORIO (una serie DICOM): su uri acaba en "/" y agrupa.
+    sueltas = {u for u in declaradas if not u.endswith("/")}
+    if faltan := {u for u in declaradas if u.endswith("/")} - set(dirs):
+        raise ValueError(
+            f"el manifiesto referencia {len(faltan)} directorio(s) que no se aportaron: "
+            + ", ".join(sorted(faltan))
+        )
+    # Un asset puede venir de un fichero del caso o generarse aqui —la escena convertida,
+    # la segmentacion—, y para el contenedor son lo mismo: bytes con su hash. Lo que no
+    # puede es faltar.
+    aportadas = set(mapa) | set(extras or {})
+    if faltan := sueltas - aportadas:
+        raise ValueError(
+            f"el manifiesto referencia {len(faltan)} asset(s) que no se aportaron: "
+            + ", ".join(sorted(faltan)[:3])
+        )
+    if sobran := set(mapa) - declaradas:
+        raise ValueError(
+            f"se aportaron {len(sobran)} fichero(s) que el manifiesto no declara: "
+            + ", ".join(sorted(sobran)[:3])
+        )
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_suffix(destino.suffix + ".tmp")
+    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as z:
+        # PRIMERA entrada, siempre. Es la identificacion positiva del formato.
+        z.writestr(MANIFIESTO, json_manifiesto or manifiesto.json_canonico())
+        for uri, ruta in sorted(mapa.items()):
+            z.write(ruta, uri)
+        for prefijo, carpeta in sorted(dirs.items()):
+            for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
+                z.write(hijo, prefijo + hijo.relative_to(carpeta).as_posix())
+        for uri, texto in (extras or {}).items():
+            z.writestr(uri, texto)
+    tmp.replace(destino)
+    return destino
+
+
+def lee_manifiesto(ruta: Path) -> Manifiesto:
+    """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada."""
+    with zipfile.ZipFile(ruta) as z:
+        nombres = z.namelist()
+        if not nombres or nombres[0] != MANIFIESTO:
+            raise ValueError(
+                f"{ruta.name}: la primera entrada es {nombres[0] if nombres else 'ninguna'!r} "
+                f"y el spec exige {MANIFIESTO!r} — sin eso no hay identificacion positiva."
+            )
+        return Manifiesto.model_validate_json(z.read(MANIFIESTO))
+
+
+def asset_de(
+    ruta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
+    media_type: str, **extra,
+) -> Asset:
+    """Construye el sobre de un asset midiendo el fichero: hash y tamano reales."""
+    from uos.manifiesto import PRIORIDAD
+
+    return Asset(
+        id=id_, kind=kind, visit=visit, uri=uri, media_type=media_type,
+        sha256=sha256(ruta), bytes=ruta.stat().st_size, frame=frame,
+        load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
+    )
+
+
+def json_de(obj: object) -> str:
+    return json.dumps(obj, indent=1, ensure_ascii=False)
+
+
+def partes_de(carpeta: Path) -> list[Parte]:
+    """Una `Parte` por fichero del directorio, con su nombre RELATIVO y su hash."""
+    return [
+        Parte(
+            name=hijo.relative_to(carpeta).as_posix(),
+            sha256=sha256(hijo),
+            bytes=hijo.stat().st_size,
+        )
+        for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file())
+    ]
+
+
+def asset_de_directorio(
+    carpeta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
+    media_type: str, **extra,
+) -> Asset:
+    """El sobre de un asset que es una SERIE entera, midiendo fichero a fichero.
+
+    ⚠️ Los nombres de los cortes viajan tal cual, y aqui eso es correcto aunque en el resto
+    del contenedor no lo sea: el orden de una serie DICOM es dato clinico, y renombrarlos a
+    `IM0001.dcm…` seria reescribir el fichero que decimos entregar intacto. Los nombres que
+    trae un export de CBCT son del equipo (`3DSlice100.dcm`), no del paciente — si algun
+    proveedor los emitiera con identificador dentro, eso hay que cazarlo en la ingesta y no
+    aqui, porque para entonces el DICOM ya lo lleva en sus tags.
+    """
+    from uos.manifiesto import PRIORIDAD
+
+    partes = partes_de(carpeta)
+    if not partes:
+        raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
+    return Asset(
+        id=id_, kind=kind, visit=visit, uri=uri if uri.endswith("/") else uri + "/",
+        media_type=media_type, sha256=digesto_de_partes(partes),
+        bytes=sum(p.bytes for p in partes), frame=frame, parts=partes,
+        load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
+    )
+
+
+def asset_de_bytes(
+    crudo: bytes, uri: str, *, id_: str, kind, visit: str, frame: str,
+    media_type: str, **extra,
+) -> Asset:
+    """El sobre de un asset que se GENERA aqui y no sale de un fichero del caso.
+
+    La escena convertida y la segmentacion no existen en disco: se construyen al exportar.
+    Su `sha256` es el de los bytes que van a acabar en el ZIP, igual que el de los demas, y
+    por eso el validador los comprueba sin saber que unos vinieron de un fichero y otros de
+    memoria.
+    """
+    from uos.manifiesto import PRIORIDAD
+
+    return Asset(
+        id=id_, kind=kind, visit=visit, uri=uri, media_type=media_type,
+        sha256=hashlib.sha256(crudo).hexdigest(), bytes=len(crudo), frame=frame,
+        load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
+    )

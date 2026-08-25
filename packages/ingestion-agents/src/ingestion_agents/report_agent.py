@@ -12,9 +12,14 @@ Dos backends, misma salida (`list[RegionalObservation]`):
   **determinista**, sin red, sin coste — es el que corre en CI |
 | `llm` | Claude con *structured output* (tool use) | prosa libre, sinónimos, negaciones |
 
+Los dos cubren los mismos campos —pH, anatomía radicular y hallazgos— y devuelven la
+misma forma. Lo único que cambia es quién lee el texto.
+
 **Por qué `rules` es el defecto.** No sobre-agentificar: el LLM entra donde la
 entrada es ambigua, no por costumbre. Además el backend determinista da el
-suelo medible contra el que comparar al LLM (fiabilidad >95%).
+suelo medible contra el que comparar al LLM, y ya está medido: **97,8% en informes
+tabulados, 43,5% en prosa** sobre el corpus de `report_corpus.py`. Ese reparto es el
+que decide dónde vale la pena gastar una llamada al modelo.
 
 **Human-in-the-loop.** El agente **no** decide qué se persiste: emite cada
 observación con su `Provenance.confidence` y es el orquestador quien aplica el
@@ -33,13 +38,17 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from core_schemas import (
     ClinicalAttributes,
+    Derivation,
+    Hallazgo,
+    Medida,
     Modality,
     RegionalObservation,
     Support,
@@ -59,6 +68,7 @@ _PH_RE = re.compile(r"\bpH\b\s*[:=]?\s*(\d{1,2}(?:[.,]\d+)?)", re.IGNORECASE)
 _DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 _LLM_MODEL = "claude-sonnet-5"
+_BACKENDS = ("rules", "llm")
 # Confianza que se asigna a una extracción por regex: alta pero no 1.0 — el patrón
 # acertó, pero nadie ha verificado que el informe dijera lo que parece decir.
 _RULES_CONFIDENCE = 0.9
@@ -68,6 +78,12 @@ _RULES_CONFIDENCE = 0.9
 _DISCARD_CONFIDENCE = 0.6
 # Cuántos descartes se detallan en el `detail` antes de resumir el resto.
 _MAX_DISCARDS_IN_DETAIL = 5
+# Confianza que se asume si el modelo no la declara. Deliberadamente baja: una
+# extracción sin confianza declarada no es una extracción segura.
+_LLM_CONFIDENCE_FALLBACK = 0.5
+# Campos enteros de `ClinicalAttributes` que el backend LLM puede proponer. Sus
+# límites NO se copian aquí: se leen del contrato (`_limite`).
+_CAMPOS_ENTEROS = ("n_raices", "n_conductos")
 
 
 @dataclass(frozen=True)
@@ -188,6 +204,107 @@ def extract_ph_by_rules(text: str) -> RuleExtraction:
     return RuleExtraction(found, discards)
 
 
+# --------------------------------------------------------------------------- #
+# Informes de CBCT con IA: anatomía radicular y hallazgos por pieza
+# --------------------------------------------------------------------------- #
+# Estos informes NO traen pH — que era lo único que la capa regional sabía recoger — y sí
+# traen, línea a línea, «Diente 16 Diente, 3 raíces, 4 canales, Signos de caries». Es
+# exactamente el soporte regional del contrato, en un formato que el extractor de pH no
+# ve. Sin esto, un informe con hallazgos de 28 piezas se ingería con 0 observaciones.
+_DIENTE_RE = re.compile(r"Diente\s+(\d{2})\s+(.*?)(?=Diente\s+\d{2}\s|\Z)", re.S)
+_RAICES_RE = re.compile(r"(\d+)\s+ra[íi](?:z|ces)\b", re.IGNORECASE)
+# El informe alterna «conducto» y «canal» para lo mismo. Un vocabulario controlado existe
+# precisamente para que esa variación no llegue al twin.
+_CONDUCTOS_RE = re.compile(r"(\d+)\s+(?:conducto|canal)e?s?\b", re.IGNORECASE)
+
+_HALLAZGOS_RE: tuple[tuple[re.Pattern[str], Hallazgo], ...] = (
+    (re.compile(r"\bausente\b", re.I), Hallazgo.AUSENTE),
+    (re.compile(r"\bcaries\b", re.I), Hallazgo.CARIES),
+    (re.compile(r"\brestauraci[óo]n\b", re.I), Hallazgo.RESTAURACION),
+    (re.compile(r"c[áa]lculo\s+pulpar", re.I), Hallazgo.CALCULO_PULPAR),
+    (re.compile(r"p[ée]rdida\s+de\s+hueso\s+periodontal", re.I),
+     Hallazgo.PERDIDA_OSEA_PERIODONTAL),
+    (re.compile(r"aparato\s+de\s+ortodoncia", re.I), Hallazgo.APARATO_ORTODONCICO),
+)
+
+
+# Un índice de instrumentación con su rango de referencia al lado. La forma la fija el
+# informe, no nosotros:
+#
+#     POC TA      88.09%  I        83≤(%)≤100
+#     ASIM         4.58%          -10≤(%)≤10
+#
+# El nombre puede llevar espacios (`POC TA`, `POC ECM`), la lateralidad es opcional y el
+# rango puede venir con cualquiera de los dos extremos negativos.
+_INDICE_RE = re.compile(
+    r"^\s*(?P<nombre>[A-Z][A-Z ]{1,20}?)\s+"
+    r"(?P<valor>-?\d+(?:[.,]\d+)?)\s*(?P<unidad>%|mm|N)?\s*"
+    r"(?P<lado>[IDA])?\s+"
+    r"(?P<lo>-?\d+(?:[.,]\d+)?)\s*≤\s*\(?(?P=unidad)?\)?\s*≤\s*(?P<hi>-?\d+(?:[.,]\d+)?)\s*$",
+    re.MULTILINE,
+)
+
+
+def extract_medidas_by_rules(texto: str) -> list[dict]:
+    """Índices del informe con el rango de referencia que el propio informe declara.
+
+    **No se interpreta ninguno.** No hay tabla de qué significa `TORS` ni `POC ECM`, y no
+    debería haberla: inventarle semántica clínica a la sigla de un fabricante es
+    exactamente el tipo de suposición que este pipeline no hace. Lo que sí se puede hacer
+    —y es mucho— es capturar el valor **junto al intervalo que el documento imprime al
+    lado**, porque eso permite señalar lo anómalo sin entender la magnitud.
+
+    Medido sobre un estudio real de oclusión: ocho índices, y **dos fuera de su propio
+    rango normal** (`TORS` 89,34 con normal 90-100; `POC ECM` 81,20 con normal 83-100).
+    Antes de esto el informe entero salía con cero hallazgos y confianza 0,00.
+
+    Solo se recogen las líneas que traen rango. Un número suelto sin intervalo no se puede
+    ni validar ni señalar, y meterlo aquí solo añadiría ruido con aspecto de dato.
+    """
+    fuera = []
+    for m in _INDICE_RE.finditer(texto):
+        nombre = " ".join(m.group("nombre").split())
+        if len(nombre) < 2:
+            continue
+        fuera.append({
+            "nombre": nombre,
+            "valor": float(m.group("valor").replace(",", ".")),
+            "unidad": m.group("unidad") or "",
+            "normal_min": float(m.group("lo").replace(",", ".")),
+            "normal_max": float(m.group("hi").replace(",", ".")),
+            "lado": m.group("lado"),
+            "texto": " ".join(m.group(0).split()),
+        })
+    return fuera
+
+
+def extract_hallazgos_by_rules(text: str) -> dict[str, dict]:
+    r"""`FDI → {n_raices, n_conductos, hallazgos}` de un informe tabulado por diente.
+
+    El texto se parte en bloques por el marcador `Diente NN`, no línea a línea: el PDF
+    corta descripciones largas a mitad («…Signos de caries (Dentina,» + salto), y un
+    extractor por líneas perdería el resto del hallazgo sin avisar.
+
+    Solo se acepta un código FDI válido: el patrón `\d{2}` casaría con cualquier par de
+    dígitos, y `ontology.is_valid_fdi` es la misma puerta que usa el extractor de pH.
+    """
+    fuera: dict[str, dict] = {}
+    for codigo, cuerpo in _DIENTE_RE.findall(text):
+        if not ontology.is_valid_fdi(codigo):
+            continue
+        raices = _RAICES_RE.search(cuerpo)
+        conductos = _CONDUCTOS_RE.search(cuerpo)
+        hallazgos = [h for patron, h in _HALLAZGOS_RE if patron.search(cuerpo)]
+        if not (raices or conductos or hallazgos):
+            continue
+        fuera[codigo] = {
+            "n_raices": int(raices.group(1)) if raices else None,
+            "n_conductos": int(conductos.group(1)) if conductos else None,
+            "hallazgos": hallazgos,
+        }
+    return fuera
+
+
 def _describe_discards(discards: list[Discard]) -> str:
     """Resumen legible de los descartes para el `detail` del resultado."""
     cabeza = "; ".join(str(d) for d in discards[:_MAX_DISCARDS_IN_DETAIL])
@@ -200,63 +317,231 @@ def _describe_discards(discards: list[Discard]) -> str:
 # --------------------------------------------------------------------------- #
 # Backend LLM (structured output)
 # --------------------------------------------------------------------------- #
-_EXTRACTION_TOOL = {
-    "name": "registrar_hallazgos",
+_EXTRACTION_TOOL: dict[str, Any] = {
+    "name": "registrar_dientes",
     "description": (
-        "Registra los valores de pH medidos por diente que aparecen en el informe. "
-        "Incluye únicamente dientes con un pH explícito en el texto."
+        "Registra, diente a diente, lo que el informe afirma explícitamente: el pH "
+        "medido, la anatomía radicular y los hallazgos del vocabulario controlado. "
+        "Incluye un diente solo si el informe dice algo de él, y omite los campos que "
+        "ese diente no declare."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "hallazgos": {
+            "dientes": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "fdi": {
                             "type": "string",
+                            # El patrón no sustituye a `ontology.is_valid_fdi` —admite el
+                            # 56, que no existe— pero impide lo que la validación no
+                            # puede recuperar: la cadena vacía. Medido con un modelo
+                            # local, que rellenaba `fdi=""` y hacía perder el diente
+                            # entero; con el patrón, la decodificación restringida ya no
+                            # deja construir ese token.
+                            "pattern": "^[1-8][1-8]$",
                             "description": "Código ISO-FDI de dos dígitos, p. ej. '16'.",
                         },
                         "ph": {"type": "number", "minimum": 3.0, "maximum": 9.0},
+                        "n_raices": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "n_conductos": {"type": "integer", "minimum": 1, "maximum": 8},
+                        "hallazgos": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": [h.value for h in Hallazgo]},
+                            "description": (
+                                "Vocabulario CERRADO. Lo que no esté en la lista se omite; "
+                                "no se aproxima al término más parecido."
+                            ),
+                        },
                         "confianza": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                     },
-                    "required": ["fdi", "ph", "confianza"],
+                    "required": ["fdi", "confianza"],
                 },
             }
         },
-        "required": ["hallazgos"],
+        "required": ["dientes"],
     },
 }
+"""Esquema de la tool: la barrera que impide que el modelo devuelva prosa.
+
+`ph` dejó de ser obligatorio cuando el backend pasó a cubrir la anatomía: un informe
+de CBCT con IA no mide pH, y exigirlo obligaba al modelo a inventarlo o a callarse el
+diente entero. El vocabulario de `hallazgos` va como `enum` **generado desde
+`Hallazgo`**, no copiado: añadir un término al contrato lo añade aquí sin tocar nada.
+"""
 
 _SYSTEM_PROMPT = (
     "Eres un extractor de datos de informes odontológicos. Devuelves únicamente lo "
     "que el informe afirma explícitamente. No infieres, no completas dientes que no "
     "aparecen y no conviertes notaciones dudosas: si un código dental es ambiguo, "
-    "baja la confianza en vez de adivinar. Numeración ISO-FDI de dos dígitos."
+    "baja la confianza en vez de adivinar. Numeración ISO-FDI de dos dígitos.\n"
+    "\n"
+    "Reglas que se incumplen con más frecuencia:\n"
+    "- Una negación no es un hallazgo. «Sin signos de caries» significa que NO hay "
+    "caries: no la registres.\n"
+    "- Un antecedente no es el estado actual. «Caries tratada en 2024, hoy "
+    "restaurada» registra la restauración, no la caries.\n"
+    "- El vocabulario de hallazgos es cerrado. Si el informe describe algo que no "
+    "está en la lista —una fractura radicular, por ejemplo—, omítelo.\n"
+    "- Omite el campo que el informe no declare. Un informe de CBCT no trae pH y uno "
+    "de pH no trae anatomía radicular: devolverlos vacíos es correcto.\n"
+    "- Un rango son varias piezas. «Dientes 16-18» son el 16, el 17 y el 18: "
+    "enumera cada una por separado.\n"
+    "- Si el informe usa otra numeración (Universal, Palmer) y no declara cuál, no "
+    "la conviertas: omite el diente."
 )
+"""Las reglas del prompt salen de lo que el corpus mide que falla, no de la intuición.
+
+Cada viñeta corresponde a una familia de `report_corpus.py` (negación, antecedente,
+vocabulario, rango, notación ajena). Si mañana el corpus mide un fallo nuevo, la
+viñeta se añade aquí y `scripts/eval_informes.py` dice si sirvió de algo.
+"""
 
 
 class LLMExtraction(NamedTuple):
-    """Resultado del backend LLM: `{FDI: (pH, confianza)}` **y lo que se cayó**."""
+    """Resultado del backend LLM: pH, campos clínicos **y lo que se cayó**."""
 
     findings: dict[str, tuple[float, float]]
+    """`FDI → (pH, confianza)`."""
+    clinicos: dict[str, dict[str, Any]]
+    """`FDI → {n_raices, n_conductos, hallazgos}`, con los campos no declarados ausentes."""
     discards: list[Discard]
 
 
-def extract_ph_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
-    """Extrae con Claude (salida forzada por esquema) y registra los descartes.
+def _limite(campo: str) -> tuple[int, int]:
+    """Rango que **el contrato** impone a un campo entero de `ClinicalAttributes`.
 
-    El esquema de la tool es la barrera: el modelo no puede devolver prosa ni un
-    campo inventado, solo instancias del esquema. Los valores siguen pasando por
-    la validación de la ontología igual que en el backend determinista — la
-    confianza del modelo no exime de validar. Y, como allí, lo que la validación
-    tumba se **registra**: que lo haya propuesto un LLM no es motivo para perderlo
-    en silencio; al contrario, es cuando más interesa saberlo.
+    Se lee de `model_fields` en vez de copiarse aquí: duplicar el 1–5 de las raíces
+    crearía dos verdades que se separan en cuanto alguien toque una. La barrera del
+    agente y la del contrato tienen que ser la misma o el agente deja pasar cosas que
+    después revientan en `RegionalObservation`.
+    """
+    minimo = maximo = None
+    for restriccion in ClinicalAttributes.model_fields[campo].metadata:
+        minimo = getattr(restriccion, "ge", minimo)
+        maximo = getattr(restriccion, "le", maximo)
+    if minimo is None or maximo is None:  # pragma: no cover - el contrato los declara
+        raise RuntimeError(f"`ClinicalAttributes.{campo}` no declara rango.")
+    return int(minimo), int(maximo)
+
+
+def _propuesta(item: Mapping[str, Any]) -> str:
+    """La propuesta del modelo tal cual, para que el descarte diga qué se cayó."""
+    return " ".join(f"{clave}={valor}" for clave, valor in item.items())
+
+
+def _confianza(valor: object) -> float:
+    return (
+        min(1.0, max(0.0, float(valor)))  # type: ignore[arg-type]
+        if isinstance(valor, int | float)
+        else _LLM_CONFIDENCE_FALLBACK
+    )
+
+
+def valida_propuestas(items: Iterable[Mapping[str, Any]]) -> LLMExtraction:
+    """Filtra lo que el modelo propone contra la ontología y el contrato.
+
+    **Pura y sin red.** Toda la política del backend `llm` vive aquí, así que se
+    prueba entera sin `anthropic` instalado y sin clave. Lo único que queda fuera es
+    la llamada HTTP, que no tiene decisiones dentro.
+
+    **Se valida campo a campo, no diente a diente.** Un informe que dice «Diente 16,
+    3 raíces, pH 74» trae un valor malo y dos buenos; tumbar la pieza entera perdería
+    los dos buenos. Cae solo el que falla, y cae **registrado**: que lo haya propuesto
+    un LLM no es motivo para perderlo en silencio, igual que no lo es en el regex.
+
+    **Por qué la validación no puede delegarse en Pydantic.** `ClinicalAttributes`
+    también rechazaría `n_raices=9`, pero lanzando — y el envoltorio *fail-loud* del
+    agente convertiría eso en un informe **entero** en `FAILED` y en cuarentena. Un
+    valor implausible tiene que costar ese valor, no el documento.
+    """
+    findings: dict[str, tuple[float, float]] = {}
+    clinicos: dict[str, dict[str, Any]] = {}
+    discards: list[Discard] = []
+
+    for item in items:
+        code = str(item.get("fdi", "")).replace(".", "")
+        if not ontology.is_valid_fdi(code):
+            discards.append(
+                Discard(_propuesta(item), "código FDI inexistente (propuesto por el LLM)")
+            )
+            continue
+
+        confianza = _confianza(item.get("confianza"))
+        campos: dict[str, Any] = {}
+
+        ph = item.get("ph")
+        if isinstance(ph, int | float):
+            valor = float(ph)
+            if not ontology.PH.accepts(valor):
+                discards.append(
+                    Discard(
+                        f"fdi={code} pH={valor:g}",
+                        f"pH fuera del rango plausible "
+                        f"({ontology.PH.minimum:g}–{ontology.PH.maximum:g})",
+                    )
+                )
+            elif code in findings:
+                discards.append(
+                    Discard(f"fdi={code} pH={valor:g}", f"el diente {code} ya tenía un pH")
+                )
+            else:
+                findings[code] = (valor, confianza)
+        elif ph is not None:
+            discards.append(Discard(f"fdi={code} pH={ph!r}", "el pH no es un número"))
+
+        for campo in _CAMPOS_ENTEROS:
+            propuesto = item.get(campo)
+            if propuesto is None:
+                continue
+            minimo, maximo = _limite(campo)
+            if not isinstance(propuesto, int) or isinstance(propuesto, bool):
+                discards.append(
+                    Discard(f"fdi={code} {campo}={propuesto!r}", f"{campo} no es un entero")
+                )
+            elif not minimo <= propuesto <= maximo:
+                discards.append(
+                    Discard(
+                        f"fdi={code} {campo}={propuesto}",
+                        f"{campo} fuera del rango del contrato ({minimo}–{maximo})",
+                    )
+                )
+            else:
+                campos[campo] = propuesto
+
+        hallazgos: list[Hallazgo] = []
+        for propuesto in item.get("hallazgos") or []:
+            try:
+                hallazgos.append(Hallazgo(str(propuesto)))
+            except ValueError:
+                discards.append(
+                    Discard(
+                        f"fdi={code} hallazgo={propuesto!r}",
+                        "hallazgo fuera del vocabulario controlado",
+                    )
+                )
+        if hallazgos:
+            campos["hallazgos"] = hallazgos
+
+        if campos:
+            clinicos.setdefault(code, {}).update(campos)
+
+    return LLMExtraction(findings, clinicos, discards)
+
+
+def extract_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
+    """Extrae con Claude (salida forzada por esquema) y valida lo que devuelve.
+
+    Aquí no hay política: se llama al modelo y se delega en `valida_propuestas`, que
+    es lo que decide qué entra. La separación es lo que permite probar el backend
+    completo sin red — y lo que deja claro que el esquema de la tool no basta como
+    barrera: el modelo puede respetarlo y aun así proponer un diente que no existe.
     """
     try:
         from anthropic import Anthropic
-    except ImportError as exc:
+    except ImportError as exc:  # pragma: no cover - depende del extra `llm`
         raise RuntimeError(
             "El backend `llm` requiere el extra `llm` de `ingestion-agents` (anthropic)."
         ) from exc
@@ -266,35 +551,19 @@ def extract_ph_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
     client = Anthropic()
     response = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=4096,
         system=_SYSTEM_PROMPT,
-        tools=[_EXTRACTION_TOOL],  # type: ignore[list-item]
-        tool_choice={"type": "tool", "name": "registrar_hallazgos"},
+        tools=[_EXTRACTION_TOOL],
+        tool_choice={"type": "tool", "name": "registrar_dientes"},
         messages=[{"role": "user", "content": text}],
     )
-
-    out: dict[str, tuple[float, float]] = {}
-    discards: list[Discard] = []
-    for block in response.content:
-        if getattr(block, "type", None) != "tool_use":
-            continue
-        for item in block.input.get("hallazgos", []):  # type: ignore[union-attr]
-            code = str(item.get("fdi", "")).replace(".", "")
-            value = float(item.get("ph"))
-            propuesta = f"fdi={code} pH={value:g}"
-            if not ontology.is_valid_fdi(code):
-                discards.append(Discard(propuesta, "código FDI inexistente (propuesto por el LLM)"))
-            elif not ontology.PH.accepts(value):
-                discards.append(
-                    Discard(
-                        propuesta,
-                        f"pH fuera del rango plausible "
-                        f"({ontology.PH.minimum:g}–{ontology.PH.maximum:g})",
-                    )
-                )
-            else:
-                out[code] = (value, float(item.get("confianza", 0.5)))
-    return LLMExtraction(out, discards)
+    propuestas = [
+        item
+        for block in response.content
+        if getattr(block, "type", None) == "tool_use"
+        for item in block.input.get("dientes", [])  # type: ignore[union-attr]
+    ]
+    return valida_propuestas(propuestas)
 
 
 # --------------------------------------------------------------------------- #
@@ -312,16 +581,31 @@ class ReportAgent(BaseIngestionAgent):
         self,
         *,
         backend: str = "rules",
-        model: str = _LLM_MODEL,
+        model: str | None = None,
         default_timestamp: datetime | None = None,
         quarantine_dir: str | Path | None = None,
     ) -> None:
         super().__init__(quarantine_dir=quarantine_dir)
-        if backend not in {"rules", "llm"}:
-            raise ValueError(f"Backend desconocido: {backend!r} (usa 'rules' o 'llm').")
+        if backend not in _BACKENDS:
+            raise ValueError(
+                f"Backend desconocido: {backend!r} (usa {' o '.join(map(repr, _BACKENDS))})."
+            )
         self.backend = backend
-        self.model = model
+        # El modelo por defecto depende del backend: no hay uno que sirva a los tres.
+        self.model = model or (_LLM_MODEL if backend == "llm" else "")
         self.default_timestamp = default_timestamp
+
+    def _derivation(self) -> tuple[Derivation, str | None]:
+        """El único agente de ingesta cuya respuesta depende de cómo se le construyó.
+
+        `rules` es un patrón: reproducible y auditable leyendo el regex. Los otros dos
+        son un modelo interpretando prosa, y el twin tiene que poder decir **cuál** —
+        no es lo mismo `claude-sonnet-5` que un 7B local, y dentro de un año importará
+        saber con cuál se ingirió este informe.
+        """
+        if self.backend == "rules":
+            return Derivation.DETERMINISTIC, None
+        return Derivation.INFERRED, f"{self.backend}:{self.model}"
 
     def _ingest(self, source: Path) -> IngestionOutput:
         text = extract_text(source)
@@ -336,36 +620,88 @@ class ReportAgent(BaseIngestionAgent):
             or datetime.fromtimestamp(source.stat().st_mtime, tz=UTC)
         )
 
+        # Los informes de CBCT con IA no traen pH: traen anatomía radicular y hallazgos.
+        # No compiten con el pH —son otro campo del mismo `ClinicalAttributes`— y un
+        # informe puede traer los dos, uno o ninguno. Lo que cambia con el backend es
+        # **quién los lee**. Antes salían siempre del regex, también con `backend="llm"`:
+        # el modelo quedaba enchufado al campo tabulado (el pH, que el patrón ya cubre al
+        # 98%) y ausente del que viene en prosa, que es donde el regex baja al 43%.
+        # Medido en `scripts/eval_informes.py` sobre `report_corpus.py`.
         if self.backend == "rules":
             extraction = extract_ph_by_rules(text)
             findings = {
                 code: (value, _RULES_CONFIDENCE)
                 for code, value in extraction.findings.items()
             }
+            clinicos = extract_hallazgos_by_rules(text)
             discards = extraction.discards
         else:
-            findings, discards = extract_ph_by_llm(text, model=self.model)
+            findings, clinicos, discards = extract_by_llm(text, model=self.model)
+
+        # Y lo que el contrato NO interpreta. Va aparte de `findings`/`clinicos` porque no
+        # es por diente y porque no está validado contra ningún rango clínico nuestro: lo
+        # único que lo acota es el intervalo que el propio informe imprime. Ver `Medida`.
+        medidas = [
+            # `derivation` explícito y no el del agente: los índices los saca
+            # `extract_medidas_by_rules` **con los tres backends**, así que un informe
+            # ingerido con modelo llevaría índices marcados como inferidos sin serlo.
+            # El campo existe para no mentir, y mentiría en el sentido contrario.
+            Medida(
+                **m,
+                provenance=self._provenance(
+                    source,
+                    confidence=_RULES_CONFIDENCE,
+                    derivation=Derivation.DETERMINISTIC,
+                ),
+            )
+            for m in extract_medidas_by_rules(text)
+        ]
 
         observations = [
             RegionalObservation(
                 region_id=code,
-                attributes=ClinicalAttributes(ph=value),
+                attributes=ClinicalAttributes(
+                    ph=findings.get(code, (None, 0.0))[0],
+                    **clinicos.get(code, {}),
+                ),
                 timestamp=timestamp,
-                provenance=self._provenance(source, confidence=confidence),
+                provenance=self._provenance(
+                    source, confidence=findings.get(code, (None, _RULES_CONFIDENCE))[1]
+                ),
             )
-            for code, (value, confidence) in sorted(findings.items())
+            for code in sorted(set(findings) | set(clinicos))
         ]
 
         # Un informe del que no se extrae nada no es un éxito vacío: puede ser un
         # PDF escaneado sin OCR o un formato inesperado. Se declara con confianza
         # baja para que el gate de human-in-the-loop lo pare.
-        agent_confidence = min((c for _, c in findings.values()), default=0.0)
+        agent_confidence = min(
+            (c for _, c in findings.values()),
+            default=_RULES_CONFIDENCE if (clinicos or medidas) else 0.0,
+        )
 
         # Y un informe del que se extrae *parte* tampoco lo es. Si algo se
         # descartó, el informe decía algo que el twin no recoge: la confianza baja
         # por debajo del umbral del gate para que lo mire una persona y decida si
         # era un error de tecleo del clínico o un dato que hay que recuperar.
-        motivos = [] if findings else ["No se extrajo ningún hallazgo regional del informe."]
+        motivos = (
+            []
+            if (findings or clinicos or medidas)
+            else ["No se extrajo ningún hallazgo regional del informe."]
+        )
+        # Un índice fuera del rango que el propio informe declara es lo más accionable que
+        # sale de aquí, y el agente **no lo interpreta**: lo repite. Decir «TORS 89,34 con
+        # normal 90-100» no es un diagnóstico, es leer el documento en voz alta.
+        anomalas = [m for m in medidas if m.fuera_de_rango]
+        if anomalas:
+            motivos.append(
+                f"{len(anomalas)} de {len(medidas)} índice(s) fuera del rango que el "
+                "propio informe declara: "
+                + ", ".join(
+                    f"{m.nombre} {m.valor:g}{m.unidad} (normal "
+                    f"{m.normal_min:g}-{m.normal_max:g})" for m in anomalas
+                )
+            )
         if discards:
             agent_confidence = min(agent_confidence, _DISCARD_CONFIDENCE)
             motivos.append(_describe_discards(discards))
@@ -374,5 +710,6 @@ class ReportAgent(BaseIngestionAgent):
             source,
             confidence=agent_confidence,
             regional=observations,
+            medidas=medidas,
             detail=" ".join(motivos) if motivos else None,
         )

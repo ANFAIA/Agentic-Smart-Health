@@ -35,7 +35,7 @@ La **ingesta, la fusión, la segmentación y los tres canales de exportación es
 construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
 integración; lo que queda del camino es el análisis clínico. Lo que ya funciona hoy:
 
-**Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.2.0`**). El
+**Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.6.0`**). El <!--const:SCHEMA_VERSION-->
 `TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
 `surface_ref` (malla), `image_refs` (fotos, lista), `regional` (observaciones por
 diente FDI) y `provenance` por valor (trazabilidad raw→contrato).
@@ -105,18 +105,27 @@ CBCT↔intraoral está **medido sobre un paciente real**
 ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
 población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
 
-**Exportación reversible** — `export-agents`, **tres canales, y los tres miden lo que
-producen releyéndolo** en vez de prometerlo:
+**Exportación reversible** — `export-agents`, **y todos miden lo que producen
+releyéndolo** en vez de prometerlo:
 
 | Agente | Materializa | Error medido |
 |---|---|---|
 | `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief | <!--const:REVERSIBILITY_BUDGET_MM-->
 | `field-export-agent` | `gaussian_field_ref` → **PLY binario** | **0,0 mm** exactos sobre el CBCT de un paciente real (498.407 primitivas, 27,9 MB en 0,06 s): las posiciones van en `double` para que la verificación mida *bugs* de formato y no el redondeo |
 | `render-export-agent` | `gaussian_field_ref` → **PNG multivista** | **PSNR 102 dB · SSIM 0,99999999** en el ciclo twin → PLY → render, reproducible byte a byte |
+| `composite-mesh-export-agent` | escáner + CBCT → **arcada imprimible + un STL por diente** | **0,372 mm (p95) · sesgo −0,02 mm** — y este número **no es reversibilidad**: mide el reconstructor de raíces contra la corona escaneada, que es la única banda donde hay dos medidas del mismo tejido. Por eso este canal queda fuera de la comprobación de reversibilidad |
 
 El STL sale en el sistema del escáner o en el del twin; el PLY, centrado o en mm reales
 del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del propio
 fichero**.
+
+⚠️ **La distinción que separa las cuatro primeras filas de la última.** Los canales
+reversibles re-materializan lo que entró: su desviación responde «¿sale lo que metí?» y el
+presupuesto de 0,1 mm del brief va sobre eso. El último escribe geometría que **no entró**
+—la raíz, que ninguna otra medida cubre— y su número responde a otra pregunta con la misma
+unidad. Medirlas en el mismo cajón ponía el recorrido entero en rojo por 0,37 mm de una
+superficie que nadie había medido antes, mientras los canales que sí prometen
+reversibilidad daban 0,000000 mm.
 
 **Todavía no**: color **per-píxel** (registro foto↔malla — probado, no converge barato
 sin calibración), `pathology-agent`. Sigue pendiente del ADR de motor de render
@@ -145,17 +154,19 @@ agentic-smart-health/          ← workspace root
 ├── apps/
 │   ├── agent-orchestrator/    ← orquestador del sistema multiagente
 │   ├── research-agent/        ← agente de investigación (RAG + literatura científica)
-│   └── slicer-mcp-server/     ← servidor MCP para integración con 3D Slicer
 ├── packages/
 │   ├── core-schemas/          ← esquemas Pydantic compartidos (el contrato TwinSnapshot)
 │   ├── ingestion-agents/      ← 4 agentes de ingesta (mesh · cbct · report · image)
 │   ├── fusion-agents/         ← fusión geométrica y semántica sobre el twin
 │   ├── analysis-agents/       ← segmentación anatómica: region_id (FDI) por gaussiana
 │   ├── export-agents/         ← regeneración de malla, campo y render desde el twin, con el error medido
+│   ├── gaussian-engine/       ← ajuste de elipsoides anisótropos a la densidad que midió el CBCT
+│   ├── uos/                   ← contenedor Unified Oral Scene: el caso entero con sus relaciones declaradas
 │   ├── tooth-aggregation/     ← agregación de etiquetas por punto a instancias de diente
 │   └── 3dgs-engine/           ← placeholder (la reconstrucción 3DGS vive hoy en notebooks + gsplat)
 ├── data/
 │   └── research-agent/        ← knowledge base del agente de investigación
+├── schemas/                   ← JSON Schema publicado del manifiesto UOS, por versión (§12)
 ├── docs/                      ← documentación (ver nota más abajo)
 ├── notebooks/                 ← experimentación y exploración (01–07)
 ├── tests/                     ← suite de pruebas global
@@ -179,11 +190,24 @@ Orquestador central del sistema multiagente. Coordina los agentes de cada fase d
 
 Depende de `core-schemas` e `ingestion-agents` (vía workspace) para garantizar contratos de datos compartidos con el resto del sistema.
 
-### `slicer-mcp-server`
+### Interoperabilidad con [3D Slicer](https://www.slicer.org/) y otras plataformas
 
-Servidor **MCP (Model Context Protocol)** que expone una interfaz para la integración con [3D Slicer](https://www.slicer.org/), la plataforma open source de referencia para visualización y análisis de imágenes médicas. Permite que los agentes interactúen con modelos 3D e imágenes DICOM directamente desde el entorno de Slicer.
+**Por formatos abiertos, no por un servidor.** El pipeline materializa cada caso en STL, PLY
+y PNG, más el JSON del propio `TwinSnapshot`, y todos ellos los lee Slicer de forma nativa.
+Eso ya es interoperabilidad: no hay protocolo que negociar ni servicio que mantener vivo, y
+el fichero sigue abriéndose dentro de diez años sin nosotros.
 
-Depende igualmente de `core-schemas` para mantener la coherencia de los datos a través de la interfaz MCP.
+Hubo aquí un `slicer-mcp-server` y **se ha retirado**. Era un directorio con un `server.py`
+de **cero líneas** descrito en este mismo README en presente —«expone una interfaz»,
+«permite que los agentes interactúen»— y su desbloqueo dependía de que un tercero
+confirmase formato y sentido de la llamada. Una pieza vacía que no podemos desbloquear
+nosotros no es arquitectura: es una intención escrita en el sitio donde se documentan los
+hechos.
+
+Un servidor MCP tendría sentido para interacción **viva y bidireccional** — que un agente
+conduzca la sesión de Slicer, no que lea un fichero. Nadie ha pedido eso todavía, y cuando
+se pida se construye. Ver la issue #40, que ahora es una pregunta al partner y no un
+componente de este repositorio.
 
 ### `research-agent`
 
@@ -339,17 +363,27 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/altura_corona.py`](scripts/altura_corona.py) | mide la altura de corona clínica sobre el escáner intraoral. |
 | [`scripts/audit_pr.py`](scripts/audit_pr.py) | Guardián de las reglas de arquitectura del monorepo. |
 | [`scripts/blender_render_views.py`](scripts/blender_render_views.py) | Render multivista de una malla intraoral con **Blender** (headless). |
+| [`scripts/caso_completo.py`](scripts/caso_completo.py) | El pipeline entero sobre un caso clínico real, etapa por etapa. |
+| [`scripts/composicion_cbct_ios.py`](scripts/composicion_cbct_ios.py) | Dientes segmentados en el CBCT + encía del IOS, en gaussianas. |
 | [`scripts/data_guard.py`](scripts/data_guard.py) | Impide que datos ajenos entren al repositorio sin permiso. |
 | [`scripts/desplazamiento_relativo.py`](scripts/desplazamiento_relativo.py) | ¿Se puede decir «esta pieza se desplazó X mm»? Referencia leave-one-out y umbral. |
 | [`scripts/docs_sync.py`](scripts/docs_sync.py) | Comprueba que la documentación no le mienta al código. |
+| [`scripts/entrena_diente_cbct.py`](scripts/entrena_diente_cbct.py) | Segmentador de diente en CBCT, contra el listón del umbral. |
+| [`scripts/entrena_gs_escaner.py`](scripts/entrena_gs_escaner.py) | 3DGS de verdad sobre la superficie del escaner. |
 | [`scripts/entrenar_3dgs.py`](scripts/entrenar_3dgs.py) | EXPERIMENTO con resultado NEGATIVO: 3DGS entrenado de una arcada. |
+| [`scripts/eval_informes.py`](scripts/eval_informes.py) | ¿Cuánto de lo que dice un informe acaba en el contrato? |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+| [`scripts/metricas.py`](scripts/metricas.py) | las cuatro cifras del brief, MEDIDAS y no prometidas. |
+| [`scripts/mide_segmentacion.py`](scripts/mide_segmentacion.py) | cuanto se puede DESCARTAR de la segmentacion FDI de un `.uos`. |
+| [`scripts/prepara_toothfairy.py`](scripts/prepara_toothfairy.py) | Descarga ToothFairy2 caso a caso y lo deja entrenable. |
 | [`scripts/promedio_y_escala.py`](scripts/promedio_y_escala.py) | Dos preguntas de diseño sobre el registro por diente, medidas en vez de argumentadas. |
+| [`scripts/refina_3dgs.py`](scripts/refina_3dgs.py) | La fase que faltaba: el campo semilla optimizado como 3DGS. |
 | [`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py) | mide si el escáner intraoral y el CBCT se pueden alinear. |
 | [`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py) | Simula qué resolución alcanza cada modalidad dental. |
 | [`scripts/segmentar_fdi.py`](scripts/segmentar_fdi.py) | etiqueta cada diente de una arcada con su código FDI. |
 | [`scripts/seguimiento_histora.py`](scripts/seguimiento_histora.py) | cuánto se ha movido el margen gingival entre dos escaneos. |
+| [`scripts/umbral_vs_verdad.py`](scripts/umbral_vs_verdad.py) | ¿Cuánto diente recupera un umbral, contra una verdad conocida? |
 | [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
 <!-- /generado: scripts -->
 
@@ -458,6 +492,16 @@ emitidos.
 > - `docs/research/` — referencias bibliográficas, notas de investigación sobre Gaussian Splatting, estándares DICOM/STL, interoperabilidad clínica y normativa aplicable (RGPD, HIPAA).
 
 La documentación técnica orientada a desarrolladores y contribuidores se mantendrá en este README y en los `pyproject.toml` de cada componente.
+
+### Por dónde empezar a leer
+
+| Documento | Responde a |
+|---|---|
+| [`docs/cierre-mvp.md`](docs/cierre-mvp.md) | qué está medido, qué no está resuelto y qué queda para después |
+| [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md) | qué lleva un `.uos` y a quién le sirve |
+| [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | por qué la segmentación FDI no está resuelta, con la medida |
+| [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
+| [`docs/research/segmentacion-diente-cbct.md`](docs/research/segmentacion-diente-cbct.md) | hasta dónde llega un clasificador sobre el CBCT, y dónde deja de llegar |
 
 ---
 

@@ -99,6 +99,72 @@ def test_el_ciclo_twin_ply_render_no_pierde_nada(con_ply) -> None:
     assert not salida.hitl_required
 
 
+def test_el_ciclo_es_exacto_aunque_el_campo_NO_este_centrado(ingerido, tmp_path) -> None:
+    """El caso que el test de arriba no cubre, y que rompió el ciclo en producción.
+
+    El campo del `cbct-agent` sale con el centroide en el origen —`origin` ES la media—,
+    así que un verificador que recentrara restando el centroide daba exacto por
+    casualidad. El `gaussian-engine` ajusta elipsoides a la densidad y **mueve** el
+    centroide: medido sobre un caso real, 4,4 mm sobre una escena de 87 mm. Aquella resta
+    pasó a ser una traslación y el ciclo se desplomó a 14,1 dB contra un presupuesto de
+    40, sin que reventara nada.
+
+    Aquí se reproduce a mano: se desplaza el campo y se exige que el ciclo siga siendo
+    exacto. El marco lo declara la cabecera y se lee de ahí.
+    """
+    store, snapshot, _ = ingerido
+    arrays = dict(store.load(snapshot.gaussian_field_ref))
+    arrays["centers"] = np.asarray(arrays["centers"], dtype=np.float64) + [0.04, -1.84, 3.97]
+    desplazado = _snapshot(store.put(**arrays), acquisition_id=snapshot.acquisition_id)
+
+    ply = tmp_path / "descentrado.ply"
+    assert FieldExportAgent(store).export(desplazado, ply).ok
+    salida = RenderExportAgent(store, resolucion=64).export(
+        desplazado, tmp_path / "vistas-descentrado", ply=ply
+    )
+
+    assert salida.ok, salida.detail
+    assert salida.psnr_db == float("inf")
+    assert salida.ssim == pytest.approx(1.0)
+    assert salida.image_within_budget
+
+
+def test_el_marco_del_ply_se_LEE_de_la_cabecera_y_no_se_deduce(ingerido, tmp_path) -> None:
+    """Un PLY en coordenadas del CBCT lleva `centers + origin` y lo dice. El verificador
+    resta el `origin_mm` que declara, no el centroide que le parezca."""
+    from export_agents.field import metadatos_ply
+
+    store, snapshot, _ = ingerido
+    ply = tmp_path / "en-cbct.ply"
+    assert FieldExportAgent(store).export(snapshot, ply, frame="cbct").ok
+
+    meta = metadatos_ply(ply)
+    assert meta["frame"] == "cbct"
+    origen = np.asarray([float(v) for v in meta["origin_mm"].split()])
+    assert np.allclose(origen, store.load(snapshot.gaussian_field_ref)["origin"])
+
+    salida = RenderExportAgent(store, resolucion=64).export(
+        snapshot, tmp_path / "vistas-cbct", ply=ply
+    )
+    assert salida.psnr_db == float("inf")
+
+
+def test_un_ply_que_no_declara_su_marco_es_un_ERROR_y_no_un_caso_por_defecto(
+    ingerido, tmp_path
+) -> None:
+    """Adivinar el marco es exactamente lo que hubo que arreglar: se falla ruidosamente."""
+    from export_agents.render import _desplazamiento
+
+    store, snapshot, _ = ingerido
+    ply = tmp_path / "mudo.ply"
+    assert FieldExportAgent(store).export(snapshot, ply).ok
+    crudo = ply.read_bytes().replace(b"comment frame twin\n", b"", 1)
+    ply.write_bytes(crudo)
+
+    with pytest.raises(ValueError, match="marco conocido"):
+        _desplazamiento(ply)
+
+
 def test_las_metricas_cazan_un_eje_intercambiado(con_ply) -> None:
     """El bug que una estimación del error de formato NO vería.
 
@@ -110,7 +176,10 @@ def test_las_metricas_cazan_un_eje_intercambiado(con_ply) -> None:
     torcido = tmp_path / "torcido.ply"
     columnas = dict(leido)
     columnas["x"], columnas["y"] = leido["y"], leido["x"]   # ← el bug
-    escribe_ply(torcido, columnas, comentarios=["ejes intercambiados a proposito"])
+    # El `frame` va en la cabecera como en cualquier PLY que salga del exportador: lo
+    # que este test finge es un BUG de geometria, no un fichero sin declarar su marco.
+    escribe_ply(torcido, columnas,
+                comentarios=["frame twin", "ejes intercambiados a proposito"])
 
     salida = RenderExportAgent(store, resolucion=64).export(
         snapshot, tmp_path / "vistas", ply=torcido

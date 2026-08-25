@@ -63,7 +63,7 @@ from export_agents.base import (
     ExportOutput,
     SurfaceStore,
 )
-from export_agents.field import _CLAVES_MINIMAS, lee_ply
+from export_agents.field import _CLAVES_MINIMAS, lee_ply, metadatos_ply
 
 SIGMAS_SOPORTE = 3.0
 """Radio del depósito, en sigmas. Más allá de 3σ queda < 1,1 % de la masa de la gaussiana."""
@@ -271,6 +271,44 @@ def lee_png(ruta: Path) -> np.ndarray:
         return np.asarray(img.convert("L"), dtype=np.uint8)
 
 
+def _desplazamiento(ply: Path) -> np.ndarray:
+    """Lo que hay que restarle al PLY para llevarlo al marco del twin, en mm.
+
+    El marco lo DECLARA la cabecera (`comment frame twin|cbct`), y por eso se lee de ahí:
+    el twin va centrado y el CBCT lleva `centers + origin`, así que comparar sin saber
+    cuál es mediría el desplazamiento en vez del ciclo.
+
+    ⚠️ **Antes se restaba el centroide de la nube**, lo cual era exacto *mientras* `origin`
+    fuese la media —el `cbct-agent` la escribe así—. El `gaussian-engine` ajusta elipsoides
+    a la densidad y el centroide del campo ajustado ya no es cero: medido sobre un caso
+    real, `[0,04, −1,84, 3,97]` mm. Aquella resta inocua se convirtió en una traslación de
+    4,4 mm sobre una escena de 87 mm y el ciclo se desplomó a **14,1 dB** contra un
+    presupuesto de 40, en silencio y con las imágenes de buen aspecto. Es el fallo que el
+    propio comentario de este sitio anunciaba, y el motivo de que ahora se lea.
+
+    Un marco que no se declara es un **error**, no un caso por defecto: adivinar es
+    exactamente lo que hizo falta arreglar.
+    """
+    meta = metadatos_ply(ply)
+    marco = meta.get("frame")
+    if marco == "twin":
+        # El twin ya va centrado. No hay nada que restar, y restar «casi nada» tampoco.
+        return np.zeros(3)
+    if marco == "cbct":
+        if "origin_mm" not in meta:
+            raise ValueError(
+                f"{ply.name} declara `frame cbct` y no trae `origin_mm` en la cabecera: "
+                "sin el desplazamiento no se puede volver al marco del twin, y estimarlo "
+                "del centroide es lo que rompió esta comparación."
+            )
+        return np.asarray([float(v) for v in meta["origin_mm"].split()], dtype=np.float64)
+    raise ValueError(
+        f"{ply.name} no declara un marco conocido en su cabecera "
+        f"(`comment frame …` dice {marco!r}): no se puede comparar contra el twin sin "
+        "saber en qué sistema vienen las coordenadas."
+    )
+
+
 class RenderExportAgent(BaseExportAgent):
     """Materializa el campo del twin como PNG multivista, y mide el ciclo.
 
@@ -279,7 +317,7 @@ class RenderExportAgent(BaseExportAgent):
     """
 
     name = "render-export-agent"
-    version = "0.1.0"
+    version = "0.1.1"
 
     def __init__(
         self,
@@ -398,6 +436,9 @@ class RenderExportAgent(BaseExportAgent):
         Es el ciclo completo: twin → PLY → render, contra twin → render. Cierra el bucle
         que el canal de malla cierra releyendo el STL, y por la misma razón: una
         estimación no vería un eje intercambiado, y esto sí.
+
+        El marco del PLY se **lee** de su cabecera, no se deduce de los datos. Ver
+        `_desplazamiento`.
         """
         leido = lee_ply(ply)
         centers = np.column_stack([leido["x"], leido["y"], leido["z"]]).astype(np.float64)
@@ -405,13 +446,7 @@ class RenderExportAgent(BaseExportAgent):
             [leido["scale_0"], leido["scale_1"], leido["scale_2"]]
         ).astype(np.float64)
         density = np.asarray(leido["density"], dtype=np.float64)
-        # El PLY puede venir en el marco del CBCT (`centers + origin`) y el del twin va
-        # centrado: comparar dos encuadres distintos mediría el desplazamiento, no el
-        # ciclo. Se recentra restando el centroide, y eso recupera el marco del twin
-        # **exactamente** porque `origin` ES el centroide (`cbct_agent`). Si algún día
-        # `origin` dejara de ser la media, este paso dejaría de ser exacto en silencio,
-        # así que la dependencia queda escrita aquí.
-        centers = centers - centers.mean(axis=0)
+        centers = centers - _desplazamiento(ply)
 
         peores = (float("inf"), 1.0)
         for vista, propia in zip(self.vistas, propias, strict=True):

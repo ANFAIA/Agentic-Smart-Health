@@ -17,6 +17,7 @@ import pytest
 from core_schemas import (
     SCHEMA_VERSION,
     ClinicalAttributes,
+    Derivation,
     Modality,
     ModalityIngestion,
     ModalityStatus,
@@ -169,3 +170,49 @@ def test_transform_sobrevive_al_round_trip_json():
 def test_rms_negativo_se_rechaza():
     with pytest.raises(ValidationError):
         RigidTransform(rotation=_rot_z(0), translation=(0.0, 0.0, 0.0), rms_mm=-0.1)
+
+
+# --- `Derivation`: leído vs inferido --------------------------------------- #
+# El hueco que estos tests tapan: `Provenance` decía qué agente produjo un valor,
+# pero no si lo había *leído* o *inferido*. Con un `report-agent` que tiene un
+# backend por reglas y dos por modelo, «lo produjo report-agent@0.1.0» dejó de ser
+# una respuesta: el mismo agente y la misma versión dan las dos cosas.
+def test_sin_declarar_no_es_lo_mismo_que_determinista() -> None:
+    """`None` significa «nadie lo dijo», no «es reproducible».
+
+    Es la misma distinción que `ModalityStatus` hace entre `MISSING` y `FAILED`. Si
+    el defecto afirmase determinismo, un agente que infiere y olvida declararlo
+    produciría un valor que **miente** en vez de uno que calla.
+    """
+    assert _prov().derivation is None
+    assert _prov().derivation is not Derivation.DETERMINISTIC
+
+
+def test_una_inferencia_declara_su_modelo() -> None:
+    prov = _prov(derivation=Derivation.INFERRED, model="llm:claude-sonnet-5")
+    assert prov.derivation is Derivation.INFERRED
+    assert prov.model == "llm:claude-sonnet-5"
+
+
+def test_una_inferencia_sin_modelo_no_se_construye() -> None:
+    """«Inferido por no se sabe quién» no es auditable ni reproducible."""
+    with pytest.raises(ValidationError, match="exige declarar `model`"):
+        _prov(derivation=Derivation.INFERRED)
+
+
+@pytest.mark.parametrize("derivation", [None, Derivation.DETERMINISTIC])
+def test_un_modelo_sin_inferencia_es_una_contradiccion(derivation: object) -> None:
+    """Declarar modelo y a la vez determinismo es una afirmación que no puede ser cierta."""
+    with pytest.raises(ValidationError, match="solo tiene sentido"):
+        _prov(derivation=derivation, model="llm:claude-sonnet-5")
+
+
+def test_el_determinismo_no_arrastra_modelo() -> None:
+    prov = _prov(derivation=Derivation.DETERMINISTIC)
+    assert prov.model is None
+
+
+def test_la_derivacion_sobrevive_al_contrato_serializado() -> None:
+    """Si no viajase en el JSON, el twin persistido perdería la distinción."""
+    prov = _prov(derivation=Derivation.INFERRED, model="llm:claude-sonnet-5")
+    assert Provenance.model_validate_json(prov.model_dump_json()) == prov

@@ -346,6 +346,47 @@ reproducible**, que es lo que la ingesta necesita validar (y lo que ningún
 dataset público suelto da: nadie publica CBCT + malla + informe del mismo
 paciente).
 
+## Corpus de evaluación del informe
+
+`ingestion_agents/report_corpus.py` es a los informes lo que `edge_cases.py` a las
+entradas rotas: un catálogo único, 22 informes sintéticos, cada uno con **lo que
+dice de verdad** anotado a mano y **lo que el backend determinista saca de él** hoy.
+Las dos columnas están separadas a propósito — si la referencia fuese lo que el
+regex extrae, el regex tendría 100 % por definición y no habría suelo contra el que
+comparar un LLM.
+
+```bash
+uv run python scripts/eval_informes.py --detalle     # backend determinista
+uv run python scripts/eval_informes.py --backend llm # requiere ANTHROPIC_API_KEY
+```
+
+Medido sobre el corpus (22 informes · 19 valores de pH · 47 clínicos · 5 índices):
+
+| familia | cobertura de `rules` | valores falsos |
+|---|---|---|
+| tabulado (8 informes) | **97,8 %** | 0 |
+| prosa (7 informes) | **43,5 %** | 2 |
+| abstención (7 informes) | 100 % | 1 |
+| **total** | **80,3 %** | **3** |
+
+Dos lecturas, y la segunda importa más que la primera:
+
+1. El determinista **cumple el >95 % del brief en el terreno para el que se
+   escribió** (tabulado) y se queda en 43 % en prosa. La cifra global de 78,8 % no
+   es un veredicto sobre el extractor: es la proporción de cada formato en el
+   corpus. Por eso se reporta por familia.
+2. Hay **3 valores falsos** dentro del contrato, y son un fallo distinto del hueco.
+   El peor: `Tooth #14` (notación Universal, que es el 26 en FDI) se ingiere como
+   FDI 14 —otro diente— con confianza 0,9 y sin descarte que lo delate. Los tres
+   están fijados en `test_corpus_informes.py::FALSOS_POSITIVOS_RULES`, una cifra
+   que solo puede bajar.
+
+El corpus no se escribió para aprobar al extractor actual, sino para darle al
+backend `llm` contra qué medirse. Y ya sirvió para eso: medir esta tabla es lo que
+destapó que el LLM solo producía pH —el campo que el regex ya cubre al 98 %— mientras
+los campos en prosa salían del regex incluso con `backend="llm"`. Los dos backends
+cubren hoy los mismos campos, así que `--backend llm` es comparable valor a valor.
+
 ## Tests
 
 ```bash

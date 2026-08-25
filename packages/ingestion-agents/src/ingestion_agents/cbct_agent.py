@@ -34,6 +34,34 @@ from ingestion_agents.store import ArtifactStore
 # Aire ≈ -1000 HU, esmalte ≳ 2000 HU. Por debajo del umbral no hay tejido que
 # modelar: sembrar gaussianas ahí solo añade millones de primitivas invisibles.
 DEFAULT_HU_THRESHOLD = 300.0
+
+# --- recorte a la region dental --------------------------------------------- #
+#
+# **Por que existe.** El campo se siembra muestreando UNIFORMEMENTE todo lo que pasa de
+# 300 HU, y un CBCT dental de FOV completo es una CABEZA: craneo, mandibula y cervicales.
+# Los 500.000 puntos se reparten por todo ese hueso y a los dientes les tocan las migajas.
+# Medido sobre un caso real: de 493.932 gaussianas solo 28.652 caian en zona dental, y el
+# compuesto acababa con **el 7 % del volumen de cada diente** — filamentos, no dientes.
+#
+# El recorte no adivina donde esta la dentadura: la LOCALIZA por el esmalte, que es lo mas
+# denso de la cabeza, y se queda con la masa contigua mayor.
+#
+# ⚠️ El umbral se eligio midiendo, y los dos extremos fallan de formas distintas:
+#
+#     HU >= 1500 -> la masa mayor mide 112 x 97 x 86 mm: es el craneo, no la dentadura
+#     HU >= 1800 -> 61 x 60 x 42 mm  ← las dos arcadas en oclusion
+#     HU >= 2600 -> 10 x 20 x 13 mm: un EMPASTE. El volumen llega a 13.626 HU y por
+#                   encima de 2600 el metal domina al esmalte
+HU_ESMALTE = 1800.0
+
+# Rejilla con la que se agrupa. A 5 mm la dentadura es una sola masa contigua y el ruido
+# disperso no llega a formar grupo.
+PASO_AGRUPACION_MM = 5.0
+
+# Margen alrededor del esmalte. La raiz NO es esmalte y queda fuera de la masa localizada:
+# un diente entero mide 20-25 mm y la corona ocupa los 8-9 superiores, asi que hacen falta
+# ~12 mm para que el apice entre en la caja.
+MARGEN_RAIZ_MM = 12.0
 # HU a partir del cual σ satura a 1.0 (esmalte/metal). Normaliza el rango útil.
 HU_SATURATION = 2000.0
 
@@ -111,6 +139,41 @@ class Serie:
     el sentido del eje es **desconocido** y quien separe arcadas por altura no puede
     nombrarlas. Se expone precisamente para que no se dé por supuesto lo que no consta.
     """
+
+
+def _caja_dental(
+    volumen: np.ndarray, spacing, z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """`(min, max)` en mm de la caja que contiene la dentadura, o `None` si no la localiza.
+
+    Se localiza por el **esmalte**, que es lo mas denso de una cabeza, y quedandose con la
+    masa contigua mayor. Es lo que distingue la dentadura de un empaste suelto: los dos
+    superan el umbral, pero solo una forma un bloque de 60 mm.
+
+    Devuelve `None` en vez de una caja mala si no encuentra nada agrupable — un CBCT sin
+    dientes, o con un umbral que no le vale. Quien llama sigue con el volumen entero, que
+    es el comportamiento de siempre.
+    """
+    from scipy import ndimage
+
+    o = np.argwhere(volumen >= HU_ESMALTE)
+    if len(o) < 1000:
+        return None
+    p = np.column_stack([o[:, 2] * spacing[0], o[:, 1] * spacing[1], z[o[:, 0]]])
+
+    g = np.floor((p - p.min(axis=0)) / PASO_AGRUPACION_MM).astype(int)
+    masa = np.zeros(g.max(axis=0) + 1, dtype=np.int32)
+    np.add.at(masa, (g[:, 0], g[:, 1], g[:, 2]), 1)
+    # `>= 3` para que una celda con dos voxeles sueltos no encadene dos masas distintas.
+    etiquetas, n = ndimage.label(masa >= 3)
+    if n == 0:
+        return None
+
+    tam = ndimage.sum(masa, etiquetas, range(1, n + 1))
+    mayor = int(np.argmax(tam)) + 1
+    dentro = etiquetas[g[:, 0], g[:, 1], g[:, 2]] == mayor
+    q = p[dentro]
+    return q.min(axis=0) - MARGEN_RAIZ_MM, q.max(axis=0) + MARGEN_RAIZ_MM
 
 
 def _read_series(directory: Path) -> Serie:
@@ -250,12 +313,17 @@ class CBCTAgent(BaseIngestionAgent):
         *,
         hu_threshold: float = DEFAULT_HU_THRESHOLD,
         max_primitives: int = 500_000,
+        recorte_dental: bool = False,
         quarantine_dir: str | Path | None = None,
     ) -> None:
         super().__init__(quarantine_dir=quarantine_dir)
         self.store = store
         self.hu_threshold = hu_threshold
         self.max_primitives = max_primitives
+        # Opt-in, y a proposito: no todo CBCT que entre aqui es de FOV completo, y recortar
+        # uno que ya venga acotado a la dentadura solo quitaria margen sin ganar nada.
+        # Quien sabe que su serie es de cabeza entera lo pide.
+        self.recorte_dental = recorte_dental
         self.patient_pseudonym: str | None = None
 
     def _ingest(self, source: Path) -> IngestionOutput:
@@ -274,6 +342,21 @@ class CBCTAgent(BaseIngestionAgent):
                 f"Ningún vóxel supera el umbral de {self.hu_threshold} HU: "
                 "serie vacía, mal reescalada o umbral inadecuado."
             )
+
+        recorte = None
+        if self.recorte_dental:
+            caja = _caja_dental(volume, spacing, serie.z)
+            if caja is not None:
+                lo, hi = caja
+                mundo_todo = np.column_stack([
+                    occupied[:, 2] * spacing[0],
+                    occupied[:, 1] * spacing[1],
+                    serie.z[occupied[:, 0]],
+                ])
+                dentro = np.all((mundo_todo >= lo) & (mundo_todo <= hi), axis=1)
+                if dentro.sum() >= 1000:
+                    recorte = (int(occupied.shape[0]), int(dentro.sum()), hi - lo)
+                    occupied = occupied[dentro]
 
         # Submuestreo determinista si el volumen da más primitivas de las pedidas:
         # paso uniforme (no aleatorio) para que la ingesta sea reproducible.
@@ -338,4 +421,12 @@ class CBCTAgent(BaseIngestionAgent):
                 hu_range=np.asarray([self.hu_threshold, HU_SATURATION], dtype=np.float64),
             ),
             n_primitives=int(centers.shape[0]),
+            detail=(
+                None if recorte is None else
+                f"recorte dental: {recorte[1]:,} de {recorte[0]:,} vóxeles de tejido duro "
+                f"({recorte[1] / recorte[0]:.1%}) en una caja de "
+                f"{recorte[2][0]:.0f}×{recorte[2][1]:.0f}×{recorte[2][2]:.0f} mm. El resto "
+                "es cráneo y cervicales: sin recortar, el muestreo uniforme deja los "
+                "dientes con el 7% de su volumen."
+            ),
         )

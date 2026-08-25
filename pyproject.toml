@@ -9,8 +9,12 @@ dependencies = [
     "core-schemas",
     "export-agents",
     "fusion-agents",
+    # Sin el extra `gpu`: el ajuste del campo necesita torch y la raiz no puede
+    # arrastrar CUDA a quien solo quiera correr las pruebas de los agentes.
+    "gaussian-engine",
     "ingestion-agents",
     "tooth-aggregation",
+    "uos",
 ]
 
 [tool.uv.workspace]
@@ -72,8 +76,10 @@ analysis-agents = { workspace = true }
 core-schemas = { workspace = true }
 export-agents = { workspace = true }
 fusion-agents = { workspace = true }
+gaussian-engine = { workspace = true }
 ingestion-agents = { workspace = true }
 tooth-aggregation = { workspace = true }
+uos = { workspace = true }
 
 [tool.ruff]
 line-length = 100

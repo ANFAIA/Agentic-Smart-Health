@@ -1,0 +1,36 @@
+[project]
+name = "uos"
+version = "0.2.0"
+description = "Unified Oral Scene: contenedor + manifiesto de composicion para un caso dental"
+requires-python = ">=3.11"
+dependencies = [
+    # El manifiesto ES el contrato, asi que se valida como tal.
+    "pydantic>=2.7",
+    # `TwinSnapshot` -> manifiesto: la conversion vive aqui, no en el contrato del twin.
+    "core-schemas",
+    # El agente hereda el contrato comun de exportacion y necesita la rigida del registro.
+    "export-agents",
+    "fusion-agents",
+    "numpy>=2.0",
+    # Solo para el sidecar del volumen (§5.2): se leen CABECERAS, nunca pixeles. El
+    # DICOM viaja intacto y quien lo abra usara su propio parser; esto existe para que
+    # un visor web no necesite uno solo para saber que le llega.
+    "pydicom>=3.0",
+    # El §12 exige que el validador contraste contra el JSON Schema PUBLICADO, no solo
+    # contra el contrato de Pydantic: es el unico artefacto con el que un tercero puede
+    # comprobar un `.uos`. Va como dependencia declarada y no opcional porque un chequeo
+    # que solo corre si alguien tiene la libreria por casualidad no es un chequeo.
+    "jsonschema>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uos"]
+
+[tool.uv.sources]
+core-schemas = { workspace = true }
+export-agents = { workspace = true }
+fusion-agents = { workspace = true }

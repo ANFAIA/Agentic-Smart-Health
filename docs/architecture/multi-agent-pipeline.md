@@ -29,7 +29,7 @@ muestre. Un **orquestador** reparte el trabajo.
 
 | Capa | Qué es | Componente en el repo |
 |---|---|---|
-| **Visualización** | Lo que ve el usuario | `web-viewer` (three.js) · VTK / 3D Slicer |
+| **Visualización** | Lo que ve el usuario | canal de visor del exportador (HTML autocontenido) · VTK / 3D Slicer leyendo los ficheros abiertos |
 | **Orquestación** | Reparte y ordena las tareas | `apps/agent-orchestrator` |
 | **Agentes** | Hacen el trabajo (ingesta + análisis) | `cbct/mesh/report/image-agent`, `segmentation/pathology-agent`… |
 | **Cerebro (LLM)** | Razona **dentro** de un agente (no es una capa central; no todos lo usan) | Claude / Ollama — hoy solo en `research-agent` |
@@ -130,8 +130,8 @@ flowchart LR
     E1["TwinSnapshot JSON<br/>+ campo .ply/.splat por hash"]
   end
   subgraph VIS["Visualización"]
-    V1["web-viewer · three.js"]
-    V2["VTK / 3D Slicer"]
+    V1["visor HTML autocontenido<br/>(canal de exportación)"]
+    V2["VTK / 3D Slicer<br/>(lee los ficheros abiertos)"]
   end
 
   A1 --> RG
@@ -301,14 +301,14 @@ asimetría del contrato (ADR 001 §2):
 | Canal | Qué exporta | Formato (propuesto) | Consumidor |
 |---|---|---|---|
 | **Metadatos / contrato** | `TwinSnapshot` (referencias, `RegionalObservation`, provenance) | **JSON** (`model_dump` de Pydantic) | ambos visualizadores + API |
-| **Campo gaussiano** | los tensores masivos referidos por `gaussian_field_ref` | **`.ply` / `.splat`** (por hash) | `web-viewer` (three.js), VTK/Slicer |
+| **Campo gaussiano** | los tensores masivos referidos por `gaussian_field_ref` | **`.ply` / `.splat`** (por hash) | el visor HTML y VTK/Slicer |
 
 ```mermaid
 flowchart LR
   SN["TwinSnapshot"] --> J["JSON (contrato)<br/>model_dump()"]
   SN -->|"gaussian_field_ref → resuelve hash"| ENG[("3dgs-engine")]
   ENG --> PLY[".ply / .splat"]
-  J --> WEB["web-viewer · three.js"]
+  J --> WEB["visor HTML"]
   PLY --> WEB
   J --> VTK["VTK / 3D Slicer"]
   PLY --> VTK
@@ -389,7 +389,17 @@ render**. Mientras tanto no bloquea nada: los tres canales exportan y miden.
 6. **Export** — el snapshot se materializa: el `export-agent` regenera la **malla**
    (STL, con el error medido) y, cuando D1 se cierre, el campo gaussiano
    (`.ply/.splat`); el contrato viaja como JSON.
-7. **Visualización** — `web-viewer` (three.js) y/o VTK/Slicer lo renderizan.
+7. **Visualización** — el canal de visor emite un **HTML autocontenido** (un fichero, sin
+   servidor) y VTK/3D Slicer leen los mismos ficheros abiertos.
+
+   ⚠️ **Sin servidor, y es una decisión.** Un visor con backend obligaría a mantener vivo
+   un servicio con dato clínico —RGPD, autenticación, operación— para ver un caso, y
+   duplicaría 3D Slicer, que es la herramienta que las clínicas ya tienen. Un twin que
+   necesita infraestructura viva para poder mirarse no es reversible.
+
+   Aquí hubo también un `slicer-mcp-server`, retirado: era un directorio vacío cuyo
+   desbloqueo dependía de que el partner confirmase formato y sentido de la llamada.
+   La interoperabilidad ya ocurre por los ficheros abiertos, que Slicer lee nativamente.
 
 > **⚠ El orden de las fases 2–4 es provisional, no una decisión cerrada.** Lo único
 > firme es la **dependencia de datos**: la fusión *semántica* (4) necesita el FDI, así

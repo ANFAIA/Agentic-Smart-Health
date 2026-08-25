@@ -48,13 +48,25 @@ from export_agents.base import (
     ExportOutput,
     SurfaceStore,
 )
+from export_agents.compuesto import (
+    DENSIDAD_ENCIA,
+    ORIGEN_CBCT,
+    ORIGEN_IOS,
+    CompositeExportAgent,
+)
 from export_agents.field import (
+    COLUMNAS_DE_ARRAY,
     FIELD_FRAMES,
     FieldExportAgent,
     FieldFrame,
     densidad_a_hu,
     escribe_ply,
+    esquema_del_campo,
     lee_ply,
+)
+from export_agents.malla_compuesta import (
+    CompositeMeshExportAgent,
+    superficie_alfa,
 )
 from export_agents.render import (
     VISTAS_POR_DEFECTO,
@@ -76,8 +88,10 @@ from export_agents.stl import (
     stl_header,
     write_binary_stl,
 )
+from export_agents.visor import ViewerExportAgent
 
 __all__ = [
+    "COLUMNAS_DE_ARRAY",
     "DEFAULT_HITL_THRESHOLD",
     "FIELD_FRAMES",
     "FRAMES",
@@ -86,6 +100,12 @@ __all__ = [
     "REVERSIBILITY_BUDGET_MM",
     "VISTAS_POR_DEFECTO",
     "BaseExportAgent",
+    "CompositeExportAgent",
+    "CompositeMeshExportAgent",
+    "ViewerExportAgent",
+    "DENSIDAD_ENCIA",
+    "ORIGEN_CBCT",
+    "ORIGEN_IOS",
     "ExportAgent",
     "ExportAgentProtocol",
     "ExportOutput",
@@ -97,6 +117,7 @@ __all__ = [
     "Vista",
     "beer_lambert",
     "densidad_a_hu",
+    "esquema_del_campo",
     "escribe_ply",
     "escribe_png",
     "face_normals",
@@ -108,4 +129,5 @@ __all__ = [
     "ssim",
     "stl_header",
     "write_binary_stl",
+    "superficie_alfa",
 ]

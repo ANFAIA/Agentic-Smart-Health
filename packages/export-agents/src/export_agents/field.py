@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from core_schemas import ModalityStatus, TwinSnapshot
+from core_schemas import ColumnaCampo, ModalityStatus, TwinSnapshot
 
 from export_agents.base import (
     REVERSIBILITY_BUDGET_MM,
@@ -71,10 +71,86 @@ _PROPIEDADES: tuple[tuple[str, str], ...] = (
 # `segmentation-agent`, y un campo sin segmentar no la tiene — declararla siempre
 # obligaría a rellenarla con ceros, que en el convenio del agente significan «sin
 # asignar» y son indistinguibles de un campo que sí se segmentó y no encontró nada.
-_OPCIONALES: tuple[tuple[str, str], ...] = (("region_id", "short"),)
+_OPCIONALES: tuple[tuple[str, str], ...] = (
+    ("region_id", "short"),
+    # De qué modalidad viene cada gaussiana. Solo la escribe el compuesto, porque solo él
+    # mezcla dos: un campo de una sola fuente no la necesita. Ver `compuesto.py`.
+    ("origen", "short"),
+)
 _TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
 _CLAVES_MINIMAS = ("centers", "scales", "rotations", "density")
+
+# Qué columnas escribe cada array del campo. Lo declara el exportador porque es quien lo
+# sabe: `centers` sale como x/y/z y `rotations` como `rot_*`, y ninguna regla de recorte
+# de cadenas acierta con las dos.
+#
+# Sirve además de contrato hacia fuera: un array del campo que NO esté aquí es uno que
+# este exportador no sabe escribir, y por tanto se pierde al exportar. Eso es exactamente
+# lo que le pasó a `region_id`, y el orquestador lo comprueba con este mapa
+# (`IngestionPipeline._columnas_del_campo`).
+COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
+    "centers": ("x", "y", "z"),
+    "scales": ("scale_0", "scale_1", "scale_2"),
+    "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
+    "density": ("density",),
+    "region_id": ("region_id",),
+    "origen": ("origen",),
+}
+
+
+# Qué es cada columna, **en máquina**. Vive aquí, junto a `COLUMNAS_DE_ARRAY`, porque es
+# el mismo conocimiento: el exportador es quien sabe qué escribe y con qué semántica.
+#
+# ⚠️ Lo importante de esta tabla es `escala`. El PLY de facto de 3DGS usa `scale_0..2` y
+# `rot_0..3` con los MISMOS nombres y guarda el **logaritmo** de la escala; aquí van
+# milímetros lineales. Un visor estándar abriendo este fichero no fallaría: exponenciaría
+# nuestros milímetros y renderizaría basura con buen aspecto. Por eso el snapshot declara
+# además `perfil_campo`, para que un lector pueda negarse en vez de adivinar.
+ESQUEMA_COLUMNAS: dict[str, dict] = {
+    "x": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "y": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "z": {"unidad": "mm", "significado": "centro de la gaussiana"},
+    "scale_0": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "scale_1": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "scale_2": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
+    "rot_0": {"significado": "cuaternion (w, x, y, z) normalizado — componente w"},
+    "rot_1": {"significado": "cuaternion (w, x, y, z) normalizado — componente x"},
+    "rot_2": {"significado": "cuaternion (w, x, y, z) normalizado — componente y"},
+    "rot_3": {"significado": "cuaternion (w, x, y, z) normalizado — componente z"},
+    "density": {
+        "unidad": "sigma_normalizada",
+        "significado": "atenuacion Beer-Lambert en [0,1] sobre `hu_range`. NO es opacidad",
+    },
+    "region_id": {
+        "significado": "diente al que pertenece la gaussiana; 0 = sin asignar",
+        "vocabulario": "ISO-3950",
+        "medido": False,
+        "derivado_de": "segmentation-agent",
+    },
+    "origen": {
+        "significado": "modalidad de la que viene: 0 = CBCT (densidad medida), "
+        "1 = escaner intraoral (forma medida)",
+        "medido": False,
+        "derivado_de": "composite-export-agent",
+    },
+}
+
+
+def esquema_del_campo(arrays: dict) -> list[ColumnaCampo]:
+    """Las columnas que este exportador escribiria para `arrays`, ya descritas.
+
+    Se deriva de lo que el campo trae, no de una lista fija: un campo sin segmentar no
+    declara `region_id`, igual que no la escribe. Declarar de mas seria tan mentira como
+    declarar de menos.
+    """
+    columnas = []
+    for clave in arrays:
+        for prop in COLUMNAS_DE_ARRAY.get(clave, ()):
+            spec = ESQUEMA_COLUMNAS.get(prop)
+            if spec is not None:
+                columnas.append(ColumnaCampo(nombre=prop, **spec))
+    return columnas
 
 
 def densidad_a_hu(density: np.ndarray, hu_range: np.ndarray) -> np.ndarray:
@@ -112,6 +188,39 @@ def escribe_ply(destino: Path, columnas: dict[str, np.ndarray], *, comentarios: 
     with destino.open("wb") as fh:
         fh.write(("\n".join(cabecera) + "\n").encode("ascii"))
         fh.write(filas.tobytes())
+
+
+def metadatos_ply(ruta: Path) -> dict[str, str]:
+    """Las lineas `comment` de la cabecera, indexadas por su primera palabra.
+
+    `comment frame twin` sale como `{"frame": "twin"}`. La cabecera ya declaraba estas
+    cosas —el marco, el `origin_mm`, el `hu_range`— y hasta hoy no las leia nadie: eran
+    prosa para una persona. Que sean legibles es lo que permite a un consumidor **leer**
+    en que marco viene el fichero en vez de deducirlo de los datos.
+
+    ⚠️ Esa deduccion es justo el fallo que este lector existe para cerrar. El verificador
+    del render recentraba restando el centroide de la nube, lo cual era exacto **mientras**
+    `origin` fuese la media —el `cbct-agent` la escribe asi—. El `gaussian-engine` ajusta
+    elipsoides y mueve el centroide 4,4 mm, y aquella resta inocua paso a ser una
+    traslacion: el ciclo caia a 14,1 dB comparando dos encuadres distintos. Un dato que el
+    fichero DECLARA no se adivina.
+    """
+    fuera: dict[str, str] = {}
+    with ruta.open("rb") as fh:
+        while True:
+            linea = fh.readline()
+            if not linea:
+                raise ValueError(f"{ruta} se acaba sin `end_header`: no es un PLY completo.")
+            texto = linea.decode("ascii", errors="replace").strip()
+            if texto == "end_header":
+                return fuera
+            if texto.startswith("comment "):
+                partes = texto[len("comment "):].split(maxsplit=1)
+                if partes:
+                    # Se conserva la PRIMERA: la cabecera lleva varias lineas de prosa y
+                    # una clave repetida significaria que alguien anadio una frase que
+                    # empieza igual, no que el valor haya cambiado.
+                    fuera.setdefault(partes[0], partes[1] if len(partes) > 1 else "")
 
 
 def lee_ply(ruta: Path) -> dict[str, np.ndarray]:
@@ -223,14 +332,18 @@ class FieldExportAgent(BaseExportAgent):
                 )
             origin = np.asarray(arrays["origin"], dtype=np.float64)
             centers = centers + origin
-            comentarios.append(f"origin_mm {origin[0]!r} {origin[1]!r} {origin[2]!r}")
+            comentarios.append(
+                "origin_mm " + " ".join(repr(float(v)) for v in origin)
+            )
             comentarios.append("coordenadas en mm del DICOM (centers + origin)")
         else:
             comentarios.append("coordenadas centradas en el origen; suma `origin` para el CBCT")
 
         if "hu_range" in arrays:
             bajo, alto = np.asarray(arrays["hu_range"], dtype=np.float64)
-            comentarios.append(f"hu_range {bajo!r} {alto!r}  (hu = density*(alto-bajo)+bajo)")
+            comentarios.append(
+                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(alto-bajo)+bajo)"
+            )
 
         escalas = np.asarray(arrays["scales"], dtype=np.float32)
         rotaciones = np.asarray(arrays["rotations"], dtype=np.float32)

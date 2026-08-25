@@ -1,0 +1,620 @@
+{
+  "$defs": {
+    "Adquisicion": {
+      "additionalProperties": false,
+      "properties": {
+        "time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time"
+        },
+        "device": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Device",
+          "type": "object"
+        }
+      },
+      "title": "Adquisicion",
+      "type": "object"
+    },
+    "Asset": {
+      "additionalProperties": false,
+      "description": "El sobre comun a todo asset (§4.1).\n\n`sha256` no es decorativo: es lo que hace la procedencia verificable (§2.5) y lo que\npermite decir que el DICOM que sale es byte-identico al que entro.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/Clase"
+        },
+        "visit": {
+          "title": "Visit",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "frame": {
+          "title": "Frame",
+          "type": "string"
+        },
+        "acquisition": {
+          "$ref": "#/$defs/Adquisicion"
+        },
+        "load_priority": {
+          "default": 30,
+          "title": "Load Priority",
+          "type": "integer"
+        },
+        "regulatory": {
+          "$ref": "#/$defs/Regulatorio"
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Proyeccion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/Parte"
+          },
+          "title": "Parts",
+          "type": "array"
+        },
+        "sidecar_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sidecar Uri"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "visit",
+        "uri",
+        "media_type",
+        "sha256",
+        "bytes",
+        "frame"
+      ],
+      "title": "Asset",
+      "type": "object"
+    },
+    "Clase": {
+      "description": "`kind` de un asset (§4.1). El nivel UOS-Core solo exige los tres primeros.",
+      "enum": [
+        "volume",
+        "mesh_gs_scene",
+        "image2d",
+        "signal",
+        "derived_seg",
+        "document"
+      ],
+      "title": "Clase",
+      "type": "string"
+    },
+    "EstadoPHI": {
+      "description": "Anonimizacion como ESTADO EXPLICITO (§2.6), no como suposicion.\n\nUn `.uos` dice en que estado esta y los visores lo respetan —banner, politicas de\nexport—. Sin este campo, «no se si lleva datos identificables» y «no los lleva» serian\nindistinguibles, que es la peor forma de manejar PHI.",
+      "enum": [
+        "identified",
+        "pseudonymized",
+        "anonymized",
+        "quarantined"
+      ],
+      "title": "EstadoPHI",
+      "type": "string"
+    },
+    "Extension": {
+      "additionalProperties": false,
+      "description": "Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).\n\n**Por que hace falta.** UOS se apoya en glTF, que resolvio esto hace anos con\n`extensionsUsed` / `extensionsRequired`: un lector abre el fichero, ve que extensiones\ntrae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese\nmecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde\ndecir «esto es una extension, se llama asi, y si no la entiendes ignorala».\n\nLa consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,\nlos descriptores de gaussianas medidas— viven en directorios propios y **un lector\najeno las ignora sin enterarse de que las ignora**. Eso convierte un formato abierto en\nuno que solo el emisor lee entero, que es justo lo que UOS existe para evitar.\n\n⚠️ La distincion entre `used` y `required` es el corazon del mecanismo, no burocracia:\n`required` dice «sin entender esto NO abras el fichero». Una extension que solo anade\ninformacion va en `used` y nunca en `required` — si estuviera, un visor conforme se\nnegaria a abrir un caso que podria enseniar perfectamente.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        },
+        "schema_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Id"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Extension",
+      "type": "object"
+    },
+    "Frame": {
+      "additionalProperties": false,
+      "description": "Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "units": {
+          "default": "mm",
+          "title": "Units",
+          "type": "string"
+        },
+        "handedness": {
+          "default": "right",
+          "title": "Handedness",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Frame",
+      "type": "object"
+    },
+    "Parte": {
+      "additionalProperties": false,
+      "description": "Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).\n\nExiste para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que\nalgo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie\nno cuadra» y «el corte 214 esta corrupto».",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "sha256",
+        "bytes"
+      ],
+      "title": "Parte",
+      "type": "object"
+    },
+    "Procedencia": {
+      "additionalProperties": false,
+      "description": "Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico.",
+      "properties": {
+        "prev_manifest_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prev Manifest Sha256"
+        },
+        "chain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chain"
+        }
+      },
+      "title": "Procedencia",
+      "type": "object"
+    },
+    "Proyeccion": {
+      "additionalProperties": false,
+      "description": "Que clase de imagen 2D es y a que piezas apunta (§5.3).\n\n`fdi_targets` va VACIO cuando no se sabe, que con una foto suelta de una carpeta de\nclinica es lo normal: nadie anoto a que diente apunta. Vacio significa «no consta»,\nno «ninguno» — y adivinarlo desde los pixeles es justo el trabajo que el proyecto no\nda por hecho.",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "fdi_targets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fdi Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Proyeccion",
+      "type": "object"
+    },
+    "RecursoFHIR": {
+      "additionalProperties": false,
+      "description": "A que recurso FHIR R4 corresponde un asset (§9), para el conector con el PMS.\n\n⚠️ **`resource` es una referencia y `resource_type` un TIPO, y no son lo mismo.** El\nejemplo del spec escribe `\"resource\": \"ImagingStudy/is-9911\"`, o sea una referencia a un\nrecurso que existe en un servidor concreto. Nosotros no tenemos ese servidor: el caso no\nha pasado por ningun PMS y no hay identificador que citar. Declarar uno inventado seria\nexactamente el fallo del ADR 003 —plausible, silencioso y ya dentro del contrato—,\nporque un conector que lo leyera intentaria resolverlo.\n\nAsi que se declara lo que SI se sabe: el tipo de recurso al que corresponde cada asset.\nEs una afirmacion de tipo, verdadera hoy y sin servidor, y es lo que un conector\nnecesita para saber que crear. `resource` queda para cuando el caso viva en un PMS de\nverdad y alguien pueda rellenarlo.",
+      "properties": {
+        "resource_type": {
+          "title": "Resource Type",
+          "type": "string"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_type"
+      ],
+      "title": "RecursoFHIR",
+      "type": "object"
+    },
+    "Registro": {
+      "additionalProperties": false,
+      "description": "Relacion espacial entre dos frames. **Objeto de primera clase** (§6).\n\nToda relacion es explicita, auditable y firmable. La transformada lleva puntos de\n`source_frame` a `target_frame`, en milimetros y mano derecha.\n\n⚠️ `verified_by` vacio en un registro `auto_dl` significa PROVISIONAL, y el visor tiene\nque indicarlo. Un alineamiento automatico que nadie ha mirado no es lo mismo que uno\nfirmado, y presentarlos igual seria exactamente el fallo callado que el spec evita.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source_frame": {
+          "title": "Source Frame",
+          "type": "string"
+        },
+        "target_frame": {
+          "title": "Target Frame",
+          "type": "string"
+        },
+        "transform_4x4_row_major": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "title": "Transform 4X4 Row Major",
+          "type": "array"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "rms_error_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rms Error Mm"
+        },
+        "computed": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Computed"
+        },
+        "operator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operator"
+        },
+        "verified_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verified By"
+        },
+        "regulatory": {
+          "$ref": "#/$defs/Regulatorio"
+        }
+      },
+      "required": [
+        "id",
+        "source_frame",
+        "target_frame",
+        "transform_4x4_row_major",
+        "method"
+      ],
+      "title": "Registro",
+      "type": "object"
+    },
+    "Regulatorio": {
+      "additionalProperties": false,
+      "description": "La capa regulatoria del asset (§1.1). Layer 3 es SaMD y se puede desmontar.",
+      "properties": {
+        "layer": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Layer",
+          "type": "integer"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "jurisdictions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Jurisdictions",
+          "type": "array"
+        }
+      },
+      "title": "Regulatorio",
+      "type": "object"
+    },
+    "Sujeto": {
+      "additionalProperties": false,
+      "description": "El paciente, SIEMPRE por seudonimo. El nombre no entra en un `.uos`.",
+      "properties": {
+        "pseudonym": {
+          "title": "Pseudonym",
+          "type": "string"
+        },
+        "fhir_patient": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fhir Patient"
+        }
+      },
+      "required": [
+        "pseudonym"
+      ],
+      "title": "Sujeto",
+      "type": "object"
+    },
+    "Visita": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "date": {
+          "title": "Date",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "date"
+      ],
+      "title": "Visita",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Manifiesto de un contenedor Unified Oral Scene. Derivado del contrato de la implementacion de referencia, no escrito a mano: un esquema copiado se separa del codigo en el primer campo que alguien anade.",
+  "properties": {
+    "uos_version": {
+      "default": "0.2",
+      "title": "Uos Version",
+      "type": "string"
+    },
+    "case_id": {
+      "title": "Case Id",
+      "type": "string"
+    },
+    "created": {
+      "format": "date-time",
+      "title": "Created",
+      "type": "string"
+    },
+    "generator": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Generator",
+      "type": "object"
+    },
+    "phi_state": {
+      "$ref": "#/$defs/EstadoPHI"
+    },
+    "subject": {
+      "$ref": "#/$defs/Sujeto"
+    },
+    "canonical_frame": {
+      "$ref": "#/$defs/Frame"
+    },
+    "frames": {
+      "items": {
+        "$ref": "#/$defs/Frame"
+      },
+      "title": "Frames",
+      "type": "array"
+    },
+    "visits": {
+      "items": {
+        "$ref": "#/$defs/Visita"
+      },
+      "title": "Visits",
+      "type": "array"
+    },
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/Asset"
+      },
+      "title": "Assets",
+      "type": "array"
+    },
+    "registrations": {
+      "items": {
+        "$ref": "#/$defs/Registro"
+      },
+      "title": "Registrations",
+      "type": "array"
+    },
+    "fhir_map": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RecursoFHIR"
+      },
+      "title": "Fhir Map",
+      "type": "object"
+    },
+    "extensions": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Extension"
+      },
+      "title": "Extensions",
+      "type": "object"
+    },
+    "extensions_used": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Extensions Used",
+      "type": "array"
+    },
+    "extensions_required": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Extensions Required",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Procedencia"
+    }
+  },
+  "required": [
+    "case_id",
+    "generator",
+    "phi_state",
+    "subject",
+    "canonical_frame"
+  ],
+  "title": "UOS manifest v0.2",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://histora.dev/schemas/uos-manifest-0.2.schema.json"
+}
