@@ -714,6 +714,23 @@ SegmentationOutput
   el umbral, el mismo FDI en dos instancias, una clase sin código FDI en el mapeo, y
   más de un 10% de los puntos de diente descartados por fragmentación — que la
   agregación se los coma **en silencio** es el riesgo, no que se los coma.
+- ⚠️ **Y el simétrico: un vértice de diente rodeado de encía es encía.** `rellena_etiquetas`
+  sólo iba en un sentido —daba etiqueta a lo que no la tenía y nunca se la quitaba a lo que
+  la tenía mal—, así que tras el pipeline entero quedaban **692 vértices de diente flotando
+  en la encía**. `quita_motas` los limpia con el mismo umbral 0,85, precisamente para no
+  mover el margen: un vértice del margen tiene vecinos de las dos clases y no llega. Y
+  `rellena_etiquetas` pasa a **iterar**, porque cerrar un hueco deja al descubierto el
+  siguiente: los huecos van 3.299 → 1.519 → 1.198 → 1.096 → 1.051 y convergen.
+- ⚠️ **La frontera entre dientes CONTIGUOS sale difuminada, y se afila aparte.** El
+  contacto interproximal es superficie continua en la malla, así que el modelo no tiene
+  ahí ningún borde geométrico al que agarrarse. Medido sobre un caso clínico: el **7,0 %
+  del área del escaneo** (308 mm²) estaba en caras cuyos vértices pertenecían a dos
+  dientes distintos, y los pares eran todos vecinos —(26,27), (15,16), (21,22), (11,21)—.
+  Se ve al encender una pieza en el visor: se enciende también un trozo de la de al lado.
+  `analysis_agents.afina_fronteras` vota por mayoría entre vecinos y lo baja a **92 mm²**
+  reasignando 3.624 vértices. **No toca el margen corona/encía** —12,8 % del área— porque
+  ésa sí es una frontera clínica y difuminarla borraría lo que un periodoncista viene a
+  mirar.
 - ⚠️ **Las etiquetas del escáner son SEMILLAS, así que una isla mal etiquetada allí se
   convierte aquí en un diente entero.** Medido sobre un caso real: el segmentador del
   escáner puso el código de un tercer molar a 275 vértices pegados a la cara distal del
@@ -727,6 +744,8 @@ SegmentationOutput
 
 | Fecha | Versión | Cambio |
 |---|---|---|
+| 2026-08-25 | 0.1.0 | `quita_motas` y el relleno iterativo: las motas de diente en la encía bajan de 692 a 311 y los huecos de encía en corona de 3.299 a 1.048. Sin cambio de contrato. |
+| 2026-08-25 | 0.1.0 | `afina_fronteras`: la frontera entre piezas contiguas deja de estar difuminada (308 → 92 mm² de área con dos dientes en la misma cara). Y se retira el recorte apical por eje de pieza: medido, el eje sacado del CBCT sale a 60° del real porque la nube arrastra hueso. Sin cambio de contrato. |
 | 2026-08-24 | 0.1.0 | `absorbe_islas`: las piezas diminutas metidas dentro de otra dejan de sembrar un diente fantasma en el CBCT. Sin cambio de contrato. |
 | 2026-08-06 | 0.1.0 | Registro inicial. Paquete `analysis-agents` con su contrato base; agregación punto → diente sobre `tooth-aggregation`; `region_id` persistido como artefacto aditivo; enganche en `IngestionPipeline.fuse()` entre las dos etapas de fusión. |
 
@@ -1093,11 +1112,14 @@ docente— y apoya sobre la corona.
   superficie que la cámara ve, sin interior y sin fondo. Se ve bien en pantalla (ya nos
   mordió una vez: el paladar salía como un agujero negro por pintar sólo la cara frontal)
   y no se imprime, porque un laminador necesita saber qué es dentro. Ver `solido`.
-- ⚠️ **La base es perpendicular al eje ANATÓMICO, no al Z del fichero.** El Z de un
-  escaneo es el que tenía la máquina y no significa nada: una base construida sobre él
-  sale inclinada y el modelo se cae de la bandeja. El eje se mide de los códigos FDI del
-  propio escaneo, y **sin ellos se entrega la cáscara declarándolo** en vez de inventarse
-  una vertical.
+- ⚠️ **La base es perpendicular al eje OCLUSAL —hacia dónde muerde la pieza— y va al
+  extremo contrario.** No al Z del fichero, que es el que tenía la máquina y no significa
+  nada; y sobre todo **no al eje superior**: en un maxilar son opuestos, y confundirlos no
+  da un modelo torcido sino uno al revés. Medido: con el superior el plano caía en −9,82
+  mm cuando las coronas llegaban a −7,82, así que la falda bajaba por delante de los
+  dientes y los envolvía en una caja — 21,7 cm³ de volumen contra los 11,9 correctos. El
+  eje se mide de los códigos FDI del propio escaneo, y **sin ellos se entrega la cáscara
+  declarándolo** en vez de inventarse una vertical.
 - ⚠️ **Un cuerpo sin ESMALTE no es un diente, por mucho que lo parezca.** El pipeline
   llegó a exportar una pieza «28» sobre un caso real con tamaño de diente (19,4 mm), forma
   de diente y la misma separación del vecino que dos molares contiguos: era la tuberosidad
@@ -1148,7 +1170,7 @@ docente— y apoya sobre la corona.
 
 | Fecha | Versión | Cambio |
 |---|---|---|
-| 2026-08-24 | 0.3.0 | La arcada se cierra en sólido con base plana perpendicular al eje anatómico. Guardarraíl de esmalte: un cuerpo sin corona de esmalte no se exporta como diente. Y se declara cuando una raíz reconstruida es más larga de lo que su tipo admite. |
+| 2026-08-24 | 0.3.0 | La arcada se cierra en sólido con base plana perpendicular al eje **oclusal** (con el superior salía del revés). Guardarraíl de esmalte: un cuerpo sin corona de esmalte no se exporta como diente. Y se declara cuando una raíz reconstruida es más larga de lo que su tipo admite. |
 | 2026-08-24 | 0.2.0 | La arcada pasa a salir SIN raíces —es lo que se imprime y una pieza impresa no lleva procedencia— y lo reconstruido se muda a un STL por pieza con su corona medida del escáner. |
 | 2026-08-24 | 0.1.0 | Registro inicial. STL del compuesto por complejo alfa por pieza, con el error del reconstructor medido en la banda de corona y el sesgo declarado con signo. |
 
@@ -1233,7 +1255,7 @@ capas, cotas sobre el modelo y encuadre por caso.
 | Campo | Valor |
 |---|---|
 | **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Versión** | `0.3.0` |
+| **Versión** | `0.4.0` |
 | **Estado** | `active` |
 | **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
 | **Contrato común** | `ExportOutput` + `BaseExportAgent` |
@@ -1403,6 +1425,7 @@ propio y el validador puede correr sobre un fichero que escribió otro.
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Registro inicial. Nivel UOS-Core: manifiesto, contenedor ZIP/STORE, validador con niveles de conformidad, vistas con ejes anatómicos medidos y cadena de procedencia entre versiones. Verificado sobre el caso clínico real: `VALIDO`, 10 assets, 19 vistas, malla byte-idéntica. |
+| 2026-08-24 | 0.4.0 | Conformidad con el borrador: la registración deja de escribir `rms_error_mm: null` teniendo el residuo medido —un fallo de nombre que `getattr` tapaba— y de acreditar la ICP al agente equivocado; la escena se parte en un *primitive* por diente con `extras.uos_fdi` (§5.1), que es lo que habilita el picking del §11.3 en un visor ajeno; las fotos declaran `projection` (§5.3); las vistas llevan `mpr` y `clip_planes` cuando el volumen viaja (§7); y se publica el **JSON Schema por versión** que el §12 exige, contrastado por el propio validador. |
 | 2026-08-24 | 0.3.0 | El contenedor lleva el **gemelo** y no sólo las entradas: escena glTF con los nodos GS colgando y su registración como `matrix`, campo y compuesto con descriptor que declara si están **medidos**, segmentación en `derived/`, capa clínica, y un **mecanismo de extensiones** propuesto al borrador. |
 | 2026-08-24 | 0.2.0 | Nivel **UOS-Vol**: la serie DICOM entera como asset-directorio, verificada corte a corte, con su sidecar §5.2 leído de las cabeceras que viajan, y rechazada si esas cabeceras desmienten el `phi_state`. Y el `fhir_map` poblado por tipo de recurso. |
 
