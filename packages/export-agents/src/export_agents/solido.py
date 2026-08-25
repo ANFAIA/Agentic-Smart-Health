@@ -206,28 +206,35 @@ def cierra_en_solido(
     posiciones: np.ndarray,
     caras: np.ndarray,
     *,
-    arriba: np.ndarray,
+    hacia_las_coronas: np.ndarray,
     holgura_mm: float = HOLGURA_BASE_MM,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, int | bool | float]]:
-    """Cáscara abierta → sólido con base plana perpendicular a `arriba`.
+    """Cáscara abierta → sólido con base plana al otro lado de las coronas.
 
-    `arriba` es la dirección hacia la coronilla del paciente, **medida** (ver
-    `anatomia.marco_anatomico`), no supuesta: la base tiene que ser perpendicular al eje
-    anatómico y no al eje Z del fichero, que es el del escáner y no significa nada.
+    ⚠️ **El eje que hay que pasar es el OCLUSAL —hacia dónde muerde la pieza— y no el
+    superior.** En un maxilar son opuestos, y confundirlos no produce un modelo torcido:
+    produce uno **al revés**. Medido sobre un caso real, con el eje superior el plano caía
+    en −9,82 mm cuando las coronas llegaban a −7,82, así que la falda bajaba por delante
+    de los dientes y los envolvía en una caja en vez de cerrar por el lado del hueso.
+
+    La base va perpendicular a ese eje y **al extremo contrario**: un modelo se apoya por
+    donde estaba el hueso y muerde por el otro lado. Y el eje se mide (ver
+    `anatomia.marco_anatomico`), no se supone — el Z de un escaneo es el que tenía la
+    máquina y no significa nada.
 
     Devuelve `(posiciones, caras, informe)`. El informe lleva lo que se hizo y —lo que
     importa— si el resultado es realmente estanco.
     """
     pos = np.asarray(posiciones, dtype=np.float64)
     car = np.asarray(caras, dtype=np.int64)
-    n = np.asarray(arriba, dtype=np.float64)
+    n = np.asarray(hacia_las_coronas, dtype=np.float64)
     n = n / np.linalg.norm(n)
 
     lazos = lazos_de_borde(car)
     if not lazos:
         return pos, car, {"ya_cerrada": True, "estanca": es_estanca(car)}
 
-    # Dos ejes cualesquiera perpendiculares a `arriba`: sólo hacen falta para triangular
+    # Dos ejes cualesquiera perpendiculares al eje oclusal: sólo hacen falta para triangular
     # la tapa en 2D, así que su orientación en el plano da igual mientras sean ortogonales.
     auxiliar = np.array([1.0, 0.0, 0.0])
     if abs(auxiliar @ n) > 0.9:

@@ -519,3 +519,34 @@ def test_sin_eje_anatomico_se_entrega_la_CASCARA_y_se_dice(tmp_path):
     assert salida.ok
     assert "CASCARA-ABIERTA" in salida.path.read_bytes()[:80].decode("ascii", "replace")
     assert any("NO ha quedado estanca" in m for m in salida.hitl_reasons)
+
+
+def test_la_base_cae_al_lado_CONTRARIO_de_las_coronas(tmp_path):
+    """El fallo que esto guarda, y que ningún test topológico veía: la malla salía
+    estanca, con volumen positivo y todas las aristas compartidas — y del revés.
+
+    Se le estaba pasando el eje SUPERIOR, que en un maxilar es el opuesto del oclusal.
+    El plano caía por delante de los dientes y la falda los envolvía en una caja: 21,7
+    cm³ contra los 11,9 correctos. Un modelo se apoya por donde estaba el hueso y muerde
+    por el otro lado, y eso no lo dice la topología.
+    """
+    from export_agents.anatomia import marco_anatomico
+    from export_agents.stl import read_stl_triangles
+
+    almacen = _almacen(piezas=(11, 16, 21, 26), en_arcada=True)
+    salida = CompositeMeshExportAgent(almacen).export(
+        _snapshot(), tmp_path / "c.stl", etiquetas_ios=almacen.etiquetas_ios
+    )
+    malla = almacen.load(REF_MALLA)
+    marco, motivo = marco_anatomico(malla["positions"], almacen.etiquetas_ios)
+    assert marco is not None, motivo
+    oclusal = marco.oclusal / np.linalg.norm(marco.oclusal)
+
+    v = read_stl_triangles(salida.path).reshape(-1, 3)
+    coronas = malla["positions"][almacen.etiquetas_ios > 0] @ oclusal
+    assert float((v @ oclusal).min()) < float(coronas.min()), (
+        "la base no está por debajo de las coronas"
+    )
+    assert float((v @ oclusal).max()) <= float(coronas.max()) + 1e-6, (
+        "hay geometría nueva POR ENCIMA de las coronas: la base salió del lado equivocado"
+    )

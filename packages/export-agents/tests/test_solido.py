@@ -47,7 +47,7 @@ def test_una_cascara_abierta_sale_ESTANCA():
     pos, caras = _casquete()
     assert not es_estanca(caras), "la fixture ya venía cerrada: no prueba nada"
 
-    _, cerradas, informe = cierra_en_solido(pos, caras, arriba=ARRIBA)
+    _, cerradas, informe = cierra_en_solido(pos, caras, hacia_las_coronas=ARRIBA)
 
     assert informe["estanca"] is True
     assert es_estanca(cerradas)
@@ -59,7 +59,7 @@ def test_el_volumen_sale_POSITIVO_aunque_la_malla_venga_del_reves():
     volumen lo detecta de una vez, y sólo tiene sentido preguntarlo si es estanca: sobre
     un bobinado inconsistente el número no significa nada."""
     pos, caras = _casquete()
-    pos2, cerradas, informe = cierra_en_solido(pos, caras[:, ::-1].copy(), arriba=ARRIBA)
+    pos2, cerradas, informe = cierra_en_solido(pos, caras[:, ::-1].copy(), hacia_las_coronas=ARRIBA)
 
     assert informe["estanca"] is True
     assert volumen_con_signo(pos2, cerradas) > 0.0
@@ -71,7 +71,7 @@ def test_la_base_es_perpendicular_al_eje_que_se_le_pasa():
     construida sobre él sale inclinada y el modelo se cae de la bandeja."""
     pos, caras = _casquete()
     eje = np.array([0.0, 1.0, 0.0])
-    pos2, cerradas, _ = cierra_en_solido(pos, caras, arriba=eje)
+    pos2, cerradas, _ = cierra_en_solido(pos, caras, hacia_las_coronas=eje)
 
     nuevos = pos2[len(pos) :]
     # Los vértices de la base tienen que caer todos en el mismo plano perpendicular
@@ -92,7 +92,7 @@ def test_un_agujero_pequeno_se_tapa_DONDE_ESTA_y_no_baja_al_plano():
     caras = np.delete(caras, interior, axis=0)
     assert len(lazos_de_borde(caras)) == 2, "la fixture no ha abierto ningún agujero"
 
-    _, cerradas, informe = cierra_en_solido(pos, caras, arriba=ARRIBA)
+    _, cerradas, informe = cierra_en_solido(pos, caras, hacia_las_coronas=ARRIBA)
 
     assert informe["huecos_tapados"] == 1
     assert informe["estanca"] is True
@@ -100,8 +100,8 @@ def test_un_agujero_pequeno_se_tapa_DONDE_ESTA_y_no_baja_al_plano():
 
 def test_una_malla_YA_cerrada_se_devuelve_intacta():
     pos, caras = _casquete()
-    _, cerradas, _ = cierra_en_solido(pos, caras, arriba=ARRIBA)
-    pos2, otra, informe = cierra_en_solido(pos, cerradas, arriba=ARRIBA)
+    _, cerradas, _ = cierra_en_solido(pos, caras, hacia_las_coronas=ARRIBA)
+    pos2, otra, informe = cierra_en_solido(pos, cerradas, hacia_las_coronas=ARRIBA)
 
     assert informe.get("ya_cerrada") is True
     assert np.array_equal(otra, cerradas)

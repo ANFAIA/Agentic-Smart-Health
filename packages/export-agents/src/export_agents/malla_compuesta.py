@@ -421,12 +421,13 @@ class CompositeMeshExportAgent(BaseExportAgent):
     ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         """La arcada, cerrada en sólido con base plana. Si no se puede, se dice.
 
-        ⚠️ La base es perpendicular al eje **anatómico**, no al Z del fichero. El eje Z de
-        un escaneo es el que tenía la máquina y no significa nada: una base construida
-        sobre él sale inclinada y el modelo se cae de la bandeja. El eje sale medido de
-        los códigos FDI del propio escaneo (`anatomia.marco_anatomico`), así que sin
-        etiquetas no hay eje — y entonces se entrega la cáscara **declarándolo**, en vez
-        de inventarse una vertical.
+        ⚠️ La base es perpendicular al eje **oclusal** —hacia dónde muerde la pieza— y no
+        al superior ni al Z del fichero. El Z es el que tenía la máquina y no significa
+        nada; y el superior, en un maxilar, es el OPUESTO del oclusal: usarlo no daba un
+        modelo torcido sino uno al revés, con la falda bajando por delante de los dientes
+        y envolviéndolos. El eje sale medido de los códigos FDI del propio escaneo
+        (`anatomia.marco_anatomico`), así que sin etiquetas no hay eje — y entonces se
+        entrega la cáscara **declarándolo**, en vez de inventarse una vertical.
         """
         if etiquetas_ios is None or len(etiquetas_ios) != len(superficie):
             return superficie, caras, {
@@ -438,7 +439,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
         marco, motivo = marco_anatomico(superficie, np.asarray(etiquetas_ios))
         if marco is None:
             return superficie, caras, {"estanca": False, "motivo": motivo}
-        return cierra_en_solido(superficie, caras, arriba=marco.superior)
+        return cierra_en_solido(superficie, caras, hacia_las_coronas=marco.oclusal)
 
     def _por_pieza(
         self,
