@@ -265,6 +265,111 @@ def lee_ply(ruta: Path) -> dict[str, np.ndarray]:
     return {nombre: np.asarray(filas[nombre]) for nombre, _ in props}
 
 
+# -----------------------------------------------------------------------
+# PLY INRIA 3DGS — formato de apariencia (color real del paciente)
+# -----------------------------------------------------------------------
+
+# Coeficiente DC de los armonicos esfericos (grado 0).
+C0 = 0.28209479177387814
+
+# Propiedades INRIA 3DGS grado 0 (las mismas que usa el visor web).
+PROPIEDADES_INRIA = (
+    "x", "y", "z",
+    "nx", "ny", "nz",
+    "f_dc_0", "f_dc_1", "f_dc_2",
+    "opacity",
+    "scale_0", "scale_1", "scale_2",
+    "rot_0", "rot_1", "rot_2", "rot_3",
+)
+
+
+def escribe_inria(
+    destino: Path,
+    params: dict[str, np.ndarray],
+    *,
+    perfil: str = "ash-gs-apariencia/1.0",
+    n_vistas: int = 0,
+    iteraciones: int = 0,
+    acquisition_id: str = "",
+) -> None:
+    """PLY binario en formato INRIA 3DGS (grado 0 de armonicos esfericos).
+
+    Propiedades:
+    - x, y, z: double (float64) — centro de la gaussiana en mm
+    - nx, ny, nz: float (float32) — normales (0,0,0 para campos)
+    - f_dc_0..2: float (float32) — color RGB (coeficiente DC de SH)
+    - opacity: float (float32) — opacidad (logit)
+    - scale_0..2: float (float32) — escala (logaritmo de mm)
+    - rot_0..3: float (float32) — cuaternion (w, x, y, z)
+
+    Diferencia con `escribe_ply`:
+    - density → opacity (con transformacion logit)
+    - sin region_id (la apariencia no segmenta)
+    - scale en log (convencion INRIA, no lineal)
+    - color por gaussiana (f_dc_*)
+    """
+    n = len(params["means"])
+    pos = params["means"].astype(np.float64)
+    col = params["colors"].astype(np.float64)  # ya en [0,1]
+    esc = params["scales"].astype(np.float64)  # ya en log
+    rot = params["quats"].astype(np.float64)   # ya normalizado
+    opa = params["opacities"].astype(np.float64)  # ya en logit
+
+    # Color RGB → SH DC coefficient: f_dc = (color - 0.5) / C0
+    f_dc = (col - 0.5) / C0
+
+    cabecera = [
+        "ply",
+        "format binary_little_endian 1.0",
+        f"comment generado por gaussian-engine@{perfil}",
+        f"comment acquisition_id {acquisition_id}",
+        "comment perfil INRIA 3DGS grado 0 — APARIENCIA, no medida",
+        "comment las gaussianas NO son los vertices del escaner: el optimizador las",
+        "comment movio, divodio y podo. No hay correspondencia 1:1 con lo medido.",
+        "comment f_dc_* = color RGB real del paciente (coeficiente DC de SH)",
+        "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
+        "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
+        "comment rot es cuaternion (w,x,y,z) normalizado",
+        f"comment entrenado contra {n_vistas} renders EEVEE, {iteraciones} iteraciones",
+        f"element vertex {n}",
+        *(f"property float {p}" for p in PROPIEDADES_INRIA),
+        "end_header",
+    ]
+
+    # Construir array estructurado
+    dtype = np.dtype([
+        ("x", "<f8"), ("y", "<f8"), ("z", "<f8"),
+        ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
+        ("f_dc_0", "<f4"), ("f_dc_1", "<f4"), ("f_dc_2", "<f4"),
+        ("opacity", "<f4"),
+        ("scale_0", "<f4"), ("scale_1", "<f4"), ("scale_2", "<f4"),
+        ("rot_0", "<f4"), ("rot_1", "<f4"), ("rot_2", "<f4"), ("rot_3", "<f4"),
+    ])
+    filas = np.empty(n, dtype=dtype)
+    filas["x"] = pos[:, 0]
+    filas["y"] = pos[:, 1]
+    filas["z"] = pos[:, 2]
+    filas["nx"] = 0.0
+    filas["ny"] = 0.0
+    filas["nz"] = 0.0
+    filas["f_dc_0"] = f_dc[:, 0].astype(np.float32)
+    filas["f_dc_1"] = f_dc[:, 1].astype(np.float32)
+    filas["f_dc_2"] = f_dc[:, 2].astype(np.float32)
+    filas["opacity"] = opa.astype(np.float32)
+    filas["scale_0"] = esc[:, 0].astype(np.float32)
+    filas["scale_1"] = esc[:, 1].astype(np.float32)
+    filas["scale_2"] = esc[:, 2].astype(np.float32)
+    filas["rot_0"] = rot[:, 0].astype(np.float32)
+    filas["rot_1"] = rot[:, 1].astype(np.float32)
+    filas["rot_2"] = rot[:, 2].astype(np.float32)
+    filas["rot_3"] = rot[:, 3].astype(np.float32)
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with destino.open("wb") as f:
+        f.write(("\n".join(cabecera) + "\n").encode("ascii"))
+        f.write(filas.tobytes())
+
+
 class FieldExportAgent(BaseExportAgent):
     """Materializa `gaussian_field_ref` como PLY, y mide cuánto se parece al twin.
 

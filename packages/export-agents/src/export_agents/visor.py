@@ -384,7 +384,7 @@ class ViewerExportAgent(BaseExportAgent):
         for clave, nombre, detalle in CAPAS_APARIENCIA:
             partes = [
                 _lee_inria(f) for p in _PARTES_APARIENCIA
-                if (f := Path(origen_gs) / f"escaner_3dgs-{p}.ply").exists()
+                if (f := Path(origen_gs) / f"gs_escaner-{p}.ply").exists()
             ]
             if not partes:
                 continue
