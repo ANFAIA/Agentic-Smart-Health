@@ -665,6 +665,16 @@ class IngestionPipeline:
         # de `derived/` (§5.5). Sin ellos el campo va a `null`, que es la verdad.
         modelo_segmentacion: Any | None = None,
         render: bool = True,
+        # El campo ajustado (gaussian-engine) y su informe de ajuste. Va APARTE en el
+        # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot. Ver
+        # `packages/uos/src/uos/agente.py`.
+        campo_ajustado: Any | None = None,
+        ajuste: Any | None = None,
+        # El descriptor del campo ajustado (dict plano, construido en `caso_completo.py`
+        # para no acoplar UOS a gaussian_engine). Se vuelta tal cual en el sidecar.
+        campo_ajustado_descriptor: dict | None = None,
+        # Perfil ligero: los originales se declaran con su sha256 y no viajan.
+        sin_originales: bool = False,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
 
@@ -792,6 +802,12 @@ class IngestionPipeline:
                 # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda
                 # lo oclusal, cuál es la derecha del paciente— para nombrar las vistas.
                 etiquetas_ios=etiquetas_ios,
+                # El campo ajustado (gaussian-engine) y su informe: van APARTE en el
+                # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot.
+                campo_ajustado=campo_ajustado,
+                ajuste=ajuste,
+                campo_ajustado_descriptor=campo_ajustado_descriptor,
+                sin_originales=sin_originales,
             ),
         ]
         if render:
