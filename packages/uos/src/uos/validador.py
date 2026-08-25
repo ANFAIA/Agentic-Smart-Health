@@ -125,6 +125,14 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
     """Cada asset existe y su hash cuadra. Verificar es la politica en ingesta (§8)."""
     dentro = set(z.namelist())
     for a in m.assets:
+        if a.external:
+            # No es un error: el perfil ligero declara el original y no lo custodia. Pero
+            # tampoco es gratis, y callarselo seria vender la misma garantia por menos.
+            inf.avisos.append(
+                f"asset {a.id}: EXTERNO ({a.uri}). El contenedor declara su sha256 y su "
+                "tamano, pero no lo lleva: no se puede verificar aqui."
+            )
+            continue
         if a.uri.endswith("/"):
             _valida_serie(z, a, dentro, inf)
             continue

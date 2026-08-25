@@ -104,6 +104,11 @@
           ],
           "default": null,
           "title": "Sidecar Uri"
+        },
+        "external": {
+          "default": false,
+          "title": "External",
+          "type": "boolean"
         }
       },
       "required": [

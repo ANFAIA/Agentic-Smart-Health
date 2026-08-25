@@ -130,10 +130,31 @@ class UOSExportAgent(BaseExportAgent):
         etiquetas_ios: Any | None = None,
         modelo_segmentacion: Path | None = None,
         cbct: Path | None = None,
+        # ⚠️ **Perfil ligero: los originales se DECLARAN y no viajan.** El `.uos` sale con
+        # el campo gaussiano, la escena y el manifiesto; el STL del escaner y la serie
+        # DICOM quedan como assets `external`, con su `uri` logica y su `sha256`, y quien
+        # los custodia es otro sistema.
+        #
+        # Lo que cambia es la garantia, no la forma: con ellos dentro el contenedor afirma
+        # «el DICOM que sale es el que entro» y el validador lo comprueba; sin ellos afirma
+        # «se el hash de lo que deberia haber ahi». Sigue siendo auditable y ya NO cumple el
+        # §1.1 del spec, que exige que el DICOM adquirido viaje byte-identico. Es una
+        # decision de producto y se toma fuera de este agente: aqui solo se obedece y se
+        # declara. El validador avisa por cada asset externo.
+        sin_originales: bool = False,
         previo: Path | None = None,
         # Quien calculo la registracion, para el `operator` de §6. Lo sabe el orquestador
         # —tiene la salida de la fusion geometrica— y este agente no puede deducirlo.
         registrador: str | None = None,
+        # El campo ajustado (gaussian-engine) y su informe de ajuste. Va APARTE en el
+        # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot.
+        # `campo_ajustado` es un ref (hash/URI del almacén); `ajuste` es un dataclass
+        # `Ajuste` con `rmse_hu`, `rmse_hu_por_region`, `compresion`.
+        campo_ajustado: str | None = None,
+        ajuste: Any | None = None,
+        # El descriptor del campo ajustado (dict plano, construido fuera de este paquete
+        # para no acoplarlo a `gaussian_engine`). Se vuelca tal cual en el sidecar.
+        campo_ajustado_descriptor: dict | None = None,
     ) -> ExportOutput:
         if not pseudonimo:
             # ⚠️ **No se cae al `acquisition_id`**, y es deliberado: ese identificador sale
@@ -174,7 +195,8 @@ class UOSExportAgent(BaseExportAgent):
         # y `1574` es el numero de caso. Se nombra por su papel en la escena y la
         # trazabilidad la da el sha256, que es mas fuerte que un nombre.
         uri = f"scene/scan{malla.suffix.lower()}"
-        ficheros[uri] = malla
+        if not sin_originales:
+            ficheros[uri] = malla
         # ⚠️ `document`, no `mesh_gs_scene`. Lo dice el §5.1: la escena es el `.glb`, y el
         # STL original «PUEDE incluirse como asset document para trazabilidad». Declararlo
         # escena haria que un visor viera dos escenas y no supiera cual montar.
@@ -182,6 +204,7 @@ class UOSExportAgent(BaseExportAgent):
             malla, uri, id_="asset.ios", kind=Clase.DOCUMENT, visit=visita.id,
             frame=FRAME_IOS, media_type=_MEDIA.get(malla.suffix.lower(), "model/stl"),
             acquisition=Adquisicion(time=snapshot.timestamp),
+            external=sin_originales,
         ))
         # ⚠️ **La ESCENA, ademas del STL.** El §3.1 dibuja `scene/scene.glb` como «STL
         # convertido» y el §1.1 dice que UOS no re-encodea datos fuente: las dos cosas solo
@@ -200,6 +223,17 @@ class UOSExportAgent(BaseExportAgent):
         # Las capas de gaussianas. Son tres cosas distintas con el mismo `kind`, asi que
         # cada una lleva su descriptor: el campo es densidad MEDIDA, el compuesto es medida
         # de dos modalidades, y la apariencia es reconstruccion contra renders.
+        #
+        # ⚠️ **`escena_gs` se salta cuando `apariencia_ref` está set.** En ese caso la
+        # capa de apariencia la gestiona el bloque `asset.apariencia` más abajo, con
+        # el esquema INRIA y el perfil correctos. Si no lo saltamos, el main loop crea
+        # `asset.gs` con el esquema de densidad (porque `_descriptor_gs` usa los defaults
+        # del snapshot) y el sidecar queda con `profile: ash-twin/1.0` en vez de
+        # `ash-gs-apariencia/1.0`.
+        _skip_escena_gs = (
+            snapshot.apariencia_ref is not None
+            and escena_gs is not None
+        )
         for ruta, id_, papel, medido, marco, nota in (
             (campo, "asset.field", "campo gaussiano del twin", True, FRAME_CBCT,
              "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
@@ -213,20 +247,35 @@ class UOSExportAgent(BaseExportAgent):
         ):
             if ruta is None or not ruta.exists():
                 continue
+            # Si hay `apariencia_ref`, el bloque `asset.apariencia` gestiona esta capa
+            # con el esquema INRIA correcto — no la procesamos aquí con los defaults.
+            if _skip_escena_gs and id_ == "asset.gs":
+                continue
             # El nombre dentro del contenedor describe QUE es, no de que variable sale.
             # `asset.gs` daria `scene/gs.ply`, que no dice nada a quien lo abra.
             corto = {"asset.gs": "appearance"}.get(id_, id_.split(".")[1])
             uri = f"scene/{corto}{ruta.suffix.lower()}"
             descriptor = f"scene/{corto}.gs.json"
             ficheros[uri] = ruta
+            # Para el campo semilla, incluir info de submuestreo en el sidecar si el
+            # artefacto la trae. Así el consumidor sabe cuántos vóxeles había antes.
+            submuestreo = None
+            if id_ == "asset.field" and self.store is not None:
+                submuestreo = self._lee_submuestreo(snapshot)
             extras_escena[descriptor] = json_de(self._descriptor_gs(
                 snapshot, papel=papel, medido=medido, marco=marco, nota=nota,
+                submuestreo=submuestreo,
             ))
             assets.append(asset_de(
                 ruta, uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
                 frame=marco, media_type="application/octet-stream",
                 # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
                 load_priority=25, sidecar_uri=descriptor,
+                # La capa de apariencia es DERIVADA (entrenada contra renders) y va en
+                # `scene/` con `layer=1`, no en `derived/` (que es Layer 3, inferencia
+                # clínica). El campo semilla y el compuesto son `raw` por defecto.
+                **({"regulatory": Regulatorio(layer=1, status="derived")}
+                   if id_ == "asset.gs" else {}),
             ))
             nodos_gs.append(NodoGS(
                 uri=uri, nombre=papel,
@@ -235,6 +284,117 @@ class UOSExportAgent(BaseExportAgent):
                 matriz_fila=(al_canonico if marco == FRAME_CBCT else None),
                 extras={"uos_descriptor_uri": descriptor, "uos_measured": medido},
             ))
+
+        # ── Campo ajustado (gaussian-engine) ──────────────────────────────────
+        # El ajuste optimiza el campo semilla contra la densidad medida. El resultado
+        # viaja APARTE en el `.uos` como `asset.field_fit`, sin sustituir la semilla.
+        # Razón: el twin reversible lleva la semilla (que es dato medido); el ajustado
+        # es DERIVADO (optimización numérica, no una medición nueva) y va en `scene/`
+        # con `regulatory.layer=1, status="derived"` — no en `derived/`, que es Layer 3
+        # (inferencia clínica con modelo entrenado).
+        #
+        # `campo_ajustado` es un ref (hash/URI del almacén); `campo_ajustado_descriptor`
+        # es un dict plano construido en `caso_completo.py` con `gaussian_engine.esquema`
+        # y `gaussian_engine.PERFIL` — este paquete no importa `gaussian_engine`.
+        if (campo_ajustado is not None and campo_ajustado_descriptor is not None
+                and self.store is not None):
+            try:
+                datos_aj = self.store.load(campo_ajustado)
+                uri_fit = "scene/field_fit.ply"
+                ficheros[uri_fit] = self._escribe_ply(
+                    destination / uri_fit, datos_aj,
+                )
+                descriptor_fit = "scene/field_fit.gs.json"
+                extras_escena[descriptor_fit] = json_de(campo_ajustado_descriptor)
+                assets.append(asset_de(
+                    destination / uri_fit, uri_fit,
+                    id_="asset.field_fit",
+                    kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                    frame=FRAME_CBCT, media_type="application/octet-stream",
+                    load_priority=25, sidecar_uri=descriptor_fit,
+                ))
+                nodos_gs.append(NodoGS(
+                    uri=uri_fit,
+                    nombre="campo ajustado contra densidad medida",
+                    matriz_fila=al_canonico,
+                    extras={
+                        "uos_descriptor_uri": descriptor_fit,
+                        "uos_measured": False,
+                    },
+                ))
+            except (KeyError, OSError, ValueError) as e:
+                aviso_derivados.append(
+                    f"campo ajustado no incluido en el `.uos`: {e}"
+                )
+
+        # ── Apariencia entrenada (gsplat contra fotos) ─────────────────────
+        # El PLY INRIA con color real del paciente, entrenado contra renders de
+        # Blender. Viaja como `asset.apariencia` con `layer=1, status="derived"`.
+        # El esquema de columnas es INRIA (f_dc_*, opacity, scale en log), NO
+        # el del campo de densidad — por eso pasamos `esquema_override`.
+        #
+        # ⚠️ **Los arrays en el almacén** (`means`, `quats`, `opacities`, `colors`)
+        # no coinciden con las claves de `_escribe_ply` (`centers`, `rotations`,
+        # `density`). Usamos `escribe_inria` que conoce el formato INRIA de
+        # primera mano — el mismo que escribe el PLY en el pipeline.
+        if (snapshot.apariencia_ref is not None and self.store is not None):
+            try:
+                from gaussian_engine.agente_apariencia import esquema_apariencia
+                from gaussian_engine.apariencia import (
+                    escribe_inria as _escribe_inria,
+                )
+                datos_ap = self.store.load(snapshot.apariencia_ref)
+                uri_ap = "scene/appearance.ply"
+                destino_ap = destination / uri_ap
+                destino_ap.parent.mkdir(parents=True, exist_ok=True)
+                # Escribir el PLY INRIA directamente con los arrays del almacén.
+                _escribe_inria(
+                    destino_ap, datos_ap,
+                    n_vistas=datos_ap.get("n_vistas", 0),
+                    iteraciones=datos_ap.get("iteraciones", 0),
+                )
+                ficheros[uri_ap] = destino_ap
+                # El esquema INRIA lo construimos aqui para no acoplar el UOS
+                # al paquete gaussian-engine. Las columnas son las mismas que
+                # `gaussian_engine.apariencia.escribe_inria` escribe en el PLY.
+                esq_ap = esquema_apariencia()
+                descriptor_ap = "scene/appearance.gs.json"
+                extras_escena[descriptor_ap] = json_de(self._descriptor_gs(
+                    snapshot,
+                    papel="apariencia real entrenada con gsplat",
+                    medido=False,
+                    marco=FRAME_IOS,
+                    nota=(
+                        "color RGB real del paciente, entrenado contra renders "
+                        "EEVEE con 0.8*L1 + 0.2*(1-SSIM). Las posiciones fueron "
+                        "movidas por el optimizador: no hay correspondencia 1:1 "
+                        "con los vertices del escaneo"
+                    ),
+                    esquema_override=esq_ap,
+                    perfil_override="ash-gs-apariencia/1.0",
+                    n_primitives_override=len(datos_ap["means"]),
+                ))
+                assets.append(asset_de(
+                    destination / uri_ap, uri_ap,
+                    id_="asset.apariencia",
+                    kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                    frame=FRAME_IOS, media_type="application/octet-stream",
+                    load_priority=25, sidecar_uri=descriptor_ap,
+                    regulatory=Regulatorio(layer=1, status="derived"),
+                ))
+                nodos_gs.append(NodoGS(
+                    uri=uri_ap,
+                    nombre="apariencia real entrenada con gsplat",
+                    matriz_fila=None,  # ya en frame canónico (escáner)
+                    extras={
+                        "uos_descriptor_uri": descriptor_ap,
+                        "uos_measured": False,
+                    },
+                ))
+            except (KeyError, OSError, ValueError) as e:
+                aviso_derivados.append(
+                    f"apariencia no incluida en el `.uos`: {e}"
+                )
 
         # La ESCENA, con la malla y los nodos GS colgando de ella.
         malla_ingerida = self._malla_ingerida(snapshot)
@@ -378,13 +538,18 @@ class UOSExportAgent(BaseExportAgent):
             uri = "volume/ct_001/"
             sidecar_uri = SIDECAR.format(id="ct_001")
             sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
-            directorios[uri] = cbct
+            if not sin_originales:
+                directorios[uri] = cbct
+            # ⚠️ El sidecar del volumen viaja SIEMPRE, tambien en el perfil ligero: es lo
+            # que dice dimensiones, espaciado y orientacion sin parsear DICOM (§5.2). Sin el
+            # un contenedor ligero no podria ni situar el volumen que referencia.
             extras[sidecar_uri] = json_de(sidecar)
             assets.append(asset_de_directorio(
                 cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
                 frame=FRAME_CBCT, media_type="application/dicom",
                 acquisition=Adquisicion(time=snapshot.timestamp),
                 sidecar_uri=sidecar_uri,
+                external=sin_originales,
             ))
 
         fhir = self._fhir(assets)
@@ -481,6 +646,65 @@ class UOSExportAgent(BaseExportAgent):
                 f"{FRAME_IOS}"
             ),
         )
+
+    def _escribe_ply(self, destino: Path, datos: dict) -> Path:
+        """PLY binario little-endian desde los arrays de un campo gaussiano.
+
+        Misma estructura que ``field.escribe_ply``, pero aqui no podemos importar
+        ``export_agents`` (seria una dependencia cruzada entre paquetes). Los arrays
+        llegan como ``centers`` (N,3), ``scales`` (N,3), ``rotations`` (N,4) y
+        ``density`` (N,), y se mapean a las propiedades PLY ``x/y/z``, ``scale_*``,
+        ``rot_*`` y ``density``.
+        """
+        import numpy as np
+
+        _MAPEO = {
+            "centers": ("x", "y", "z"),
+            "scales": ("scale_0", "scale_1", "scale_2"),
+            "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
+            "density": ("density",),
+            "region_id": ("region_id",),
+            "origen": ("origen",),
+        }
+        _TIPOS_PLY = {
+            "x": ("double", np.float64), "y": ("double", np.float64),
+            "z": ("double", np.float64),
+            "scale_0": ("float", np.float32), "scale_1": ("float", np.float32),
+            "scale_2": ("float", np.float32),
+            "rot_0": ("float", np.float32), "rot_1": ("float", np.float32),
+            "rot_2": ("float", np.float32), "rot_3": ("float", np.float32),
+            "density": ("float", np.float32),
+            "region_id": ("short", np.int16),
+            "origen": ("short", np.int16),
+        }
+
+        cols = []
+        for arr_key, ply_names in _MAPEO.items():
+            if arr_key in datos:
+                arr = np.asarray(datos[arr_key])
+                if arr.ndim == 2:
+                    for i, pn in enumerate(ply_names):
+                        cols.append((pn, arr[:, i]))
+                else:
+                    cols.append((ply_names[0], arr))
+
+        n = len(cols[0][1]) if cols else 0
+        cabecera = ["ply", "format binary_little_endian 1.0",
+                     f"element vertex {n}"]
+        cabecera += [f"property {_TIPOS_PLY[nombre][0]} {nombre}"
+                     for nombre, _ in cols]
+        cabecera.append("end_header")
+
+        dtype = np.dtype([(nombre, _TIPOS_PLY[nombre][1]) for nombre, _ in cols])
+        filas = np.empty(n, dtype=dtype)
+        for nombre, arr in cols:
+            filas[nombre] = arr
+
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with destino.open("wb") as fh:
+            fh.write(("\n".join(cabecera) + "\n").encode("ascii"))
+            fh.write(filas.tobytes())
+        return destino
 
     def _registros(self, snapshot: TwinSnapshot, operador: str | None) -> list[Registro]:
         """La relacion CBCT ↔ escaner, INVERTIDA al canonico y declarada.
@@ -597,9 +821,42 @@ class UOSExportAgent(BaseExportAgent):
             return None
         return malla if "positions" in malla and "faces" in malla else None
 
+    def _lee_submuestreo(self, snapshot: TwinSnapshot) -> dict | None:
+        """Lee `paso` y `n_origen` del artefacto del campo semilla, si existen.
+
+        El `cbct-agent` guarda el paso de submuestreo (el array de 3 enteros que
+        indica cada cuántos vóxeles se quedó uno) y el número de vóxeles originales.
+        Esto permite al consumidor del `.uos` saber cuántos vóxeles había antes: un
+        PLY con 500K gaussianas y paso (3,3,1) indica ~4,5M vóxeles originales.
+        """
+        if snapshot.gaussian_field_ref is None or self.store is None:
+            return None
+        try:
+            datos = self.store.load(snapshot.gaussian_field_ref)
+        except (KeyError, OSError, ValueError):
+            return None
+        if "paso" not in datos or "n_origen" not in datos:
+            return None
+        import numpy as np
+
+        paso_arr = np.asarray(datos["paso"], dtype=int)
+        n_origen = int(datos["n_origen"])
+        n_final = int(datos["centers"].shape[0])
+        # `paso` viene en orden (z, y, x) del `occupied`; lo pasamos a (x, y, z)
+        # para que el consumidor lo entienda sin conocer la interna del agente.
+        paso_xyz = paso_arr[::-1].tolist()
+        return {
+            "paso_voxeles": paso_xyz,
+            "de": n_origen,
+            "a": n_final,
+        }
+
     def _descriptor_gs(
         self, snapshot: TwinSnapshot, *, papel: str, medido: bool, marco: str,
-        nota: str,
+        nota: str, submuestreo: dict | None = None,
+        esquema_override: list | None = None,
+        perfil_override: str | None = None,
+        n_primitives_override: int | None = None,
     ) -> dict[str, Any]:
         """El sidecar de un asset de gaussianas: que es y con que semantica.
 
@@ -609,22 +866,35 @@ class UOSExportAgent(BaseExportAgent):
         milimetros lineales. Un visor estandar abriendo esto no fallaria — exponenciaria
         nuestros milimetros y renderizaria basura con muy buen aspecto. Por eso las
         columnas se declaran en vez de suponerse.
+
+        ⚠️ **Overrides para la capa de apariencia.** La capa `asset.gs` tiene un esquema
+        de columnas DISTINTO al campo de densidad (INRIA: `f_dc_*`, `opacity` en logit,
+        `scale_*` en log). Los overrides permiten al UOS usar el esquema correcto sin
+        cambiar el snapshot (que sigue apuntando al campo de densidad).
         """
-        return {
+        esquema = esquema_override if esquema_override is not None else snapshot.esquema_campo
+        perfil = perfil_override if perfil_override is not None else snapshot.perfil_campo
+        n_prim = (n_primitives_override
+                  if n_primitives_override is not None
+                  else snapshot.n_primitives)
+        resultado: dict[str, Any] = {
             "role": papel,
             "measured": medido,
             "note": nota,
-            "profile": snapshot.perfil_campo,
+            "profile": perfil,
             "frame": marco,
             "units": "mm",
-            "n_primitives": snapshot.n_primitives,
+            "n_primitives": n_prim,
             "columns": [
                 {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
                  "measured": c.medido, "derived_from": c.derivado_de,
                  "meaning": c.significado, "vocabulary": c.vocabulario}
-                for c in snapshot.esquema_campo
+                for c in esquema
             ],
         }
+        if submuestreo is not None:
+            resultado["submuestreo"] = submuestreo
+        return resultado
 
     def _extensiones(self, assets: list) -> dict[str, Extension]:
         """Lo que este emisor anade al borrador, dicho en voz alta.

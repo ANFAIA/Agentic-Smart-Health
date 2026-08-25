@@ -6,10 +6,11 @@ Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede ent
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 UOS_VERSION = "0.2"
 
@@ -99,6 +100,15 @@ class Parte(BaseModel):
     bytes: int = Field(ge=0)
 
 
+#: Una uri que no es una ruta sino la identidad del fichero. Ver `Asset._direccion_y_custodia`.
+DIRECCION = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def direccion_de_contenido(sha256: str) -> str:
+    """`sha256:<hex>` — como se nombra un asset que no viaja dentro del contenedor."""
+    return f"sha256:{sha256}"
+
+
 class Asset(BaseModel):
     """El sobre comun a todo asset (§4.1).
 
@@ -130,6 +140,20 @@ class Asset(BaseModel):
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
     sidecar_uri: str | None = None
+    # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es el perfil
+    # ligero: el `.uos` lleva el campo gaussiano y el manifiesto, y los originales
+    # —DICOM, STL— se referencian por `uri` y se acreditan por `sha256`.
+    #
+    # Lo que cambia es la GARANTIA, y hay que decirlo en voz alta. Con el asset dentro, el
+    # contenedor afirma «el DICOM que sale es byte-identico al que entro» y el validador lo
+    # comprueba. Con `external: true` afirma «se el hash de lo que deberia haber ahi»: sigue
+    # siendo auditable —quien tenga el fichero puede probar que es el mismo— pero el
+    # contenedor ya no lo custodia, y el §1.1 del spec, que exige que el DICOM adquirido
+    # viaje byte-identico, deja de cumplirse por construccion.
+    #
+    # Por eso el validador AVISA por cada asset externo en vez de callarse: no es un error
+    # —el perfil es deliberado— pero tampoco es gratis.
+    external: bool = False
 
     @field_validator("uri")
     @classmethod
@@ -138,12 +162,57 @@ class Asset(BaseModel):
 
         No es purismo: un `..` en una ruta de ZIP es la travesia de directorios clasica, y
         un lector que la resuelva ingenuamente escribe fuera del destino.
+
+        La direccion de contenido (`sha256:<hex>`) se acepta aparte: no es una ruta, asi
+        que las reglas de ruta no se le aplican. Que solo pueda usarla un asset externo lo
+        comprueba `_direccion_y_custodia`.
         """
+        if DIRECCION.fullmatch(v):
+            return v
         if not v.isascii() or v.startswith("/") or ".." in v.split("/"):
             raise ValueError(
                 f"uri {v!r}: las rutas internas son relativas, ASCII y sin '..'"
             )
         return v
+
+    @model_validator(mode="after")
+    def _direccion_y_custodia(self) -> Asset:
+        """Un asset externo se nombra por su CONTENIDO; uno interno, por su sitio.
+
+        **Por que la uri de un externo es el hash.** Un asset que no viaja no tiene «sitio
+        dentro del contenedor», asi que una ruta seria una promesa sobre un ZIP en el que
+        no esta. Lo unico que sigue siendo cierto de el es **que fichero es**, y eso es
+        exactamente lo que dice una direccion de contenido. Es la misma convencion que el
+        `ArtifactStore` del proyecto usa desde el principio (`sha256:<hex>`), asi que un
+        resolvedor que ya tenga un almacen direccionado por contenido no necesita saber
+        nada de UOS para servirlo.
+
+        ⚠️ Y tiene una propiedad que una ruta no tiene: **no puede llevar dato de
+        paciente**. La ruta local de un caso clinico lleva el directorio del paciente; un
+        hash no lleva nada. El perfil ligero saca ficheros del contenedor, no identidades.
+
+        Se comprueba en los dos sentidos, y el segundo importa igual: una direccion de
+        contenido en un asset que SI viaja seria un asset imposible de localizar dentro del
+        ZIP.
+        """
+        es_direccion = bool(DIRECCION.fullmatch(self.uri))
+        if self.external and not es_direccion:
+            raise ValueError(
+                f"asset {self.id}: es externo y su uri {self.uri!r} es una ruta. Un asset "
+                "que no viaja se nombra por su contenido: `sha256:<hex>`."
+            )
+        if es_direccion:
+            if not self.external:
+                raise ValueError(
+                    f"asset {self.id}: su uri es una direccion de contenido pero el asset "
+                    "viaja dentro; entonces no habria forma de encontrarlo en el ZIP."
+                )
+            if self.uri.split(":", 1)[1] != self.sha256:
+                raise ValueError(
+                    f"asset {self.id}: la direccion de contenido y el campo `sha256` no "
+                    "son el mismo hash."
+                )
+        return self
 
 
 def digesto_de_partes(partes: list[Parte]) -> str:

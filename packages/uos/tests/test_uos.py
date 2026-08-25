@@ -640,3 +640,143 @@ def test_el_esquema_del_repositorio_NO_se_queda_atras(tmp_path):
     assert _json.loads(publicado.read_text()) == esquema_del_manifiesto(), (
         f"{RUTA} se ha quedado atras respecto al contrato: regeneralo"
     )
+
+
+# --- perfil ligero: los originales se declaran y no viajan -------------------- #
+def _snap_min():
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, TwinSnapshot
+
+    return TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0",
+        provenance=Provenance(source_file="x", modality=Modality.MESH, agent="a@0"),
+    )
+
+
+def test_sin_originales_el_STL_se_DECLARA_y_no_viaja(tmp_path, malla):
+    """El perfil ligero: identidad del original dentro, fichero fuera.
+
+    Lo que se comprueba es lo que hace que siga siendo auditable: el asset sigue en el
+    manifiesto, con su `sha256` y su tamaño REALES —no ceros, no `null`—, y lo único que
+    cambia es que sus bytes no están en el ZIP.
+    """
+    import hashlib
+    import zipfile
+
+    from uos import UOSExportAgent, lee_manifiesto
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        sin_originales=True,
+    )
+    assert salida.ok, salida.detail
+    m = lee_manifiesto(salida.path)
+    ios = next(a for a in m.assets if a.id == "asset.ios")
+
+    assert ios.external is True
+    assert ios.sha256 == hashlib.sha256(malla.read_bytes()).hexdigest()
+    assert ios.bytes == malla.stat().st_size
+    with zipfile.ZipFile(salida.path) as z:
+        assert ios.uri not in set(z.namelist()), "el original ha viajado igualmente"
+
+
+def test_sin_originales_el_validador_AVISA_y_no_falla(tmp_path, malla):
+    """Un asset que no se puede verificar no es un error, pero tampoco se calla.
+
+    ⚠️ Es la diferencia entre las dos garantías, y por eso hay un test: con el original
+    dentro el contenedor afirma «lo que sale es lo que entró» y el validador lo comprueba;
+    sin él afirma «sé el hash de lo que debería haber ahí». Si el validador no lo dijera,
+    las dos afirmaciones serían indistinguibles desde fuera.
+    """
+    from uos import UOSExportAgent
+    from uos.validador import valida
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        sin_originales=True,
+    )
+    inf = valida(salida.path)
+    assert inf.errores == [], inf.errores
+    assert any("EXTERNO" in a and "asset.ios" in a for a in inf.avisos), inf.avisos
+
+
+def test_con_originales_no_hay_ningun_aviso_de_externo(tmp_path, malla):
+    """El contrario, para que el test de arriba pueda fallar.
+
+    Sin esto, un validador que avisara SIEMPRE pasaría los dos y no probaría nada.
+    """
+    from uos import UOSExportAgent
+    from uos.validador import valida
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+    )
+    inf = valida(salida.path)
+    assert inf.errores == [], inf.errores
+    assert not any("EXTERNO" in a for a in inf.avisos), inf.avisos
+
+
+def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
+    """La `uri` de un asset que no viaja es `sha256:<hex>`, no una ruta.
+
+    ⚠️ Dos razones, y la segunda es de dato. Un fichero que no está dentro **no tiene sitio
+    dentro**, así que una ruta sería una promesa sobre un ZIP en el que no está; lo único
+    que sigue siendo cierto de él es qué fichero es. Y una dirección de contenido **no puede
+    llevar dato de paciente**: la ruta local de un caso clínico lleva el directorio del
+    paciente, un hash no lleva nada. El perfil ligero saca ficheros del contenedor, no
+    identidades.
+    """
+    import hashlib
+
+    from uos import UOSExportAgent, lee_manifiesto
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        sin_originales=True,
+    )
+    m = lee_manifiesto(salida.path)
+    ios = next(a for a in m.assets if a.id == "asset.ios")
+
+    esperado = hashlib.sha256(malla.read_bytes()).hexdigest()
+    assert ios.uri == f"sha256:{esperado}"
+    assert ios.sha256 == esperado, "la dirección y el campo del contrato tienen que cuadrar"
+    # Y nada del disco ni del proveedor viaja en ella.
+    assert str(tmp_path) not in ios.uri and malla.stem not in ios.uri
+
+
+def test_una_direccion_de_contenido_en_un_asset_que_SI_viaja_se_rechaza():
+    """El sentido contrario, que es el que hace que la regla signifique algo.
+
+    Un asset con dirección de contenido que además viaja dentro sería imposible de
+    localizar en el ZIP: el lector buscaría una entrada llamada `sha256:…`.
+    """
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="viaja dentro"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+              media_type="model/stl", sha256="a" * 64, bytes=1, frame="frame.ios_master")
+
+
+def test_un_asset_externo_con_RUTA_se_rechaza():
+    """Y el otro sentido: externo obliga a dirección de contenido."""
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="es una ruta"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="scene/scan.stl",
+              media_type="model/stl", sha256="a" * 64, bytes=1,
+              frame="frame.ios_master", external=True)
+
+
+def test_la_direccion_tiene_que_ser_el_MISMO_hash_que_el_campo_del_contrato():
+    """Dos sitios con el mismo dato se separan. Que no puedan es el punto."""
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="no.*son el mismo hash"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+              media_type="model/stl", sha256="b" * 64, bytes=1,
+              frame="frame.ios_master", external=True)

@@ -57,7 +57,11 @@ def escribe_uos(
     """
     mapa = dict(ficheros)
     dirs = dict(directorios or {})
-    declaradas = {a.uri for a in manifiesto.assets}
+    # ⚠️ Los assets EXTERNOS se declaran y no se aportan: el manifiesto lleva su identidad
+    # —`uri` logica, `sha256`, `bytes`— y el fichero vive fuera. Es el perfil ligero, y por
+    # eso quedan fuera de las dos comprobaciones de abajo: exigir su fichero convertiria en
+    # error justo lo que el perfil hace a proposito. Ver `Asset.external`.
+    declaradas = {a.uri for a in manifiesto.assets if not a.external}
     # Un asset puede ser un DIRECTORIO (una serie DICOM): su uri acaba en "/" y agrupa.
     sueltas = {u for u in declaradas if not u.endswith("/")}
     if faltan := {u for u in declaradas if u.endswith("/")} - set(dirs):
@@ -112,12 +116,21 @@ def asset_de(
     ruta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
     media_type: str, **extra,
 ) -> Asset:
-    """Construye el sobre de un asset midiendo el fichero: hash y tamano reales."""
-    from uos.manifiesto import PRIORIDAD
+    """Construye el sobre de un asset midiendo el fichero: hash y tamano reales.
 
+    Si el asset es `external`, la `uri` que se pase se descarta y se nombra por su
+    **direccion de contenido**: un fichero que no viaja no tiene sitio dentro del
+    contenedor, y una ruta seria una promesa sobre un ZIP en el que no esta. Ver
+    `Asset._direccion_y_custodia`.
+    """
+    from uos.manifiesto import PRIORIDAD, direccion_de_contenido
+
+    h = sha256(ruta)
     return Asset(
-        id=id_, kind=kind, visit=visit, uri=uri, media_type=media_type,
-        sha256=sha256(ruta), bytes=ruta.stat().st_size, frame=frame,
+        id=id_, kind=kind, visit=visit,
+        uri=direccion_de_contenido(h) if extra.get("external") else uri,
+        media_type=media_type,
+        sha256=h, bytes=ruta.stat().st_size, frame=frame,
         load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
     )
 
@@ -151,14 +164,20 @@ def asset_de_directorio(
     proveedor los emitiera con identificador dentro, eso hay que cazarlo en la ingesta y no
     aqui, porque para entonces el DICOM ya lo lleva en sus tags.
     """
-    from uos.manifiesto import PRIORIDAD
+    from uos.manifiesto import PRIORIDAD, direccion_de_contenido
 
     partes = partes_de(carpeta)
     if not partes:
         raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
+    h = digesto_de_partes(partes)
+    # ⚠️ Externa, la serie sigue llevando sus `parts` con el hash de CADA corte. Es lo que
+    # permite que quien la custodie demuestre que no le falta ninguno — la garantia que se
+    # pierde es la custodia, no la trazabilidad.
     return Asset(
-        id=id_, kind=kind, visit=visit, uri=uri if uri.endswith("/") else uri + "/",
-        media_type=media_type, sha256=digesto_de_partes(partes),
+        id=id_, kind=kind, visit=visit,
+        uri=(direccion_de_contenido(h) if extra.get("external")
+             else (uri if uri.endswith("/") else uri + "/")),
+        media_type=media_type, sha256=h,
         bytes=sum(p.bytes for p in partes), frame=frame, parts=partes,
         load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
     )
