@@ -461,3 +461,182 @@ def _stl_binario(triangulos: int = 4) -> bytes:
         v = rng.normal(0, 10, (3, 3)).astype("<f4")
         crudo += np.zeros(3, dtype="<f4").tobytes() + v.tobytes() + b"\x00\x00"
     return crudo
+
+
+# --- §6: la registracion, que llevaba dos fallos callados --------------------- #
+def _registro_de(ruta) -> dict:
+    """La unica registracion del contenedor escrito."""
+    with zipfile.ZipFile(ruta) as z:
+        return json.loads(z.read("manifest.json"))["registrations"][0]
+
+
+
+def _con_registro(rms=0.666):
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, RigidTransform, TwinSnapshot
+
+    return TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0", surface_ref="sha256:1",
+        provenance=Provenance(
+            source_file="x", modality=Modality.MESH,
+            # ⚠️ El ULTIMO agente que toca la procedencia es la fusion SEMANTICA, no la
+            # que calculo la ICP. Es justo la confusion que producia el fallo.
+            agent="semantic-fusion-agent@0.1.0",
+            transform=RigidTransform(
+                rotation=(1.0, 0.0, 0.0, 0.0), translation=(0.0, 0.0, 0.0), rms_mm=rms
+            ),
+        ),
+    )
+
+
+def test_el_rms_del_registro_LLEGA_al_manifiesto(tmp_path, malla):
+    """El fallo que esto guarda: el campo del contrato se llama `rms_mm` y aqui se leia
+    `rms_error_mm` con un `getattr(..., None)`, asi que TODOS los contenedores salian con
+    `rms_error_mm: null` teniendo el residuo medido.
+
+    §6 lo pide porque una registracion automatica sin `verified_by` es provisional, y el
+    residuo es lo unico que dice cuanto de provisional: 0,666 mm y 6 mm no permiten lo
+    mismo. Un `null` ahi no es un hueco, es tirar una medida que ya existe.
+    """
+    import numpy as np
+    from uos.agente import UOSExportAgent
+
+    almacen = _Almacen(np.random.default_rng(0).normal(0, 5, (30, 3)))
+    salida = UOSExportAgent(almacen).export(
+        _con_registro(), tmp_path / "c", malla=malla, pseudonimo="P-1"
+    )
+    assert salida.ok, salida.detail
+
+    assert _registro_de(salida.path)["rms_error_mm"] == pytest.approx(0.666)
+
+
+def test_el_operator_acredita_a_QUIEN_registro(tmp_path, malla):
+    """El otro fallo del mismo objeto: se escribia `auto:{provenance.agent}`, que nombra
+    al ultimo agente que toco la procedencia y no al que calculo la ICP. El contenedor
+    acreditaba una medida a quien no la hizo, en el unico campo que existe para eso."""
+    import numpy as np
+    from uos.agente import UOSExportAgent
+
+    almacen = _Almacen(np.random.default_rng(0).normal(0, 5, (30, 3)))
+    salida = UOSExportAgent(almacen).export(
+        _con_registro(), tmp_path / "c", malla=malla, pseudonimo="P-1",
+        registrador="auto:geometric-fusion-agent@0.2.0",
+    )
+    assert salida.ok, salida.detail
+    reg = _registro_de(salida.path)
+
+    assert reg["operator"] == "auto:geometric-fusion-agent@0.2.0"
+    assert "semantic" not in (reg["operator"] or "")
+
+
+def test_sin_saber_quien_registro_se_deja_NULL_y_no_se_inventa(tmp_path, malla):
+    """§6 admite no saber quien registro. No admite escribir a alguien que no fue."""
+    import numpy as np
+    from uos.agente import UOSExportAgent
+
+    almacen = _Almacen(np.random.default_rng(0).normal(0, 5, (30, 3)))
+    salida = UOSExportAgent(almacen).export(
+        _con_registro(), tmp_path / "c", malla=malla, pseudonimo="P-1"
+    )
+
+    assert _registro_de(salida.path)["operator"] is None
+
+
+# --- §5.1: metadata odontologica por sub-mesh -------------------------------- #
+def _gltf_de(ruta) -> dict:
+    """El chunk JSON del `scene.glb` del contenedor."""
+    import struct
+
+    with zipfile.ZipFile(ruta) as z:
+        glb = z.read("scene/scene.glb")
+    return json.loads(glb[20 : 20 + struct.unpack_from("<I", glb, 12)[0]])
+
+
+
+def test_la_escena_lleva_el_FDI_por_sub_mesh(tmp_path, malla):
+    """§5.1 pide `extras.uos_fdi` por sub-mesh, y no es decoracion: el picking semantico
+    del §11.3 esta definido SOBRE ese campo.
+
+    Sin el, un visor ajeno abre nuestro contenedor y no puede seleccionar un diente por
+    mucho que las etiquetas viajen en `derived/seg_teeth` — eso lo lee el NUESTRO porque
+    sabe que existe, no un lector cualquiera.
+    """
+    import numpy as np
+    from uos.agente import UOSExportAgent
+
+    pos, etq = _arcada_de_juguete()
+    salida = UOSExportAgent(_Almacen(pos)).export(
+        _snapshot(surface_ref="sha256:malla"), tmp_path / "c",
+        pseudonimo="P-1", malla=malla, etiquetas_ios=etq,
+    )
+    assert salida.ok, salida.detail
+
+    prims = _gltf_de(salida.path)["meshes"][0]["primitives"]
+    con_fdi = {p["extras"]["uos_fdi"] for p in prims if "extras" in p}
+    assert con_fdi == {str(int(f)) for f in np.unique(etq) if f > 0}
+    # Y queda un primitive SIN codigo: la encia y las caras que cruzan de un diente a
+    # otro. Ni se reparten ni se descartan — descartarlas dejaria agujeros en la malla.
+    assert any("extras" not in p for p in prims)
+
+
+def test_partir_por_FDI_no_toca_el_orden_de_los_vertices(tmp_path, malla):
+    """La union entre `derived/seg_teeth` y la escena es POSICIONAL: el codigo `i` es del
+    vertice `i`. Lo que se parte es el indice, nunca las posiciones, y todos los
+    primitives comparten el mismo accesor de POSITION. Si eso cambia, la segmentacion se
+    pinta sobre los dientes equivocados y nada protesta."""
+
+    from uos.agente import UOSExportAgent
+
+    pos, etq = _arcada_de_juguete()
+    salida = UOSExportAgent(_Almacen(pos)).export(
+        _snapshot(surface_ref="sha256:malla"), tmp_path / "c",
+        pseudonimo="P-1", malla=malla, etiquetas_ios=etq,
+    )
+    g = _gltf_de(salida.path)
+    prims = g["meshes"][0]["primitives"]
+
+    assert len({p["attributes"]["POSITION"] for p in prims}) == 1, "POSITION se ha duplicado"
+    assert g["accessors"][prims[0]["attributes"]["POSITION"]]["count"] == len(pos)
+
+
+# --- §12: el esquema publicado ------------------------------------------------ #
+def test_el_esquema_publicado_valida_un_contenedor_de_verdad(tmp_path, malla):
+    """§12 pide que el validador contraste contra un «JSON Schema publicado por version».
+
+    Validabamos con Pydantic, que es correcto y es NUESTRO: alguien ajeno no tenia contra
+    que comprobar un `.uos`. Un formato cuya unica definicion ejecutable vive dentro de la
+    implementacion de referencia no es un formato.
+    """
+    import json as _json
+
+    import jsonschema
+    from uos.agente import UOSExportAgent
+    from uos.esquema import esquema_del_manifiesto
+
+    pos, etq = _arcada_de_juguete()
+    salida = UOSExportAgent(_Almacen(pos)).export(
+        _snapshot(surface_ref="sha256:malla"), tmp_path / "c",
+        pseudonimo="P-1", malla=malla, etiquetas_ios=etq,
+    )
+    assert salida.ok, salida.detail
+    with zipfile.ZipFile(salida.path) as z:
+        manifiesto = _json.loads(z.read("manifest.json"))
+
+    jsonschema.validate(manifiesto, esquema_del_manifiesto())
+
+
+def test_el_esquema_del_repositorio_NO_se_queda_atras(tmp_path):
+    """El esquema se DERIVA del contrato, pero el fichero publicado es una copia en disco
+    y una copia se separa. Este test es lo que obliga a regenerarlo cuando cambia un
+    campo, en vez de descubrirlo cuando a alguien de fuera no le valida un contenedor."""
+    import json as _json
+
+    from uos.esquema import RUTA, esquema_del_manifiesto
+
+    publicado = Path(__file__).resolve().parents[3] / RUTA
+    assert publicado.exists(), f"falta {RUTA}: regenera con `uv run python -m uos.esquema`"
+    assert _json.loads(publicado.read_text()) == esquema_del_manifiesto(), (
+        f"{RUTA} se ha quedado atras respecto al contrato: regeneralo"
+    )

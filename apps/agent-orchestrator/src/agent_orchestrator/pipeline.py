@@ -764,6 +764,18 @@ class IngestionPipeline:
                 # El seudonimo sale del pipeline, NO del identificador de adquisicion:
                 # aquel es un hash y este el nombre del directorio del caso.
                 pseudonimo=result.patient_pseudonym,
+                # Quién calculó la ICP, para el `operator` de §6. Sale de la salida de la
+                # FUSIÓN GEOMÉTRICA y no del snapshot: la procedencia del snapshot nombra
+                # al último agente que la tocó —la fusión semántica—, así que deducirlo de
+                # ahí acreditaba la medida a quien no la hizo.
+                registrador=next(
+                    (
+                        f"auto:{f.agent}"
+                        for f in result.fusion
+                        if f.agent.startswith("geometric-fusion-agent")
+                    ),
+                    None,
+                ),
                 malla=malla,
                 escena_gs=escena_gs,
                 imagenes=list(imagenes or []),

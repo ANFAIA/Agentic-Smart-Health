@@ -50,6 +50,7 @@ from uos.manifiesto import (
     Frame,
     Manifiesto,
     Procedencia,
+    Proyeccion,
     RecursoFHIR,
     Registro,
     Regulatorio,
@@ -108,7 +109,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.3.0"
+    version = "0.4.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -130,6 +131,9 @@ class UOSExportAgent(BaseExportAgent):
         modelo_segmentacion: Path | None = None,
         cbct: Path | None = None,
         previo: Path | None = None,
+        # Quien calculo la registracion, para el `operator` de §6. Lo sabe el orquestador
+        # —tiene la salida de la fusion geometrica— y este agente no puede deducirlo.
+        registrador: str | None = None,
     ) -> ExportOutput:
         if not pseudonimo:
             # ⚠️ **No se cae al `acquisition_id`**, y es deliberado: ese identificador sale
@@ -189,7 +193,7 @@ class UOSExportAgent(BaseExportAgent):
         # orden: el §5.1 pide que la relacion GS→malla vaya codificada como `matrix` del
         # nodo de gaussianas colgado bajo el de la malla. Sin la transformada no se puede
         # construir la escena, solo un `.glb` con la malla suelta.
-        registros = self._registros(snapshot)
+        registros = self._registros(snapshot, registrador)
         al_canonico = registros[0].transform_4x4_row_major if registros else None
         nodos_gs: list[NodoGS] = []
 
@@ -258,6 +262,11 @@ class UOSExportAgent(BaseExportAgent):
                 malla_ingerida.get("normals"), nombre="scan",
                 generador=f"{self.name}@{self.version}",
                 nodos_gs=nodos_gs,
+                # ⚠️ El FDI por vertice parte la malla en un primitive por diente con
+                # `extras.uos_fdi` (§5.1). Sin eso, el picking semantico del §11.3 —que
+                # esta definido sobre ese campo— no funciona en un visor ajeno, por mucho
+                # que las mismas etiquetas viajen ademas en `derived/seg_teeth`.
+                etiquetas=etiquetas_ios,
                 extras={
                     "uos_frame": FRAME_IOS,
                     "uos_units": "mm",
@@ -313,6 +322,11 @@ class UOSExportAgent(BaseExportAgent):
                 foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
+                # §5.3. Lo unico que se puede afirmar de estas: son fotos intraorales.
+                # `fdi_targets` va vacio porque nadie anoto a que diente apunta cada una,
+                # y vacio significa «no consta» — deducirlo de los pixeles exige la fusion
+                # foto↔malla, que esta medida y no converge barata sin calibracion.
+                projection=Proyeccion(type="intraoral_photo"),
             ))
 
         # La capa clinica: lo que el informe dice de cada pieza, las medidas que no caben
@@ -327,7 +341,7 @@ class UOSExportAgent(BaseExportAgent):
                 media_type="application/json", load_priority=15,
             ))
 
-        registros = self._registros(snapshot)
+        registros = self._registros(snapshot, registrador)
         directorios: dict[str, Path] = {}
         extras: dict[str, str] = {}
         aviso_volumen: list[str] = []
@@ -375,9 +389,15 @@ class UOSExportAgent(BaseExportAgent):
 
         fhir = self._fhir(assets)
         extensiones = self._extensiones(assets)
-        vistas, aviso_vistas = self._vistas(snapshot, visita, etiquetas_ios,
-                                            con_apariencia="asset.gs" in
-                                            {a.id for a in assets})
+        ids_assets = {a.id for a in assets}
+        vistas, aviso_vistas = self._vistas(
+            snapshot, visita, etiquetas_ios,
+            con_apariencia="asset.gs" in ids_assets,
+            # Los controles de volumen del §7 —`mpr`, `clip_planes`, la capa `volume`—
+            # solo se escriben si el volumen VIAJA. En un contenedor sin el darian a
+            # entender que hay un plano que cortar.
+            con_volumen=any(a.kind is Clase.VOLUME for a in assets),
+        )
         salida = destination.with_suffix(".uos")
         # La version anterior del caso, si la hay: de ella salen `prev_manifest_sha256` y
         # la cadena que este contenedor continua. Por defecto es el propio destino, que
@@ -462,12 +482,18 @@ class UOSExportAgent(BaseExportAgent):
             ),
         )
 
-    def _registros(self, snapshot: TwinSnapshot) -> list[Registro]:
+    def _registros(self, snapshot: TwinSnapshot, operador: str | None) -> list[Registro]:
         """La relacion CBCT ↔ escaner, INVERTIDA al canonico y declarada.
 
         La fusion geometrica registra el escaner SOBRE el CBCT, asi que su transformada va
         de escaner a CBCT. UOS quiere todo relativo al escaner, y la inversa de una rigida
         es exacta por construccion — es lo mismo que hace reversible el resto del sistema.
+
+        ⚠️ **`operador` lo pasa quien exporta, y no se deduce del snapshot.** Aqui se
+        escribia `auto:{snapshot.provenance.agent}`, que es el ULTIMO agente que toco la
+        procedencia —la fusion semantica— y no el que calculo la ICP. El contenedor
+        acreditaba una medida a quien no la hizo, en el unico campo que existe para saber
+        quien la hizo. Sin dato se deja `None`: §6 admite no saberlo, no admite inventarlo.
         """
         t = snapshot.provenance.transform
         if t is None:
@@ -483,14 +509,21 @@ class UOSExportAgent(BaseExportAgent):
             target_frame=FRAME_IOS,
             transform_4x4_row_major=[float(x) for x in np.linalg.inv(m).ravel()],
             method="icp_surface",
-            rms_error_mm=getattr(t, "rms_error_mm", None),
+            # ⚠️ El campo del contrato se llama `rms_mm`; aqui se leia `rms_error_mm` con
+            # un `getattr(..., None)` que tapaba el fallo de nombre en silencio, asi que
+            # TODOS los contenedores salian con `rms_error_mm: null` teniendo el numero
+            # medido a mano. §6 lo pide porque una registracion automatica sin verificar
+            # es provisional, y el residuo es lo unico que dice cuanto de provisional:
+            # 0,666 mm y 6 mm no permiten lo mismo. Se lee como atributo, no con `getattr`,
+            # para que el dia que alguien lo renombre falle en vez de escribir null.
+            rms_error_mm=t.rms_mm,
             computed=snapshot.timestamp,
-            operator=f"auto:{snapshot.provenance.agent}",
+            operator=operador,
         )]
 
     def _vistas(
         self, snapshot: TwinSnapshot, visita: Visita, etiquetas: Any | None,
-        *, con_apariencia: bool,
+        *, con_apariencia: bool, con_volumen: bool = False,
     ) -> tuple[list[Vista], list[str]]:
         """Las vistas del caso (§7), medidas sobre la malla EN EL FRAME CANONICO.
 
@@ -516,6 +549,7 @@ class UOSExportAgent(BaseExportAgent):
             visita=visita.id,
             piezas=sorted({obs.region_id for obs in snapshot.regional}),
             con_apariencia=con_apariencia,
+            con_volumen=con_volumen,
         )
 
     def _fhir(self, assets: list) -> dict[str, RecursoFHIR]:
