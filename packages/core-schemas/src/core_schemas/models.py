@@ -585,6 +585,15 @@ class TwinSnapshot(BaseModel):
         "sobre las gaussianas. Mismo invariante fail-loud: una referencia colgante "
         "es un error.",
     )
+    apariencia_ref: str | None = Field(
+        default=None,
+        description="Hash/URI de la capa de apariencia entrenada con gsplat (perfil "
+        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con color real del "
+        "paciente optimizado contra fotos intraorales. No es el campo de densidad "
+        "(medido en HU) ni el visor (decimado para pantalla): es una capa derivada "
+        "que añade el color que el CBCT no puede medir. Null si no se entrenó "
+        "apariencia. Mismo invariante fail-loud: referencia colgante = error.",
+    )
     n_primitives: int | None = Field(default=None, ge=0)
     medidas: list[Medida] = Field(
         default_factory=list,
