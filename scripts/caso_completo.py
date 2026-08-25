@@ -288,7 +288,10 @@ def main() -> int:
     if args.fdi and caso.mesh:
         import numpy as _np
         from analysis_agents import absorbe_islas as _absorbe
+        from analysis_agents import afina_fronteras as _afina
+        from analysis_agents import quita_motas as _motas
         from analysis_agents import rellena_etiquetas as _rellena
+        from analysis_agents import rellena_huecos_interiores as _huecos
         from ingestion_agents.mesh_agent import parse_stl as _stl
 
         _V = _np.asarray(_stl(caso.mesh)["positions"], dtype=_np.float64)
@@ -308,6 +311,26 @@ def main() -> int:
             print(f"  ⚠ FDI {_origen}: {_n:,} vértices metidos dentro del {_destino}, no "
                   f"son una pieza. Absorbidos — el caso pasa a tener "
                   f"{len({int(x) for x in etq_ios if x > 0})} dientes.")
+        # El contacto interproximal no tiene borde geométrico, así que la etiqueta sale
+        # difuminada y encender una pieza enciende un trozo de la vecina. Ver
+        # `afina_fronteras`: NO toca el margen gingival, que sí es una frontera clínica.
+        etq_ios, _movidos = _afina(_V, etq_ios)
+        if _movidos:
+            print(f"  frontera entre piezas contiguas afilada: {_movidos:,} vértices "
+                  f"reasignados a su vecino por mayoría")
+        # Y el simétrico de `rellena_etiquetas`: un vértice de diente rodeado de encía es
+        # encía. Sin esto quedan motas color hueso salpicadas sobre el rosa del visor.
+        etq_ios, _motitas = _motas(_V, etq_ios)
+        if _motitas:
+            print(f"  motas de diente en mitad de la encía: {_motitas:,} quitadas "
+                  f"(el margen gingival no se toca)")
+        # Y los huecos que el relleno por vecindario no alcanza porque son mayores que el
+        # vecindario. El criterio aquí es la distancia a encía de verdad, no los vecinos:
+        # un vértice del margen está pegado a la encía y por eso nunca entra.
+        etq_ios, _dentro = _huecos(_V, etq_ios)
+        if _dentro:
+            print(f"  huecos de encía en mitad de una corona: {_dentro:,} rellenados "
+                  f"(a más de 1,5 mm de cualquier encía real)")
 
     fabrica = None
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
