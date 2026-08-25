@@ -375,6 +375,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
 | [`scripts/metricas.py`](scripts/metricas.py) | las cuatro cifras del brief, MEDIDAS y no prometidas. |
+| [`scripts/mide_segmentacion.py`](scripts/mide_segmentacion.py) | cuanto se puede DESCARTAR de la segmentacion FDI de un `.uos`. |
 | [`scripts/prepara_toothfairy.py`](scripts/prepara_toothfairy.py) | Descarga ToothFairy2 caso a caso y lo deja entrenable. |
 | [`scripts/promedio_y_escala.py`](scripts/promedio_y_escala.py) | Dos preguntas de diseño sobre el registro por diente, medidas en vez de argumentadas. |
 | [`scripts/refina_3dgs.py`](scripts/refina_3dgs.py) | La fase que faltaba: el campo semilla optimizado como 3DGS. |
@@ -491,6 +492,16 @@ emitidos.
 > - `docs/research/` — referencias bibliográficas, notas de investigación sobre Gaussian Splatting, estándares DICOM/STL, interoperabilidad clínica y normativa aplicable (RGPD, HIPAA).
 
 La documentación técnica orientada a desarrolladores y contribuidores se mantendrá en este README y en los `pyproject.toml` de cada componente.
+
+### Por dónde empezar a leer
+
+| Documento | Responde a |
+|---|---|
+| [`docs/cierre-mvp.md`](docs/cierre-mvp.md) | qué está medido, qué no está resuelto y qué queda para después |
+| [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md) | qué lleva un `.uos` y a quién le sirve |
+| [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | por qué la segmentación FDI no está resuelta, con la medida |
+| [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
+| [`docs/research/segmentacion-diente-cbct.md`](docs/research/segmentacion-diente-cbct.md) | hasta dónde llega un clasificador sobre el CBCT, y dónde deja de llegar |
 
 ---
 
