@@ -71,6 +71,20 @@ class Adquisicion(BaseModel):
     device: dict[str, str] = Field(default_factory=dict)
 
 
+class Proyeccion(BaseModel):
+    """Que clase de imagen 2D es y a que piezas apunta (§5.3).
+
+    `fdi_targets` va VACIO cuando no se sabe, que con una foto suelta de una carpeta de
+    clinica es lo normal: nadie anoto a que diente apunta. Vacio significa «no consta»,
+    no «ninguno» — y adivinarlo desde los pixeles es justo el trabajo que el proyecto no
+    da por hecho.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    type: str
+    fdi_targets: list[str] = Field(default_factory=list)
+
+
 class Parte(BaseModel):
     """Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).
 
@@ -106,6 +120,12 @@ class Asset(BaseModel):
     regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
     # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Parte` y
     # `digesto_de_partes`.
+    # ⚠️ §5.3. `projection` describe QUE tipo de imagen es y a que dientes apunta; `pose`
+    # —donde estaba la camara— es explicitamente opcional en el spec y aqui no se emite:
+    # una foto intraoral de una carpeta de clinica no trae pose, y calcularla exige la
+    # fusion foto↔malla, que esta medida y no converge barata sin calibracion.
+    projection: Proyeccion | None = None
+
     parts: list[Parte] = Field(default_factory=list)
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.

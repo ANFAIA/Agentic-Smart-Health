@@ -12,6 +12,8 @@ dos copias de esa geometria seria tener dos definiciones de donde esta lo oclusa
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from export_agents.anatomia import (
     distancia_para_encuadrar,
@@ -47,6 +49,15 @@ class Capa(BaseModel):
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
+class Mpr(BaseModel):
+    """El corte multiplanar de una vista (§7). Sin volumen no significa nada."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    plane: dict[str, list[float]] | None = None
+    window: dict[str, float] | None = None
+
+
 class Vista(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -55,8 +66,17 @@ class Vista(BaseModel):
     layers: dict[str, Capa] = Field(default_factory=dict)
     visit: str
 
-    # `mpr` y `clip_planes` del spec no se emiten: son controles del VOLUMEN, y el volumen
-    # es UOS-Vol. Emitirlos vacios daria a entender que hay un plano que cortar.
+    # ⚠️ `mpr` y `clip_planes` solo aparecen cuando el contenedor LLEVA volumen, y por eso
+    # son opcionales en vez de tener un valor por defecto. Son controles del volumen: en un
+    # `.uos` que no lo trae, emitirlos —aunque sea vacios— da a entender que hay un plano
+    # que cortar y una ventana que ajustar. Cuando el volumen si viaja, callarlos es el
+    # error contrario: el §7 los define y un visor los espera.
+    mpr: Mpr | None = None
+    clip_planes: list[dict[str, list[float]]] | None = None
+
+    # `time_cursor_s` del §7 no se emite: es el cursor de la timeline de SEÑALES (§5.4), y
+    # este emisor no produce ninguna. Un cursor temporal sobre un caso sin serie temporal
+    # no apunta a nada.
 
 
 def _distancia(pos: np.ndarray, centro: np.ndarray, direccion: np.ndarray) -> float:
@@ -83,6 +103,7 @@ def construye_vistas(
     visita: str,
     piezas: list[str] | None = None,
     con_apariencia: bool = False,
+    con_volumen: bool = False,
 ) -> tuple[list[Vista], list[str]]:
     """Las vistas del caso y los motivos por los que falte alguna.
 
@@ -101,18 +122,27 @@ def construye_vistas(
         # La apariencia va por DEBAJO de 1.0: es reconstruida contra renders, no medida, y
         # el visor tiene que poder dejar ver la malla por debajo.
         capas["gs"] = Capa(opacity=0.85)
+    if con_volumen:
+        # ⚠️ APAGADO por defecto, y no por prudencia: el §11.2 advierte que componer GS
+        # translucido con volumen translucido no tiene solucion exacta con dos pasadas
+        # independientes. Encender el volumen de entrada dejaria la vista guardada en el
+        # unico estado que el propio spec reconoce como mal definido.
+        capas["volume"] = Capa(visible=False, opacity=0.6)
+    extra: dict[str, Any] = (
+        {"mpr": Mpr(enabled=False), "clip_planes": []} if con_volumen else {}
+    )
 
     vistas = [
         # Se mira DESDE donde muerde la pieza, o sea contra el eje oclusal.
-        Vista(id="view.oclusal", label="Oclusal", visit=visita, layers=dict(capas),
+        Vista(id="view.oclusal", label="Oclusal", visit=visita, layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.oclusal, marco.anterior)),
-        Vista(id="view.frontal", label="Frontal", visit=visita, layers=dict(capas),
+        Vista(id="view.frontal", label="Frontal", visit=visita, layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.anterior, marco.superior)),
         Vista(id="view.vestibular_derecha", label="Vestibular derecha", visit=visita,
-              layers=dict(capas),
+              layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.derecha, marco.superior)),
         Vista(id="view.vestibular_izquierda", label="Vestibular izquierda", visit=visita,
-              layers=dict(capas),
+              layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, -marco.derecha, marco.superior)),
     ]
 
@@ -131,7 +161,7 @@ def construye_vistas(
             fuera = marco.anterior
         vistas.append(Vista(
             id=f"view.pieza_{codigo}", label=f"Pieza {codigo}", visit=visita,
-            layers=dict(capas),
+            layers=dict(capas), **extra,
             camera=_camara(pos[m], objetivo, normaliza(fuera + marco.superior * 0.35),
                            marco.superior),
         ))
