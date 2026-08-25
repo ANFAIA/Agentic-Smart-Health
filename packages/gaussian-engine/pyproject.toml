@@ -19,6 +19,12 @@ dependencies = [
 # y lo dice claro si falta.
 [project.optional-dependencies]
 gpu = ["torch>=2.4"]
+appearance = [
+    "torch>=2.4",
+    "gsplat>=1.0",
+    "torchmetrics>=1.0",
+    "Pillow>=10.0",
+]
 
 [tool.uv.sources]
 core-schemas = { workspace = true }
