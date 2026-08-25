@@ -16,6 +16,11 @@ dependencies = [
     # DICOM viaja intacto y quien lo abra usara su propio parser; esto existe para que
     # un visor web no necesite uno solo para saber que le llega.
     "pydicom>=3.0",
+    # El §12 exige que el validador contraste contra el JSON Schema PUBLICADO, no solo
+    # contra el contrato de Pydantic: es el unico artefacto con el que un tercero puede
+    # comprobar un `.uos`. Va como dependencia declarada y no opcional porque un chequeo
+    # que solo corre si alguien tiene la libreria por casualidad no es un chequeo.
+    "jsonschema>=4.0",
 ]
 
 [build-system]

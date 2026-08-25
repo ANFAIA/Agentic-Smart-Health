@@ -73,6 +73,7 @@ def valida(ruta: Path) -> Informe:
                 )
                 break
         crudo = z.read(MANIFIESTO)
+        _valida_esquema(crudo, inf)
         m = Manifiesto.model_validate_json(crudo)
         _valida_assets(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
@@ -89,6 +90,35 @@ def valida(ruta: Path) -> Informe:
     inf.niveles = [n for n, exige in _EXIGE.items()
                    if exige <= {a.kind for a in m.assets}]
     return inf
+
+
+def _valida_esquema(crudo: bytes, inf: Informe) -> None:
+    """El manifiesto contra el **JSON Schema publicado** (§12).
+
+    ⚠️ **No es redundante con `model_validate_json`, y la diferencia importa.** Pydantic
+    comprueba que el manifiesto encaje en NUESTRO contrato; el esquema publicado es el
+    unico artefacto que un tercero puede usar para comprobar el suyo. Correrlo aqui es lo
+    que garantiza que el esquema que publicamos es el que de verdad aceptamos: si los dos
+    se separan, este chequeo lo dice antes que un implementador de fuera.
+
+    Un fallo aqui es AVISO y no error: el que manda sobre si el contenedor es valido sigue
+    siendo el contrato. Lo que este chequeo detecta es que el esquema publicado se quedo
+    atras, que es un problema de nuestra publicacion y no del fichero que alguien trae.
+    """
+    try:
+        import jsonschema
+    except ModuleNotFoundError:  # pragma: no cover - dependencia opcional
+        return
+    from uos.esquema import esquema_del_manifiesto
+
+    try:
+        jsonschema.validate(json.loads(crudo), esquema_del_manifiesto())
+    except jsonschema.ValidationError as e:
+        inf.avisos.append(
+            f"el manifiesto no valida contra el JSON Schema publicado en "
+            f"{'.'.join(str(x) for x in e.absolute_path) or '(raiz)'}: {e.message}. "
+            "El contrato lo acepta, asi que lo que se ha quedado atras es el esquema."
+        )
 
 
 def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
