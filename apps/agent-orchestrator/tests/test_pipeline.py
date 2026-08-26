@@ -906,3 +906,46 @@ def test_el_orquestador_reenvia_TODO_lo_que_el_agente_de_UOS_acepta():
         f"el agente de UOS acepta {sorted(sin_reenviar)} y `exportar` no lo reenvía: "
         "añádelo a la firma o justifícalo en DELIBERADOS"
     )
+
+
+def test_el_motivo_de_un_informe_ilegible_no_lleva_el_NOMBRE_del_fichero(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """⚠️ **Un nombre de fichero clínico es dato del paciente tan a menudo como no lo es.**
+
+    Este motivo acaba en `review.reasons` y de ahí dentro del `.uos`, que se declara
+    `pseudonymized`. Llevó primero la ruta entera —con el directorio del paciente— y luego
+    el nombre del fichero, que parecía suficiente hasta que en un caso real uno de los
+    informes se llamaba `APELLIDOS_NOMBRE_Informe_de_CBCT_...pdf`. No hay forma de saber
+    cuál de los dos casos toca, así que va el hash: identifica el fichero sin poder llevar
+    nada dentro. Es el mismo razonamiento por el que un asset externo se nombra
+    `sha256:<hex>` en lugar de con su ruta.
+    """
+    bueno = tmp_path / "bueno.txt"
+    bueno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    apellidos = "PEREZ GOMEZ"
+    ilegible = tmp_path / f"{apellidos}_MARIA_Informe_de_CBCT.pdf"
+    # Un PDF VALIDO y sin capa de texto, que es lo que sale de un escaner de sobremesa.
+    # Uno roto a mano no vale: falla antes, en el parser, y no llega a la rama que esto
+    # comprueba.
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=595, height=842)
+    with ilegible.open("wb") as fh:
+        w.write(fh)
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [bueno, ilegible]
+    result = pipeline.run(case)
+
+    # El motivo viaja por dos sitios: el  del agente y las razones del gate de
+    # revision humana, que es lo que acaba dentro del . Se miran los dos.
+    razones = getattr(getattr(result.export, "review", None), "reasons", []) or []
+    motivos = " ".join(
+        [str(o.detail or "") for o in result.report_outcomes] + [str(r) for r in razones]
+    )
+    assert "no contiene texto extraíble" in motivos, "el fallo se sigue declarando"
+    for trozo in (apellidos, "PEREZ", "GOMEZ", "MARIA"):
+        assert trozo not in motivos, f"«{trozo}» sale del contenedor dentro del motivo"
+    assert "sha256:" in motivos, "y se identifica por su hash, no por su nombre"

@@ -569,6 +569,32 @@ def extract_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
 # --------------------------------------------------------------------------- #
 # Agente
 # --------------------------------------------------------------------------- #
+def _sha256(ruta: Path) -> str:
+    """El sha256 de un fichero, leido a trozos. Identifica sin poder identificar a nadie."""
+    import hashlib
+
+    h = hashlib.sha256()
+    with Path(ruta).open("rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            h.update(bloque)
+    return h.hexdigest()
+
+
+def _paginas_de_imagen(ruta: Path) -> str:
+    """Que clase de fichero ilegible es, en una frase para el gate de revision humana."""
+    try:
+        from pypdf import PdfReader
+
+        r = PdfReader(ruta)
+        con_imagen = sum(1 for pg in r.pages if pg.images)
+        if con_imagen:
+            return (f"PDF escaneado: {len(r.pages)} pagina(s), {con_imagen} de imagen y "
+                    "ninguna capa de texto. Necesita lectura humana o OCR")
+        return f"PDF de {len(r.pages)} pagina(s) sin texto ni imagenes"
+    except Exception:
+        return "no se ha podido inspeccionar su estructura"
+
+
 class ReportAgent(BaseIngestionAgent):
     """Ingiere el informe clínico y produce la capa dispersa de atributos por FDI."""
 
@@ -610,12 +636,30 @@ class ReportAgent(BaseIngestionAgent):
     def _ingest(self, source: Path) -> IngestionOutput:
         text = extract_text(source)
         if not text.strip():
-            # ⚠️ El NOMBRE del fichero, no su ruta. Este mensaje acaba en
-            # `review.reasons` y de ahi dentro del `.uos`, y una ruta de un caso clinico
-            # lleva el directorio del paciente — o sea que sacaba del contenedor justo lo
-            # que el seudonimo existe para no sacar. El nombre basta para saber cual es.
+            # ⚠️ **Ni la ruta ni el nombre: el HASH.** Este mensaje acaba en
+            # `review.reasons` y de ahi dentro del `.uos`. Primero iba la ruta entera, que
+            # lleva el directorio del paciente; se cambio al nombre del fichero, y eso
+            # tampoco vale — en un caso real uno de los informes se llama
+            # `APELLIDOS_NOMBRE_Informe_...pdf`. Un nombre de fichero clinico es dato del
+            # paciente tan a menudo como no lo es, y no hay forma de saber cual toca.
+            #
+            # El hash identifica el fichero sin poder llevar nada dentro, que es el mismo
+            # razonamiento por el que un asset externo se nombra `sha256:<hex>` en vez de
+            # con su ruta. Quien tenga el fichero delante lo reconoce; quien solo tenga el
+            # contenedor, no puede sacar de ahi un nombre.
+            # ⚠️ **Y se dice QUE clase de fichero es, no solo que fallo.** «No contiene
+            # texto extraible» se lee como «esta corrupto», y en la carpeta de una clinica
+            # casi nunca lo esta: es un PDF escaneado. Sobre este caso, el que fallaba
+            # resulto ser el PASAPORTE DE IMPLANTES —tres implantes con su posicion FDI, su
+            # fecha, su marca y su numero de lote, escritos a mano sobre un formulario
+            # escaneado a 1600x2293—. Dato clinico de primer orden que se estaba tirando
+            # como si fuera basura. Decir «N paginas de imagen» convierte un fallo en una
+            # tarea para el gate de revision humana.
             raise ValueError(
-                f"El informe no contiene texto extraíble: {Path(source).name}"
+                "El informe no contiene texto extraíble: "
+                f"sha256:{_sha256(source)[:16]}{Path(source).suffix} — "
+                f"{_paginas_de_imagen(source)}. El documento se identifica por ese "
+                "`sha256` en el manifiesto"
             )
 
         # La fecha del informe manda: una observación regional es un punto de la
