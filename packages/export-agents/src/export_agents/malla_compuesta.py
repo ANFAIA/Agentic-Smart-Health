@@ -63,7 +63,7 @@ from analysis_agents.dental import LONGITUD_MM
 from core_schemas import ModalityStatus, TwinSnapshot
 from ingestion_agents.ontology import describe
 
-from export_agents.anatomia import marco_anatomico
+from export_agents.anatomia import anchos_de_corona, marco_anatomico
 from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
 from export_agents.compuesto import _al_marco_del_twin, espaciado_de_malla
 from export_agents.solido import cierra_en_solido
@@ -77,6 +77,11 @@ from export_agents.stl import read_stl_triangles, write_binary_stl
 # sale como una cápsula. El valor se valida midiendo la banda de corona, que es para
 # lo que existe esa medida.
 ALFA_ESPACIADOS = 2.5
+
+# Cuantos milimetros puede pasarse una corona etiquetada de su ancho de tabla antes de
+# que se declare. No es cero porque la anatomia real varia entre personas y la tabla es un
+# prior: por debajo de esto el exceso no distingue una boca ancha de una etiqueta corrida.
+EXCESO_ANCHO_MM = 1.5
 
 # A cuántos espaciados de la malla del escáner deja de considerarse que una gaussiana
 # del CBCT está describiendo la misma superficie. Más cerca que esto, el escáner ya lo
@@ -372,6 +377,27 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 f"tipo de diente admite ({', '.join(pasadas)} mm): están arrastrando hueso "
                 "alveolar, así que lo que se imprima por debajo del ápice no es diente."
             )
+        # ⚠️ **La frontera diente-diente no la vigilaba NADIE.** El acierto por diente que
+        # declara el `segmentation-agent` pregunta si el codigo mayoritario de cada pieza
+        # es el correcto, y una etiqueta que se pasa dos milimetros al vecino no cambia
+        # una mayoria: se puede tener 0,93 por diente y una corona de 18 mm. Es justo lo
+        # que un clinico ve al encender una pieza en el visor y arrastra parte de la de al
+        # lado. Se DECLARA, como las raices: quien recorta la frontera decide donde acaba
+        # el diente, y eso no lo puede decidir un exportador.
+        if etiquetas_ios is not None:
+            anchas = [
+                f"FDI {fdi} {ancho:.0f}/{cota:.0f}"
+                for fdi, (ancho, cota) in sorted(
+                    anchos_de_corona(superficie, caras, etiquetas_ios).items()
+                )
+                if ancho - cota > EXCESO_ANCHO_MM
+            ]
+            if anchas:
+                motivos.append(
+                    f"{len(anchas)} corona(s) etiquetada(s) son MAS ANCHAS de lo que su "
+                    f"posicion admite ({', '.join(anchas)} mm mesiodistales): la etiqueta "
+                    "se pasa del punto de contacto y pinta parte del diente vecino."
+                )
         if sin_esmalte:
             motivos.append(
                 f"{len(sin_esmalte)} cuerpo(s) etiquetado(s) como diente NO tienen esmalte "

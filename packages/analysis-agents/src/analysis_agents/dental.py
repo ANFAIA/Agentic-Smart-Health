@@ -112,6 +112,35 @@ LONGITUD_MM: dict[str, float] = {
     "molar": 22.0,
 }
 
+# Ancho MESIODISTAL de corona, en mm, por (arcada, posicion en el cuadrante). De las
+# mismas tablas anatomicas que `LONGITUD_MM`.
+#
+# ⚠️ **Va por POSICION y no por tipo de diente, al reves que `LONGITUD_MM`, y no es una
+# incoherencia.** La longitud casi no distingue un incisivo central de uno lateral; el
+# ancho si —8,5 mm contra 6,5, un 31 % — y con una sola entrada por tipo el central
+# pareceria estrecho y el lateral se pasaria siempre. La posicion es el segundo digito
+# del codigo FDI, o sea que sale del propio vocabulario ISO-3950 y no hay que inventarla.
+#
+# Para que sirve, y para que NO: mide si la ETIQUETA se ha pasado del punto de contacto,
+# que es lo que se ve en el visor como «este diente pinta parte de su vecino». No mide la
+# corona del paciente —la anatomia real varia entre personas— asi que un exceso de dos
+# milimetros es una senal para mirar, no un diagnostico.
+ANCHO_MM: dict[tuple[str, int], float] = {
+    ("maxilar", 1): 8.5, ("maxilar", 2): 6.5, ("maxilar", 3): 7.5, ("maxilar", 4): 7.0,
+    ("maxilar", 5): 6.5, ("maxilar", 6): 10.0, ("maxilar", 7): 9.0, ("maxilar", 8): 8.5,
+    ("mandibular", 1): 5.0, ("mandibular", 2): 5.5, ("mandibular", 3): 7.0,
+    ("mandibular", 4): 7.0, ("mandibular", 5): 7.0, ("mandibular", 6): 11.0,
+    ("mandibular", 7): 10.5, ("mandibular", 8): 11.0,
+}
+
+
+def ancho_admitido(fdi: int) -> float | None:
+    """El ancho mesiodistal de tabla para un codigo FDI, o `None` si no es de los 32."""
+    cuadrante, posicion = divmod(int(fdi), 10)
+    if cuadrante not in (1, 2, 3, 4) or not 1 <= posicion <= 8:
+        return None
+    return ANCHO_MM.get(("maxilar" if cuadrante in (1, 2) else "mandibular", posicion))
+
 # ⚠️ **La cota se mide sobre el eje GLOBAL de la arcada, y no por falta de intentarlo.**
 # Un eje por pieza deberia cortar mejor —los molares superiores estan inclinados— pero el
 # escaner no contiene esa direccion, y esta medido. Tres estimadores sacados de la corona,

@@ -36,6 +36,8 @@ import math
 from typing import NamedTuple
 
 import numpy as np
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 
 # Cuadrantes FDI. Permanentes y temporales comparten lado: 1/5 y 4/8 son la derecha del
 # paciente, 2/6 y 3/7 la izquierda.
@@ -49,6 +51,10 @@ _POSTERIOR = {6, 7, 8}
 
 # Por debajo de esto dos direcciones medidas son casi la misma y la base degenera.
 _MINIMO_COSENO = 0.15
+
+# Longitud minima de la tangente al arco entre dos piezas vecinas. Por debajo, la
+# direccion mesiodistal no esta definida y el ancho no se declara.
+_EPS_DIRECCION = 1e-9
 
 
 # Cuadrantes del maxilar y de la mandibula (permanentes y temporales).
@@ -157,6 +163,91 @@ def marco_anatomico(
             "mandibula. Hace falta separar las arcadas antes de medir"
         )
     return Base(centro, oclusal, derecha, anterior, superior, arcada), ""
+
+
+def anchos_de_corona(
+    posiciones: np.ndarray, caras: np.ndarray, etiquetas: np.ndarray
+) -> dict[int, tuple[float, float]]:
+    """Por pieza etiquetada, `(ancho medido, ancho de tabla)` en mm mesiodistales.
+
+    Es la medida directa de **«esta etiqueta se ha pasado del punto de contacto»**, que es
+    lo que se ve en el visor cuando una pieza se enciende y arrastra un trozo de su vecina.
+    Ningun numero de los que ya se declaran la captura: el acierto por diente pregunta si
+    el codigo mayoritario es el correcto, y una frontera corrida dos milimetros no cambia
+    una mayoria. Se puede tener 0,93 de acierto por diente y coronas de 18 mm.
+
+    Dos detalles del calculo que NO son opcionales, porque sin ellos el numero no
+    significa nada:
+
+    - **Solo la componente conexa MAYOR de cada etiqueta.** Medido sobre un maxilar real,
+      cada codigo trae ademas decenas de islas sueltas repartidas por la arcada; tomando
+      todos sus vertices, el 27 «mide» 41 mm. No es que la corona sea ancha: es que se
+      esta midiendo hasta la mota mas lejana.
+    - **Rango del 1 al 99 %**, no el maximo. Un solo vertice del borde de la componente
+      inflaria el ancho sin que la frontera se haya movido.
+
+    La direccion mesiodistal sale de la tangente al arco en cada pieza —la recta entre los
+    centroides de sus dos vecinas—, que es la que corre a lo largo de la arcada. Con un eje
+    global el numero mezclaria ancho y profundidad en los molares, que estan girados.
+
+    Devuelve `{}` si no hay dos piezas con las que orientar la tangente.
+    """
+    from analysis_agents.dental import ancho_admitido
+
+    pos = np.asarray(posiciones, dtype=np.float64)
+    etq = np.asarray(etiquetas, dtype=np.int64)
+    if len(pos) != len(etq) or not (etq > 0).any():
+        return {}
+
+    aristas = np.unique(
+        np.sort(np.asarray(caras)[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1), axis=0
+    )
+    nucleos: dict[int, np.ndarray] = {}
+    for fdi in (int(f) for f in np.unique(etq) if f > 0):
+        suyos = etq == fdi
+        idx = np.flatnonzero(suyos)
+        if idx.size < 3:
+            continue
+        remap = np.full(len(pos), -1, dtype=np.int64)
+        remap[idx] = np.arange(idx.size)
+        propias = aristas[suyos[aristas[:, 0]] & suyos[aristas[:, 1]]]
+        grafo = coo_matrix(
+            (np.ones(len(propias)), (remap[propias[:, 0]], remap[propias[:, 1]])),
+            shape=(idx.size, idx.size),
+        )
+        _, comp = connected_components(grafo, directed=False)
+        nucleos[fdi] = idx[comp == np.bincount(comp).argmax()]
+    if len(nucleos) < 2:
+        return {}
+
+    centros = {f: pos[v].mean(axis=0) for f, v in nucleos.items()}
+    # Orden a lo largo del arco: cuadrantes 1 y 4 de atras hacia delante, 2 y 3 al reves.
+    # Es el mismo orden anatomico del vocabulario, no una suposicion sobre la geometria.
+    def _clave(f: int) -> tuple[int, int]:
+        cuadrante, posicion = divmod(f, 10)
+        return (0, -posicion) if cuadrante in (1, 4) else (1, posicion)
+
+    arco = sorted(centros, key=_clave)
+    salida: dict[int, tuple[float, float]] = {}
+    for i, fdi in enumerate(arco):
+        cota = ancho_admitido(fdi)
+        if cota is None:
+            continue
+        antes = centros[arco[i - 1]] if i else None
+        despues = centros[arco[i + 1]] if i + 1 < len(arco) else None
+        if antes is not None and despues is not None:
+            ref = despues - antes
+        elif despues is not None:
+            ref = despues - centros[fdi]
+        else:
+            ref = centros[fdi] - antes
+        norma = float(np.linalg.norm(ref))
+        if norma < _EPS_DIRECCION:
+            continue
+        proy = (pos[nucleos[fdi]] - centros[fdi]) @ (ref / norma)
+        ancho = float(np.quantile(proy, 0.99) - np.quantile(proy, 0.01))
+        salida[fdi] = (ancho, cota)
+    return salida
 
 
 def _cuadrantes(
