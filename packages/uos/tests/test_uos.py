@@ -286,6 +286,62 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
 
 
 
+def test_un_informe_ilegible_viaja_dentro_del_contenedor(tmp_path, malla):
+    """Un PDF sin capa de texto **no se pierde**: viaja byte-identico y sin su nombre.
+
+    Antes solo viajaba lo que el `report-agent` conseguia transcribir, asi que un informe
+    escaneado desaparecia entero — el gate decia «hay un PDF que nadie pudo leer» y el
+    PDF no estaba en ninguna parte para que alguien lo leyera. En el caso real que lo
+    destapo ese fichero era el **pasaporte de implantes**: tres implantes con su posicion
+    FDI, su fecha, su marca y su lote, y ningun otro documento del caso los mencionaba.
+
+    Con `sin_originales` obedece la misma regla que el STL y las fotos: se declara por su
+    direccion de contenido y no viaja dentro. Lo que se arregla no es que viaje SIEMPRE, es
+    que exista en el manifiesto — antes no habia ni asset.
+    """
+    import zipfile
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, TwinSnapshot
+    from uos import UOSExportAgent, lee_manifiesto
+
+    doc = tmp_path / "APELLIDOS_NOMBRE_Informe.pdf"
+    doc.write_bytes(b"%PDF-1.4 escaneado sin texto")
+    snap = TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0",
+        provenance=Provenance(source_file="x", modality=Modality.MESH, agent="a@0"),
+    )
+    salida = UOSExportAgent(None).export(
+        snap, tmp_path / "caso", pseudonimo="P-1", malla=malla, informes=[doc]
+    )
+
+    assert salida.ok, salida.detail
+    m = lee_manifiesto(salida.path)
+    docs = [a for a in m.assets if a.uri.startswith("clinical/documents/")]
+    assert len(docs) == 1
+    assert docs[0].media_type == "application/pdf"
+    # Layer 1: es registro clinico, no salida de un modelo. Borrar `derived/` no se lo
+    # lleva por delante.
+    assert docs[0].regulatory.layer == 1
+    # El apellido del paciente esta en el NOMBRE del fichero y no puede entrar.
+    assert "APELLIDOS" not in " ".join(a.uri for a in m.assets)
+    with zipfile.ZipFile(salida.path) as z:
+        assert z.read(docs[0].uri) == doc.read_bytes()
+
+    # Y en el perfil ligero se declara por su hash, como el STL y las fotos.
+    ligero = UOSExportAgent(None).export(
+        snap, tmp_path / "ligero", pseudonimo="P-1", malla=malla, informes=[doc],
+        sin_originales=True,
+    )
+    assert ligero.ok, ligero.detail
+    fuera = [a for a in lee_manifiesto(ligero.path).assets if a.id == "asset.doc_000"]
+    assert len(fuera) == 1 and fuera[0].external
+    assert fuera[0].uri == f"sha256:{docs[0].sha256}"
+    with zipfile.ZipFile(ligero.path) as z:
+        assert "clinical/documents/doc_000.pdf" not in z.namelist()
+
+
 # --- el agente, vistas y cadena ---------------------------------------------- #
 def _snapshot(**kw):
     """Un snapshot minimo. `surface_ref` y `regional` son lo que alimenta las vistas."""

@@ -127,6 +127,20 @@ class UOSExportAgent(BaseExportAgent):
         campo: Path | None = None,
         compuesto: Path | None = None,
         imagenes: list[Path] | None = None,
+        # ⚠️ **Los informes del caso, tal como llegaron.** Antes NO viajaba ninguno: el
+        # `report-agent` los leia, sacaba lo que podia y el PDF se quedaba fuera. Para un
+        # informe tabulado eso casi no se nota —la transcripcion lleva lo que decia—, pero
+        # para uno ESCANEADO se pierde entero: el gate dice «hay un PDF que nadie pudo
+        # leer» y el documento no esta en ninguna parte para que alguien lo lea.
+        #
+        # El caso que lo destapo: un pasaporte de implantes escaneado, con tres implantes
+        # (marca, referencia, lote, fecha y posicion FDI) que NO aparecen en ningun otro
+        # documento del caso. Era la unica constancia, y se caia — ni dentro ni declarado.
+        #
+        # Siguen `sin_originales` como todo lo demas: en el perfil ligero se declaran por
+        # su `sha256` y los custodia otro sistema. Lo que se arregla aqui no es que viajen
+        # SIEMPRE, es que EXISTAN en el manifiesto.
+        informes: list[Path] | None = None,
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
         modelo_segmentacion: Path | None = None,
@@ -538,6 +552,31 @@ class UOSExportAgent(BaseExportAgent):
                 # y vacio significa «no consta» — deducirlo de los pixeles exige la fusion
                 # foto↔malla, que esta medida y no converge barata sin calibracion.
                 projection=Proyeccion(type="intraoral_photo"),
+            ))
+
+        for i, doc in enumerate(informes or []):
+            if not doc.exists():
+                continue
+            # ⚠️ El nombre NO viaja: los de una clinica llevan apellidos del paciente.
+            # Se renumera, igual que las fotos.
+            uri = f"clinical/documents/doc_{i:03d}{doc.suffix.lower()}"
+            # ⚠️ Obedecen la MISMA bandera que el STL y las fotos. Un informe no es un
+            # caso aparte: o el perfil lleva los originales o no los lleva, y una
+            # excepcion para los PDF haria que «ligero» significara una cosa distinta
+            # segun el asset. Con `sin_originales` se declaran por su direccion de
+            # contenido —`sha256:<hex>`— igual que el resto, y es el mismo hash con el
+            # que el gate nombra el que nadie pudo leer.
+            if not sin_originales:
+                ficheros[uri] = doc
+            assets.append(asset_de(
+                doc, uri, id_=f"asset.doc_{i:03d}", kind=Clase.DOCUMENT, visit=visita.id,
+                external=sin_originales,
+                frame=FRAME_IOS,
+                media_type=_MEDIA.get(doc.suffix.lower(), "application/pdf"),
+                # §5.1 Layer 1: es el registro que firmo una persona, no salida de un
+                # modelo. La TRANSCRIPCION de lo que dice vive aparte, en
+                # `clinical/observations.json`, y declara su propia `derivation`.
+                regulatory=Regulatorio(layer=1),
             ))
 
         # La capa clinica: lo que el informe dice de cada pieza, las medidas que no caben

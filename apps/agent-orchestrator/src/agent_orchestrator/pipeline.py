@@ -230,6 +230,23 @@ class PipelineResult:
     latency_s: float = 0.0
     patient_pseudonym: str = ""
 
+    def __post_init__(self) -> None:
+        # ⚠️ **Los motivos se DEDUPLICAN aquí, en el único sitio por el que pasan todos.**
+        # Se acumulan en cinco puntos distintos (`fuse`, cada etapa, `exportar`), y cada
+        # uno concatena los del resultado anterior con los suyos: una etapa que vuelve a
+        # emitir un motivo que ya estaba lo repetía. En el caso real salían «FDI 21» y
+        # «FDI 24» dos veces cada uno.
+        #
+        # No es cosmético. Esta lista la lee UNA PERSONA en el gate, y un motivo repetido
+        # se lee como dos problemas: infla la percepción de gravedad y esconde los demás
+        # en el scroll. El ruido es como se desactiva un gate.
+        #
+        # Se conserva el ORDEN de primera aparición —no se ordena— porque el orden cuenta
+        # en qué etapa se detectó cada cosa. Y va en `__post_init__` y no en cada punto de
+        # acumulación porque `replace()` lo vuelve a ejecutar: un punto nuevo queda
+        # cubierto sin que nadie se acuerde.
+        self.hitl_reasons = list(dict.fromkeys(self.hitl_reasons))
+
     @property
     def hitl_required(self) -> bool:
         """¿Necesita revisión humana antes de persistirse?"""
@@ -657,6 +674,9 @@ class IngestionPipeline:
         malla: Any | None = None,
         escena_gs: Any | None = None,
         imagenes: Any | None = None,
+        # Los PDF del caso, tal como llegaron. Van dentro incluso en el perfil ligero: un
+        # papel escaneado en la carpeta de una clinica no lo custodia ningun otro sistema.
+        informes: Any | None = None,
         # La serie DICOM, para que el `.uos` suba a UOS-Vol. Es OPCIONAL y por peso: son
         # cientos de megas que multiplican por diez el tamaño del contenedor, así que
         # llevarlos es una decisión de quien exporta y no un valor por defecto.
@@ -798,6 +818,7 @@ class IngestionPipeline:
                 malla=malla,
                 escena_gs=escena_gs,
                 imagenes=list(imagenes or []),
+                informes=list(informes or []),
                 # La serie DICOM entera, si el llamante la pide: sube el contenedor a
                 # UOS-Vol. Sin ella el `.uos` es UOS-Core y lo declara.
                 cbct=cbct,

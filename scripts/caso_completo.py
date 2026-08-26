@@ -664,6 +664,9 @@ def main() -> int:
         escena_gs=(None if args.gs_apariencia is None
                    else args.gs_apariencia / "gs_escaner-coronas.ply"),
         imagenes=list(caso.images),
+        # Los PDF del caso viajan dentro, ilegibles incluidos: el `report-agent` extrae lo
+        # que puede y el documento queda para lo que no. Ver `_export`.
+        informes=list(caso.reports),
         # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
         cbct=caso.cbct if args.con_volumen else None,
         # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
