@@ -42,7 +42,7 @@ def meta_segmentacion(
     *,
     asset_origen: str,
     modelo: str,
-    version: str,
+    version: str | None,
     pesos_sha256: str | None = None,
     estado: str = "investigational",
     jurisdicciones: list[str] | None = None,

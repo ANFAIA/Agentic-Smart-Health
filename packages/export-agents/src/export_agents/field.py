@@ -44,6 +44,7 @@ pequeño.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -151,6 +152,29 @@ def esquema_del_campo(arrays: dict) -> list[ColumnaCampo]:
             if spec is not None:
                 columnas.append(ColumnaCampo(nombre=prop, **spec))
     return columnas
+
+
+def esquema_de_propiedades(propiedades: Iterable[str]) -> list[ColumnaCampo]:
+    """Las columnas de un PLY ya escrito, descritas a partir de **sus** propiedades.
+
+    ⚠️ **Existe porque el esquema de un fichero se saca del fichero, no del snapshot.**
+    El sidecar del compuesto reutilizaba `esquema_campo`, que describe el campo SEMILLA, y
+    el compuesto trae ademas `origen` —de que modalidad viene cada gaussiana—. Esa columna
+    viajaba en los bytes y no en el descriptor: un lector ajeno no podia separar el CBCT
+    del escaner dentro de un fichero que mezcla los dos, que es justo para lo que existe.
+
+    Es el mismo fallo que ya se arreglo aqui con `n_primitives` (el sidecar decia 1.341.990
+    sobre un fichero de 1.454.057): se corrigio la cuenta y no la lista de columnas.
+
+    Se respeta el orden recibido — quien reconstruya el registro desde `columns` lo
+    necesita —, y una propiedad que este exportador no sabe describir se omite en vez de
+    inventarse una semantica.
+    """
+    return [
+        ColumnaCampo(nombre=p, **ESQUEMA_COLUMNAS[p])
+        for p in propiedades
+        if p in ESQUEMA_COLUMNAS
+    ]
 
 
 def densidad_a_hu(density: np.ndarray, hu_range: np.ndarray) -> np.ndarray:

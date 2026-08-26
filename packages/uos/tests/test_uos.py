@@ -780,3 +780,79 @@ def test_la_direccion_tiene_que_ser_el_MISMO_hash_que_el_campo_del_contrato():
         Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
               media_type="model/stl", sha256="b" * 64, bytes=1,
               frame="frame.ios_master", external=True)
+
+
+# --- el descriptor describe el FICHERO, no lo que alguien cree ---------------- #
+def _ply_apariencia(ruta, *, unidades: str | None, n: int = 7) -> None:
+    """Un PLY de apariencia mínimo, con o sin la línea de unidades."""
+    import struct
+
+    cab = ["ply", "format binary_little_endian 1.0",
+           "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida"]
+    if unidades is not None:
+        cab.append(f"comment unidades {unidades}")
+    cab += [f"element vertex {n}", "property float x", "end_header"]
+    ruta.write_bytes(("\n".join(cab) + "\n").encode("ascii") + struct.pack(f"<{n}f", *range(n)))
+
+
+def test_el_descriptor_lee_las_unidades_DEL_FICHERO(tmp_path):
+    """⚠️ El fallo que esto guarda: el sidecar afirmaba `units: "mm"` con un literal y el
+    PLY de apariencia estaba en el espacio normalizado de Blender —32 veces más pequeño—.
+    Nada contrastaba una cosa con la otra, así que la contradicción no podía fallar: solo
+    verse, y solo comparando la nube con la malla.
+    """
+    from uos import UOSExportAgent
+
+    p = tmp_path / "a.ply"
+    _ply_apariencia(p, unidades="normalizado", n=11)
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("normalizado", 11, ["x"])
+
+    _ply_apariencia(p, unidades="mm", n=11)
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 11, ["x"])
+
+
+def test_un_ply_que_no_declara_unidades_devuelve_None_y_no_un_defecto(tmp_path):
+    """Suponer es lo que falló. `None` deja que se vea; `"mm"` lo taparía otra vez."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "b.ply"
+    _ply_apariencia(p, unidades=None, n=5)
+    assert UOSExportAgent(None)._cabecera_ply(p) == (None, 5, ["x"])
+
+
+def test_la_cabecera_se_lee_sin_cargar_el_fichero_entero(tmp_path):
+    """Un PLY de apariencia pesa decenas de megas; la cabecera son cientos de bytes."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "c.ply"
+    _ply_apariencia(p, unidades="mm", n=3)
+    p.write_bytes(p.read_bytes() + b"\x00" * (5 * 1024 * 1024))
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 3, ["x"])
+
+
+def test_la_cabecera_devuelve_las_propiedades_en_el_orden_del_fichero(tmp_path):
+    """⚠️ Lo que faltaba: `esquema_apariencia()` enumeraba catorce columnas mientras el
+    escritor emitía dieciocho propiedades, y `region_id` —el código FDI por gaussiana—
+    viajaba en los bytes sin aparecer en el sidecar. El orden importa: `columns` es la
+    receta para montar el registro binario."""
+    import struct
+
+    from uos import UOSExportAgent
+
+    p = tmp_path / "e.ply"
+    cab = ["ply", "format binary_little_endian 1.0", "comment unidades mm",
+           "element vertex 2", "property float x", "property float y",
+           "property short region_id", "end_header"]
+    p.write_bytes(("\n".join(cab) + "\n").encode("ascii")
+                  + struct.pack("<ffhffh", 0, 0, 11, 1, 1, 21))
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 2, ["x", "y", "region_id"])
+
+
+def test_un_fichero_que_no_es_un_ply_no_revienta(tmp_path):
+    """El descriptor no puede tumbar una exportación por no entender un asset."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "d.bin"
+    p.write_bytes(b"\x00\x01\x02")
+    assert UOSExportAgent(None)._cabecera_ply(p) == (None, None, [])
+    assert UOSExportAgent(None)._cabecera_ply(tmp_path / "no-existe.ply") == (None, None, [])

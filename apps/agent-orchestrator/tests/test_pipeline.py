@@ -867,3 +867,42 @@ def test_el_esquema_SIGUE_al_campo_cuando_una_etapa_lo_cambia(
     assert region.medido is False, "no es una medida: la derivó un agente"
     assert region.derivado_de == "segmentation-agent"
 
+
+
+def test_el_orquestador_reenvia_TODO_lo_que_el_agente_de_UOS_acepta():
+    """La firma de `exportar` enumera argumentos a mano, y una lista a mano se queda vieja.
+
+    ⚠️ Costó una ejecución entera —451 s de entrenamiento incluidos— que murió en la última
+    línea con `unexpected keyword argument 'sin_malla'`: el agente había ganado el
+    parámetro y el orquestador no. Nada lo detectaba hasta que se ejecutaba el caso real
+    con esa bandera puesta.
+
+    Los que NO se reenvían están aquí uno a uno **y con su razón**. Añadir un parámetro al
+    agente sin reenviarlo, o sin justificarlo aquí, rompe este test — que es exactamente
+    cuando hay que enterarse.
+    """
+    import inspect
+
+    from agent_orchestrator.pipeline import IngestionPipeline
+    from uos.agente import UOSExportAgent
+
+    # Los calcula el propio orquestador o no tienen sentido desde fuera.
+    DELIBERADOS = {
+        "campo",         # ruta del PLY del campo: la produce el canal de campo
+        "compuesto",     # idem, el canal del compuesto
+        "motivos",       # los acumula el pipeline de la fusión
+        "previo",        # por defecto es el propio destino
+        "pseudonimo",    # sale del snapshot
+        "registrador",   # lo sabe la fusión geométrica
+    }
+    del_agente = set(inspect.signature(UOSExportAgent._export).parameters) - {
+        "self", "snapshot", "destination",
+    }
+    del_orquestador = set(inspect.signature(IngestionPipeline.exportar).parameters) - {
+        "self", "result", "destino",
+    }
+    sin_reenviar = del_agente - del_orquestador - DELIBERADOS
+    assert not sin_reenviar, (
+        f"el agente de UOS acepta {sorted(sin_reenviar)} y `exportar` no lo reenvía: "
+        "añádelo a la firma o justifícalo en DELIBERADOS"
+    )

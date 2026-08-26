@@ -444,3 +444,42 @@ def test_la_malla_reconstruida_no_decide_si_el_recorrido_es_reversible() -> None
         max_deviation_mm=0.5,
     )
     assert not PipelineResult(snapshot=None, exports=[fuera, reconstruida]).reversible
+
+
+# --- el contenedor no se contradice a si mismo ------------------------------- #
+def _verificador():
+    """`scripts/verifica_contenedor.py`, que no es un paquete instalado."""
+    import importlib.util
+    from pathlib import Path as _P
+
+    ruta = _P(__file__).resolve().parents[3] / "scripts" / "verifica_contenedor.py"
+    spec = importlib.util.spec_from_file_location("verifica_contenedor", ruta)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_el_uos_del_caso_sintetico_no_se_CONTRADICE(recorrido) -> None:
+    """El `.uos` de referencia del CI: cada afirmación del manifiesto, contra los bytes.
+
+    ⚠️ **Por qué hace falta además del validador.** El validador comprueba el CONTRATO —ZIP
+    bien formado, hashes, grafo de marcos, `derived/` en Layer 3— y todo eso puede estar
+    perfecto mientras un descriptor afirma algo que su fichero no sostiene. Pasó ocho veces
+    en un día sobre código que llevaba semanas escrito: `units: "mm"` sobre un PLY
+    normalizado (la nube salía 32 veces más pequeña), `n_primitives` con el número de otro
+    campo, la cabecera del PLY con bytes no-ASCII.
+
+    Ninguna es una violación del contrato: son **afirmaciones falsas dentro de un
+    contenedor válido**, y solo se ven comparando el manifiesto con los bytes.
+
+    Corre sobre el caso SINTÉTICO a propósito: los `.uos` con dato clínico no se versionan,
+    así que el CI no tendría ninguno contra el que ejecutarlo. Éste lo genera
+    `synthetic.write_case` en cada ejecución.
+    """
+    resultado, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+    fallos = _verificador().verifica(uos)
+    assert fallos == [], "el contenedor se contradice:\n  · " + "\n  · ".join(fallos)

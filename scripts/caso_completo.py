@@ -287,6 +287,14 @@ def main() -> int:
              "sencillamente no se ejecuta, que es lo que ha pasado hasta hoy.",
     )
     ap.add_argument(
+        "--solo-gaussianas", action="store_true",
+        help="El contenedor lleva SOLO el campo gaussiano y el manifiesto: fuera los "
+             "originales (STL, DICOM) y fuera también la malla convertida `scene.glb`. "
+             "⚠️ Sin la malla, `derived/seg_teeth` tampoco viaja —indexa sus vértices— "
+             "así que el FDI tiene que ir por gaussiana en el propio campo. Implica "
+             "--sin-originales.",
+    )
+    ap.add_argument(
         "--sin-originales", action="store_true",
         help="Perfil LIGERO: el .uos lleva el campo gaussiano, la escena y el manifiesto, "
              "y los originales —STL del escáner y serie DICOM— se declaran como assets "
@@ -605,6 +613,10 @@ def main() -> int:
                         n_vistas=N_VISTAS,
                         resolucion=RESOLUCION,
                         iteraciones=ITERACIONES,
+                        # Con esto cada gaussiana sale con su FDI: el visor puede
+                        # encender una pieza sin malla delante, que es lo que
+                        # necesita un contenedor de solo gaussianas.
+                        etiquetas=etq_ios,
                         dispositivo="cuda" if torch.cuda.is_available() else "cpu",
                         traza=True,
                     )
@@ -612,12 +624,14 @@ def main() -> int:
                     # Guardar el PLY INRIA en el almacén
                     ply_ap = destino_ap / "apariencia.ply"
                     if ply_ap.exists():
+                        # ⚠️ **Se guarda TODO lo que el entrenamiento devolvió, no una
+                        # lista escogida a mano.** Esa lista se quedó vieja dos veces: la
+                        # des-normalización de Blender y el `region_id` por gaussiana se
+                        # calcularon, se imprimieron en el log y no llegaron al almacén —
+                        # así que el PLY del contenedor, que se reescribe desde ahí, salió
+                        # sin ellos. Enumerar claves es acordarse; `**` es no tener que.
                         ref_ap = pipe.store.put(
-                            means=params_ap["means"],
-                            scales=params_ap["scales"],
-                            quats=params_ap["quats"],
-                            opacities=params_ap["opacities"],
-                            colors=params_ap["colors"],
+                            **{k: np.asarray(v) for k, v in params_ap.items()}
                         )
                         # Actualizar el snapshot con la referencia
                         fus = replace(fus, snapshot=fus.snapshot.model_copy(
@@ -640,7 +654,8 @@ def main() -> int:
     fin = pipe.exportar(
         fus, args.salida / "export",
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
-        sin_originales=args.sin_originales,
+        sin_originales=args.sin_originales or args.solo_gaussianas,
+        sin_malla=args.solo_gaussianas,
         gs_apariencia=args.gs_apariencia,
         # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
         # y las fotos tal como entraron, con su sha256, para que quien lo reciba pueda

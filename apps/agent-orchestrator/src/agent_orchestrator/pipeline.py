@@ -675,6 +675,15 @@ class IngestionPipeline:
         campo_ajustado_descriptor: dict | None = None,
         # Perfil ligero: los originales se declaran con su sha256 y no viajan.
         sin_originales: bool = False,
+        # ⚠️ Esta firma es una lista EXPLICITA de argumentos que hay que acordarse de
+        # ampliar cada vez que el agente de UOS gana uno, y ya ha costado: una ejecucion
+        # entera —451 s de entrenamiento incluidos— murio en la ultima linea con
+        # `unexpected keyword argument 'sin_malla'`. Si vuelve a pasar, la salida es
+        # reenviar `**kwargs` al canal de UOS en vez de enumerarlos.
+        sin_malla: bool = False,
+        # Version declarada del segmentador. Sin dato va `None` y el sidecar dice `null`:
+        # el hash de los pesos es lo que identifica el checkpoint de verdad.
+        version_segmentador: str | None = None,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
 
@@ -808,6 +817,8 @@ class IngestionPipeline:
                 ajuste=ajuste,
                 campo_ajustado_descriptor=campo_ajustado_descriptor,
                 sin_originales=sin_originales,
+                sin_malla=sin_malla,
+                version_segmentador=version_segmentador,
             ),
         ]
         if render:
