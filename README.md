@@ -430,6 +430,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/segmentar_fdi.py`](scripts/segmentar_fdi.py) | etiqueta cada diente de una arcada con su código FDI. |
 | [`scripts/seguimiento_histora.py`](scripts/seguimiento_histora.py) | cuánto se ha movido el margen gingival entre dos escaneos. |
 | [`scripts/umbral_vs_verdad.py`](scripts/umbral_vs_verdad.py) | ¿Cuánto diente recupera un umbral, contra una verdad conocida? |
+| [`scripts/verifica_contenedor.py`](scripts/verifica_contenedor.py) | que el `.uos` diga la verdad SOBRE SI MISMO. |
 | [`scripts/watch_literature.py`](scripts/watch_literature.py) | Vigila la literatura y propone entradas del manifiesto. |
 <!-- /generado: scripts -->
 
