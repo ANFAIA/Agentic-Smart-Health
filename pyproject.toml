@@ -17,6 +17,16 @@ dependencies = [
     "uos",
 ]
 
+# ⚠️ **Solo la VISION, no el entrenamiento.** Los tests de `pose_foto` necesitan opencv y
+# scikit-image; `gaussian-engine[appearance]` los trae, pero arrastra ademas torch y gsplat
+# —del orden de dos gigas de CUDA— que la suite no ejecuta. Un CI que instala CUDA para no
+# usarlo paga el coste en cada run. Aqui van los dos ligeros y nada mas.
+[project.optional-dependencies]
+vision = [
+    "opencv-python-headless>=4.10",
+    "scikit-image>=0.24",
+]
+
 [tool.uv.workspace]
 members = ["apps/*", "packages/*"]
 
