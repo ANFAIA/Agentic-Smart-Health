@@ -5,7 +5,7 @@ Este modulo implementa el flujo completo demostrado en `notebooks/07`:
     mesh-agent (STL) + image-agent (fotos)
         → Blender (EEVEE, N vistas con pose exacta)
         → gsplat (optimizacion contra renders, 0.8*L1 + 0.2*(1-SSIM))
-        → PLY en formato INRIA con color real del paciente
+        → PLY en formato INRIA con un degradado de dos tonos tomados de las fotos
 
 **Que NO es.** No es el ajuste de densidad del CBCT (ese es `ajuste.py`). Aqui se
 optimiza contra **imagenes 2D** (renders de Blender) porque el objetivo es la
@@ -14,7 +14,8 @@ anisotropas— pero la funcion de perdida, los datos de entrada y la semantica d
 resultado son distintos.
 
 **Perfil `'ash-gs-apariencia/1.0'`.** Declara que el campo fue entrenado con gsplat
-sobre renders EEVEE, con color real de fotos. Un lector que vea este perfil sabe que:
+sobre renders EEVEE de una malla pintada con dos tonos de las fotos. Un lector que
+vea este perfil sabe que:
 
   - Las posiciones NO corresponden 1:1 con vertices del escaneo (el optimizador las mueve).
   - El color es REAL (del paciente), no falso por codigo FDI.
@@ -46,6 +47,35 @@ import numpy as np
 # Perfil de este modulo. Distingue este campo del semilla (`ash-twin/1.0`) y del
 # ajustado (`ash-twin-ajustado/1.0`).
 PERFIL = "ash-gs-apariencia/1.0"
+
+#: A mas de esto de cualquier vertice del escaneo, una gaussiana NO hereda etiqueta. Dos
+#: milimetros es el orden del grosor de la encia adherida: mas alla, el vecino mas cercano
+#: ya no dice nada sobre donde esta esa gaussiana.
+LIMITE_VECINO = 2.0
+
+#: Lo que una `uri` de unidades puede valer en la cabecera de un PLY de apariencia.
+UNIDADES_MM = "mm"
+UNIDADES_NORMALIZADO = "normalizado"
+
+
+@dataclass(frozen=True)
+class CampoEscrito:
+    """Lo que `escribe_inria` ACABA de escribir, para que nadie tenga que suponerlo.
+
+    ⚠️ Existe por un fallo concreto: el descriptor `.gs.json` del contenedor afirmaba
+    `units: "mm"` con un literal, y el PLY estaba en el espacio normalizado de Blender.
+    Las dos cosas se escriben en sitios distintos y una creia por la otra, asi que no habia
+    forma de que la contradiccion fallara — solo de que se viera, y solo si alguien
+    comparaba la nube con la malla.
+
+    Es el mismo patron que ya mordio dos veces en este repositorio: un campo de contrato
+    relleno con un literal en vez de con el dato acaba mintiendo. La regla que sale de ahi
+    es que **quien escribe declara, y quien describe pregunta**.
+    """
+
+    n_primitivas: int
+    unidades: str
+    des_normalizado: bool
 
 # Numero por defecto de vistas Blender. 1600 da ~31.5 dB en 6000 iteraciones sobre
 # un escaneo intraoral tipico (medido en notebook 07, caso F1980).
@@ -143,11 +173,32 @@ def _muestra_color_fotos(rutas_fotos: list[Path]) -> tuple[np.ndarray, np.ndarra
 def _colorea_malla(
     posiciones: np.ndarray, normales: np.ndarray,
     enamel_rgb: np.ndarray, gingiva_rgb: np.ndarray,
+    etiquetas: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Aplica color por altura z: coronas (z alto) = esmalte, margen (z bajo) = encia.
+    """Esmalte donde la segmentacion dice diente, encia donde dice que no.
+
+    ⚠️ **El limite sale de las etiquetas FDI, no de la altura.** Antes era un degradado
+    entre los percentiles 30 y 70 de `z`, y eso **afirmaba el margen gingival por un numero
+    inventado** — justo la frontera que este proyecto tiene medido que no sabe determinar.
+
+    Con las etiquetas el color sigue sin ser medido —son dos tonos muestreados de las
+    fotos— pero su frontera **tiene procedencia**: es la salida del segmentador, que viaja
+    en `derived/` marcada como Layer 3, con el hash de sus pesos y su fiabilidad publicada
+    (11 de 14 piezas se descartan por anatomia; cota superior 21 %). Cambia «el limite lo
+    pusimos por altura» por «el limite lo puso un modelo, y dice cual y cuanto acierta».
+
+    Y es la MISMA etiqueta que `region_id` pone en cada gaussiana para poder encender una
+    pieza: una sola fuente de verdad en vez de dos criterios que pueden discrepar.
+
+    Sin etiquetas se cae al degradado por altura, declarado como el apano que es.
 
     Devuelve (N, 3) uint8.
     """
+    if etiquetas is not None and len(etiquetas) == len(posiciones):
+        diente = np.asarray(etiquetas).reshape(-1) > 0
+        vcol = np.where(diente[:, None], enamel_rgb, gingiva_rgb)
+        return vcol.astype(np.uint8)
+
     z = posiciones[:, 2]
     p30, p70 = np.percentile(z, [30, 70])
     w = np.clip((z - p30) / (p70 - p30), 0, 1)[:, None]
@@ -475,11 +526,28 @@ def escribe_inria(
     n_vistas: int | None = None,
     iteraciones: int | None = None,
     acquisition_id: str = "",
-) -> None:
+    scan_scale: float | None = None,
+    scan_offset: np.ndarray | list[float] | None = None,
+    region_id: np.ndarray | None = None,
+) -> CampoEscrito:
     """PLY binario en formato INRIA 3DGS (grado 0 de armonicos esfericos).
 
+    ⚠️ **`scan_scale` y `scan_offset` deshacen la normalizacion de Blender, y sin ellos el
+    fichero MIENTE.** Blender normaliza la malla para renderizar —la mete en una caja de
+    lado ~2 centrada en el origen— y gsplat entrena en ESE espacio, asi que los parametros
+    que salen del optimizador no estan en milimetros. Escribirlos tal cual produce un PLY
+    que declara `units: mm` sobre un dato normalizado.
+
+    Medido sobre un caso real: `scan_scale` 0,0308, o sea que la nube salia **32 veces mas
+    pequena** que la malla —caja de 2,3 x 1,0 x 2,2 contra 65,0 x 23,2 x 60,5 mm— y con una
+    sigma mediana de 0,022 en vez de 0,70 mm. En el visor eso es una mota en el origen, y
+    el descriptor afirmando milimetros hacia que nadie pudiera sospecharlo.
+
+    Los dos salen del `transforms.json` que escribe el paso de Blender. **Las escalas van en
+    LOGARITMO**, asi que su correccion es una suma —`-log(scan_scale)`— y no un producto.
+
     Propiedades:
-    - x, y, z: double (float64) - centro de la gaussiana en mm
+    - x, y, z: float (float32) - centro de la gaussiana en mm
     - nx, ny, nz: float (float32) - normales (0,0,0 para campos)
     - f_dc_0..2: float (float32) - color RGB (coeficiente DC de SH)
     - opacity: float (float32) - opacidad (logit)
@@ -496,6 +564,33 @@ def escribe_inria(
     pos = params["means"].astype(np.float64)
     col = params["colors"].astype(np.float64)  # ya en [0,1]
     esc = params["scales"].astype(np.float64)  # ya en log
+    # ⚠️ **Si no se pasan, se buscan en los propios parametros.** No es comodidad: es que
+    # olvidarlos escribe un fichero que miente sobre sus unidades, y ya paso dos veces —una
+    # en el pipeline y otra en el agente de UOS, que reescribe el PLY desde el almacen—.
+    # Un argumento que hay que acordarse de pasar para que el resultado sea correcto es un
+    # argumento mal puesto; el defecto tiene que ser lo correcto.
+    if scan_scale is None and "scan_scale" in params:
+        scan_scale = float(np.asarray(params["scan_scale"]).reshape(-1)[0])
+    if scan_offset is None and "scan_offset" in params:
+        scan_offset = np.asarray(params["scan_offset"], dtype=np.float64).reshape(3)
+    if region_id is None and "region_id" in params:
+        region_id = np.asarray(params["region_id"])
+
+    # Des-normalizacion, en la forma que `scripts/blender_render_views.py` deja escrita
+    # junto a los dos valores: `mundo = normalizado / scan_scale + scan_offset`.
+    #
+    # ⚠️ El signo del offset se comprueba, no se supone: con el contrario el tamano sale
+    # bien y el centro se va 7,2 mm, que es un error que no se ve mirando la nube sola —
+    # solo aparece comparandola con la malla.
+    if scan_scale is not None:
+        if scan_scale <= 0:
+            raise ValueError(f"scan_scale tiene que ser positivo y vale {scan_scale}")
+        pos = pos / scan_scale
+        esc = esc - float(np.log(scan_scale))
+    if scan_offset is not None:
+        pos = pos + np.asarray(scan_offset, dtype=np.float64)
+    pos = pos.astype(np.float32)
+    unidades = UNIDADES_MM if scan_scale is not None else UNIDADES_NORMALIZADO
     rot = params["quats"].astype(np.float64)   # ya normalizado
     opa = params["opacities"].astype(np.float64)  # ya en logit
 
@@ -508,6 +603,23 @@ def escribe_inria(
     # Color RGB → SH DC coefficient: f_dc = (color - 0.5) / C0
     f_dc = (col - 0.5) / C0
 
+    # ⚠️ **El FDI por gaussiana, si se sabe.** Sin el, seleccionar una pieza obliga a tener
+    # la malla delante —el picking del §11.3 esta definido sobre `extras.uos_fdi` de un
+    # primitive— y un contenedor de solo gaussianas no la lleva. Con el, encender una pieza
+    # es filtrar por codigo: no hace falta ninguna superficie.
+    #
+    # NO sale del optimizador: sale de preguntar, por cada gaussiana, la etiqueta del
+    # vertice de corona MAS CERCANO. El optimizador movio, dividio y podo, asi que no hay
+    # correspondencia 1:1 que heredar — y decir «vecino mas cercano» es exacto y auditable,
+    # mientras que decir «etiqueta entrenada» seria falso.
+    reg = None if region_id is None else np.asarray(region_id, dtype=np.int16)
+    if reg is not None and len(reg) != n:
+        raise ValueError(f"region_id trae {len(reg)} codigos y hay {n} gaussianas")
+
+    # ⚠️ **La cabecera va sin tildes, a proposito.** El formato PLY la define como ASCII y
+    # nuestro propio lector la decodifica asi (`Ply.ts`); un lector estricto ajeno puede
+    # rechazar el fichero. Salieron 7 bytes no-ASCII en un contenedor real —"movio",
+    # "visualizacion", "radiologica"— y un formato que solo lee su emisor no es un formato.
     cabecera = [
         "ply",
         "format binary_little_endian 1.0",
@@ -515,27 +627,46 @@ def escribe_inria(
         f"comment acquisition_id {acquisition_id}",
         "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida",
         "comment las gaussianas NO son los vertices del escaner: el optimizador las",
-        "comment movió, dividió y podó. No hay correspondencia 1:1 con lo medido.",
-        "comment f_dc_* = color RGB real del paciente (coeficiente DC de SH)",
-        "comment opacity = opacidad de visualización (logit), NO es atenuación radiológica",
-        "comment scale en logaritmo (convención INRIA), NO en mm lineales",
+        "comment movio, dividio y podo. No hay correspondencia 1:1 con lo medido.",
+        # ⚠ NO es el color del paciente, y decirlo asi era el fallo. De las fotos salen
+        # exactamente DOS numeros —la mediana de los pixeles claros-calidos y la de los
+        # rosados— y la malla se pinta interpolandolos por altura z antes de renderizar.
+        # El 3DGS aprende ESO. Ademas ese degradado afirma el margen gingival por percentil
+        # de altura, que es justo la frontera que este proyecto tiene medido que no sabe.
+        "comment f_dc_* = DOS tonos muestreados de las fotos (mediana de esmalte y de",
+        "comment encia). NO es color medido por vertice. El limite entre los dos sale",
+        "comment de la segmentacion FDI (Layer 3, ver derived/) si viaja, y si no de un",
+        "comment percentil de altura, que es un apano y no una medida",
+        "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
+        "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
         "comment rot es cuaternion (w,x,y,z) normalizado",
         f"comment entrenado contra {n_vistas} renders EEVEE, {iteraciones} iteraciones",
+        # ⚠ Las unidades van EN EL FICHERO. Es lo que permite que el descriptor del
+        # contenedor las lea en vez de afirmarlas: si algun dia alguien vuelve a escribir
+        # sin des-normalizar, el `.gs.json` dira `normalizado` y no `mm`.
+        f"comment unidades {unidades}",
         f"element vertex {n}",
         *(f"property float {p}" for p in PROPIEDADES_INRIA),
+        *(["comment region_id es el codigo FDI de la corona MAS CERCANA, no una etiqueta",
+           "comment aprendida: el optimizador no conserva correspondencia con los vertices",
+           "property short region_id"] if reg is not None else []),
         "end_header",
     ]
 
     # Construir array estructurado
+    columnas_extra = [("region_id", "<i2")] if reg is not None else []
     dtype = np.dtype([
-        ("x", "<f8"), ("y", "<f8"), ("z", "<f8"),
+        ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
         ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
         ("f_dc_0", "<f4"), ("f_dc_1", "<f4"), ("f_dc_2", "<f4"),
         ("opacity", "<f4"),
         ("scale_0", "<f4"), ("scale_1", "<f4"), ("scale_2", "<f4"),
         ("rot_0", "<f4"), ("rot_1", "<f4"), ("rot_2", "<f4"), ("rot_3", "<f4"),
+        *columnas_extra,
     ])
     filas = np.empty(n, dtype=dtype)
+    if reg is not None:
+        filas["region_id"] = reg
     filas["x"] = pos[:, 0]
     filas["y"] = pos[:, 1]
     filas["z"] = pos[:, 2]
@@ -562,6 +693,9 @@ def escribe_inria(
         f.write(filas.tobytes())
 
     print(f"PLY INRIA: {destino.name} ({n:,} gaussianas, {destino.stat().st_size / 1e6:.1f} MB)")
+    return CampoEscrito(
+        n_primitivas=n, unidades=unidades, des_normalizado=scan_scale is not None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -581,8 +715,15 @@ def entrena_apariencia(
     dispositivo: str = "cuda",
     script_blender: Path | None = None,
     traza: bool = False,
+    # FDI por vertice del escaneo. Si viene, cada gaussiana sale con el codigo de la corona
+    # mas cercana, y entonces se puede seleccionar una pieza SIN tener la malla delante.
+    etiquetas: np.ndarray | None = None,
 ) -> tuple[dict[str, np.ndarray], EntrenamientoApariencia]:
-    """Entrena un campo de gaussianas con color real desde fotos intraorales.
+    """Entrena un campo de gaussianas sobre una malla pintada con dos tonos de las fotos.
+
+    ⚠️ **No es color medido.** Ver `_colorea_malla` y `_muestra_color_fotos`: de las fotos
+    salen dos RGB y la malla se pinta interpolandolos por altura. El color por vertice de
+    verdad exige proyectar los pixeles sobre la geometria, que necesita pose de camara.
 
     Flujo completo:
         1. Muestrear color de fotos (esmalte/encía por altura)
@@ -590,7 +731,7 @@ def entrena_apariencia(
         3. Blender renderiza N vistas con pose exacta
         4. Sembrar gaussianas desde la malla
         5. Entrenar con gsplat (0.8*L1 + 0.2*(1-SSIM))
-        6. Exportar PLY INRIA con color real
+        6. Exportar PLY INRIA con ese degradado (no color medido)
         7. Devolver arrays + metricas
 
     Parametros:
@@ -620,7 +761,9 @@ def entrena_apariencia(
 
     # Paso 2: Colorear malla y render Blender
     print("Paso 2/4: renderizando vistas Blender...")
-    vcol = _colorea_malla(posiciones, np.zeros_like(posiciones), enamel_rgb, gingiva_rgb)
+    vcol = _colorea_malla(
+        posiciones, np.zeros_like(posiciones), enamel_rgb, gingiva_rgb, etiquetas
+    )
     scan_coloreado = destino / "scan_colored.ply"
     escribe_ply_coloreado(scan_coloreado, posiciones, caras, vcol)
 
@@ -642,14 +785,66 @@ def entrena_apariencia(
     # Paso 4: Exportar PLY INRIA
     print("Paso 4/4: exportando PLY...")
     ply_path = destino / "apariencia.ply"
+    # ⚠️ **El FDI por gaussiana, por vecino mas cercano.** El optimizador movio, dividio y
+    # podo, asi que no hay correspondencia con los vertices que heredar. Se pregunta la
+    # etiqueta de la corona mas cercana y se dice asi en la cabecera del PLY: es exacto y
+    # auditable, y no finge una etiqueta aprendida que no existe.
+    #
+    # Las gaussianas estan en el espacio NORMALIZADO y los vertices en mm, asi que la
+    # consulta se hace llevando los vertices al mismo espacio — no al reves, para no
+    # depender de que la des-normalizacion ya se haya aplicado.
+    if etiquetas is not None and posiciones is not None:
+        from scipy.spatial import cKDTree
+
+        etq = np.asarray(etiquetas)
+        if len(etq) == len(posiciones):
+            # ⚠️ **Contra TODOS los vertices, no solo contra las coronas.** Consultando solo
+            # las coronas, cada gaussiana hereda el FDI de la corona mas proxima **este
+            # donde este**: salio el 100 % de las gaussianas marcadas como diente y ni una
+            # como encia. Y para encender una pieza eso es peor que no tener etiqueta,
+            # porque encenderia tambien el trozo de encia mas cercano a ella.
+            #
+            # Preguntando a todos, una gaussiana sobre la encia hereda el 0 de la encia,
+            # que es la respuesta correcta.
+            V = np.asarray(posiciones, dtype=np.float64)
+            Vn = (V - np.asarray(T["scan_offset"], dtype=np.float64)) * float(T["scan_scale"])
+            d, idx = cKDTree(Vn).query(np.asarray(params["means"], dtype=np.float64))
+            reg = etq[idx].astype(np.int16)
+            # ⚠️ Y una cota: el optimizador mueve, divide y poda, y algunas gaussianas
+            # acaban lejos de cualquier vertice. Heredar la etiqueta de un vecino a cinco
+            # milimetros es inventarsela. `LIMITE_VECINO` esta en el espacio normalizado
+            # porque es donde viven las gaussianas.
+            lejos = d > LIMITE_VECINO * float(T["scan_scale"])
+            reg[lejos] = 0
+            params["region_id"] = reg
+            print(f"  region_id por gaussiana: "
+                  f"{len([c for c in set(reg.tolist()) if c > 0])} codigo(s) FDI · "
+                  f"{(reg > 0).mean() * 100:.0f}% diente · "
+                  f"{lejos.mean() * 100:.1f}% sin vecino a menos de {LIMITE_VECINO} mm")
+
+    # ⚠️ **Todo lo que hace falta para reescribir el PLY viaja en `params`.** El PLY lo
+    # escriben DOS sitios —este y el agente de UOS, desde el almacen— y el segundo solo ve
+    # lo que el almacen guarde. La des-normalizacion y el FDI por gaussiana se perdieron
+    # ahi, cada uno una vez, porque `store.put()` enumeraba claves a mano. Metiendolos en
+    # el dict, guardar `**params` los lleva sin que nadie tenga que acordarse.
+    params["scan_scale"] = np.asarray(T["scan_scale"], dtype=np.float64)
+    params["scan_offset"] = np.asarray(T["scan_offset"], dtype=np.float64)
+
     # Inyectar metadatos en el dict para que `escribe_inria` y el store los tengan.
     n_vistas_reales = len(T["frames"])
     params["n_vistas"] = np.array(n_vistas_reales, dtype=np.int32)
     params["iteraciones"] = np.array(iteraciones, dtype=np.int32)
+    # ⚠️ La des-normalizacion viaja AQUI y no dentro del entrenamiento: gsplat optimiza en
+    # el espacio normalizado de Blender y tiene que seguir haciendolo —es donde estan las
+    # camaras—. Lo que no puede es salir de esta funcion sin deshacerse, porque el PLY
+    # declara milimetros. `escribe_inria` sin estos dos argumentos escribe un fichero que
+    # miente sobre sus unidades; ver su docstring.
     escribe_inria(
         ply_path, params,
         n_vistas=n_vistas_reales,
         iteraciones=iteraciones,
+        scan_scale=float(T["scan_scale"]),
+        scan_offset=T.get("scan_offset"),
     )
 
     # Metricas finales

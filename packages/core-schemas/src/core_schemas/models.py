@@ -588,7 +588,8 @@ class TwinSnapshot(BaseModel):
     apariencia_ref: str | None = Field(
         default=None,
         description="Hash/URI de la capa de apariencia entrenada con gsplat (perfil "
-        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con color real del "
+        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con un degradado de "
+        "dos tonos tomados de las fotos —NO color medido— del "
         "paciente optimizado contra fotos intraorales. No es el campo de densidad "
         "(medido en HU) ni el visor (decimado para pantalla): es una capa derivada "
         "que añade el color que el CBCT no puede medir. Null si no se entrenó "
