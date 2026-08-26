@@ -610,7 +610,13 @@ class ReportAgent(BaseIngestionAgent):
     def _ingest(self, source: Path) -> IngestionOutput:
         text = extract_text(source)
         if not text.strip():
-            raise ValueError(f"El informe no contiene texto extraíble: {source}")
+            # ⚠️ El NOMBRE del fichero, no su ruta. Este mensaje acaba en
+            # `review.reasons` y de ahi dentro del `.uos`, y una ruta de un caso clinico
+            # lleva el directorio del paciente — o sea que sacaba del contenedor justo lo
+            # que el seudonimo existe para no sacar. El nombre basta para saber cual es.
+            raise ValueError(
+                f"El informe no contiene texto extraíble: {Path(source).name}"
+            )
 
         # La fecha del informe manda: una observación regional es un punto de la
         # serie temporal del paciente, y fecharla mal desordena la evolución.
