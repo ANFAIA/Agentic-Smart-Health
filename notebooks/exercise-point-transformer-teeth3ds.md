@@ -479,3 +479,64 @@ entrada es una arcada **en pose canónica**, no una malla cualquiera. Sin eso, e
 diente no significa nada fuera del dataset con el que se midió. Implementado en
 [`scripts/segmentar_fdi.py`](../scripts/segmentar_fdi.py); el uso posterior de las etiquetas está
 en [`registro-por-diente-histora.md`](registro-por-diente-histora.md).
+
+## A7 · La FRONTERA — lo que ninguna métrica de aquí estaba midiendo
+
+Todo lo anterior mide **identificación**: ¿el código mayoritario de cada diente es el
+correcto? Nada mide **dónde acaba un diente y empieza el de al lado**. Y son cosas
+distintas: una etiqueta que se pasa dos milímetros al vecino no cambia una mayoría, así
+que puede convivir con 0,96 de FDI por diente sin que ningún número de esta ficha se
+mueva. Es exactamente lo que un clínico ve al encender una pieza en el visor y arrastra
+un trozo de la contigua.
+
+La medida que sí lo ve es el **ancho mesiodistal** de cada corona etiquetada contra la
+tabla anatómica (`export_agents.anatomia.anchos_de_corona`). Dos detalles del cálculo no
+son opcionales: se toma solo la **componente conexa mayor** de cada etiqueta —con todos
+sus vértices el 27 de un caso real «mide» 41 mm, porque se está midiendo hasta la mota
+más lejana— y el **rango del 1 al 99 %**, no el máximo.
+
+### Calibración: ¿cuánto marca sobre etiquetas de experto?
+
+Sobre 330 coronas anotadas de 25 maxilares de Teeth3DS+:
+
+| | exceso mediano | coronas > +1,5 mm |
+|---|---|---|
+| **verdad anotada** | **+0,28 mm** | **6 %** |
+
+O sea que el umbral de +1,5 mm deja fuera la variación anatómica normal. La medida no
+está sesgada.
+
+### El modelo, sobre el split de TEST (20 maxilares, 80/20 semilla 42)
+
+| decodificación | acierto/punto | FDI/diente | exceso mediano | coronas anchas |
+|---|---|---|---|---|
+| `argmax` por punto | 0.898 | 0.958 | +0,96 mm | **33 %** |
+| contigüidad `beta=2` | **0.908** | **0.962** | +0,92 mm | **33 %** |
+
+**Un tercio de las coronas tiene la frontera fuera de tolerancia con 0,958 de FDI por
+diente.** Cinco veces la tasa natural. Las dos métricas que esta ficha publica no lo ven.
+
+### La decodificación con contigüidad y qué separa
+
+`tooth_aggregation.suaviza_contiguidad` decodifica el mismo `logprob` con ICM sobre el
+grafo kNN, añadiendo el único hecho que el `argmax` por punto ignora: **un diente es un
+parche contiguo**. No reentrena nada.
+
+- **Quita las motas**: sobre un maxilar real de 112.067 vértices, componentes conexas por
+  pieza **119 → 30** e islas **6,8 % → 1,5 %**. En test, +1,0 punto de acierto por punto
+  y +0,4 de FDI por diente — no degrada nada, por eso es el defecto de `aggregate_teeth`.
+- **No mueve la frontera**: coronas anchas 33 % → 33 %, exceso mediano −0,04 mm. En el
+  caso propio, 9 de 15 antes y después con el exceso medio moviéndose una centésima.
+
+Y esa separación **es el resultado**. El término de contigüidad pesa como mucho `beta`,
+así que no puede con una diferencia de log-probabilidad mayor: donde el modelo se
+equivoca **con confianza** —y en el punto de contacto interproximal se equivoca con
+confianza— no hay nada que decodificar mejor. La frontera pide otro modelo, no otro
+decodificador.
+
+### Fuera de Teeth3DS+
+
+Sobre el maxilar de `histora` (otro escáner, otra pose, dentición con implantes) las
+coronas anchas suben de **33 % a 60 %** (9 de 15), con excesos de hasta +9,1 mm en el 27.
+Es la misma caída que A6 documenta para la pose: el número de test no se transfiere por
+decreto.
