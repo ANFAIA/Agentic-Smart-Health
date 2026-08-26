@@ -53,6 +53,19 @@ PERFIL = "ash-gs-apariencia/1.0"
 #: ya no dice nada sobre donde esta esa gaussiana.
 LIMITE_VECINO = 2.0
 
+#: Cuantos vertices vota la etiqueta de cada gaussiana. Ver `_fdi_por_gaussiana`.
+#:
+#: ⚠️ **Uno solo no basta, y este proyecto ya lo sabia.** Sobre la malla corre
+#: `afina_fronteras`, que reasigna por mayoria justo porque «el contacto interproximal no
+#: tiene borde geometrico»: en un caso real movio 3.559 vertices. Las gaussianas heredaban
+#: con 1-NN y se saltaban esa correccion, reintroduciendo el ruido que la malla ya habia
+#: quitado.
+#:
+#: Medido sobre el caso real: la pureza del vecindario de cada gaussiana —cuantos de sus
+#: 16 vecinos llevan su misma etiqueta— pasa de **85,1 % con 1-NN a 91,4 % con 16**, y 32
+#: solo aniade 0,6 puntos mas. Cambia el 3,6 % de las etiquetas.
+VOTOS_FDI = 16
+
 #: Lo que una `uri` de unidades puede valer en la cabecera de un PLY de apariencia.
 UNIDADES_MM = "mm"
 UNIDADES_NORMALIZADO = "normalizado"
@@ -518,6 +531,92 @@ PROPIEDADES_INRIA = (
 )
 
 
+def _comentarios_color(params: dict) -> list[str]:
+    """Que es el `f_dc_*` de ESTE fichero, leido de lo que el entrenamiento guardo.
+
+    ⚠️ **Se lee, no se afirma.** Estas cuatro lineas eran un literal que decia «DOS tonos
+    muestreados de las fotos», y antes de eso decian «color real del paciente». Las dos
+    veces era una frase escrita a mano en un sitio distinto de donde se decidia el color, y
+    las dos veces envejecio. Ahora el entrenamiento guarda cuantos vertices llevan pixel
+    medido y la cabecera lo cuenta.
+    """
+    n = int(np.asarray(params.get("n_vertices_malla", 0)).reshape(-1)[0] or 0)
+    med = int(np.asarray(params.get("n_vertices_medidos", 0)).reshape(-1)[0] or 0)
+    interp = int(np.asarray(params.get("n_vertices_interpolados", 0)).reshape(-1)[0] or 0)
+    if n and med:
+        return [
+            "comment f_dc_* = color MEDIDO: el pixel que una foto intraoral ve en cada",
+            "comment vertice, con la pose resuelta por PnP sobre correspondencias por",
+            f"comment diente. {med} de {n} vertices medidos, {interp} interpolados del",
+            "comment medido mas cercano y el resto con el degradado de respaldo.",
+            "comment NO es measured=true: el optimizador movio, dividio y podo las",
+            "comment gaussianas, asi que no hay correspondencia 1:1 con lo proyectado",
+        ]
+    return [
+        "comment f_dc_* = DOS tonos muestreados de las fotos (mediana de esmalte y de",
+        "comment encia). NO es color medido por vertice. El limite entre los dos sale",
+        "comment de la segmentacion FDI (Layer 3, ver derived/) si viaja, y si no de un",
+        "comment percentil de altura, que es un apano y no una medida",
+    ]
+
+
+def _fdi_por_gaussiana(
+    centros: np.ndarray,
+    vertices: np.ndarray,
+    etiquetas: np.ndarray,
+    *,
+    limite: float,
+    votos: int = VOTOS_FDI,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """El codigo FDI de cada gaussiana, por MAYORIA de los vertices mas cercanos.
+
+    Devuelve `(region_id, lejos, cuantas_cambiaron)`.
+
+    ⚠️ **Por mayoria y no por el vecino mas cercano, y el porque esta medido.** El contacto
+    interproximal no tiene borde geometrico: dos coronas contiguas se tocan y el vertice
+    mas proximo a una gaussiana del contacto puede ser el del diente de al lado. Sobre la
+    malla eso ya se corrige —`afina_fronteras` reasigno 3.559 vertices en un caso real— y
+    las gaussianas se saltaban la correccion heredando con 1-NN.
+
+    Medido sobre el caso real: la pureza del vecindario de cada gaussiana pasa de **85,1 %
+    con 1-NN a 91,4 % con dieciseis votos**, cambiando el 3,6 % de las etiquetas.
+
+    ⚠️ **Los empates caen del lado de la encia.** `np.bincount` sobre los codigos devuelve
+    el menor de los empatados, y el 0 —encia o sin asignar— es el menor de todos. Es la
+    direccion correcta en la que equivocarse: marcar encia como diente pinta esmalte sobre
+    encia y enciende trozos ajenos al seleccionar una pieza; marcar diente como encia solo
+    deja un borde sin asignar.
+
+    ⚠️ **Y la cota de distancia se mide contra el vecino MAS CERCANO, no contra el voto.**
+    El optimizador mueve, divide y poda, y algunas gaussianas acaban lejos de cualquier
+    vertice: heredar la etiqueta de un vecino a cinco milimetros es inventarsela. Si el mas
+    proximo ya esta fuera de la cota, los otros quince tambien.
+    """
+    from scipy.spatial import cKDTree
+
+    k = max(1, min(int(votos), len(vertices)))
+    d, idx = cKDTree(vertices).query(centros, k=k)
+    if k == 1:
+        d = d[:, None]
+        idx = idx[:, None]
+    etq = np.asarray(etiquetas).reshape(-1).astype(np.int64)
+    vecinas = etq[idx]
+
+    # Voto por mayoria fila a fila. Se compactan los codigos a indices densos porque
+    # `bincount` reserva hasta el maximo, y un FDI es 48: barato, pero explicito.
+    codigos, comprimido = np.unique(vecinas, return_inverse=True)
+    comprimido = comprimido.reshape(vecinas.shape)
+    cuentas = np.zeros((len(centros), len(codigos)), dtype=np.int32)
+    np.add.at(cuentas, (np.arange(len(centros))[:, None], comprimido), 1)
+    reg = codigos[cuentas.argmax(axis=1)].astype(np.int16)
+
+    cercano = etq[idx[:, 0]].astype(np.int16)
+    lejos = d[:, 0] > limite
+    reg[lejos] = 0
+    cercano[lejos] = 0
+    return reg, lejos, int((reg != cercano).sum())
+
+
 def escribe_inria(
     destino: Path,
     params: dict[str, np.ndarray],
@@ -633,10 +732,7 @@ def escribe_inria(
         # rosados— y la malla se pinta interpolandolos por altura z antes de renderizar.
         # El 3DGS aprende ESO. Ademas ese degradado afirma el margen gingival por percentil
         # de altura, que es justo la frontera que este proyecto tiene medido que no sabe.
-        "comment f_dc_* = DOS tonos muestreados de las fotos (mediana de esmalte y de",
-        "comment encia). NO es color medido por vertice. El limite entre los dos sale",
-        "comment de la segmentacion FDI (Layer 3, ver derived/) si viaja, y si no de un",
-        "comment percentil de altura, que es un apano y no una medida",
+        *_comentarios_color(params),
         "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
         "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
         "comment rot es cuaternion (w,x,y,z) normalizado",
@@ -753,17 +849,47 @@ def entrena_apariencia(
     destino.mkdir(parents=True, exist_ok=True)
 
     # Paso 1: Color desde fotos
-    print("Paso 1/4: muestreando color de fotos...")
+    print("Paso 1/4: color desde las fotos...")
     enamel_rgb, gingiva_rgb = _muestra_color_fotos(rutas_fotos)
-    print(f"  esmalte {enamel_rgb.round().astype(int)} · "
-          f"encía {gingiva_rgb.round().astype(int)} · "
-          f"{len(rutas_fotos)} fotos")
-
-    # Paso 2: Colorear malla y render Blender
-    print("Paso 2/4: renderizando vistas Blender...")
-    vcol = _colorea_malla(
+    print(f"  dos tonos de respaldo: esmalte {enamel_rgb.round().astype(int)} · "
+          f"encía {gingiva_rgb.round().astype(int)}")
+    respaldo = _colorea_malla(
         posiciones, np.zeros_like(posiciones), enamel_rgb, gingiva_rgb, etiquetas
     )
+
+    # ⚠️ **Se intenta color MEDIDO antes que los dos tonos.** Proyectar los pixeles de la
+    # foto sobre la malla necesita la pose de camara, y este proyecto tenia medido que no
+    # sabia sacarla: COLMAP da CERO pares geometricos entre las fotos clinicas. `pose_foto`
+    # la saca por PnP sobre correspondencias por diente —la Etapa 1 de DentalGS— y sobre un
+    # caso real da 0,74 mm de error, con 4,31 sigma de separacion esmalte/encia sobre la
+    # malla y dos piezas menos fuera de su caja anatomica a cobertura constante.
+    #
+    # Si no hay pose sostenible se cae al degradado de dos tonos, que es lo que habia, y se
+    # dice. `medido` viaja para que el descriptor no tenga que suponerlo.
+    medido = interpolado = 0
+    try:
+        from gaussian_engine.pose_foto import color_por_vertice
+
+        cm = color_por_vertice(list(rutas_fotos), posiciones, caras, etiquetas,
+                               respaldo_rgb=respaldo, traza=traza)
+        vcol = cm.rgb
+        medido, interpolado = int(cm.medido.sum()), int(cm.interpolado.sum())
+        print(f"  color MEDIDO: {cm.resumen()}")
+        for pose in cm.poses:
+            print(f"    {pose.ruta.name}: pose {pose.error_mm:.2f} mm · "
+                  f"apoyo {100*pose.apoyo:.0f} % · {pose.inliers}/{pose.correspondencias}")
+        for ruta, razon in cm.descartadas:
+            print(f"    ✗ {ruta.name}: {razon}")
+    except ImportError as e:
+        vcol = respaldo
+        print(f"  ⚠ sin color medido ({e}): se pinta el degradado de dos tonos, que NO es "
+              "color del paciente. Instala el extra `appearance`.")
+    if medido == 0:
+        print("  ⚠ ninguna foto ha dado una pose sostenible: el color son DOS TONOS y su "
+              "frontera sale de las etiquetas FDI, que es inferencia (Layer 3).")
+
+    # Paso 2: Render Blender
+    print("Paso 2/4: renderizando vistas Blender...")
     scan_coloreado = destino / "scan_colored.ply"
     escribe_ply_coloreado(scan_coloreado, posiciones, caras, vcol)
 
@@ -794,8 +920,6 @@ def entrena_apariencia(
     # consulta se hace llevando los vertices al mismo espacio — no al reves, para no
     # depender de que la des-normalizacion ya se haya aplicado.
     if etiquetas is not None and posiciones is not None:
-        from scipy.spatial import cKDTree
-
         etq = np.asarray(etiquetas)
         if len(etq) == len(posiciones):
             # ⚠️ **Contra TODOS los vertices, no solo contra las coronas.** Consultando solo
@@ -808,19 +932,16 @@ def entrena_apariencia(
             # que es la respuesta correcta.
             V = np.asarray(posiciones, dtype=np.float64)
             Vn = (V - np.asarray(T["scan_offset"], dtype=np.float64)) * float(T["scan_scale"])
-            d, idx = cKDTree(Vn).query(np.asarray(params["means"], dtype=np.float64))
-            reg = etq[idx].astype(np.int16)
-            # ⚠️ Y una cota: el optimizador mueve, divide y poda, y algunas gaussianas
-            # acaban lejos de cualquier vertice. Heredar la etiqueta de un vecino a cinco
-            # milimetros es inventarsela. `LIMITE_VECINO` esta en el espacio normalizado
-            # porque es donde viven las gaussianas.
-            lejos = d > LIMITE_VECINO * float(T["scan_scale"])
-            reg[lejos] = 0
+            reg, lejos, cambiadas = _fdi_por_gaussiana(
+                np.asarray(params["means"], dtype=np.float64), Vn, etq,
+                limite=LIMITE_VECINO * float(T["scan_scale"]),
+            )
             params["region_id"] = reg
             print(f"  region_id por gaussiana: "
                   f"{len([c for c in set(reg.tolist()) if c > 0])} codigo(s) FDI · "
                   f"{(reg > 0).mean() * 100:.0f}% diente · "
-                  f"{lejos.mean() * 100:.1f}% sin vecino a menos de {LIMITE_VECINO} mm")
+                  f"{lejos.mean() * 100:.1f}% sin vecino a menos de {LIMITE_VECINO} mm · "
+                  f"voto de {VOTOS_FDI}: {cambiadas:,} distinta(s) del vecino mas cercano")
 
     # ⚠️ **Todo lo que hace falta para reescribir el PLY viaja en `params`.** El PLY lo
     # escriben DOS sitios —este y el agente de UOS, desde el almacen— y el segundo solo ve
@@ -829,6 +950,13 @@ def entrena_apariencia(
     # el dict, guardar `**params` los lleva sin que nadie tenga que acordarse.
     params["scan_scale"] = np.asarray(T["scan_scale"], dtype=np.float64)
     params["scan_offset"] = np.asarray(T["scan_offset"], dtype=np.float64)
+    # ⚠️ **De donde salio el color, en numeros y dentro del artefacto.** Sin esto el
+    # descriptor tendria que SUPONER si el `f_dc_*` es color medido o los dos tonos de
+    # respaldo, y suponer es lo que ya hizo que el contenedor declarase «color real del
+    # paciente» sobre un degradado inventado. Con esto lo lee.
+    params["n_vertices_medidos"] = np.asarray(medido, dtype=np.int64)
+    params["n_vertices_interpolados"] = np.asarray(interpolado, dtype=np.int64)
+    params["n_vertices_malla"] = np.asarray(len(posiciones), dtype=np.int64)
 
     # Inyectar metadatos en el dict para que `escribe_inria` y el store los tengan.
     n_vistas_reales = len(T["frames"])

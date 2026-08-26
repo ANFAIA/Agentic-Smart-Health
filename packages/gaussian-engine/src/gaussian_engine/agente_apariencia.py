@@ -48,10 +48,15 @@ ESQUEMA_INRIA: dict[str, dict] = {
     **{f"f_dc_{i}": {
         "unidad": "",
         "significado": (
-            "coeficiente DC de SH — degradado de DOS tonos muestreados de las "
-            "fotos e interpolado por altura z; NO es color medido por vertice"
+            "coeficiente DC de SH — color de la foto intraoral proyectado sobre la malla "
+            "con la pose resuelta por PnP, y aprendido por el optimizador desde los "
+            "renders. `medido: false` porque el optimizador movio, dividio y podo las "
+            "gaussianas: no hay correspondencia 1:1 con el vertice que recibio el pixel. "
+            "La cabecera del PLY dice cuantos vertices llevaban pixel medido y cuantos "
+            "el degradado de respaldo"
         ),
         "medido": False,
+        "derivado_de": "proyeccion de foto intraoral (pose PnP) + optimizacion 3DGS",
     } for i in range(3)},
     "opacity": {
         "unidad": "logit",

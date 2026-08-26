@@ -267,3 +267,71 @@ def test_el_esquema_cubre_todas_las_propiedades_que_escribe_el_PLY(tmp_path):
     props = [ln.split()[2] for ln in cab.splitlines()
              if ln.startswith("property ") and len(ln.split()) == 3]
     assert [c.nombre for c in esquema_apariencia(props)] == props
+
+
+# ── El FDI por gaussiana sale de un VOTO, no del vecino más cercano ──────────────
+#
+# ⚠️ El contacto interproximal no tiene borde geométrico: dos coronas contiguas se tocan, y
+# el vértice más próximo a una gaussiana del contacto puede ser el del diente de al lado.
+# Sobre la malla eso ya se corregía —`afina_fronteras` reasignó 3.559 vértices en un caso
+# real— y las gaussianas se saltaban la corrección heredando con 1-NN. Se veía: una pieza
+# encendía también un trozo de su vecina.
+
+def test_el_voto_gana_al_vecino_mas_cercano_en_el_contacto():
+    """Una gaussiana rodeada de vértices del 11 con UNO del 12 pegado no es del 12."""
+    import numpy as np
+    from gaussian_engine.apariencia import _fdi_por_gaussiana
+
+    # Un intruso del 12 a 0,05 mm; quince del 11 alrededor, todos algo más lejos.
+    vert = [[0.05, 0.0, 0.0]]
+    etq = [12]
+    for k in range(15):
+        a = 2 * np.pi * k / 15
+        vert.append([0.3 * np.cos(a), 0.3 * np.sin(a), 0.0])
+        etq.append(11)
+    reg, lejos, cambiadas = _fdi_por_gaussiana(
+        np.zeros((1, 3)), np.asarray(vert), np.asarray(etq), limite=2.0,
+    )
+    assert reg[0] == 11, "el voto no ha ganado al vecino más cercano"
+    assert not lejos[0]
+    assert cambiadas == 1, "el 1-NN habría dicho 12, así que tiene que contar como cambio"
+
+
+def test_el_empate_cae_del_lado_de_la_encia():
+    """⚠️ Es la dirección correcta en la que equivocarse: marcar encía como diente pinta
+    esmalte sobre encía y enciende trozos ajenos al seleccionar; marcar diente como encía
+    sólo deja un borde sin asignar."""
+    import numpy as np
+    from gaussian_engine.apariencia import _fdi_por_gaussiana
+
+    vert = np.array([[0.1, 0, 0], [-0.1, 0, 0], [0, 0.1, 0], [0, -0.1, 0]], dtype=float)
+    reg, _, _ = _fdi_por_gaussiana(
+        np.zeros((1, 3)), vert, np.array([11, 11, 0, 0]), limite=2.0, votos=4,
+    )
+    assert reg[0] == 0
+
+
+def test_la_cota_de_distancia_se_mide_contra_el_MAS_CERCANO():
+    """El optimizador mueve, divide y poda: una gaussiana lejos de todo no hereda nada.
+    Y la cota mira al vecino más próximo — si ése ya está fuera, los demás también."""
+    import numpy as np
+    from gaussian_engine.apariencia import _fdi_por_gaussiana
+
+    vert = np.array([[10.0, 0, 0], [10.1, 0, 0], [10.2, 0, 0]], dtype=float)
+    reg, lejos, _ = _fdi_por_gaussiana(
+        np.zeros((1, 3)), vert, np.array([11, 11, 11]), limite=2.0, votos=3,
+    )
+    assert lejos[0] and reg[0] == 0
+
+
+def test_sin_ambiguedad_el_voto_no_cambia_nada():
+    """Que el voto no invente: donde todos los vecinos coinciden, la etiqueta es la suya."""
+    import numpy as np
+    from gaussian_engine.apariencia import _fdi_por_gaussiana
+
+    rng = np.random.default_rng(0)
+    vert = rng.normal(scale=0.2, size=(40, 3))
+    reg, _, cambiadas = _fdi_por_gaussiana(
+        np.zeros((1, 3)), vert, np.full(40, 26), limite=2.0,
+    )
+    assert reg[0] == 26 and cambiadas == 0
