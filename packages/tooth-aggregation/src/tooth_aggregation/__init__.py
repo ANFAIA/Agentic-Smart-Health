@@ -40,6 +40,7 @@ from tooth_aggregation.aggregate import (
     connected_labels,
     majority_label,
     merge_fragments,
+    suaviza_contiguidad,
     typical_spacing,
 )
 
@@ -50,5 +51,6 @@ __all__ = [
     "connected_labels",
     "majority_label",
     "merge_fragments",
+    "suaviza_contiguidad",
     "typical_spacing",
 ]

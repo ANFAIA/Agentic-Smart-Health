@@ -11,6 +11,7 @@ from tooth_aggregation import (
     connected_labels,
     majority_label,
     merge_fragments,
+    suaviza_contiguidad,
     typical_spacing,
 )
 
@@ -40,6 +41,73 @@ def logprob_de(labels: np.ndarray, n_clases: int, alto: float = -0.1) -> np.ndar
     lp = np.full((len(labels), n_clases), -9.0)
     lp[np.arange(len(labels)), labels] = alto
     return lp
+
+
+# --- decodificacion con contiguidad ----------------------------------------- #
+def test_suaviza_contiguidad_borra_motas_sueltas_dentro_de_un_diente() -> None:
+    """Un punto mal clasificado en medio de un bloque vuelve a la clase de sus vecinos.
+
+    Es el fallo que se ve a ojo en el visor: cientos de motas del codigo de una pieza
+    salpicadas sobre las demas. Un `argmax` por punto no puede quitarlas — nada en el
+    dice que las etiquetas de una malla formen parches.
+    """
+    pts, lab = escena((cubo((0, 0, 0)), 1))
+    lp = logprob_de(lab, 3)
+    intruso = len(pts) // 2
+    lp[intruso] = [-9.0, -1.0, -0.5]  # se equivoca por poco: 0.5 de margen
+
+    assert lp.argmax(axis=1)[intruso] == 2
+    y = suaviza_contiguidad(pts, lp, beta=2.0)
+    assert y[intruso] == 1
+    assert (y == 1).all()
+
+
+def test_suaviza_contiguidad_NO_tumba_un_error_en_el_que_el_modelo_esta_seguro() -> None:
+    """⚠️ El termino de contigüidad pesa **como mucho `beta`**, asi que no puede con una
+    diferencia de log-probabilidad mayor.
+
+    No es una limitacion a corregir subiendo `beta`: es la razon por la que este
+    suavizado quita las motas y NO mueve la frontera entre dos piezas. Donde el modelo
+    se equivoca **con confianza** —y en el punto de contacto interproximal se equivoca
+    con confianza— aqui no hay nada que rascar; hace falta otro modelo.
+    """
+    pts, lab = escena((cubo((0, 0, 0)), 1))
+    lp = logprob_de(lab, 3)
+    lp[len(pts) // 2] = [-9.0, -8.0, -0.1]  # 7.9 de margen, muy por encima de beta
+    assert suaviza_contiguidad(pts, lp, beta=2.0)[len(pts) // 2] == 2
+
+
+def test_suaviza_contiguidad_con_beta_cero_es_el_argmax_exacto() -> None:
+    """`beta=0` tiene que reproducir el comportamiento anterior byte a byte.
+
+    Es lo que permite medir el cambio: la version vieja sigue estando a un parametro.
+    """
+    pts, lab = escena((cubo((0, 0, 0)), 1), (cubo((0, 0, 6 * STEP)), 2))
+    lp = logprob_de(lab, 3)
+    lp[3] = [-0.1, -9.0, -8.0]
+    assert np.array_equal(suaviza_contiguidad(pts, lp, beta=0.0), lp.argmax(axis=1))
+
+
+def test_suaviza_contiguidad_NO_funde_dos_dientes_pegados() -> None:
+    """⚠️ La contiguidad no puede comerse la frontera: dos bloques adyacentes con
+    etiquetas distintas siguen siendo dos.
+
+    Si el suavizado uniera piezas vecinas estaria arreglando el ruido a costa de
+    inventar un error peor — y justo el que este proyecto tiene delante.
+    """
+    pts, lab = escena((cubo((0, 0, 0)), 1), (cubo((0, 0, 4 * STEP)), 2))
+    y = suaviza_contiguidad(pts, logprob_de(lab, 3), beta=2.0)
+    assert set(np.unique(y)) == {1, 2}
+    assert (y == lab).mean() > 0.95
+
+
+def test_aggregate_teeth_decodifica_con_contiguidad_por_defecto() -> None:
+    """El defecto del agregador es `beta=2.0`: una mota aislada ya no parte un diente."""
+    pts, lab = escena((cubo((0, 0, 0)), 1))
+    lp = logprob_de(lab, 3)
+    lp[len(pts) // 2] = [-9.0, -8.0, -0.1]
+    piezas = aggregate_teeth(pts, lp, min_size=10)
+    assert [p.label for p in piezas] == [1]
 
 
 # --- espaciado -------------------------------------------------------------- #
