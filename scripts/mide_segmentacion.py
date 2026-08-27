@@ -133,36 +133,7 @@ def lee_escena(glb: bytes) -> tuple[np.ndarray, np.ndarray]:
 RECORTE_PCT = 1.0
 
 
-def _aristas(tri: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Las aristas en los DOS sentidos: cada vertice tiene que ver a todos sus vecinos."""
-    e = np.concatenate([tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]])
-    e = np.concatenate([e, e[:, ::-1]])
-    return e[:, 0], e[:, 1]
-
-
-def concavidad(pos: np.ndarray, tri: np.ndarray) -> np.ndarray:
-    """Indicador adimensional por vertice: positivo = concavo.
-
-    Para cada vecino `u` de `v` se mide cuanto se sale `u` del plano tangente en `v`, en
-    unidades de la propia arista. Con normales hacia fuera, un pliegue —que es lo que hay
-    donde el diente sale de la encia— da positivo y una cuspide da negativo. Es una media
-    de cosenos: no hay que ajustar una cuadrica ni elegir un radio.
-    """
-    a, b, c = (pos[tri[:, i]] for i in range(3))
-    n_cara = np.cross(b - a, c - a)          # su modulo es 2x el area: pondera solo
-    n = np.zeros_like(pos)
-    for i in range(3):
-        np.add.at(n, tri[:, i], n_cara)
-    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
-
-    i, j = _aristas(tri)
-    d = pos[j] - pos[i]
-    largo = np.linalg.norm(d, axis=1)
-    coseno = np.einsum("ij,ij->i", d, n[i]) / np.maximum(largo, 1e-12)
-    suma, cuenta = np.zeros(len(pos)), np.zeros(len(pos))
-    np.add.at(suma, i, coseno)
-    np.add.at(cuenta, i, 1.0)
-    return suma / np.maximum(cuenta, 1.0)
+from analysis_agents.frontera import _aristas, concavidad  # noqa: E402
 
 
 def razon_de_concavidad(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> float | None:
