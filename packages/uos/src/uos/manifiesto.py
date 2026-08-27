@@ -140,6 +140,20 @@ class Asset(BaseModel):
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
     sidecar_uri: str | None = None
+    # ⚠️ **De que otros assets sale este. No hay § que lo defina, y hace falta.**
+    #
+    # `scene/scene.glb` es la malla del escaner reindexada a glTF: MISMA geometria,
+    # 220.085 triangulos, los mismos que el STL. Pero el manifiesto lo declaraba como un
+    # asset suelto de tipo `mesh_gs_scene` —sin sidecar y sin ningun enlace al `asset.ios`
+    # que se declara FUERA por su hash—, asi que quien recibiera el contenedor no tenia
+    # como saber que esa malla es una conversion del escaner y no una fuente independiente.
+    # El dato estaba, pero dentro del propio GLB (`extras.uos_source_asset`): habia que
+    # parsear cinco megas de glTF para enterarse de algo que el manifiesto puede decir en
+    # una linea.
+    #
+    # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
+    # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
+    derived_from: list[str] = Field(default_factory=list)
     # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es el perfil
     # ligero: el `.uos` lleva el campo gaussiano y el manifiesto, y los originales
     # —DICOM, STL— se referencian por `uri` y se acreditan por `sha256`.

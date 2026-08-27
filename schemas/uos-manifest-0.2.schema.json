@@ -105,6 +105,13 @@
           "default": null,
           "title": "Sidecar Uri"
         },
+        "derived_from": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Derived From",
+          "type": "array"
+        },
         "external": {
           "default": false,
           "title": "External",

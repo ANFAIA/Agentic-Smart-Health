@@ -523,6 +523,10 @@ class UOSExportAgent(BaseExportAgent):
                     glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
                     visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
                     load_priority=10,
+                    # De donde sale esta malla, DICHO EN EL MANIFIESTO. Es el escaner
+                    # reindexado a glTF —misma geometria, mismos 220.085 triangulos—, y sin
+                    # esta linea la unica forma de saberlo era parsear el GLB entero.
+                    derived_from=["asset.ios"],
                 ))
 
             # `derived/` — la segmentacion, Layer 3 y desmontable (§5.5).
@@ -1138,6 +1142,32 @@ class UOSExportAgent(BaseExportAgent):
                     "reconstruida y el esquema de sus columnas. El borrador trata el 3DGS "
                     "como apariencia en marco de reconstruccion; aqui hay campos ajustados "
                     "a la densidad del CBCT, en el marco del paciente y con error en HU"
+                ),
+            )
+        # ⚠️ **La reversibilidad existe y el contenedor no la declaraba.** De este `.uos`
+        # sale una malla de arcada con color por vertice, codigo FDI y la marca de que
+        # vertices llevan color MEDIDO — sin tocar el escaner original, que viaja fuera.
+        # Eso es lo que el proyecto entiende por reversible: regenerar, no transportar. Y
+        # sin embargo no habia nada en el manifiesto que lo dijera: quien recibiera el
+        # fichero sin conocer nuestro script no tenia forma de saber que se puede hacer,
+        # con que assets ni que columnas saldrian. Un formato abierto cuya propiedad
+        # principal solo conoce el emisor no es abierto.
+        #
+        # No se mete la malla mejorada DENTRO a proposito: ya esta ahi, repartida entre la
+        # geometria de `asset.scene` y el color de `asset.apariencia`. Llevarla ademas
+        # serian 19 MB para duplicar una geometria que el contenedor sabe reconstruir, y
+        # dos verdades sobre la misma superficie que pueden divergir.
+        if "asset.scene" in ids and "asset.apariencia" in ids:
+            fuera["ash_reversible"] = Extension(
+                name="ash_reversible", version="1.0",
+                schema_id="ash-reversible/1.0",
+                description=(
+                    "de `asset.scene` (geometria y `extras.uos_fdi` por primitiva) mas la "
+                    "columna de color de `asset.apariencia` se regenera una malla de "
+                    "arcada con color por vertice, codigo FDI y una columna `medido` que "
+                    "dice que vertices llevan color del paciente y cuales el degradado de "
+                    "respaldo. El color se toma de las gaussianas que cubren cada vertice "
+                    "dentro de 3 sigmas, ponderadas por alfa. No viaja: se reconstruye"
                 ),
             )
         return fuera
