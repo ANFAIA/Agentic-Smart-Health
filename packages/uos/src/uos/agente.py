@@ -408,15 +408,14 @@ class UOSExportAgent(BaseExportAgent):
                     papel="apariencia real entrenada con gsplat",
                     medido=False,
                     marco=FRAME_IOS,
-                    nota=(
-                        "⚠️ el color NO es medido: es un degradado de DOS tonos "
-                        "muestreados de las fotos (mediana de esmalte y de encia) "
-                        "interpolado por altura z, y el limite esmalte/encia que "
-                        "insinua no esta medido. Entrenado contra renders EEVEE de "
-                        "esa malla pintada, con 0.8*L1 + 0.2*(1-SSIM). Las posiciones "
-                        "fueron movidas por el optimizador: no hay correspondencia "
-                        "1:1 con los vertices del escaneo"
-                    ),
+                    # ⚠️ **La nota se LEE del PLY, no se escribe aqui.** Este literal
+                    # describia el color como «un degradado de DOS tonos interpolado por
+                    # altura z» mucho despues de que el color pasara a medirse corona a
+                    # corona: la cabecera del fichero decia una cosa y su propio sidecar
+                    # otra, y el panel del visor mostraba la vieja. Es el mismo fallo que
+                    # ya se arreglo dos veces aqui —las unidades y el esquema— y la misma
+                    # cura: quien describe, pregunta al fichero.
+                    nota=self._nota_color_ply(destino_ap),
                     esquema_override=esq_ap,
                     perfil_override="ash-gs-apariencia/1.0",
                     # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
@@ -950,6 +949,39 @@ class UOSExportAgent(BaseExportAgent):
             "de": n_origen,
             "a": n_final,
         }
+
+    @staticmethod
+    def _nota_color_ply(ruta: Path) -> str:
+        """Lo que el PLY dice de su propio color, para que el sidecar no lo repita a mano.
+
+        Se toman los `comment` desde el que abre `f_dc_*` hasta el ultimo seguido: son los
+        que `gaussian_engine.apariencia._comentarios_color` escribe describiendo de donde
+        salio el color y cuanto de el es medido. Si el fichero no los trae se dice eso, en
+        vez de afirmar nada sobre un color que no se ha podido leer.
+        """
+        try:
+            with ruta.open("rb") as f:
+                crudo = f.read(65536)
+        except OSError:
+            return "el PLY de apariencia no se ha podido leer para describir su color"
+        fin = crudo.find(b"end_header")
+        lineas = crudo[: fin if fin >= 0 else len(crudo)].decode("ascii", "replace")
+        recogiendo, partes = False, []
+        for linea in lineas.splitlines():
+            if not linea.startswith("comment "):
+                continue
+            cuerpo = linea[len("comment "):].strip()
+            if cuerpo.startswith("f_dc_"):
+                recogiendo = True
+            elif recogiendo and cuerpo.startswith(("opacity", "scale", "rot ", "unidades",
+                                                   "entrenado", "region_id", "nx,ny,nz",
+                                                   "f_rest_")):
+                break
+            if recogiendo:
+                partes.append(cuerpo)
+        if not partes:
+            return "el PLY de apariencia no declara de donde sale su color"
+        return " ".join(partes)
 
     @staticmethod
     def _cabecera_ply(ruta: Path) -> tuple[str | None, int | None, list[str]]:
