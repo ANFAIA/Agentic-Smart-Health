@@ -649,7 +649,8 @@ class IngestionPipeline:
             detected = seg.detected or None
 
         if snapshot is not None and detected is not None:
-            out = self.semantic_fusion.fuse(snapshot, detected=detected)
+            out = self.semantic_fusion.fuse(snapshot, detected=detected,
+                                            arcada_aportada=arcada)
             salidas.append(out)
             motivos += self._stage_reasons(out)
             motivos += self._conservacion("fusion-semantica", snapshot, out.snapshot)
@@ -693,8 +694,6 @@ class IngestionPipeline:
         # El descriptor del campo ajustado (dict plano, construido en `caso_completo.py`
         # para no acoplar UOS a gaussian_engine). Se vuelta tal cual en el sidecar.
         campo_ajustado_descriptor: dict | None = None,
-        # Perfil ligero: los originales se declaran con su sha256 y no viajan.
-        sin_originales: bool = False,
         # ⚠️ Esta firma es una lista EXPLICITA de argumentos que hay que acordarse de
         # ampliar cada vez que el agente de UOS gana uno, y ya ha costado: una ejecucion
         # entera —451 s de entrenamiento incluidos— murio en la ultima linea con
@@ -837,7 +836,15 @@ class IngestionPipeline:
                 campo_ajustado=campo_ajustado,
                 ajuste=ajuste,
                 campo_ajustado_descriptor=campo_ajustado_descriptor,
-                sin_originales=sin_originales,
+                # ⚠️ **`sin_originales` NO se reenvia, y por eso no esta aqui.** Lo
+                # estuvo, con su propio `= False` en esta firma, y ese valor por
+                # defecto duplicado le gano al `= True` del agente: el contenedor
+                # salio con el STL del escaner, las nueve fotos y los tres informes
+                # dentro, 216 MB, mientras el agente creia estar emitiendo el perfil
+                # sin originales. Que no viajen originales es una decision DEL
+                # FORMATO, y vive en un solo sitio —`uos.agente`—, que es donde se
+                # puede leer con su motivo al lado. Un defecto escrito dos veces
+                # vuelve a divergir.
                 sin_malla=sin_malla,
                 version_segmentador=version_segmentador,
             ),

@@ -279,15 +279,17 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
     m = lee_manifiesto(salida.path)
     uris = " ".join(a.uri for a in m.assets)
     assert "PEREZ" not in uris and "0000144500014386" not in uris
-    assert "images/img_000.jpg" in uris
+    assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.img_000")
     # Y la malla igual: su nombre tampoco entra.
     assert malla.stem not in uris
-    assert "scene/scan" in uris
+    # ⚠️ Y ahora es MÁS fuerte que antes: el escáner ni siquiera viaja, así que su `uri`
+    # es su dirección de contenido. Un `sha256` no puede llevar el nombre de nadie.
+    assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.ios")
 
 
 
-def test_un_informe_ilegible_viaja_dentro_del_contenedor(tmp_path, malla):
-    """Un PDF sin capa de texto **no se pierde**: viaja byte-identico y sin su nombre.
+def test_un_informe_ilegible_QUEDA_DECLARADO_en_el_manifiesto(tmp_path, malla):
+    """Un PDF sin capa de texto **no se pierde**: queda declarado por su `sha256`.
 
     Antes solo viajaba lo que el `report-agent` conseguia transcribir, asi que un informe
     escaneado desaparecia entero — el gate decia «hay un PDF que nadie pudo leer» y el
@@ -295,11 +297,10 @@ def test_un_informe_ilegible_viaja_dentro_del_contenedor(tmp_path, malla):
     destapo ese fichero era el **pasaporte de implantes**: tres implantes con su posicion
     FDI, su fecha, su marca y su lote, y ningun otro documento del caso los mencionaba.
 
-    Con `sin_originales` obedece la misma regla que el STL y las fotos: se declara por su
-    direccion de contenido y no viaja dentro. Lo que se arregla no es que viaje SIEMPRE, es
-    que exista en el manifiesto — antes no habia ni asset.
+    Obedece la misma regla que el escaner y las fotos: **ningun original viaja dentro**, se
+    declara por su direccion de contenido. Lo que se arreglo no es que viaje, es que EXISTA
+    en el manifiesto — antes no habia ni asset, y el documento se caia entero del caso.
     """
-    import zipfile
     from datetime import datetime
 
     from core_schemas import Modality, Provenance, TwinSnapshot
@@ -313,36 +314,18 @@ def test_un_informe_ilegible_viaja_dentro_del_contenedor(tmp_path, malla):
         provenance=Provenance(source_file="x", modality=Modality.MESH, agent="a@0"),
     )
     salida = UOSExportAgent(None).export(
-        snap, tmp_path / "caso", pseudonimo="P-1", malla=malla, informes=[doc]
+        snap, tmp_path / "caso", pseudonimo="P-1", malla=malla, informes=[doc],
     )
 
     assert salida.ok, salida.detail
     m = lee_manifiesto(salida.path)
-    docs = [a for a in m.assets if a.uri.startswith("clinical/documents/")]
-    assert len(docs) == 1
-    assert docs[0].media_type == "application/pdf"
-    # Layer 1: es registro clinico, no salida de un modelo. Borrar `derived/` no se lo
-    # lleva por delante.
-    assert docs[0].regulatory.layer == 1
-    # El apellido del paciente esta en el NOMBRE del fichero y no puede entrar.
-    assert "APELLIDOS" not in " ".join(a.uri for a in m.assets)
-    with zipfile.ZipFile(salida.path) as z:
-        assert z.read(docs[0].uri) == doc.read_bytes()
-
-    # Y en el perfil ligero se declara por su hash, como el STL y las fotos.
-    ligero = UOSExportAgent(None).export(
-        snap, tmp_path / "ligero", pseudonimo="P-1", malla=malla, informes=[doc],
-        sin_originales=True,
-    )
-    assert ligero.ok, ligero.detail
-    fuera = [a for a in lee_manifiesto(ligero.path).assets if a.id == "asset.doc_000"]
-    assert len(fuera) == 1 and fuera[0].external
-    assert fuera[0].uri == f"sha256:{docs[0].sha256}"
-    with zipfile.ZipFile(ligero.path) as z:
-        assert "clinical/documents/doc_000.pdf" not in z.namelist()
+    docs = [a for a in m.assets if a.id.startswith("asset.doc_")]
+    assert len(docs) == 1, "el informe ilegible no existe en el manifiesto"
+    # Declarado por su contenido, no por una ruta: no viaja y no lleva el nombre de nadie.
+    assert docs[0].uri.startswith("sha256:")
+    assert "APELLIDOS" not in docs[0].uri and "NOMBRE" not in docs[0].uri
 
 
-# --- el agente, vistas y cadena ---------------------------------------------- #
 def _snapshot(**kw):
     """Un snapshot minimo. `surface_ref` y `regional` son lo que alimenta las vistas."""
     from datetime import datetime
@@ -762,12 +745,17 @@ def test_con_originales_no_hay_ningun_aviso_de_externo(tmp_path, malla):
     """El contrario, para que el test de arriba pueda fallar.
 
     Sin esto, un validador que avisara SIEMPRE pasaría los dos y no probaría nada.
+
+    ⚠️ Pide `sin_originales=False` **explícitamente** porque ya no es el defecto: nuestro
+    formato no lleva originales. El perfil con originales sigue existiendo en el agente
+    porque es lo que el §1.1 del borrador especifica, y ninguna bandera de la CLI lo activa.
     """
     from uos import UOSExportAgent
     from uos.validador import valida
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        sin_originales=False,
     )
     inf = valida(salida.path)
     assert inf.errores == [], inf.errores
@@ -912,3 +900,35 @@ def test_un_fichero_que_no_es_un_ply_no_revienta(tmp_path):
     p.write_bytes(b"\x00\x01\x02")
     assert UOSExportAgent(None)._cabecera_ply(p) == (None, None, [])
     assert UOSExportAgent(None)._cabecera_ply(tmp_path / "no-existe.ply") == (None, None, [])
+
+
+def test_el_sidecar_de_segmentacion_dice_de_que_pieza_fiarse() -> None:
+    """⚠️ **Sin esto, seleccionar una pieza en el visor puede mentir en silencio.**
+
+    El contenedor dice la verdad sobre la pieza —su color, su pH, sus hallazgos— y enciende
+    una superficie que arrastra medio diente vecino. Lo que se lee al lado es correcto y lo
+    que se ve, no, que es la peor combinación posible. El veredicto por pieza convierte eso
+    en un dato consultable.
+
+    El criterio no es una opinión: sale del `p95` de `|ancho medido - tabla|` sobre 188
+    coronas etiquetadas por experto. Contar coronas «demasiado anchas» no vale — las de
+    experto lo fallan en el 77 %.
+    """
+    import numpy as np
+    from uos.derivados import meta_segmentacion
+
+    etq = np.array([11, 11, 12, 0], np.int16)
+    calidad = {11: {"mesiodistal_mm": 8.9, "table_mm": 8.5, "excess_mm": 0.4,
+                    "within_expert_range": True},
+               12: {"mesiodistal_mm": 13.1, "table_mm": 6.5, "excess_mm": 6.6,
+                    "within_expert_range": False}}
+    meta = meta_segmentacion(etq, asset_origen="asset.scene", modelo="m",
+                             version=None, calidad=calidad)
+    bloque = meta["per_tooth_boundary"]
+    assert bloque["teeth"]["11"]["within_expert_range"] is True
+    assert bloque["teeth"]["12"]["within_expert_range"] is False
+    assert "77 %" in bloque["note"]
+
+    # Y sin el dato el bloque NO aparece: ausente no es «todas mal».
+    assert "per_tooth_boundary" not in meta_segmentacion(
+        etq, asset_origen="asset.scene", modelo="m", version=None)

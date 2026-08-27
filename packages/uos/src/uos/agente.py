@@ -100,6 +100,24 @@ _MEDIA = {
 }
 
 
+def _calidad_frontera(malla: Any, etq: Any) -> dict[int, dict] | None:
+    """Por pieza, si su recorte esta dentro de lo que hacen las etiquetas de experto.
+
+    Devuelve `None` si no se puede calcular, que es distinto de «todas mal»: el sidecar no
+    declara el bloque en vez de declararlo vacio.
+    """
+    try:
+        import numpy as _np
+        from analysis_agents.frontera import calidad_por_pieza
+
+        caras = _np.asarray(malla.get("faces"))
+        if caras is None or caras.size == 0:
+            return None
+        return calidad_por_pieza(_np.asarray(malla["positions"], float), caras, etq)
+    except Exception:
+        return None
+
+
 class UOSExportAgent(BaseExportAgent):
     """Empaqueta el twin como Unified Oral Scene.
 
@@ -155,10 +173,23 @@ class UOSExportAgent(BaseExportAgent):
         # Lo que cambia es la garantia, no la forma: con ellos dentro el contenedor afirma
         # «el DICOM que sale es el que entro» y el validador lo comprueba; sin ellos afirma
         # «se el hash de lo que deberia haber ahi». Sigue siendo auditable y ya NO cumple el
-        # §1.1 del spec, que exige que el DICOM adquirido viaje byte-identico. Es una
-        # decision de producto y se toma fuera de este agente: aqui solo se obedece y se
-        # declara. El validador avisa por cada asset externo.
-        sin_originales: bool = False,
+        # ⚠️ **Ningun fichero original viaja dentro. Es el formato, no un perfil.**
+        # El encargo del proyecto es «regenerar ficheros STL e imagenes a partir del Digital
+        # Twin»: regenerar, no transportar. Un contenedor que lleva el escaner dentro no
+        # demuestra reversibilidad —demuestra que sabe copiar un fichero—, y ademas
+        # multiplica su peso por lo que ya esta representado en el gemelo.
+        #
+        # Lo que viaja de cada original es su DIRECCION DE CONTENIDO: `uri` pasa a ser
+        # `sha256:<hex>` y `external` a `true`. Quien reciba el contenedor puede comprobar
+        # que el fichero que le den es exactamente el que se ingirio, sin que el fichero
+        # tenga que estar dentro.
+        #
+        # ⚠️ **Y esto cambia la GARANTIA, asi que se declara.** Con los originales dentro el
+        # contenedor afirma «lo que sale es lo que entro» y el validador lo comprueba (§1.1
+        # del spec); sin ellos afirma «se el hash de lo que deberia haber ahi». El validador
+        # avisa por cada asset externo, que es lo correcto: es una diferencia real y quien
+        # reciba el fichero tiene que verla.
+        sin_originales: bool = True,
         # ⚠️ **Perfil de solo gaussianas: fuera tambien la malla convertida.** `scene.glb`
         # no es un original —es presentacion, el STL convertido a float32— pero sigue
         # siendo una malla, y la decision de producto es que el contenedor lleve el campo
@@ -515,6 +546,7 @@ class UOSExportAgent(BaseExportAgent):
                         version=version_segmentador,
                         pesos_sha256=(None if modelo_segmentacion is None
                                       else sha256_de_fichero(modelo_segmentacion)),
+                        calidad=_calidad_frontera(malla_ingerida, etq),
                     )
                     extras_escena[SEGMENTACION] = crudo
                     extras_escena[SEGMENTACION_META] = json_de(meta)
@@ -537,13 +569,16 @@ class UOSExportAgent(BaseExportAgent):
             # ⚠️ El nombre del fichero NO viaja: los de un proveedor llevan identificadores
             # del paciente. Se renumera y la trazabilidad la da el sha256.
             uri = f"images/img_{i:03d}{foto.suffix.lower()}"
-            # ⚠️ Las fotos son originales, igual que el STL y el DICOM: en el perfil de
-            # solo gaussianas se declaran y no viajan. Son 18 MB de los 191 del contenedor.
-            if not sin_malla:
+            # ⚠️ **Las fotos son originales, igual que el STL y el DICOM.** Iban atadas a
+            # `sin_malla` —el perfil de solo gaussianas— y no a `sin_originales`, asi que
+            # un contenedor que decia no llevar originales llevaba 18 MB de fotografias
+            # del paciente dentro. Es el mismo criterio para las tres cosas: lo que viaja
+            # es la direccion de contenido, no el fichero.
+            if not sin_originales:
                 ficheros[uri] = foto
             assets.append(asset_de(
                 foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
-                external=sin_malla,
+                external=sin_originales,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
                 # §5.3. Lo unico que se puede afirmar de estas: son fotos intraorales.

@@ -1,5 +1,13 @@
 """UOS-Vol: la serie DICOM viaja ENTERA y sin tocar, con su sidecar (§5.2).
 
+⚠️ **Este perfil ya NO lo emite el pipeline, y estos tests siguen aquí a propósito.** La
+decisión de producto es que nuestro `.uos` no lleve ningún fichero original —sólo su
+dirección de contenido—, así que `sin_originales` vale `True` por defecto y ninguna bandera
+de la CLI puede ponerlo a `False`. Lo que estos tests cubren es la conformidad con el §5.2
+del borrador, que sigue siendo parte del formato aunque nosotros no la usemos: si algún día
+alguien emite UOS-Vol, esta maquinaria tiene que seguir siendo correcta. Por eso pasan
+`sin_originales=False` explícitamente.
+
 Lo que se prueba no es que quepa en el ZIP, sino que **siga siendo la misma serie**: cada
 corte byte-idéntico y verificable por separado, y el manifiesto declarando exactamente los
 que hay. Un contenedor que dice llevar un CBCT y lleva 396 de 397 cortes es peor que uno
@@ -133,7 +141,8 @@ def test_renombrar_un_corte_CAMBIA_el_digesto(serie, tmp_path):
 # --- el ciclo completo -------------------------------------------------------- #
 def test_la_serie_sale_BYTE_IDENTICA_corte_a_corte(serie, malla, tmp_path):
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
 
     assert salida.ok, salida.detail
@@ -144,7 +153,8 @@ def test_la_serie_sale_BYTE_IDENTICA_corte_a_corte(serie, malla, tmp_path):
 
 def test_con_volumen_la_conformidad_sube_a_UOS_Vol(serie, malla, tmp_path):
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
     informe = valida(salida.path)
 
@@ -167,7 +177,8 @@ def test_el_volumen_vive_en_el_frame_del_CBCT_y_conecta_por_la_registracion(
     serie, malla, tmp_path
 ):
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
     m = lee_manifiesto(salida.path)
 
@@ -185,6 +196,7 @@ def test_sin_registro_el_volumen_NO_viaja_y_el_resto_del_caso_SI(serie, malla, t
     salida = UOSExportAgent(None).export(
         _snapshot(con_registro=False), tmp_path / "caso",
         pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False,
     )
 
     assert salida.ok, salida.detail
@@ -197,7 +209,8 @@ def test_un_corte_que_falta_INVALIDA_aunque_el_resto_cuadre(serie, malla, tmp_pa
     """El fallo que este nivel existe para cazar: una serie a la que le falta un corte se
     abre, se renderiza y tiene un hueco que nadie ve."""
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
     mutilado = tmp_path / "mutilado.uos"
     with zipfile.ZipFile(salida.path) as z, zipfile.ZipFile(
@@ -219,7 +232,8 @@ def test_un_corte_que_falta_INVALIDA_aunque_el_resto_cuadre(serie, malla, tmp_pa
 def test_un_corte_ALTERADO_invalida_y_se_dice_CUAL(serie, malla, tmp_path):
     """Un hash del conjunto diría «la serie no cuadra». Estos dicen qué corte."""
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
     tocado = tmp_path / "tocado.uos"
     victima = None
@@ -242,7 +256,8 @@ def test_un_corte_ALTERADO_invalida_y_se_dice_CUAL(serie, malla, tmp_path):
 def test_un_corte_de_MAS_tambien_invalida(serie, malla, tmp_path):
     """Que la serie que sale no sea la que se dice que entró es igual de grave por exceso."""
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
     colado = tmp_path / "colado.uos"
     with zipfile.ZipFile(salida.path) as z, zipfile.ZipFile(
@@ -262,7 +277,8 @@ def test_el_sidecar_del_volumen_viaja_y_el_manifiesto_lo_declara(serie, malla, t
     import json
 
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
 
     with zipfile.ZipFile(salida.path) as z:
@@ -273,7 +289,8 @@ def test_el_sidecar_del_volumen_viaja_y_el_manifiesto_lo_declara(serie, malla, t
 
 def test_el_volumen_esta_en_el_fhir_map_como_ImagingStudy(serie, malla, tmp_path):
     salida = UOSExportAgent(None).export(
-        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie
+        _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla, cbct=serie,
+        sin_originales=False
     )
 
     m = lee_manifiesto(salida.path)

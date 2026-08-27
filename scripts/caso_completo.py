@@ -362,22 +362,6 @@ def main() -> int:
              "--sin-originales.",
     )
     ap.add_argument(
-        "--sin-originales", action="store_true",
-        help="Perfil LIGERO: el .uos lleva el campo gaussiano, la escena y el manifiesto, "
-             "y los originales —STL del escáner y serie DICOM— se declaran como assets "
-             "externos con su sha256 sin viajar dentro. ⚠️ Cambia la GARANTÍA: con ellos "
-             "dentro el contenedor afirma «lo que sale es lo que entró» y el validador lo "
-             "comprueba; sin ellos afirma «sé el hash de lo que debería haber ahí», y deja "
-             "de cumplir el §1.1 del spec. El validador avisa por cada asset externo.",
-    )
-    ap.add_argument(
-        "--con-volumen", action="store_true",
-        help="Mete la serie DICOM ENTERA en el .uos y sube su conformidad a UOS-Vol. "
-             "Va detrás de una bandera por PESO: la serie de un CBCT son cientos de "
-             "megas y multiplica por diez el tamaño del contenedor. Sin esto el .uos es "
-             "UOS-Core y lo declara, en vez de fingir que lleva el volumen.",
-    )
-    ap.add_argument(
         "--fdi", type=Path, default=None,
         help="`region_id` por vertice del escaneo intraoral. Es la mitad que dice CUAL es "
              "cada diente: el modelo del CBCT es binario y no puede darla.",
@@ -390,7 +374,11 @@ def main() -> int:
              "exacto —la tabla de anchos leída al derecho y al revés es la misma lista— y "
              "una foto intraoral puede estar tomada con espejo, así que ni la geometría "
              "ni la imagen dicen de qué lado es. Sin esto no hay color por pieza y el "
-             "gate lo declara, en vez de jugarse el 16 contra el 26 a cara o cruz.",
+             "gate lo declara, en vez de jugarse el 16 contra el 26 a cara o cruz. "
+             "`nombre=no` declara que esa foto NO es una tira vestibular de esta arcada "
+             "—la contraria, una oclusal, un primer plano de una pieza— y entonces no "
+             "aporta color: darle un lado sería peor, repartiría códigos FDI entre las "
+             "cúspides de un solo diente.",
     )
     args = ap.parse_args()
 
@@ -399,6 +387,12 @@ def main() -> int:
     for par in args.lado_foto:
         nombre, _, codigo = par.partition("=")
         elegidas = [f for f in caso.images if nombre in f.name]
+        # `no` declara que esa foto NO es una tira vestibular de esta arcada — la
+        # contraria, una oclusal, un primer plano de una pieza. Ver
+        # `gaussian_engine.tono_foto.NO_ES_TIRA`. Darle un lado sería PEOR que no dárselo:
+        # a un primer plano le repartiría códigos FDI entre las cúspides de un molar.
+        if codigo.strip().lower() == "no":
+            codigo = "0"
         if len(elegidas) != 1 or not codigo.isdigit():
             que = "no cuadra con ninguna foto" if not elegidas else (
                 "cuadra con varias fotos" if len(elegidas) > 1 else "el FDI no es un número")
@@ -430,7 +424,9 @@ def main() -> int:
         from analysis_agents import rellena_huecos_interiores as _huecos
         from ingestion_agents.mesh_agent import parse_stl as _stl
 
-        _V = _np.asarray(_stl(caso.mesh)["positions"], dtype=_np.float64)
+        _malla_ios = _stl(caso.mesh)
+        _V = _np.asarray(_malla_ios["positions"], dtype=_np.float64)
+        _Fc = _np.asarray(_malla_ios["faces"], dtype=_np.int64)
         _cruda = _np.load(args.fdi).astype(_np.int64)
         # ⚠️ Comprobado ANTES de usarlo, y con el número delante. Pasar las etiquetas de
         # otro paciente no da un resultado raro: da un `IndexError` doscientas líneas más
@@ -462,6 +458,13 @@ def main() -> int:
         if _movidos:
             print(f"  frontera entre piezas contiguas afilada: {_movidos:,} vértices "
                   f"reasignados a su vecino por mayoría")
+        # ⚠️ **El recorte al cuello NO se aplica, y es una decisión medida.** Mejora la
+        # frontera contra verdad de campo —0,891 → 0,906 de acuerdo con el experto sobre
+        # Teeth3DS+, 8 de 8 casos— y sobre este caso clínico se pasa: devuelve a la encía
+        # 9.942 vértices (12,3 % de lo etiquetado) y el resultado es visible, la encía
+        # bajando sobre las coronas. Una métrica que sube mientras el render empeora es una
+        # métrica que no está midiendo lo que importa. Queda en `analysis_agents.frontera`
+        # con sus tests, disponible y sin aplicar.
         # Y el simétrico de `rellena_etiquetas`: un vértice de diente rodeado de encía es
         # encía. Sin esto quedan motas color hueso salpicadas sobre el rosa del visor.
         etq_ios, _motitas = _motas(_V, etq_ios)
@@ -763,7 +766,6 @@ def main() -> int:
     fin = pipe.exportar(
         fus, args.salida / "export",
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
-        sin_originales=args.sin_originales or args.solo_gaussianas,
         sin_malla=args.solo_gaussianas,
         gs_apariencia=args.gs_apariencia,
         # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
@@ -777,7 +779,9 @@ def main() -> int:
         # que puede y el documento queda para lo que no. Ver `_export`.
         informes=list(caso.reports),
         # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
-        cbct=caso.cbct if args.con_volumen else None,
+        # ⚠️ La serie DICOM NO viaja: el formato no lleva originales, sólo su
+        # dirección de contenido. Ver `UOSExportAgent._export`.
+        cbct=None,
         # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
         modelo_segmentacion=args.modelo,
         # El campo ajustado va APARTE en el `.uos`: el twin lleva la semilla medida

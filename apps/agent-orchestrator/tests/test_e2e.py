@@ -483,3 +483,38 @@ def test_el_uos_del_caso_sintetico_no_se_CONTRADICE(recorrido) -> None:
         pytest.skip("el recorrido no produjo un .uos")
     fallos = _verificador().verifica(uos)
     assert fallos == [], "el contenedor se contradice:\n  · " + "\n  · ".join(fallos)
+
+
+def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
+    """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
+
+    ⚠️ **El agente de UOS ya lo tenía probado, y aun así salió mal.** `uos.agente` emite
+    el perfil sin originales por defecto y tres tests suyos lo exigen; pero el
+    orquestador reenviaba `sin_originales` con **su propio** `= False` en la firma, y ese
+    defecto duplicado ganaba. El contenedor del caso clínico salió con el STL del
+    escáner, nueve fotografías del paciente y tres informes dentro —216 MB— mientras
+    cada test del agente seguía en verde.
+
+    De ahí que este test viva AQUÍ y mire los bytes del ZIP: probar la pieza no prueba
+    el montaje. Lo que se comprueba es la afirmación del formato, no la de una función.
+    """
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    # Las extensiones de los ficheros tal y como los entrega un proveedor. `.ply` y
+    # `.glb` NO están: son lo que producimos nosotros —el campo gaussiano y la escena
+    # del gemelo— y son justamente lo que el contenedor existe para llevar.
+    DE_PROVEEDOR = (".stl", ".dcm", ".jpg", ".jpeg", ".png", ".pdf", ".obj")
+    dentro = [
+        n.filename
+        for n in zipfile.ZipFile(uos).infolist()
+        if n.filename.lower().endswith(DE_PROVEEDOR)
+    ]
+    assert dentro == [], (
+        "el contenedor lleva originales dentro y el formato afirma que no: "
+        + ", ".join(dentro)
+    )

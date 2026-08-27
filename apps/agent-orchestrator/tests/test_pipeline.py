@@ -894,6 +894,17 @@ def test_el_orquestador_reenvia_TODO_lo_que_el_agente_de_UOS_acepta():
         "previo",        # por defecto es el propio destino
         "pseudonimo",    # sale del snapshot
         "registrador",   # lo sabe la fusión geométrica
+        # ⚠️ **Éste no es «lo calcula el orquestador»: es una decisión del FORMATO.**
+        # Se reenviaba, con un `sin_originales: bool = False` propio en la firma de
+        # `exportar`, y ese defecto duplicado le ganó al `= True` del agente: el
+        # contenedor del caso clínico salió con el STL del escáner, nueve fotografías
+        # del paciente y tres informes dentro —216 MB— mientras todos los tests del
+        # agente seguían en verde. Que el `.uos` no lleve originales lo decide
+        # `uos.agente` y sólo él; el orquestador no tiene voz aquí, y por eso no
+        # aparece en su firma. Lo que sí hay es un test que mira los bytes del ZIP a
+        # la salida del orquestador: `test_e2e.py::test_el_uos_del_recorrido_no_lleva_
+        # NINGUN_original`, porque probar la pieza no prueba el montaje.
+        "sin_originales",
     }
     del_agente = set(inspect.signature(UOSExportAgent._export).parameters) - {
         "self", "snapshot", "destination",
@@ -905,6 +916,45 @@ def test_el_orquestador_reenvia_TODO_lo_que_el_agente_de_UOS_acepta():
     assert not sin_reenviar, (
         f"el agente de UOS acepta {sorted(sin_reenviar)} y `exportar` no lo reenvía: "
         "añádelo a la firma o justifícalo en DELIBERADOS"
+    )
+
+
+def test_lo_que_el_orquestador_reenvia_no_CONTRADICE_al_agente():
+    """Un parámetro reenviado con otro valor por defecto es peor que uno olvidado.
+
+    ⚠️ **Esto es lo que falló, y el test de reenvío no podía verlo.** `sin_originales`
+    estaba en las dos firmas y se reenviaba —aquel test en verde— pero el agente lo
+    declaraba `True` (el formato no lleva originales) y el orquestador `False`. Mientras
+    la CLI pasaba la bandera a mano no se notaba; en cuanto se quitó, el valor cayó al
+    defecto del orquestador y el contenedor del caso clínico salió con el STL del
+    escáner, nueve fotografías del paciente y tres informes dentro, 216 MB.
+
+    Un parámetro olvidado revienta con `TypeError` y se ve. Un defecto duplicado que
+    discrepa NO revienta: emite el fichero equivocado en silencio, y cada test de la
+    pieza sigue pasando. Por eso lo que se compara aquí son los VALORES, no los nombres.
+    """
+    import inspect
+
+    from agent_orchestrator.pipeline import IngestionPipeline
+    from uos.agente import UOSExportAgent
+
+    agente = inspect.signature(UOSExportAgent._export).parameters
+    orq = inspect.signature(IngestionPipeline.exportar).parameters
+
+    discrepan = {
+        n: (agente[n].default, orq[n].default)
+        for n in set(agente) & set(orq)
+        if agente[n].default is not inspect.Parameter.empty
+        and orq[n].default is not inspect.Parameter.empty
+        and agente[n].default != orq[n].default
+    }
+    assert not discrepan, (
+        "el orquestador reenvía un valor por defecto distinto al del agente, así que "
+        "el suyo gana y la decisión del agente no se aplica nunca: "
+        + ", ".join(
+            f"{n} (agente {a!r} / orquestador {o!r})"
+            for n, (a, o) in sorted(discrepan.items())
+        )
     )
 
 
