@@ -48,6 +48,33 @@ promediadas. Por comparación: 3 σ es el listón que se le pide a una señal pa
 detección, y esto lo pasa **en las cuatro fotos, con umbrales que caen dentro de 5 puntos
 unos de otros** pese a ser tomas distintas con iluminación distinta.
 
+> ⚠️ **CORRECCIÓN (2026-08-27) — esta cifra mide menos de lo que parece.** Las «dos
+> clases» son las que produce **el propio Otsu**, y Otsu elige el corte que **maximiza
+> exactamente esa separación**. Así que 3,4–4,3 σ establece que el histograma de `a*` es
+> **bimodal**, no que sus dos modos coincidan con diente y encía. Son dos afirmaciones
+> distintas y arriba se presentaba la primera como si fuera la segunda.
+>
+> Lo que sí está medido ahora, proyectando el color sobre los vértices con la pose PnP:
+>
+> | comprobación | resultado |
+> |---|---|
+> | `a*` frente a las etiquetas, global | 0,85 σ |
+> | ídem, pieza a pieza | 0,61 σ |
+> | ídem, solo vértices vistos de frente (cos > 0,85) | 0,70 σ |
+> | recolocar la frontera con la máscara y medir el ancho de corona | +2,36 → **+1,94 mm**; anchas **9/14 → 9/14** |
+>
+> O sea: la señal **existe y va en la dirección correcta** —las coronas peores son las que
+> más se estrechan (27 −4,3 mm, 17 −1,9, 26 −1,1) y 11 de 15 mejoran— pero **no separa
+> vértice a vértice** y no mete ninguna pieza en tolerancia. El titular «resultado positivo
+> y medido» de la cabecera vale para «merece la pena montar la tubería»; no vale para «la
+> frontera se resuelve con esto».
+>
+> ⚠️ Y la comprobación limpia **sigue sin hacerse**: contrastar el color contra etiquetas
+> de verdad por vértice. Teeth3DS+ las tiene pero no trae color; nuestros casos traen color
+> y no tienen etiquetas. Mientras eso no se cruce, tanto los 3,4 σ como los 0,85 σ se miden
+> contra una referencia que no es la anatomía. Ver A7/A8 de
+> `notebooks/exercise-point-transformer-teeth3ds.md`.
+
 Inspeccionada la máscara, el borde sigue el **festoneado cervical** diente a diente,
 papilas interdentales incluidas. Es exactamente la curva que §6.2 de la ficha de
 segmentación pedía y que la limpieza geométrica tiene prohibido inventar.

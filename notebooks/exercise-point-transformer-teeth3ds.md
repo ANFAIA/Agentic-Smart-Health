@@ -537,6 +537,99 @@ decodificador.
 ### Fuera de Teeth3DS+
 
 Sobre el maxilar de `histora` (otro escáner, otra pose, dentición con implantes) las
-coronas anchas suben de **33 % a 60 %** (9 de 15), con excesos de hasta +9,1 mm en el 27.
+coronas anchas suben de **33 % a 60 %** (9 de 14), con excesos de hasta +9,1 mm en el 27.
 Es la misma caída que A6 documenta para la pose: el número de test no se transfiere por
 decreto.
+
+## A8 · De qué se pasa la corona, y cuatro intentos de arreglarlo
+
+A7 midió que un tercio de las coronas queda fuera de tolerancia con 0,958 de FDI por
+diente. A8 va a por la causa y prueba los arreglos que no exigen reentrenar.
+
+### Lo que sobra es ENCÍA, no el diente vecino
+
+Sobre 12 maxilares de test con verdad anotada, contando los vértices que el modelo mete
+de más en una corona:
+
+| de dónde salen | vértices | |
+|---|---|---|
+| eran **encía** | 310.668 | **80,7 %** |
+| eran el **diente vecino** | 74.393 | 19,3 % |
+| *(el fallo contrario: corona dada por encía)* | *998* | — |
+
+**Un sesgo de 300 a 1.** No es confusión entre piezas contiguas: es la corona alargándose
+hacia apical sobre la encía, y de ahí ensanchando también en mesiodistal por la banda
+gingival. O sea que el ancho de A7 mide sobre todo la frontera **diente/encía** — la que
+este proyecto ya tenía medido que **no está en la forma sino en el color**.
+
+### La frontera anatómica SÍ es un valle, y nuestro escáner lo captura
+
+Concavidad por arista (`1 − cos` entre normales, solo donde el diedro es cóncavo), sobre
+10 maxilares con anotación de experto:
+
+| aristas | mediana | media |
+|---|---|---|
+| dentro de un diente | 0,0000 | 0,0060 |
+| **diente ↔ diente** | **0,1048** | **0,1519** — 25× |
+| diente ↔ encía | 0,0394 | 0,0575 |
+
+Y la señal no es propia del dataset: la malla de `histora` tiene la misma distribución
+(p99 0,133 frente a 0,127; 1,61 % de aristas por encima de 0,1 frente a 1,54 %). Con las
+etiquetas del MODELO, en cambio, las aristas «diente ↔ diente» salen a **0,75×** del
+interior de un diente — *menos* cóncavas. El modelo corta recto por superficie lisa.
+
+### Cuatro intentos, cuatro negativos
+
+| intento | punto | FDI/diente | coronas anchas |
+|---|---|---|---|
+| `argmax` (referencia) | 0.898 | 0.958 | 33 % |
+| contigüidad `beta=2` | 0.908 | 0.962 | 32 % |
+| **aristas pesadas por el valle** (λ=6, 12) | 0.909 | 0.957 | **32 %** |
+| **unario aplanado** (T=3, 10, 30) | 0.911 | 0.966 | **33–34 %** |
+| **checkpoint A3 boundary+centroid** | 0.709 | 0.820 | **57 %** |
+
+- **Pesar las aristas por concavidad no mueve la frontera.** ICM es local y el error es
+  regional: cuando el modelo se queda milímetros de la corona vecina, toda esa banda tiene
+  un unario equivocado y el valle más cercano está fuera del alcance de una actualización
+  por vecindad.
+- **No es sobreconfianza.** Aplanar el unario hasta T=30 no cambia nada.
+- **La *boundary loss* de A3 es peor en todo**, también en la frontera —57 % contra 33 %—.
+  A3 la declaró «sin efecto medible» porque la midió con `tooth_acc`, que es ciego a esto.
+- **El valle no es una barrera cerrada.** Cortando las aristas cóncavas y tomando
+  componentes conexas, a cualquier umbral entre 0,001 y 0,05 un solo parche se queda con
+  el **69–99,9 %** de los vértices y la pureza no pasa de **0,66**. Una partición
+  geométrica por umbral no separa los dientes: la corona sigue cosida a la encía por el
+  margen gingival, cuya concavidad es la mitad.
+
+### El color: real, en la dirección correcta, insuficiente
+
+Los cuatro negativos apuntan al mismo sitio —la frontera diente/encía, que está en el
+color— y desde el PnP hay color medido en el **68 %** de los vértices. Así que se probó.
+
+| comprobación | resultado |
+|---|---|
+| `a*` frente a las etiquetas, global | 0,85 σ |
+| ídem por pieza (por si el flash rompe un umbral único) | **0,61 σ** — peor |
+| ídem solo en vértices vistos de frente (cos > 0,85) | 0,70 σ |
+| cobertura de color medido en el margen gingival | 64,3 % (73,4 % lejos de él) |
+| **recolocar la frontera con la máscara y medir el ancho** | **+2,36 → +1,94 mm · anchas 9/14 → 9/14** |
+
+La señal **existe y no es ruido**: las coronas peores son las que más se estrechan
+(FDI 27 −4,3 mm, 17 −1,9, 26 −1,1) y 11 de 15 mejoran. Pero **no separa vértice a vértice**
+y no mete ni una pieza en tolerancia.
+
+⚠️ **Y por el camino se cayó el número en el que se apoyaba todo.** `frontera-encia-desde-foto.md`
+declaraba 3,4–4,3 σ para esta frontera; esas «dos clases» son las que produce **Otsu**, que
+elige el corte que **maximiza esa separación**. La cifra establece que el histograma de `a*`
+es bimodal, no que sus modos sean diente y encía. Corregido en la ficha.
+
+### Lo que queda en pie
+
+Ningún camino de los probados coloca la frontera. Y **la comprobación limpia sigue sin
+hacerse**, porque falta el dato para hacerla: Teeth3DS+ tiene etiquetas por vértice y no
+tiene color; nuestros casos tienen color y no tienen etiquetas. Mientras no se crucen, tanto
+los 3,4 σ como los 0,85 σ se miden contra una referencia que no es la anatomía.
+
+Cruzarlas es barato y es el siguiente paso: **renderizar color plausible sobre una malla de
+Teeth3DS+ con sus etiquetas**, o **anotar a mano el margen gingival de una sola pieza** de
+un caso propio. Cualquiera de las dos convierte esto en una pregunta decidible.

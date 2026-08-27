@@ -19,7 +19,9 @@ DentalGS (Dai et al., AAAI-26, en la base de conocimiento). Catorce corresponden
 sobredeterminan seis grados de libertad y se resuelven en forma cerrada.
 
 - **2D**: umbral de Otsu sobre `a*` de CIELAB —la frontera diente/encia SI esta en el
-  color, con 3,4-4,3 sigma segun `docs/research/frontera-encia-desde-foto.md`— y watershed
+  color —la senal existe, aunque los 3,4-4,3 sigma de esa ficha midan la bimodalidad de
+  `a*` y no el acuerdo con la anatomia: ver la correccion de
+  `docs/research/frontera-encia-desde-foto.md`— y watershed
   sobre la transformada de distancia para partir el arco en dientes.
 - **3D**: el centroide del TERCIO OCLUSAL de cada pieza etiquetada. ⚠️ No el de la pieza
   entera: las etiquetas invaden la encia, asi que ese centroide esta desplazado.
