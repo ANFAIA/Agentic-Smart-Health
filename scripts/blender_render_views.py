@@ -67,6 +67,10 @@ ap.add_argument("--relleno", type=float, default=0.8)  # energía del relleno op
 ap.add_argument("--ambiente", type=float, default=0.4)  # fuerza del mundo
 # Gris plano: ignora el color de vértice y usa un neutro. Sirve para mirar RELIEVE en
 # vez de anatomía — sin tono que distraiga, todo el rango dinámico va a la forma.
+ap.add_argument("--sombreado", action="store_true",
+                help="Ilumina la malla con el montaje de luces en vez de renderizar el "
+                     "ALBEDO plano. Deja la apariencia bonita y el color inservible: ver "
+                     "el bloque de gestion de color mas abajo.")
 ap.add_argument("--gris", type=float, default=None,
                 help="Color base neutro (0-1). Si se da, ignora el color de vértice.")
 args = ap.parse_args(argv)
@@ -114,19 +118,46 @@ bpy.context.view_layer.update()
 mat = bpy.data.materials.new("scan")
 mat.use_nodes = True
 nt = mat.node_tree
+# ⚠️ **Por defecto se renderiza el ALBEDO, no la malla iluminada, y esa es la diferencia
+# entre que el gemelo guarde el color del paciente o el de nuestro plato de luces.**
+#
+# Medido: con el montaje de luces, recuperar el color medido desde las gaussianas costaba
+# **ΔE 28,5** — y ΔE > 3,5 lo ve cualquiera, una toma de color para restaurar quiere 1-2.
+# La mitad de ese error era el `view_transform` (abajo) y la otra mitad esto: el
+# Principled BSDF con un sol de energia 3.0 hornea la iluminacion dentro del color, asi
+# que las gaussianas no aprenden el diente, aprenden *ese diente bajo nuestra luz*.
+#
+# Con emision, el pixel renderizado ES el color del vertice: el 3DGS no tiene nada
+# dependiente de la vista que aprender y su termino DC queda siendo el albedo, que es lo
+# que `clinical/observations.json` declara al lado. Se pierde el relieve rasante — pero el
+# relieve es GEOMETRIA y vive en la malla y en el campo, no en el color.
+#
+# ⚠️ Y con emision **el montaje de luces deja de importar**, incluido el argumento de que
+# tienen que ir emparentadas a la camara: no hay luz que emparentar. Ese razonamiento sigue
+# siendo correcto para `--sombreado`, que es para lo que se conserva.
 bsdf = nt.nodes.get("Principled BSDF")
-if bsdf and "Roughness" in bsdf.inputs:
+if not args.sombreado:
+    salida = nt.nodes["Material Output"]
+    if bsdf is not None:
+        nt.nodes.remove(bsdf)
+    bsdf = nt.nodes.new("ShaderNodeEmission")
+    nt.links.new(bsdf.outputs["Emission"], salida.inputs["Surface"])
+elif bsdf and "Roughness" in bsdf.inputs:
     bsdf.inputs["Roughness"].default_value = 0.55
+# El enchufe del color se llama distinto en cada shader: `Base Color` en el Principled y
+# `Color` en el de emision. Se resuelve por presencia y no por bandera para que anadir otro
+# shader no obligue a tocar tres sitios.
+_entrada = "Base Color" if bsdf and "Base Color" in bsdf.inputs else "Color"
 if args.gris is not None and bsdf:
     g = args.gris
-    bsdf.inputs["Base Color"].default_value = (g, g, g, 1.0)
+    bsdf.inputs[_entrada].default_value = (g, g, g, 1.0)
 elif obj.data.color_attributes:
     obj.data.color_attributes.active_color_index = 0
     vc = nt.nodes.new("ShaderNodeVertexColor")
     vc.layer_name = obj.data.color_attributes[0].name
-    nt.links.new(vc.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(vc.outputs["Color"], bsdf.inputs[_entrada])
 elif bsdf:
-    bsdf.inputs["Base Color"].default_value = (0.85, 0.80, 0.72, 1.0)  # marfil
+    bsdf.inputs[_entrada].default_value = (0.85, 0.80, 0.72, 1.0)  # marfil
 obj.data.materials.clear()
 obj.data.materials.append(mat)
 
@@ -194,6 +225,28 @@ scene.render.resolution_y = args.res
 scene.render.film_transparent = True
 scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGBA"
+
+# --------------------------------------------------------------------------- #
+# Gestion de color: `Standard`, y es la mitad del error de color del gemelo
+# --------------------------------------------------------------------------- #
+# ⚠️ **Blender NO escribe lo que renderiza: le aplica un mapeo tonal antes de guardar.**
+# Por defecto es AgX (Filmic en 3.x), que es una curva cinematografica que oscurece y
+# desatura los medios tonos a proposito. Este script nunca lo fijaba, asi que heredaba el
+# de la version instalada.
+#
+# El efecto esta MEDIDO sobre el caso real, comparando el color que entra en la malla con
+# el que se recupera de las gaussianas entrenadas: razon de luminancia **0,55 uniforme**,
+# sin correlacion con la geometria (0,025 contra la concavidad, o sea que no era sombra),
+# y decodificar una gamma se llevaba la mitad del error de golpe — ΔE 28,5 a 16,4.
+#
+# `Standard` guarda el render codificado en sRGB y nada mas. Es lo unico que hace que el
+# PNG contra el que entrena gsplat sea el color que se midio en la foto, y no una version
+# revelada de el.
+scene.view_settings.view_transform = "Standard"
+if hasattr(scene.view_settings, "look"):
+    scene.view_settings.look = "None"
+scene.view_settings.exposure = 0.0
+scene.view_settings.gamma = 1.0
 if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
     scene.eevee.taa_render_samples = args.samples
 
