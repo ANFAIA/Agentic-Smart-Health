@@ -38,6 +38,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -76,6 +79,16 @@ _RULES_CONFIDENCE = 0.9
 # human-in-the-loop del orquestador (0.7) a propósito: un descarte significa que
 # el informe decía algo que el twin no recoge, y eso lo decide una persona.
 _DISCARD_CONFIDENCE = 0.6
+
+# ⚠️ **Un informe leido por OCR NO vale lo que uno con capa de texto, y el numero lo dice.**
+# Por debajo del umbral del gate (0,70) a proposito: el OCR convierte un fichero ilegible en
+# uno ingerido, no en uno verificado. Que pase la ingesta y siga parando en revision humana
+# es exactamente lo que tiene que ocurrir.
+_OCR_CONFIDENCE = 0.5
+
+# 300 ppp sobre un escaneo de formulario: las pegatinas impresas de un pasaporte de
+# implantes —REF y numero de lote— son tipografia de 5-6 pt, y por debajo de 300 se pierden.
+_OCR_DPI = 300
 # Cuántos descartes se detallan en el `detail` antes de resumir el resto.
 _MAX_DISCARDS_IN_DETAIL = 5
 # Confianza que se asume si el modelo no la declara. Deliberadamente baja: una
@@ -130,6 +143,52 @@ def extract_text(path: Path) -> str:
         reader = PdfReader(str(path))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     raise ValueError(f"`report-agent` no sabe leer {suffix!r} (usa .pdf, .txt o .md).")
+
+
+class OcrNoDisponible(RuntimeError):
+    """No hay con que hacer OCR en esta maquina. Se dice cual falta, no «fallo el OCR»."""
+
+
+def ocr_disponible() -> str:
+    """`""` si se puede hacer OCR; si no, que binario falta y como se instala."""
+    faltan = [b for b in ("pdftoppm", "tesseract") if shutil.which(b) is None]
+    if not faltan:
+        return ""
+    return (
+        f"falta {' y '.join(faltan)} en esta maquina "
+        "(poppler y tesseract-ocr; en Arch/Manjaro `pacman -S poppler tesseract "
+        "tesseract-data-spa tesseract-data-eng`)"
+    )
+
+
+def ocr_pdf(path: Path, *, dpi: int = _OCR_DPI, idiomas: str = "spa+eng") -> str:
+    """Texto de un PDF **escaneado**, rasterizando y pasando `tesseract`.
+
+    ⚠️ **Esto NO es `extract_text` con otro nombre y no debe fundirse con el.** Una capa de
+    texto es lo que el generador del PDF escribio; esto es una lectura de pixeles con error,
+    y quien la consuma tiene que poder distinguirlas. Por eso vive aparte, por eso el
+    llamante baja la confianza a `_OCR_CONFIDENCE` y por eso el gate lo declara.
+
+    `--psm 1` incluye deteccion de orientacion: el caso real que motivo esto es un pasaporte
+    de implantes escaneado **girado 90 grados**, y sin OSD tesseract devuelve basura sin
+    avisar de que el problema era la rotacion.
+    """
+    if falta := ocr_disponible():
+        raise OcrNoDisponible(falta)
+    trozos: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "pag"
+        subprocess.run(
+            ["pdftoppm", "-r", str(dpi), "-png", str(path), str(base)],
+            check=True, capture_output=True,
+        )
+        for png in sorted(Path(tmp).glob("pag*.png")):
+            salida = subprocess.run(
+                ["tesseract", str(png), "stdout", "-l", idiomas, "--psm", "1"],
+                check=True, capture_output=True, text=True,
+            )
+            trozos.append(salida.stdout)
+    return "\n".join(trozos)
 
 
 def report_date(text: str) -> datetime | None:
@@ -635,6 +694,19 @@ class ReportAgent(BaseIngestionAgent):
 
     def _ingest(self, source: Path) -> IngestionOutput:
         text = extract_text(source)
+        leido_por_ocr, estorbo_ocr = False, ""
+        if not text.strip() and source.suffix.lower() == ".pdf":
+            # ⚠️ **El OCR va aqui y no dentro de `extract_text`.** Fundirlos haria que el
+            # resto del agente no pudiera distinguir lo que el generador del PDF escribio de
+            # lo que un motor leyo de unos pixeles, y esa distincion es la que sostiene la
+            # confianza que se declara mas abajo.
+            try:
+                text = ocr_pdf(source)
+                leido_por_ocr = bool(text.strip())
+            except OcrNoDisponible as exc:
+                estorbo_ocr = f" No se ha intentado OCR: {exc}"
+            except (subprocess.CalledProcessError, OSError) as exc:
+                estorbo_ocr = f" El OCR fallo: {type(exc).__name__}"
         if not text.strip():
             # ⚠️ **Ni la ruta ni el nombre: el HASH.** Este mensaje acaba en
             # `review.reasons` y de ahi dentro del `.uos`. Primero iba la ruta entera, que
@@ -659,7 +731,7 @@ class ReportAgent(BaseIngestionAgent):
                 "El informe no contiene texto extraíble: "
                 f"sha256:{_sha256(source)[:16]}{Path(source).suffix} — "
                 f"{_paginas_de_imagen(source)}. El documento se identifica por ese "
-                "`sha256` en el manifiesto"
+                "`sha256` en el manifiesto" + estorbo_ocr
             )
 
         # La fecha del informe manda: una observación regional es un punto de la
@@ -755,6 +827,18 @@ class ReportAgent(BaseIngestionAgent):
         if discards:
             agent_confidence = min(agent_confidence, _DISCARD_CONFIDENCE)
             motivos.append(_describe_discards(discards))
+        # ⚠️ **Y que el texto venga de un OCR se declara SIEMPRE**, aunque de el se haya
+        # sacado todo. Un numero de lote de implante mal leido —un 8 por un 6— es un fallo
+        # de trazabilidad que nadie detecta leyendo el `.uos`, porque el dato esta ahi y
+        # parece bueno. Bajar la confianza por debajo del umbral es lo que hace que una
+        # persona compare contra el documento, que viaja en el propio contenedor.
+        if leido_por_ocr:
+            agent_confidence = min(agent_confidence, _OCR_CONFIDENCE)
+            motivos.append(
+                "El informe no traia capa de texto y se leyo por OCR: lo extraido es una "
+                "lectura de pixeles con error, no lo que el documento dice. Hay que "
+                "cotejarlo con el original, que viaja en el contenedor por su `sha256`."
+            )
 
         return self._success(
             source,
