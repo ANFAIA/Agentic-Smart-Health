@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from gaussian_engine.tono_foto import (
     MINIMO_CORONAS_SONDA,
+    NO_ES_TIRA,
     Alineamiento,
     _lab,
     _lineal,
@@ -267,7 +268,10 @@ def test_sin_saber_el_lado_no_se_declara_ni_un_color(tmp_path) -> None:
 
     tonos, motivos = tonos_de_fotos([foto], arco, tabla, esperadas=5)
     assert tonos == []
-    assert len(motivos) == 1
+    # ⚠️ Contenido, no recuento: contar motivos falla cada vez que el emisor declara algo
+    # más, que es justo lo que se le pide. Misma lección que en el test del lado declarado.
+    assert any("espejo" in m for m in motivos)
+    assert any("NINGUNA de las" in m for m in motivos)
     assert "espejo" in motivos[0]
     # El nombre del fichero NO viaja en el motivo: lleva datos del paciente.
     assert "lateral.jpg" not in motivos[0]
@@ -741,3 +745,27 @@ def test_la_papila_es_mucosa_aunque_se_aparte_de_las_demas() -> None:
 
     ok = sondas_de_mucosa([diente] * 6, [*adherida, papila])
     assert ok.all(), "la papila se ha descartado y es encía"
+
+
+def test_una_foto_declarada_como_no_valida_no_aporta_color(tmp_path) -> None:
+    """⚠️ **«No sirve» tiene que poder decirse, y darle un lado sería peor.**
+
+    En un caso real el gate pedía «de qué lado es» a dos fotos que no eran tiras
+    vestibulares de esa arcada: una era de la arcada contraria y otra un primer plano de
+    una sola pieza, cuyas ocho «coronas» detectadas eran sus cúspides. Contestarle un lado
+    a esa segunda repartiría ocho códigos FDI entre las cúspides de un molar y plantaría
+    ese color en el contenedor, sin que nada lo delatara.
+    """
+    from gaussian_engine.tono_foto import tonos_de_fotos
+
+    arco = [17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27]
+    tabla = np.array([9.0, 10.0, 6.5, 7.0, 7.5, 6.5, 8.5,
+                      8.5, 6.5, 7.5, 7.0, 6.5, 10.0, 9.0])
+    foto = _lateral_sintetica(tmp_path / "lateral.jpg", [45, 50, 33, 35, 38])
+
+    tonos, motivos = tonos_de_fotos([foto], arco, tabla,
+                                    lado_conocido={foto: NO_ES_TIRA}, esperadas=5)
+    assert tonos == [], "una foto descartada no puede aportar ni un tono"
+    assert any("NO tira vestibular" in m for m in motivos)
+    # Y no se queda callado: un contenedor sin una sola corona con color tiene que decirlo.
+    assert any("NINGUNA de las" in m for m in motivos)

@@ -62,6 +62,10 @@ MINIMO_PIXELES_ENCIA = 200
 # debajo, la pendiente la decide el ruido y NO se corrige nada: se declara y se sigue.
 MINIMO_CORONAS_SONDA = 4
 
+# Valor de `lado_conocido` con el que una persona declara que una foto NO es una tira
+# vestibular de la arcada que se esta procesando. Es 0 porque no hay FDI 0.
+NO_ES_TIRA = 0
+
 # Fraccion de pixeles de la corona que el rechazo de mucosa puede llegar a tirar. Si tira
 # mas, lo que sobra no es contaminacion en el borde: es que la mascara no es esa corona, y
 # entonces el rechazo no arregla nada y se deja el dato crudo.
@@ -512,11 +516,26 @@ def tonos_de_fotos(
     siendo medido.
     """
     lado_conocido = lado_conocido or {}
+    # ⚠️ **Una foto puede no servir, y eso también es una respuesta.** El gate pedía «de
+    # qué lado es» a dos fotos de un caso real que no eran tiras vestibulares de esta
+    # arcada: una era de la arcada CONTRARIA y la otra un primer plano de una sola pieza,
+    # cuyas ocho «coronas» detectadas eran sus cúspides. A ninguna de las dos se le puede
+    # contestar de qué lado es, y darle un lado sería peor que no dárselo: repartiría ocho
+    # códigos FDI entre las cúspides de un molar y plantaría ese color en el contenedor.
+    descartadas = [f for f, v in lado_conocido.items() if v == NO_ES_TIRA]
     espejo = {f: (f // 10 % 2 and f + 10 or f - 10) for f in arco}
     mejor: dict[int, TonoPieza] = {}
     motivos: list[str] = []
     lecturas: list[_Lectura] = []
     for foto in fotos:
+        if lado_conocido.get(foto) == NO_ES_TIRA:
+            motivos.append(
+                f"sha256:{_sha256(foto)[:16]}{foto.suffix}: declarada como NO tira "
+                "vestibular de esta arcada, asi que no aporta color por pieza. Lo que el "
+                "emisor puede medir es que hay coronas en la imagen, no que sean de este "
+                "arco ni que sean coronas distintas"
+            )
+            continue
         rgb, etiquetas, orden = tira_de_coronas(foto, esperadas)
         if len(orden) < 3:
             continue
@@ -532,7 +551,8 @@ def tonos_de_fotos(
                     f"{len(orden)} corona(s) encaja igual de bien en {fdis[0]}-{fdis[-1]} "
                     f"que en su espejo {espejo[fdis[0]]}-{espejo[fdis[-1]]}. El arco es "
                     "simetrico y una foto intraoral puede estar tomada con espejo: hace "
-                    "falta que una persona diga de que lado es"
+                    "falta que una persona diga de que lado es, O que esta foto no es una "
+                    "tira vestibular de esta arcada"
                 )
                 continue
             if primera == espejo[fdis[0]]:
@@ -628,6 +648,17 @@ def tonos_de_fotos(
     # midio» de «se midio y salio gris»: lo unico que hay en el PLY para esa pieza es el
     # degradado de respaldo, que no es color de nadie. El motivo la nombra.
     sin_color = [f for f in arco if f not in mejor]
+    if fotos and not mejor:
+        # ⚠️ **Ninguna foto aporta color, y eso hay que decirlo una vez y entero.** El aviso
+        # de abajo se callaba cuando `mejor` estaba vacio —para no listar catorce piezas
+        # cuando no se habia medido ninguna— y el resultado era un contenedor sin una sola
+        # corona con color y sin ningun motivo que dijera por que.
+        motivos.append(
+            f"NINGUNA de las {len(fotos)} foto(s) aporta color por pieza: el contenedor no "
+            "declara el color de ninguna corona y el campo gaussiano las pinta con el "
+            "degradado de respaldo, que NO es color del paciente. Los motivos de cada foto "
+            "van arriba"
+        )
     if sin_color and mejor:
         motivos.append(
             "sin color medido: FDI "
