@@ -219,6 +219,73 @@ def linea(o) -> str:
             f"{(o.detail or '')[:70]}")
 
 
+def _con_color(snapshot, tonos):
+    """El snapshot con el color medido metido en sus observaciones por pieza.
+
+    Si una pieza ya tiene observación del informe, se le AÑADE el color en vez de crear
+    otra entrada: son dos afirmaciones sobre el mismo diente y partirlas obligaría a quien
+    lee a reunirlas. Si no la tiene, se crea una con lo único que se sabe de ella.
+    """
+    if snapshot is None or not tonos:
+        return snapshot
+    from core_schemas import (
+        ClinicalAttributes,
+        Derivation,
+        Modality,
+        Provenance,
+        RegionalObservation,
+    )
+
+    por_fdi = {t.fdi: t for t in tonos}
+    salida, vistos = [], set()
+    for obs in snapshot.regional:
+        tono = por_fdi.get(int(obs.region_id)) if str(obs.region_id).isdigit() else None
+        if tono is None:
+            salida.append(obs)
+            continue
+        vistos.add(tono.fdi)
+        salida.append(obs.model_copy(update={
+            "attributes": obs.attributes.model_copy(update={"color": _color(tono)})
+        }))
+    for fdi, tono in sorted(por_fdi.items()):
+        if fdi in vistos:
+            continue
+        salida.append(RegionalObservation(
+            region_id=str(fdi),
+            attributes=ClinicalAttributes(color=_color(tono)),
+            timestamp=snapshot.timestamp,
+            provenance=Provenance(
+                source_file=f"sha256:{tono.foto_sha256}",
+                modality=Modality.IMAGE,
+                agent="gaussian-engine/tono_foto",
+                confidence=1.0,
+                derivation=Derivation.DETERMINISTIC,
+            ),
+        ))
+    # ⚠️ `model_copy` y NO `dataclasses.replace`: `TwinSnapshot` es un modelo pydantic.
+    # `replace` sobre uno lanza «replace() should be called on dataclass instances», y aquí
+    # eso lo recogía el `except` de la apariencia, que lo anunciaba como un fallo de
+    # entrenamiento. El contenedor salía entero, con su PSNR y su cabecera, y sin color en
+    # `clinical/observations.json`: un fallo de contrato disfrazado de aviso.
+    return snapshot.model_copy(update={"regional": salida})
+
+
+def _color(tono):
+    from core_schemas import ColorCorona
+
+    return ColorCorona(
+        cervical=tuple(float(x) for x in tono.lab[0]),
+        medio=tuple(float(x) for x in tono.lab[1]),
+        incisal=tuple(float(x) for x in tono.lab[2]),
+        foto_sha256=tono.foto_sha256,
+        n_pixeles=int(tono.n_pixeles),
+        correccion_iluminacion=(
+            None if tono.correccion is None
+            else tuple(float(b) for b in tono.correccion)
+        ),
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -593,6 +660,8 @@ def main() -> int:
             print("  ⚠ --entrena-apariencia requiere image_refs (fotos intraorales)")
         else:
             print("\n--- 3b · ENTRENAMIENTO APARIENCIA (gsplat + Blender) ---")
+            tonos: list = []
+            motivos_color: list = []
             try:
                 import numpy as np
                 import torch
@@ -664,10 +733,28 @@ def main() -> int:
                               f"{metricas.n_gaussianas:,} gaussianas")
                         print(f"  → perfil `{metricas.perfil}`: DERIVADO, color real "
                               "· viaja como `asset.apariencia` en el `.uos`")
+                    tonos = list(metricas.tonos)
+                    motivos_color = list(metricas.motivos)
             except Exception as e:
                 print(f"  ⚠ Error entrenando apariencia: {e}")
                 import traceback
                 traceback.print_exc()
+
+            # ⚠️ **El color medido entra en el CONTRATO, no solo en los píxeles.**
+            # Una `RegionalObservation` por corona con soporte REGIONAL: eso es lo que hace
+            # que `clinical/observations.json` pueda responder «de qué color es el 26» sin
+            # abrir un PLY de 8 MB. `derivation` es `deterministic` porque es la mediana de
+            # unos píxeles concretos de una foto concreta: se recalcula exactamente igual.
+            #
+            # ⚠️ **Y va FUERA del `try`, que es media corrección del fallo.** Aquí dentro,
+            # un error de contrato salía por pantalla como «Error entrenando apariencia»
+            # —con el entrenamiento ya terminado y su PSNR impreso— y el contenedor se
+            # exportaba entero y mudo. Lo que el `except` puede tragarse es que el
+            # entrenamiento falle; que el color no llegue al snapshot, no.
+            fus = replace(fus, snapshot=_con_color(fus.snapshot, tonos))
+            # Y los motivos del color al gate: una foto que no se pudo lateralizar y una
+            # pieza que ninguna foto ve son exactamente lo que una persona tiene que mirar.
+            fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_color])
 
     print("\n--- 4 · EXPORTACIÓN ---")
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
@@ -704,6 +791,25 @@ def main() -> int:
               f"{'' if e.max_deviation_mm is None else f'{e.max_deviation_mm:.6f} mm'}"
               f"{'' if e.psnr_db is None else f'PSNR {e.psnr_db:.1f} dB'}")
     print(f"  → reversible: {'sí' if fin.reversible else 'NO'}")
+
+    # ── La malla mejorada: la arcada que entró, con el color que el campo mide ──
+    #
+    # ⚠️ **Se saca del `.uos` recién escrito y no de las variables que hay aquí.** Es la
+    # misma cadena que ejecutaría quien reciba el contenedor dentro de un año sin este
+    # repositorio: si el color no se puede leer del fichero entregado, el campo gaussiano
+    # no está aportando nada y la reversibilidad no cierra. Leerlo de `vcol`, que está a
+    # dos variables de distancia, sería más rápido y no demostraría eso.
+    contenedor = next(iter(sorted(args.salida.glob("export/*.uos"))), None)
+    if contenedor is not None:
+        import subprocess
+
+        hecho = subprocess.run(
+            [sys.executable, str(RAIZ / "scripts" / "malla_mejorada.py"),
+             "--uos", str(contenedor)],
+            capture_output=True, text=True,
+        )
+        print("\n--- 4b · MALLA MEJORADA (desde el `.uos`) ---")
+        print(hecho.stdout.rstrip() or f"  ⚠ {hecho.stderr.strip().splitlines()[-1:]}")
 
     print("\n--- 5 · GATE DE REVISIÓN HUMANA ---")
     if not fin.hitl_reasons:
