@@ -53,6 +53,20 @@ BRILLO_PCT = 90.0
 MINIMO_PIXELES = 60
 MINIMO_POR_TERCIO = 30
 
+# Alto, en pixeles de la imagen reducida, de la banda de mucosa que se muestrea justo por
+# encima del cuello de cada corona. Ver `encia_contigua`.
+BANDA_ENCIA_PX = 40
+MINIMO_PIXELES_ENCIA = 200
+
+# Cuantas coronas con sonda de encia hacen falta para estimar la caida del flash. Por
+# debajo, la pendiente la decide el ruido y NO se corrige nada: se declara y se sigue.
+MINIMO_CORONAS_SONDA = 4
+
+# Fraccion de pixeles de la corona que el rechazo de mucosa puede llegar a tirar. Si tira
+# mas, lo que sobra no es contaminacion en el borde: es que la mascara no es esa corona, y
+# entonces el rechazo no arregla nada y se deja el dato crudo.
+RECHAZO_MAXIMO = 0.45
+
 
 
 def _lab(rgb: np.ndarray) -> np.ndarray:
@@ -151,6 +165,13 @@ def costura_oclusal(mascara: np.ndarray, luminancia: np.ndarray) -> np.ndarray:
 # sobre un caso real: la oclusal da 1,01 —su costura es tan clara como los dientes— y las
 # cuatro vistas con eje dan 0,76 a 0,87.
 COSTURA_MAXIMA = 0.95
+
+# ⚠️ **Cuanto se le concede a la tabla de alturas antes de dejar de pintar corona.**
+# Es un juicio DECLARADO, no una medida — el mismo criterio que la `TOLERANCIA` de
+# `scripts/mide_segmentacion.py`, y por el mismo motivo: los valores de Wheeler son medias
+# de poblacion, y el escaner entra un poco en el surco. A 1,3 una corona tendria que asomar
+# un 30 % mas que la mayor de su tipo para que se le recorte el color.
+MARGEN_ALTURA = 1.3
 
 
 def costura_es_real(mascara: np.ndarray, luminancia: np.ndarray,
@@ -283,6 +304,11 @@ class TonoPieza:
     """(3, 3): cervical, medio e incisal, cada uno `L*a*b*`."""
     n_pixeles: int
     foto_sha256: str
+    correccion: tuple[float, float, float] | None = None
+    """La pendiente por canal con la que se descontó la iluminación, o `None` si no se
+    pudo corregir. Ver `ajuste_de_iluminacion`. Viaja con la medida porque un tono
+    corregido y uno crudo NO son comparables entre sí, y quien lee tiene que poder
+    distinguirlos sin reconstruir cómo se calcularon."""
 
     @property
     def rgb(self) -> np.ndarray:
@@ -298,6 +324,163 @@ def _sha256(ruta: Path) -> str:
         for trozo in iter(lambda: f.read(1 << 20), b""):
             h.update(trozo)
     return h.hexdigest()
+
+
+def _lineal(srgb: np.ndarray) -> np.ndarray:
+    """sRGB 0-255 a luz lineal 0-1. La luz se multiplica; `L*` y sRGB, no."""
+    v = np.asarray(srgb, dtype=np.float64) / 255.0
+    return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4)
+
+
+def _srgb(lineal: np.ndarray) -> np.ndarray:
+    """La vuelta de `_lineal`, a 0-255."""
+    v = np.clip(np.asarray(lineal, dtype=np.float64), 0.0, 1.0)
+    g = np.where(v <= 0.0031308, 12.92 * v, 1.055 * v ** (1 / 2.4) - 0.055)
+    return np.clip(g, 0.0, 1.0) * 255.0
+
+
+def encia_contigua(mascara: np.ndarray, etiquetas: np.ndarray,
+                   lineal: np.ndarray) -> np.ndarray | None:
+    """La mucosa pegada al cuello de UNA corona, en luz lineal. `(3,)` o `None`.
+
+    ⚠️ **Es la tarjeta gris que la foto no lleva.** En una intraoral no hay referencia
+    conocida en el encuadre, asi que el nivel absoluto de una corona es indistinguible de
+    lo lejos que le llegase el flash. Pero la encia adherida SI es una superficie de color
+    casi constante a lo largo de la arcada, esta a la misma distancia de la camara que el
+    diente que toca y recibe la misma luz: sirve de sonda de iluminacion local.
+
+    Se muestrea hacia el cuello —`y` menor, ver `HACIA_CERVICAL_SUPERIOR`— y solo donde no
+    hay corona de nadie (`etiquetas == 0`), para no medir el diente de al lado.
+    """
+    ys, xs = np.nonzero(mascara)
+    if len(ys) == 0:
+        return None
+    techo = int(ys.min())
+    banda = np.zeros_like(mascara)
+    banda[max(0, techo - BANDA_ENCIA_PX):techo, int(xs.min()):int(xs.max()) + 1] = True
+    banda &= etiquetas == 0
+    if int(banda.sum()) < MINIMO_PIXELES_ENCIA:
+        return None
+    pix = lineal[banda]
+    claro = _lab(_srgb(pix))[:, 0]
+    pix = pix[claro < np.percentile(claro, BRILLO_PCT)]
+    return np.median(pix, axis=0)
+
+
+def _theil_sen(x: np.ndarray, y: np.ndarray) -> float:
+    """Pendiente robusta: la mediana de las pendientes de todos los pares.
+
+    Con una docena de coronas y alguna con la sonda contaminada, un minimos cuadrados se
+    va detras del punto malo; la mediana de pendientes no.
+    """
+    pend = [(y[j] - y[i]) / (x[j] - x[i])
+            for i in range(len(x)) for j in range(i + 1, len(x))
+            if abs(x[j] - x[i]) > 1e-6]
+    return float(np.median(pend)) if pend else 0.0
+
+
+# Cuanto mas roja que su corona tiene que ser una sonda para admitirse como mucosa, en `a*`.
+#
+# ⚠️ **La banda de encia se toma por geometria, y ahi arriba no siempre hay encia.** Se
+# muestrea lo que queda por encima del cuello y no es corona de nadie: en una foto clinica
+# eso puede ser un separador de plastico, un labio, el espejo o el fondo negro de la boca.
+# Corregir una corona contra un separador blanco la deja con un color inventado y con toda
+# la pinta de estar medido.
+#
+# ⚠️ **Y el criterio es DIRECCIONAL, no de dispersion.** El primer intento rechazaba las
+# sondas que se apartaban mas de 3 MAD de las demas, y en el caso real tiro justo las dos
+# buenas: la encia del 13 y la del 22 son papila, mas saturadas que la encia adherida
+# (`a*` 36,1 y 31,2 frente a 25-30), no un separador. Rechazarlas dejaba esas dos piezas
+# con el artefacto puesto y con la mucosa dentro de la muestra — peor que no filtrar nada.
+# Lo que separa mucosa de no-mucosa no es apartarse de la media: es el SIGNO. Medido sobre
+# el caso, las dieciseis sondas de encia estan entre 12,5 y 22,2 puntos de `a*` por encima
+# de su corona; un plastico blanco, un espejo o el fondo estarian en cero o por debajo.
+MARGEN_MUCOSA = 5.0
+
+
+def sondas_de_mucosa(dientes: list[np.ndarray],
+                     encias: list[np.ndarray]) -> np.ndarray:
+    """Cuales de esas sondas son mucosa de verdad. `(n,)` de `bool`.
+
+    Se compara en `a*` y no en `L*`: la claridad es justo lo que varia por la caida del
+    flash —es el artefacto que se esta corrigiendo—, mientras que la mucosa es mas roja que
+    el esmalte con cualquier luz. Ver `MARGEN_MUCOSA`.
+    """
+    if not encias:
+        return np.zeros(0, bool)
+    a_encia = _lab(_srgb(np.stack(encias)))[:, 1]
+    a_diente = _lab(_srgb(np.stack(dientes)))[:, 1]
+    return a_encia - a_diente >= MARGEN_MUCOSA
+
+
+def ajuste_de_iluminacion(dientes: list[np.ndarray], encias: list[np.ndarray],
+                          ) -> tuple[np.ndarray, np.ndarray] | None:
+    """Referencia de encia y cuanto del diente predice la encia. `(ref, beta)` o `None`.
+
+    ⚠️ **No se divide por la sonda, se le quita al diente solo lo que la sonda EXPLICA.**
+    Dividir asume que la encia recibe exactamente la misma luz que el diente y nada mas, y
+    es falso: la encia esta retraida respecto al plano vestibular y le entra sombra propia,
+    asi que su rango es MAYOR que el del diente. Medido en un caso real: el diente recorre
+    21,6 puntos de `L*` y la encia 24,8. Dividir por ella no aplana el degradado — lo
+    invierte, y el molar mas oscuro sale como el diente mas claro de la boca.
+
+    Lo que se hace es una regresion en log: `beta` es la pendiente de `log(diente)` contra
+    `log(encia/ref)` por canal, y se resta `beta * log(encia/ref)`. `beta = 1` seria
+    dividir; `beta = 0`, no tocar nada. Sale del dato —en ese mismo caso, 0,63 / 0,59 /
+    0,69— y no de una constante elegida a mano.
+
+    ⚠️ **Y esto tiene un coste que hay que declarar.** Un diente de verdad tambien se
+    vuelve algo mas cromatico hacia atras, y esa parte va correlacionada con la posicion
+    igual que la luz: al quitar la componente que la encia predice se va tambien un poco de
+    ella. Se acepta porque la alternativa es dejar un artefacto de 21 puntos de `L*` que
+    hace que el 21 salga blanco y el 27 marron siendo la misma boca.
+    """
+    if len(dientes) < MINIMO_CORONAS_SONDA:
+        return None
+    d = np.stack(dientes)
+    e = np.stack(encias)
+    ref = np.median(e, axis=0)
+    beta = np.array([
+        np.clip(_theil_sen(np.log(e[:, c] / ref[c]), np.log(d[:, c])), 0.0, 1.0)
+        for c in range(3)
+    ])
+    return ref, beta
+
+
+def _sin_mucosa(lab: np.ndarray, encia_lab: np.ndarray) -> np.ndarray:
+    """Mascara de los pixeles que estan mas cerca del diente que de la encia, en `a*b*`.
+
+    ⚠️ **Una mediana aguanta un pixel de encia, no un tercio de encia.** El docstring de
+    `tono_por_tercios` dice que la mediana absorbe «algun pixel de encia colado en el
+    borde», y es cierto mientras el blob sea la corona. Cuando la segmentacion se desborda
+    sobre la mucosa —que es justo lo que hace en este caso, medido— entra mucha, y entonces
+    la mediana se mueve: un canino salio con `a* 17,5` teniendo vecinos en `a* 7,2` y `7,4`.
+    Eso no es un canino cromatico, es encia.
+
+    Se separa por `a*b*` y no por `L*` a proposito: la iluminacion mueve sobre todo `L*`,
+    asi que un umbral en claridad confundiria sombra con mucosa. En cromaticidad la encia y
+    el esmalte estan lejos —`a*` 29 contra 8 en el caso medido— y la luz apenas los mueve.
+    """
+    centro = np.median(lab, axis=0)
+    al_diente = np.linalg.norm(lab[:, 1:] - centro[1:], axis=1)
+    a_la_encia = np.linalg.norm(lab[:, 1:] - encia_lab[1:], axis=1)
+    return al_diente <= a_la_encia
+
+
+@dataclass(frozen=True)
+class _Lectura:
+    """Una corona localizada en una foto, antes de saber con que luz se tomo.
+
+    El color no se puede calcular en el mismo bucle que la localiza: la correccion de
+    iluminacion se estima sobre todas las coronas de todas las fotos a la vez, asi que hace
+    falta tenerlas todas antes de medir ninguna.
+    """
+
+    digest: str
+    rgb: np.ndarray
+    mascara: np.ndarray
+    fdi: int
+    encia: np.ndarray | None
 
 
 def tonos_de_fotos(
@@ -332,6 +515,7 @@ def tonos_de_fotos(
     espejo = {f: (f // 10 % 2 and f + 10 or f - 10) for f in arco}
     mejor: dict[int, TonoPieza] = {}
     motivos: list[str] = []
+    lecturas: list[_Lectura] = []
     for foto in fotos:
         rgb, etiquetas, orden = tira_de_coronas(foto, esperadas)
         if len(orden) < 3:
@@ -361,15 +545,97 @@ def tonos_de_fotos(
                 )
                 continue
         digest = _sha256(foto)
+        lineal = _lineal(rgb)
         for fdi, k in zip(fdis, orden, strict=True):
             mascara = etiquetas == k
-            tercios = tono_por_tercios(rgb, mascara, HACIA_CERVICAL_SUPERIOR)
-            if tercios is None:
-                continue
-            n = int(mascara.sum())
-            if fdi not in mejor or n > mejor[fdi].n_pixeles:
-                mejor[fdi] = TonoPieza(fdi=fdi, lab=tercios, n_pixeles=n,
-                                       foto_sha256=digest)
+            lecturas.append(_Lectura(
+                digest=digest, rgb=rgb, mascara=mascara, fdi=fdi,
+                encia=encia_contigua(mascara, etiquetas, lineal),
+            ))
+
+    # ── La caida del flash, estimada sobre TODAS las fotos a la vez ─────────
+    #
+    # ⚠️ **El ajuste es global y no por foto a proposito.** Cada foto ve media arcada y las
+    # dos no comparten ninguna pieza, asi que ajustar una por su cuenta deja libre el nivel
+    # de cada una y los dos lados quedan sin comparar entre si. Con una sola referencia de
+    # encia para todo el caso, las dos mitades caen en la misma escala.
+    candidatas = [c for c in lecturas if c.encia is not None]
+    es_mucosa = sondas_de_mucosa(
+        [np.median(_lineal(c.rgb[c.mascara]), axis=0) for c in candidatas],
+        [c.encia for c in candidatas],  # type: ignore[misc]
+    )
+    descartadas = sorted({c.fdi for c, ok in zip(candidatas, es_mucosa, strict=True)
+                          if not ok})
+    validas = {id(c) for c, ok in zip(candidatas, es_mucosa, strict=True) if ok}
+    con_sonda = [c for c in candidatas if id(c) in validas]
+    ajuste = ajuste_de_iluminacion(
+        [np.median(_lineal(c.rgb[c.mascara]), axis=0) for c in con_sonda],
+        [c.encia for c in con_sonda],  # type: ignore[misc]
+    )
+    if ajuste is None:
+        if lecturas:
+            motivos.append(
+                f"tono sin corregir de iluminacion: solo {len(con_sonda)} corona(s) de "
+                f"{len(lecturas)} tienen mucosa contigua que muestrear y hacen falta "
+                f"{MINIMO_CORONAS_SONDA}. Los colores declarados llevan dentro lo lejos "
+                "que le llego el flash a cada pieza y NO son comparables entre si"
+            )
+    else:
+        ref, beta = ajuste
+        motivos.append(
+            "tono corregido de iluminacion con la encia del propio paciente como "
+            f"referencia ({len(con_sonda)} corona(s) con sonda de mucosa); se descuenta "
+            "de cada pieza la parte que su encia contigua predice, con pendiente medida "
+            f"{beta[0]:.2f}/{beta[1]:.2f}/{beta[2]:.2f} por canal. Quedan comparables "
+            "entre si, pero el NIVEL absoluto sigue sin calibrar: la foto no lleva "
+            "referencia gris"
+        )
+        if descartadas:
+            motivos.append(
+                "sonda de mucosa descartada por color: FDI "
+                + ", ".join(str(f) for f in descartadas)
+                + ". Lo que hay por encima de su cuello no tiene color de encia —un "
+                "separador, un labio o el fondo de la boca—, asi que no sirve de "
+                "referencia de iluminacion y esas piezas se declaran sin corregir"
+            )
+        sin_sonda = sorted({c.fdi for c in lecturas if c.encia is None} | set(descartadas))
+        if sin_sonda:
+            motivos.append(
+                "sin sonda de mucosa: FDI "
+                + ", ".join(str(f) for f in sin_sonda)
+                + ". No tienen encia contigua visible en su foto, asi que su tono se "
+                "declara SIN corregir y no es comparable con el de las demas piezas"
+            )
+
+    # ── Pase 2: el color de cada pieza, ya en la misma escala ───────────────
+    for lect in lecturas:
+        factor = None
+        if ajuste is not None and lect.encia is not None and id(lect) in validas:
+            ref, beta = ajuste
+            factor = (ref / lect.encia) ** beta
+        tercios = tono_por_tercios(lect.rgb, lect.mascara, HACIA_CERVICAL_SUPERIOR,
+                                   factor=factor, encia=lect.encia)
+        if tercios is None:
+            continue
+        n = int(lect.mascara.sum())
+        if lect.fdi not in mejor or n > mejor[lect.fdi].n_pixeles:
+            mejor[lect.fdi] = TonoPieza(
+                fdi=lect.fdi, lab=tercios, n_pixeles=n, foto_sha256=lect.digest,
+                correccion=None if factor is None else tuple(float(b) for b in beta),
+            )
+    # ⚠️ **Una pieza sin color medido tiene que DECIRSE.** Quien abre el contenedor ve
+    # trece coronas con su color y una sin campo `color`, y no puede distinguir «no se
+    # midio» de «se midio y salio gris»: lo unico que hay en el PLY para esa pieza es el
+    # degradado de respaldo, que no es color de nadie. El motivo la nombra.
+    sin_color = [f for f in arco if f not in mejor]
+    if sin_color and mejor:
+        motivos.append(
+            "sin color medido: FDI "
+            + ", ".join(str(f) for f in sin_color)
+            + ". Ninguna de las fotos aportadas la ve con su eje cuello-borde, asi que el "
+            "contenedor no declara su color y el campo gaussiano la pinta con el degradado "
+            "de respaldo, que NO es color del paciente"
+        )
     return [mejor[f] for f in sorted(mejor)], motivos
 
 
@@ -386,7 +652,9 @@ HACIA_CERVICAL_SUPERIOR = (0.0, -1.0)
 
 
 def tono_por_tercios(rgb: np.ndarray, mascara: np.ndarray,
-                     hacia_cervical: tuple[float, float]) -> np.ndarray | None:
+                     hacia_cervical: tuple[float, float], *,
+                     factor: np.ndarray | None = None,
+                     encia: np.ndarray | None = None) -> np.ndarray | None:
     """`L*a*b*` por tercio cervical, medio e incisal. `(3, 3)` o `None`.
 
     **Por tercios y no un color por diente**, porque un diente no es de un color: se
@@ -400,17 +668,32 @@ def tono_por_tercios(rgb: np.ndarray, mascara: np.ndarray,
 
     `hacia_cervical` es la direccion en la imagen que va del borde incisal al cuello. Se
     pasa medida y no supuesta.
+
+    `factor` es la correccion de iluminacion de ESTA corona, en luz lineal y por canal (ver
+    `ajuste_de_iluminacion`); `encia`, su sonda de mucosa, para rechazar los pixeles que no
+    son diente (ver `_sin_mucosa`). Sin ellos la funcion mide lo mismo que antes, que es lo
+    que pasa cuando la corona no tiene mucosa contigua que muestrear.
     """
     ys, xs = np.nonzero(mascara)
     if len(ys) < MINIMO_PIXELES:
         return None
-    lab = _lab(np.asarray(rgb)[ys, xs])
+    pix = np.asarray(rgb)[ys, xs]
+    if factor is not None:
+        pix = _srgb(_lineal(pix) * factor)
+    lab = _lab(pix)
     sin_brillo = lab[:, 0] < np.percentile(lab[:, 0], BRILLO_PCT)
     if sin_brillo.sum() < MINIMO_POR_TERCIO * 3:
         return None
     lab = lab[sin_brillo]
     proy = (np.stack([xs, ys], axis=1).astype(np.float64)
             @ np.asarray(hacia_cervical, dtype=np.float64))[sin_brillo]
+    if encia is not None:
+        enc = encia if factor is None else encia * factor
+        queda = _sin_mucosa(lab, _lab(_srgb(enc)[None])[0])
+        # ⚠️ Tirar media corona no es limpiar un borde: si pasa, la mascara no es esta
+        # pieza y el rechazo no arregla nada. Se deja el dato crudo y que lo vea el gate.
+        if queda.mean() >= 1.0 - RECHAZO_MAXIMO and queda.sum() >= MINIMO_POR_TERCIO * 3:
+            lab, proy = lab[queda], proy[queda]
     cortes = np.quantile(proy, [1 / 3, 2 / 3])
     # ⚠️ **De CERVICAL a INCISAL, y el orden importa mas de lo que parece.** `proy` crece
     # hacia el cuello, asi que la franja de proyeccion ALTA es la cervical: devolverlas en
@@ -501,6 +784,21 @@ def pinta_malla(posiciones: np.ndarray, etiquetas: np.ndarray,
     vestibular ese vecino es una sombra interdental de la foto oclusal. Aqui un vertice sin
     pieza reconocida no hereda de un vecino cualquiera: se queda sin declarar, y quien
     pinta decide que hacer con el.
+
+    ⚠️ **Y el color de una pieza no se pinta mas alla de la altura de corona de tabla.**
+    Esto no es cosmetica: la segmentacion etiqueta como diente el **70,2 %** de la malla
+    cuando un experto etiqueta el 53,9 %, y en el caso real **11.800 vertices** con codigo
+    FDI caen por debajo del arranque de las coronas. Sin cota pasaban dos cosas a la vez,
+    las dos malas:
+
+    - encia y paladar se pintaban con el tono de la pieza que los reclamo, y el modelo salia
+      como un mosaico de colores — cada parche del color del diente que se lo llevo;
+    - y los tres tercios se repartian sobre esa altura falsa, asi que el degradado
+      **dentro** de la corona tambien salia mal: el «cervical» de un 27 que baja veinte
+      milimetros por el paladar se estiraba sobre trece milimetros de encia.
+
+    Lo que queda por debajo de la cota se pinta con el color de ENCIA, que tambien es
+    medido. No se inventa nada: la cota solo dice donde NO se puede afirmar color de corona.
     """
     pos = np.asarray(posiciones, dtype=np.float64)
     etq = np.asarray(etiquetas)
@@ -513,16 +811,34 @@ def pinta_malla(posiciones: np.ndarray, etiquetas: np.ndarray,
         rgb[etq == 0] = rgb_de_lab(np.asarray(encia))
         medido[etq == 0] = True
 
+    from analysis_agents.dental import altura_admitida
+
     for tono in tonos:
         suyos = etq == tono.fdi
         if not suyos.any():
             continue
-        altura = pos[suyos] @ eje
-        lo, hi = float(altura.min()), float(altura.max())
+        idx = np.flatnonzero(suyos)
+        altura = pos[idx] @ eje
+        hi = float(altura.max())
+        cota = altura_admitida(tono.fdi)
+        suelo = float(altura.min()) if cota is None else max(
+            float(altura.min()), hi - MARGEN_ALTURA * cota
+        )
+        corona = altura >= suelo
+        if not corona.any():
+            continue
+        # Lo que la etiqueta reclama por debajo de la cota NO puede ser corona. Se queda
+        # con el color de encia, que es medido, en vez de con el de la pieza.
+        if encia is not None and not corona.all():
+            rgb[idx[~corona]] = rgb_de_lab(np.asarray(encia))
+            medido[idx[~corona]] = True
+
+        idx, altura = idx[corona], altura[corona]
+        lo = float(altura.min())
         # 0 en el cuello, 1 en el borde: el eje oclusal apunta a oclusal, o sea al borde.
         t = np.zeros_like(altura) if hi - lo < 1e-9 else (altura - lo) / (hi - lo)
         canales = [np.interp(t, [0.0, 0.5, 1.0], tono.lab[:, c]) for c in range(3)]
         lab = np.stack(canales, axis=1)
-        rgb[suyos] = np.stack([rgb_de_lab(v) for v in lab])
-        medido[suyos] = True
+        rgb[idx] = np.stack([rgb_de_lab(v) for v in lab])
+        medido[idx] = True
     return rgb, medido

@@ -383,10 +383,13 @@ class ColorCorona(BaseModel):
     pintarla y depende del espacio de color de quien la pinte. `L*` va de 0 a 100 y
     `a*`/`b*` caben de sobra en ±128.
 
-    ⚠️ **Esto es color medido, NO un tono certificado.** Medido sobre una lateral real, el
-    `L*` baja de 76,6 en el 11 a 61,2 en el 27: eso no es que los molares sean más oscuros,
-    es el flash cayendo hacia el fondo de la boca. Para afirmar un tono haría falta una
-    referencia gris dentro del encuadre, y una serie clínica no la lleva.
+    ⚠️ **Esto es color medido, NO un tono certificado.** Sin corregir, el `L*` de un caso
+    real bajaba 22,7 puntos entre el 21 y el 27 —correlación −0,86 con la distancia a la
+    línea media—: eso no es que los molares sean más oscuros, es el flash cayendo hacia el
+    fondo de la boca. `correccion_iluminacion` dice si esa caída se descontó y con qué
+    pendiente. Aun descontada, el NIVEL absoluto sigue sin calibrar: para afirmar un tono
+    de guía haría falta una referencia gris dentro del encuadre, y una serie clínica no la
+    lleva. Lo que se puede afirmar es la comparación entre piezas del mismo caso.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -398,6 +401,13 @@ class ColorCorona(BaseModel):
     """De qué fotografía salió. El nombre del fichero NO viaja: lleva datos del paciente."""
     n_pixeles: int = Field(ge=1)
     """Sobre cuántos píxeles se tomó la mediana. Una medida sin su soporte no se puede pesar."""
+    correccion_iluminacion: tuple[float, float, float] | None = None
+    """Pendiente por canal con la que se descontó la caída del flash usando la encía del
+    propio paciente como referencia, o `None` si la pieza NO se pudo corregir.
+
+    ⚠️ **Ausente no es cero: es «no comparable».** Una pieza sin corregir lleva dentro lo
+    lejos que le llegó el flash, así que su `L*` no se puede poner al lado del de una
+    corregida. Por eso el campo es opcional y no un `0.0` por defecto."""
 
 
 class ClinicalAttributes(BaseModel):

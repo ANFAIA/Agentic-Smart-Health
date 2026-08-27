@@ -548,6 +548,7 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 | [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md) | qué lleva un `.uos` y a quién le sirve |
 | [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | por qué la segmentación FDI no está resuelta, con la medida |
 | [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
+| [`docs/research/color-por-pieza-desde-foto.md`](docs/research/color-por-pieza-desde-foto.md) | el tono de cada corona, y cómo se descuenta la caída del flash sin invertirla |
 | [`docs/research/segmentacion-diente-cbct.md`](docs/research/segmentacion-diente-cbct.md) | hasta dónde llega un clasificador sobre el CBCT, y dónde deja de llegar |
 
 ---
