@@ -315,9 +315,28 @@ def main() -> int:
         help="`region_id` por vertice del escaneo intraoral. Es la mitad que dice CUAL es "
              "cada diente: el modelo del CBCT es binario y no puede darla.",
     )
+    ap.add_argument(
+        "--lado-foto", action="append", default=[], metavar="FOTO=FDI",
+        help="De qué lado es una foto, como `nombre=FDI` de su PRIMERA corona (la de más "
+             "a la izquierda del encuadre). Repetible. ⚠️ Es el ÚNICO dato de aquí que no "
+             "sale de una medida, y no por falta de intentarlo: el arco es un espejo "
+             "exacto —la tabla de anchos leída al derecho y al revés es la misma lista— y "
+             "una foto intraoral puede estar tomada con espejo, así que ni la geometría "
+             "ni la imagen dicen de qué lado es. Sin esto no hay color por pieza y el "
+             "gate lo declara, en vez de jugarse el 16 contra el 26 a cara o cruz.",
+    )
     args = ap.parse_args()
 
     caso = descubre(args.caso)
+    lado_fotos: dict[Path, int] = {}
+    for par in args.lado_foto:
+        nombre, _, codigo = par.partition("=")
+        elegidas = [f for f in caso.images if nombre in f.name]
+        if len(elegidas) != 1 or not codigo.isdigit():
+            que = "no cuadra con ninguna foto" if not elegidas else (
+                "cuadra con varias fotos" if len(elegidas) > 1 else "el FDI no es un número")
+            raise SystemExit(f"--lado-foto {par!r}: {que}")
+        lado_fotos[elegidas[0]] = int(codigo)
     print("=" * 78)
     print(f"CASO: {caso.acquisition_id}")
     print("=" * 78)
@@ -617,6 +636,9 @@ def main() -> int:
                         # encender una pieza sin malla delante, que es lo que
                         # necesita un contenedor de solo gaussianas.
                         etiquetas=etq_ios,
+                        # El bit que ninguna medida da: de qué lado es cada foto. Ver
+                        # `--lado-foto` y `tono_foto.alinea_con_el_arco`.
+                        lado_fotos=lado_fotos,
                         dispositivo="cuda" if torch.cuda.is_available() else "cpu",
                         traza=True,
                     )

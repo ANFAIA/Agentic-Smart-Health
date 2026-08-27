@@ -798,6 +798,22 @@ def escribe_inria(
 # Funcion principal: snapshot-in, snapshot-out
 # ---------------------------------------------------------------------------
 
+def _eje_oclusal(posiciones: np.ndarray, etiquetas: np.ndarray) -> np.ndarray:
+    """El eje apico-oclusal de la arcada, MEDIDO. Ver `export_agents.anatomia`.
+
+    Se usa para repartir los tres tercios a lo largo de la corona. Si no se puede medir
+    —hace falta encia y coronas etiquetadas— se cae al eje menor de la nube, que es la
+    misma regla que `marco_anatomico` aplica antes de mirar las etiquetas.
+    """
+    from export_agents.anatomia import marco_anatomico
+
+    base, _ = marco_anatomico(posiciones, etiquetas)
+    if base is not None:
+        return np.asarray(base.oclusal, dtype=np.float64)
+    pos = np.asarray(posiciones, dtype=np.float64)
+    return np.linalg.svd(pos - pos.mean(axis=0), full_matrices=False)[2][-1]
+
+
 def entrena_apariencia(
     posiciones: np.ndarray,
     caras: np.ndarray,
@@ -814,6 +830,12 @@ def entrena_apariencia(
     # FDI por vertice del escaneo. Si viene, cada gaussiana sale con el codigo de la corona
     # mas cercana, y entonces se puede seleccionar una pieza SIN tener la malla delante.
     etiquetas: np.ndarray | None = None,
+    # ⚠️ **El bit que ninguna medida puede dar.** Para cada foto, el codigo FDI de su
+    # PRIMERA corona. El arco es un espejo exacto y una foto intraoral puede estar tomada
+    # con espejo, asi que ni la huella de anchuras ni la imagen dicen de que lado es una
+    # tira (ver `tono_foto.alinea_con_el_arco`). Sin esto no se usa color por pieza y se
+    # cae al de por vertice; con esto, el resto sigue siendo medido.
+    lado_fotos: dict[Path, int] | None = None,
 ) -> tuple[dict[str, np.ndarray], EntrenamientoApariencia]:
     """Entrena un campo de gaussianas sobre una malla pintada con dos tonos de las fotos.
 
@@ -866,7 +888,47 @@ def entrena_apariencia(
     #
     # Si no hay pose sostenible se cae al degradado de dos tonos, que es lo que habia, y se
     # dice. `medido` viaja para que el descriptor no tenga que suponerlo.
+    # ⚠️ **Primero el color por PIEZA, que no necesita pose.** Proyectar por vertice deja
+    # sin medida el 35 % de la superficie —solo una de seis fotos resuelve pose— y ese hueco
+    # se rellena interpolando del vertice medido mas cercano, que en la cara vestibular es
+    # una sombra interdental: es el color raro que se ve en el visor. Por pieza no hay hueco
+    # que rellenar, y un vertice mal segmentado recibe el color de un diente vecino en vez
+    # de una sombra.
     medido = interpolado = 0
+    por_pieza: list = []
+    if etiquetas is not None and lado_fotos:
+        try:
+            from analysis_agents.dental import ancho_admitido
+
+            from gaussian_engine.tono_foto import (
+                color_de_encia,
+                pinta_malla,
+                tonos_de_fotos,
+            )
+
+            arco = [f for f in (17, 16, 15, 14, 13, 12, 11,
+                                21, 22, 23, 24, 25, 26, 27)
+                    if ancho_admitido(f) is not None]
+            anchos = np.array([ancho_admitido(f) for f in arco], dtype=np.float64)
+            por_pieza, motivos_tono = tonos_de_fotos(
+                list(rutas_fotos), arco, anchos, lado_conocido=lado_fotos
+            )
+            for m in motivos_tono:
+                print(f"    ⚠ {m}")
+        except ImportError as e:
+            print(f"  ⚠ sin color por pieza ({e})")
+
+    if por_pieza:
+        eje = _eje_oclusal(posiciones, etiquetas)
+        vcol_pieza, med_pieza = pinta_malla(
+            posiciones, etiquetas, por_pieza, color_de_encia(list(rutas_fotos)), eje
+        )
+        print(f"  color por PIEZA: {len(por_pieza)} corona(s) medida(s), "
+              f"{100 * med_pieza.mean():.1f} % de los vertices sin interpolar nada")
+        for t in por_pieza:
+            print(f"    FDI {t.fdi}: {t.n_pixeles:,} px  "
+                  + " ".join(f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in t.rgb))
+
     try:
         from gaussian_engine.pose_foto import color_por_vertice
 
@@ -884,7 +946,12 @@ def entrena_apariencia(
         vcol = respaldo
         print(f"  ⚠ sin color medido ({e}): se pinta el degradado de dos tonos, que NO es "
               "color del paciente. Instala el extra `appearance`.")
-    if medido == 0:
+    if por_pieza:
+        # El color por pieza MANDA donde lo hay; el de por vertice se queda para el resto,
+        # que es sobre todo lo que ninguna corona reclama.
+        vcol = np.where(med_pieza[:, None], vcol_pieza, vcol)
+        medido = max(medido, int(med_pieza.sum()))
+    elif medido == 0:
         print("  ⚠ ninguna foto ha dado una pose sostenible: el color son DOS TONOS y su "
               "frontera sale de las etiquetas FDI, que es inferencia (Layer 3).")
 
