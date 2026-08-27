@@ -63,6 +63,48 @@ def lee_stl(datos: bytes) -> tuple[np.ndarray, np.ndarray]:
     return pos.astype(np.float64), np.asarray(inv).reshape(-1, 3).astype(np.int32)
 
 
+def lee_glb(datos: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`scene.glb` a `(vertices, triangulos, fdi por vertice)`.
+
+    ⚠️ **Esta es la fuente correcta, y no el STL original.** El encargo del proyecto es
+    «regenerar ficheros STL e imagenes a partir del Digital Twin»: regenerar, no
+    transportar. Un contenedor de perfil ligero NO lleva el escaner original —se declara
+    por su `sha256` y se queda fuera— y aun asi tiene que poder devolver la malla mejorada,
+    porque `scene.glb` **es** la escena del gemelo (§5.1 del borrador: el mesh convertido y
+    las gaussianas en un unico glTF binario), no una copia del fichero de entrada.
+
+    ⚠️ **Y el FDI viene aqui dentro.** Las primitivas comparten el mismo array de vertices
+    y se distinguen por sus indices y por su `extras.uos_fdi`, que es lo que el borrador
+    define para el picking semantico. Asi que la geometria por pieza no hay que
+    reconstruirla: ya viaja en el modelo.
+    """
+    largo_json = struct.unpack("<I", datos[12:16])[0]
+    cabecera = json.loads(datos[20:20 + largo_json])
+    inicio_bin = 20 + largo_json + 8
+    bin_ = datos[inicio_bin:]
+
+    def lee(indice: int) -> np.ndarray:
+        acc = cabecera["accessors"][indice]
+        vista = cabecera["bufferViews"][acc["bufferView"]]
+        tipos = {5121: "u1", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
+        n = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}[acc["type"]]
+        dt = np.dtype(tipos[acc["componentType"]])
+        off = vista.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        a = np.frombuffer(bin_, dt, count=acc["count"] * n, offset=off)
+        return a.reshape(-1, n) if n > 1 else a
+
+    prims = cabecera["meshes"][0]["primitives"]
+    pos = lee(prims[0]["attributes"]["POSITION"]).astype(np.float64)
+    caras, fdi = [], np.zeros(len(pos), np.int16)
+    for pr in prims:
+        tri = lee(pr["indices"]).astype(np.int32).reshape(-1, 3)
+        caras.append(tri)
+        codigo = (pr.get("extras") or {}).get("uos_fdi")
+        if codigo is not None:
+            fdi[np.unique(tri)] = int(codigo)
+    return pos, np.concatenate(caras), fdi
+
+
 def lee_apariencia(datos: bytes, esquema: dict) -> dict[str, np.ndarray]:
     """El PLY de apariencia a columnas, con la convención que declara `esquema`.
 
@@ -168,8 +210,16 @@ def main() -> int:
     with zipfile.ZipFile(args.uos) as z:
         dentro = set(z.namelist())
         manifiesto = json.loads(z.read("manifest.json"))
+        # ⚠️ Primero el GEMELO y despues, si acaso, el original. Al reves, un contenedor
+        # completo se apoyaria en el fichero de entrada y nunca se probaria el camino que
+        # de verdad hay que garantizar — el del contenedor ligero, que no lo lleva.
+        glb = "scene/scene.glb" if "scene/scene.glb" in dentro else None
         malla = next((n for n in dentro if n.startswith("scene/scan.")), None)
-        if malla is not None:
+        if glb is not None:
+            pos, caras, fdi_glb = lee_glb(z.read(glb))
+            crudo_malla = None
+            print(f"  geometria leida del gemelo ({glb}), sin usar el escaner original")
+        elif malla is not None:
             crudo_malla = z.read(malla)
         elif args.malla is not None:
             crudo_malla = args.malla.read_bytes()
@@ -185,15 +235,17 @@ def main() -> int:
                 return 1
             print(f"  malla aportada, sha256 {visto[:16]}… verificado contra el manifiesto")
         else:
-            print("✗ El contenedor no lleva la malla del escáner dentro (perfil ligero: "
-                  "`--sin-originales` o `--solo-gaussianas`). El manifiesto declara su "
-                  "sha256: pásala con `--malla` y se comprobará contra él.")
+            print("✗ El contenedor no lleva ni la escena del gemelo (`scene/scene.glb`) ni "
+                  "el escáner: sin geometría no hay malla que mejorar. En perfil "
+                  "`--solo-gaussianas` el manifiesto declara el `sha256` del escáner y se "
+                  "puede aportar con `--malla`.")
             return 1
         if "scene/appearance.ply" not in dentro:
             print("✗ El contenedor no lleva campo de apariencia: se generó sin "
                   "`--entrena-apariencia`, así que no hay color medido que transferir.")
             return 1
-        pos, caras = lee_stl(crudo_malla)
+        if crudo_malla is not None:
+            pos, caras, fdi_glb = (*lee_stl(crudo_malla), None)
         esquema = json.loads(z.read("scene/appearance.gs.json"))
         ap_col = lee_apariencia(z.read("scene/appearance.ply"), esquema)
         clinico = (json.loads(z.read("clinical/observations.json"))
@@ -213,8 +265,11 @@ def main() -> int:
     escalas = np.stack([ap_col["scale_0"], ap_col["scale_1"], ap_col["scale_2"]], 1).mean(1)
     rgb, medido = color_desde_gaussianas(pos, centros, f_dc, ap_col["opacity"], escalas)
 
-    fdi = None if seg is None else etiquetas_alineadas(seg[0], seg[1], len(pos), caras)
-    if seg is not None and fdi is None:
+    # El FDI del propio gemelo manda: viene con la geometria y no hay que comprobar orden.
+    fdi = fdi_glb
+    if fdi is None and seg is not None:
+        fdi = etiquetas_alineadas(seg[0], seg[1], len(pos), caras)
+    if fdi_glb is None and seg is not None and fdi is None:
         print("  ⚠ las etiquetas FDI del contenedor no se pueden alinear con esta malla: "
               "la columna `fdi` del PLY va a 0 en vez de llevar codigos que quiza esten "
               "desplazados")

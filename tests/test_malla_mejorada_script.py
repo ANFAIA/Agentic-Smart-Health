@@ -181,3 +181,56 @@ def test_unas_etiquetas_que_no_cuentan_lo_mismo_se_rechazan() -> None:
     # Y una codificación que no es la declarada tampoco se interpreta a la ligera.
     assert mm.etiquetas_alineadas(etq.tobytes(), {"encoding": {"dtype": "int32-le"}},
                                   len(etq), caras) is None
+
+
+def _glb(pos: np.ndarray, prims: list[tuple[np.ndarray, str | None]]) -> bytes:
+    """Un GLB minimo: un accessor de POSITION compartido y un `indices` por primitiva."""
+    import json as _json
+
+    buf = bytearray()
+    vistas, accs, lista = [], [], []
+    vistas.append({"buffer": 0, "byteOffset": 0, "byteLength": pos.astype("<f4").nbytes})
+    buf += pos.astype("<f4").tobytes()
+    accs.append({"bufferView": 0, "componentType": 5126, "count": len(pos), "type": "VEC3"})
+    for tri, fdi in prims:
+        vistas.append({"buffer": 0, "byteOffset": len(buf),
+                       "byteLength": tri.astype("<u4").nbytes})
+        buf += tri.astype("<u4").tobytes()
+        accs.append({"bufferView": len(vistas) - 1, "componentType": 5125,
+                     "count": tri.size, "type": "SCALAR"})
+        p = {"attributes": {"POSITION": 0}, "indices": len(accs) - 1, "mode": 4}
+        if fdi is not None:
+            p["extras"] = {"uos_fdi": fdi}
+        lista.append(p)
+    cab = _json.dumps({"asset": {"version": "2.0"}, "meshes": [{"primitives": lista}],
+                       "accessors": accs, "bufferViews": vistas,
+                       "buffers": [{"byteLength": len(buf)}]}).encode()
+    cab += b" " * (-len(cab) % 4)
+    buf += b"\0" * (-len(buf) % 4)
+    total = 12 + 8 + len(cab) + 8 + len(buf)
+    return (b"glTF" + struct.pack("<II", 2, total)
+            + struct.pack("<I", len(cab)) + b"JSON" + cab
+            + struct.pack("<I", len(buf)) + b"BIN\0" + bytes(buf))
+
+
+def test_la_geometria_sale_del_GEMELO_y_no_del_escaner_original() -> None:
+    """⚠️ **El encargo dice «regenerar a partir del Digital Twin», no transportar.**
+
+    Un contenedor de perfil ligero NO lleva el escáner original —se declara por su `sha256`
+    y se queda fuera— y aun así tiene que poder devolver la malla mejorada.
+    `scene/scene.glb` **es** la escena del gemelo, no una copia del fichero de entrada.
+    """
+    pos = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]])
+    glb = _glb(pos, [(np.array([[0, 1, 2]]), None), (np.array([[1, 3, 2]]), "26")])
+    v, caras, fdi = mm.lee_glb(glb)
+    assert len(v) == 4 and caras.shape == (2, 3)
+    assert np.allclose(v, pos)
+    # El código FDI viaja en la primitiva, que es lo que el borrador define para el picking.
+    assert fdi[3] == 26 and fdi[0] == 0
+
+
+def test_una_primitiva_sin_fdi_no_inventa_codigo() -> None:
+    """La encía es una primitiva más y no tiene código: se queda en 0, «sin asignar»."""
+    pos = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    v, caras, fdi = mm.lee_glb(_glb(pos, [(np.array([[0, 1, 2]]), None)]))
+    assert (fdi == 0).all()
