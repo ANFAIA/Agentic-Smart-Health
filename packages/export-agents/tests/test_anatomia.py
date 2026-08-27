@@ -45,3 +45,35 @@ def test_ancho_de_corona_detecta_la_etiqueta_que_se_pasa_al_vecino() -> None:
     peor = anchos_de_corona(pos, caras, np.where(pos[:, 0] < 11.5, 11, 21))
     assert peor[11][0] - medido[11][0] > 2.0
     assert peor[21][0] < medido[21][0] - 2.0
+
+
+def test_ancho_de_corona_no_cuenta_una_esquirla_como_pieza() -> None:
+    """Un resto de 200 vertices pegado al final del arco NO es un diente.
+
+    ⚠️ El exportador ya lo absorbe y declara que la arcada tiene 14 piezas; esta medida
+    lo contaba aparte y salia «9 de 15». Peor: la esquirla figuraba como corona ESTRECHA
+    —4,2 mm contra 8,5 de tabla— que de 275 vertices no significa nada.
+    """
+    nx, ny = 60, 8
+    gx = np.linspace(0.0, 30.0, nx)
+    gy = np.linspace(0.0, 6.0, ny)
+    pos = np.column_stack([
+        np.stack(np.meshgrid(gx, gy, indexing="ij"), -1).reshape(-1, 2),
+        np.zeros(nx * ny),
+    ])
+    caras = np.asarray([
+        cara
+        for i in range(nx - 1)
+        for j in range(ny - 1)
+        for cara in ([i * ny + j, i * ny + j + 1, (i + 1) * ny + j],
+                     [i * ny + j + 1, (i + 1) * ny + j + 1, (i + 1) * ny + j])
+    ])
+
+    etq = np.where(pos[:, 0] < 8.5, 11, np.where(pos[:, 0] < 17.0, 21, 22))
+    assert set(anchos_de_corona(pos, caras, etq)) == {11, 21, 22}
+
+    # Ahora los ultimos milimetros del 22 se reetiquetan como un 23 de tres vertices.
+    con_esquirla = etq.copy()
+    con_esquirla[pos[:, 0] > 29.5] = 23
+    assert int((con_esquirla == 23).sum()) < 0.15 * int((con_esquirla == 11).sum())
+    assert set(anchos_de_corona(pos, caras, con_esquirla)) == {11, 21, 22}

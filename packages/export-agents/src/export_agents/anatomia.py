@@ -202,8 +202,25 @@ def anchos_de_corona(
     aristas = np.unique(
         np.sort(np.asarray(caras)[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1), axis=0
     )
+    # ⚠️ **Una esquirla no es una pieza, y contarla falsea las dos cifras.** El umbral es
+    # RELATIVO a la propia arcada y no un numero absoluto — el mismo criterio que usa
+    # `gaussian_engine.pose_foto`. En el caso real el FDI 28 traia 275 vertices frente a
+    # los 1.200-9.500 de las piezas de verdad; el exportador lo absorbe en el 27 y declara
+    # que la arcada tiene 14 dientes, pero esta medida lo contaba aparte. Salia «9 de 15»
+    # cuando son **9 de 14**, y ademas el 28 figuraba como corona ESTRECHA (4,2 mm contra
+    # 8,5 de tabla), que de una esquirla no significa nada.
+    cuenta = {int(f): int((etq == f).sum()) for f in np.unique(etq) if f > 0}
+    if not cuenta:
+        return {}
+    # Puramente relativo, sin suelo absoluto: el numero de vertices depende del escaner y
+    # de la densidad del mallado, asi que un «minimo 200» seria el de un escaner concreto.
+    # Lo que distingue una esquirla de una pieza es su tamano frente a las demas piezas.
+    suelo = 0.15 * float(np.median(list(cuenta.values())))
+
     nucleos: dict[int, np.ndarray] = {}
-    for fdi in (int(f) for f in np.unique(etq) if f > 0):
+    for fdi, n in cuenta.items():
+        if n < suelo:
+            continue
         suyos = etq == fdi
         idx = np.flatnonzero(suyos)
         if idx.size < 3:

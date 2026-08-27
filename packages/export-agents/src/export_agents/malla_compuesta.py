@@ -377,13 +377,24 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 f"tipo de diente admite ({', '.join(pasadas)} mm): están arrastrando hueso "
                 "alveolar, así que lo que se imprima por debajo del ápice no es diente."
             )
-        # ⚠️ **La frontera diente-diente no la vigilaba NADIE.** El acierto por diente que
+        # ⚠️ **La frontera de la corona no la vigilaba NADIE.** El acierto por diente que
         # declara el `segmentation-agent` pregunta si el codigo mayoritario de cada pieza
-        # es el correcto, y una etiqueta que se pasa dos milimetros al vecino no cambia
-        # una mayoria: se puede tener 0,93 por diente y una corona de 18 mm. Es justo lo
-        # que un clinico ve al encender una pieza en el visor y arrastra parte de la de al
-        # lado. Se DECLARA, como las raices: quien recorta la frontera decide donde acaba
-        # el diente, y eso no lo puede decidir un exportador.
+        # es el correcto, y una etiqueta que se derrama unos milimetros no cambia una
+        # mayoria: esta medido que se puede tener 0,958 por diente y un tercio de las
+        # coronas fuera de tolerancia en el mismo test. Es lo que un clinico ve al encender
+        # una pieza en el visor y arrastra lo que no es suyo.
+        #
+        # ⚠️ **De QUE se pasa: medido, el 80,7 % de lo que sobra es ENCIA y solo el 19,3 %
+        # el diente vecino** (385.061 vertices sobre 12 maxilares de Teeth3DS+ con verdad).
+        # El fallo contrario —corona dada por encia— son 998 vertices: un sesgo de 300 a 1.
+        # Asi que esto NO es principalmente confusion entre piezas contiguas: es la corona
+        # alargandose hacia apical sobre la encia, y de ahi ensanchando tambien en
+        # mesiodistal por la banda gingival. Es la frontera diente/encia, que este proyecto
+        # ya tiene medido que no esta en la forma sino en el COLOR.
+        #
+        # El aviso dice lo que la medida ve —la corona no cabe en su posicion— y NO nombra
+        # una causa por pieza, porque sin etiquetas de este paciente no se puede saber si
+        # esta corona concreta se comio encia o vecino. Se DECLARA, como las raices.
         if etiquetas_ios is not None:
             anchas = [
                 f"FDI {fdi} {ancho:.0f}/{cota:.0f}"
@@ -396,7 +407,9 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 motivos.append(
                     f"{len(anchas)} corona(s) etiquetada(s) son MAS ANCHAS de lo que su "
                     f"posicion admite ({', '.join(anchas)} mm mesiodistales): la etiqueta "
-                    "se pasa del punto de contacto y pinta parte del diente vecino."
+                    "cubre superficie que no es de esa pieza. Medido sobre datos con "
+                    "verdad, 4 de cada 5 vertices sobrantes son encia y 1 el diente "
+                    "vecino."
                 )
         if sin_esmalte:
             motivos.append(
