@@ -153,3 +153,63 @@ def test_caza_las_mismas_columnas_en_otro_orden(tmp_path):
     cruzado sin que nada falle."""
     f = vc.verifica(_caso(tmp_path, propiedades=("x", "y"), columnas=("y", "x")))
     assert any("otro orden" in x for x in f), f
+
+
+def test_caza_una_pieza_que_el_informe_da_por_AUSENTE_y_la_segmentacion_emite(tmp_path):
+    """El informe dice «Diente 28 Ausente» y el modelo emite un FDI 28. Las dos
+    afirmaciones viajan en el mismo `.uos` y nadie las cruzaba.
+
+    ⚠️ No son dos opiniones al mismo nivel: la transcripción del informe es **Layer 1**
+    —un documento que firmó una persona— y la segmentación **Layer 3**, inferencia de un
+    modelo. Un contenedor que afirma las dos se contradice, y el formato promete que eso
+    lo puede comprobar **quien lo recibe**, sin acceso al pipeline que lo escribió.
+    """
+    import numpy as np
+
+    crudo = _ply(4)
+    seg = np.array([27, 27, 28, 0], dtype="<i2").tobytes()
+    glb_json = json.dumps({
+        "accessors": [{"count": 4}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+    }).encode()
+    glb = b"glTF" + struct.pack("<II", 2, 0) + struct.pack("<I", len(glb_json)) + b"JSON" + glb_json
+    clinico = {"teeth": [
+        {"fdi": "27", "findings": ["calculo_pulpar"]},
+        {"fdi": "28", "findings": ["ausente"]},
+    ]}
+    m = {"uos_version": "0.2", "assets": [
+        {"id": "asset.field", "uri": "scene/field.ply",
+         "media_type": "application/octet-stream",
+         "sha256": hashlib.sha256(crudo).hexdigest(), "bytes": len(crudo)},
+        {"id": "asset.scene", "uri": "scene/scene.glb",
+         "media_type": "model/gltf-binary",
+         "sha256": hashlib.sha256(glb).hexdigest(), "bytes": len(glb)},
+        {"id": "asset.seg", "uri": "derived/seg_teeth.bin",
+         "media_type": "application/octet-stream",
+         "sha256": hashlib.sha256(seg).hexdigest(), "bytes": len(seg)},
+        {"id": "asset.clinical", "uri": "clinical/observations.json",
+         "media_type": "application/json", "sha256": "0" * 64, "bytes": 1},
+    ]}
+    destino = tmp_path / "contradictorio.uos"
+    with zipfile.ZipFile(destino, "w") as z:
+        z.writestr("manifest.json", json.dumps(m))
+        z.writestr("scene/field.ply", crudo)
+        z.writestr("scene/scene.glb", glb)
+        z.writestr("derived/seg_teeth.bin", seg)
+        z.writestr("clinical/observations.json", json.dumps(clinico))
+    f = vc.verifica(destino)
+    assert any("AUSENTE" in x and "FDI 28" in x for x in f), f
+
+    # Y sin la contradicción no dice nada: el 27 lo emite el modelo y el informe no lo
+    # da por ausente, así que ahí no hay nada que reprochar.
+    sin_28 = np.array([27, 27, 27, 0], dtype="<i2").tobytes()
+    m["assets"][2]["sha256"] = hashlib.sha256(sin_28).hexdigest()
+    m["assets"][2]["bytes"] = len(sin_28)
+    limpio = tmp_path / "coherente.uos"
+    with zipfile.ZipFile(limpio, "w") as z:
+        z.writestr("manifest.json", json.dumps(m))
+        z.writestr("scene/field.ply", crudo)
+        z.writestr("scene/scene.glb", glb)
+        z.writestr("derived/seg_teeth.bin", sin_28)
+        z.writestr("clinical/observations.json", json.dumps(clinico))
+    assert not [x for x in vc.verifica(limpio) if "AUSENTE" in x]

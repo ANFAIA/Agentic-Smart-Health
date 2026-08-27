@@ -41,6 +41,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import numpy as np
+
 RAIZ = Path(__file__).resolve().parent.parent
 for _src in sorted(RAIZ.glob("packages/*/src")):
     sys.path.insert(0, str(_src))
@@ -164,11 +166,45 @@ def verifica(ruta: Path) -> list[str]:
                         f"que el PLY; quien monte el registro desde `columns` lee cruzado"
                     )
 
+        seg = next((a for a in m["assets"] if a["uri"].startswith("derived/seg_teeth")), None)
+
+        # --- el informe frente a lo que el modelo emitio ---------------------
+        # ⚠️ **Una pieza que el informe declara AUSENTE no puede estar segmentada.** Las dos
+        # afirmaciones viajan hoy en el mismo contenedor y nadie las cruzaba: en un caso
+        # real el informe decia «Diente 28 Ausente» —transcripcion determinista de un
+        # documento que firmo una persona, Layer 1— y la segmentacion emitia un FDI 28 de
+        # 275 vertices, que ademas obligaba al watershed de la pose a partir la foto en una
+        # pieza de mas. El contenedor se contradecia a si mismo y se declaraba coherente.
+        #
+        # Va aqui, en el verificador, y no solo aguas arriba: el formato promete que un
+        # `.uos` no se contradice, y esa promesa la tiene que poder comprobar quien lo
+        # RECIBE, sin acceso al pipeline que lo escribio.
+        obs = next((a for a in m["assets"]
+                    if a["uri"].endswith("clinical/observations.json")
+                    and a["uri"] in dentro), None)
+        if obs and seg is not None and seg["uri"] in dentro:
+            clinico = json.loads(z.read(obs["uri"]))
+            ausentes = {
+                int(t["fdi"]) for t in clinico.get("teeth", [])
+                if "ausente" in t.get("findings", []) and str(t.get("fdi", "")).isdigit()
+            }
+            codigos = np.frombuffer(z.read(seg["uri"]), dtype="<i2")
+            emitidos = {int(c) for c in np.unique(codigos) if c > 0}
+            choque = sorted(ausentes & emitidos)
+            if choque:
+                cuantos = {c: int((codigos == c).sum()) for c in choque}
+                fallos.append(
+                    "el informe declara AUSENTE(S) la(s) pieza(s) "
+                    + ", ".join(f"FDI {c} y la segmentacion emite {n:,} vertice(s) suyos"
+                                for c, n in cuantos.items())
+                    + ". La transcripcion del informe es Layer 1 y la segmentacion Layer 3: "
+                    "el contenedor afirma dos cosas incompatibles sobre la misma pieza"
+                )
+
         # --- la escena glTF, si viaja ---------------------------------------
         glb = next((a for a in m["assets"]
                     if a.get("media_type") == "model/gltf-binary"
                     and a["uri"] in dentro), None)
-        seg = next((a for a in m["assets"] if a["uri"].startswith("derived/seg_teeth")), None)
         if seg and not glb:
             fallos.append(
                 "derived/seg_teeth viaja y la escena glTF no: esas etiquetas indexan sus "
