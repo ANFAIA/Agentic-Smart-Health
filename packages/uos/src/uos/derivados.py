@@ -46,6 +46,7 @@ def meta_segmentacion(
     pesos_sha256: str | None = None,
     estado: str = "investigational",
     jurisdicciones: list[str] | None = None,
+    calidad: dict[int, dict] | None = None,
 ) -> dict[str, Any]:
     """El sidecar del §5.5. Todo lo que hace falta para saber **de dónde salió esto**.
 
@@ -78,6 +79,17 @@ def meta_segmentacion(
             ),
             "vocabulary": "ISO-3950 (FDI)",
         },
+        # ⚠️ **Qué pieza se puede seleccionar de verdad, y cuál no.** Sin esto, el visor
+        # enciende una corona que arrastra medio diente vecino y no hay nada en el fichero
+        # que lo diga: lo que se enseña al lado es correcto y lo que se ve, no. El umbral
+        # no es una opinión — sale del `p95` de `|ancho medido - tabla|` sobre 188 coronas
+        # etiquetadas por experto de Teeth3DS+. Ver `analysis_agents.frontera`.
+        **({} if calidad is None else {"per_tooth_boundary": {
+            "criterion": "|mesiodistal medido - tabla anatomica| <= p95 de experto",
+            "note": ("contar coronas «demasiado anchas» NO mide un defecto: las etiquetas "
+                     "de experto lo fallan en el 77 %. Lo que separa es la magnitud"),
+            "teeth": {str(k): v for k, v in sorted(calidad.items())},
+        }}),
         "labels": {
             "present": codigos,
             "n_labelled": int((etq > 0).sum()),
