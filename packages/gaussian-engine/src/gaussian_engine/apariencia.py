@@ -34,7 +34,7 @@ import json
 import math
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +132,21 @@ class EntrenamientoApariencia:
     n_vistas_holdout: int
     resolucion: int
     perfil: str = PERFIL
+    # ⚠️ **El color medido por pieza sale de aqui para poder viajar como DATO.** El campo
+    # gaussiano lo lleva como pixeles y eso basta para pintar, pero no para preguntar «de
+    # que color es el 26» sin abrir un PLY de 8 MB y buscar sus gaussianas. Con soporte
+    # REGIONAL cabe en `ClinicalAttributes.color` y sale en `clinical/observations.json`,
+    # que es donde un clinico lo busca.
+    tonos: list = field(default_factory=list)
+    """`TonoPieza` por corona medida. Vacio si no se pudo medir color por pieza."""
+
+    # ⚠️ **Salen de aqui porque un aviso impreso no es un aviso.** Estos motivos —una foto
+    # cuya lateralidad nadie resolvio, una pieza que ninguna foto ve— se escribian en el
+    # log del pipeline y se quedaban ahi: el `.uos` se exportaba sin ellos, y quien lo
+    # abriera no tenia forma de saber que dos fotos se descartaron por ambiguas. El gate
+    # de revision humana es donde vive esa clase de cosa.
+    motivos: list[str] = field(default_factory=list)
+    """Motivos de revision del color por pieza. Vacios si no hubo ninguno."""
 
     def como_artefacto(self) -> dict[str, np.ndarray]:
         """Convierte a formato store: arrays float32 + metadatos."""
@@ -217,6 +232,105 @@ def _colorea_malla(
     w = np.clip((z - p30) / (p70 - p30), 0, 1)[:, None]
     vcol = (w * enamel_rgb + (1 - w) * gingiva_rgb).astype(np.uint8)
     return vcol
+
+
+def _normales_de_malla(pos: np.ndarray, caras: np.ndarray) -> np.ndarray:
+    """Normal por vertice, ponderada por area (el area sale del modulo del producto)."""
+    a, b, c = (pos[caras[:, i]] for i in range(3))
+    n_cara = np.cross(b - a, c - a)
+    n = np.zeros_like(pos)
+    for i in range(3):
+        np.add.at(n, caras[:, i], n_cara)
+    return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+
+
+def _rota(n: np.ndarray, eje: np.ndarray, grados: float) -> np.ndarray:
+    """Rodrigues: gira `n` alrededor de `eje` los grados pedidos."""
+    k = eje / max(float(np.linalg.norm(eje)), 1e-12)
+    c, s = np.cos(np.radians(grados)), np.sin(np.radians(grados))
+    return n * c + np.cross(k, n) * s + k * ((n @ k) * (1.0 - c))[:, None]
+
+
+def _oclusion_ambiental(malla: np.ndarray, normales: np.ndarray) -> np.ndarray:
+    """Cuanto tapa la propia geometria a cada punto, en `[OCLUSION_MINIMA, 1]`.
+
+    Es una medida de cavidad, no un trazado de rayos: para cada punto se mira **cuanto** se
+    salen sus vecinos de su plano tangente, dentro de `RADIO_OCLUSION_MM`. En una superficie
+    lisa los vecinos estan EN el plano y el seno medio es ~0; en el fondo de una tronera
+    estan por encima y sube.
+
+    ⚠️ **Contar cuantos vecinos quedan por delante NO vale, y es lo que se probo primero.**
+    Sobre una superficie el plano tangente parte el vecindario por la mitad se este donde
+    se este, asi que la fraccion salia ~0,5 en todas partes: medido sobre el caso real, el
+    **83 %** de las gaussianas se iba al suelo del rango y la oclusion dejaba de distinguir
+    un surco de una cuspide — oscurecia la arcada entera por igual. Lo que separa las dos
+    cosas es la MAGNITUD del seno, no su signo.
+
+    ⚠️ **No es la oclusion ambiental de un renderizador y no se declara como tal.** Aquella
+    integra visibilidad sobre el hemisferio; esta cuenta vecinos. Coinciden en lo que
+    importa aqui —que las hendiduras se oscurezcan y las cuspides no— y no coinciden en el
+    valor absoluto, que por eso no se publica como magnitud fisica sino como un factor de
+    visualizacion entre 0 y 1.
+
+    ⚠️ **Se calcula SOBRE LA MALLA y se transfiere despues, y la firma lo impone.** Medirla
+    en los centros de las gaussianas no vale y esta medido: el optimizador las mueve fuera
+    de la superficie, asi que una que quede por dentro tiene a TODOS sus vecinos por delante
+    de su plano tangente y sale oscura siempre. Sobre el caso real eso mandaba el **78 %**
+    de las gaussianas al suelo del rango, contra el **5 %** que sale calculandolo en los
+    vertices. La oclusion es una propiedad de la superficie, no de como se muestree.
+    """
+    from scipy.spatial import cKDTree
+
+    d, i = cKDTree(malla).query(malla, k=VECINOS_OCLUSION,
+                                distance_upper_bound=RADIO_OCLUSION_MM)
+    valido = np.isfinite(d)
+    # El vecino que falta viene con indice fuera de rango: se apunta al 0 y se descarta
+    # con `valido`, que es mas barato que recortar cada fila por separado.
+    i = np.where(valido, i, 0)
+    hacia = malla[i] - malla[:, None, :]
+    largo = np.maximum(np.linalg.norm(hacia, axis=2), 1e-9)
+    seno = np.einsum("ijk,ik->ij", hacia, normales) / largo
+    # Solo lo que se sale POR DELANTE tapa; lo que queda por detras del plano no ve.
+    tapado = np.where(valido, np.maximum(seno, 0.0), 0.0).sum(1) / np.maximum(
+        valido.sum(1), 1
+    )
+    return np.clip(1.0 - GANANCIA_OCLUSION * tapado, OCLUSION_MINIMA, 1.0)
+
+
+def _relieve_sh1(
+    centros: np.ndarray, malla: np.ndarray, normales: np.ndarray,
+    albedo: np.ndarray | None, eje_rasante: np.ndarray | None = None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """`(normal por gaussiana, coeficientes SH1 (N,9))`, o `(None, None)` sin albedo.
+
+    El rasterizador evalua  `c = C0*sh0 + C1*(-y*sh1 + z*sh2 - x*sh3) + 0.5`  con `(x,y,z)`
+    la direccion de vista. Poniendo `sh1 = -k*n_y/C1`, `sh2 = k*n_z/C1`, `sh3 = -k*n_x/C1`
+    el segundo sumando vale **exactamente** `k*(n·v)`. No es una aproximacion: el grado 1
+    es lineal en la direccion, que es justo la forma de un termino difuso.
+
+    El orden de salida es canal-mayor —R,R,R,G,G,G,B,B,B— que es el del PLY de INRIA.
+    """
+    from scipy.spatial import cKDTree
+
+    if albedo is None or len(albedo) != len(centros):
+        return None, None
+    n = normales[cKDTree(malla).query(centros, k=1)[1]]
+    # La normal que se codifica es la ROTADA: eso convierte la luz frontal —plana— en una
+    # rasante, que es la que alarga los gradientes. `nx,ny,nz` siguen llevando la normal
+    # DE VERDAD, sin rotar: lo que se declara medido tiene que ser lo medido.
+    if eje_rasante is None:
+        n_luz = n
+    else:
+        n_luz = (
+            _rota(n, eje_rasante, RASANTE_GRADOS)
+            + RELLENO_RELIEVE * _rota(n, eje_rasante, -0.6 * RASANTE_GRADOS)
+        )
+    k = FUERZA_RELIEVE * albedo
+    sh = np.empty((len(centros), 3, 3), dtype=np.float64)
+    sh[:, :, 0] = -k * n_luz[:, None, 1] / C1
+    sh[:, :, 1] = k * n_luz[:, None, 2] / C1
+    sh[:, :, 2] = -k * n_luz[:, None, 0] / C1
+    return n, sh.reshape(len(centros), 9)
 
 
 def escribe_ply_coloreado(
@@ -519,12 +633,87 @@ def _entrena_gsplat(
 
 # Coeficiente DC de los armonicos esfericos (grado 0).
 C0 = 0.28209479177387814
+# Base de los armonicos de grado 1. El rasterizador evalua
+#   c = C0*sh0 + C1*(-y*sh1 + z*sh2 - x*sh3) + 0.5,  con (x,y,z) la direccion de vista.
+C1 = 0.4886025119029199
+
+# ⚠️ **Cuanto modula el relieve, en fraccion del albedo, y por que existe.**
+#
+# El campo se entrena contra renders de ALBEDO plano —sin eso las gaussianas guardaban el
+# diente bajo un sol que nos inventabamos nosotros, y recuperar el color medido costaba
+# ΔE 28 en vez de 0,35 por pieza—. El precio es que un albedo puro se dibuja PLANO: sin
+# variacion con la vista una arcada pierde el volumen y no se lee.
+#
+# El grado 1 de los armonicos es exactamente una funcion lineal de la direccion de vista,
+# asi que un termino `n·v` cabe ahi EXACTO y se puede escribir en vez de aprenderlo. El
+# grado 0 sigue siendo el albedo intacto: quien lea `f_dc` se lleva el color del paciente
+# sin nada horneado, y quien mire la escena ve el relieve.
+#
+# El signo es negativo porque el rasterizador usa `dir = normalize(splat - camara)`: una
+# cara que mira a la camara tiene `n·v < 0` y es la que hay que iluminar.
+FUERZA_RELIEVE = -0.35
+
+# ⚠️ **Y la luz va RASANTE, no en el eje de la camara.** Esto no es un adorno: es lo que
+# `scripts/blender_render_views.py` ya tenia escrito sobre su propio montaje —
+#
+#   «una luz EN el eje de la camara (frontal puro) es plana: n·l ~ n·v, asi que toda
+#    superficie que te mira brilla igual y el relieve se pierde. La luz oblicua alarga los
+#    gradientes y hace visible el microrrelieve de la anatomia.»
+#
+# — y la primera version de este relieve codificaba justo `n·v`, o sea el caso frontal puro
+# que ese comentario identifica como el malo. Daba volumen y NO daba resolucion.
+#
+# Cabe igual en el grado 1 porque rotar es lineal:  n·(R v) = (R^T n)·v.  Basta codificar
+# la normal ROTADA y sale una luz oblicua que sigue a la camara, que es lo que hacia el
+# montaje de Blender al emparentar la luz. El grado 0 no se toca.
+#
+# El eje de giro es el SUPERIOR de la arcada y no uno cualquiera: las hendiduras que hay
+# que revelar —troneras interproximales, surco gingival— corren verticales, y una luz
+# desplazada de lado es la que las alarga.
+RASANTE_GRADOS = 35.0
+
+# El RELLENO del montaje de Blender, por el lado contrario y flojo: `--relleno 0.8` contra
+# los 3.0 de la principal, y menos inclinado (`-_rk * 0.6`). Existe por lo mismo que alli —
+# «para que la cara en sombra no se cierre a negro: lo que ahi se pierda no lo puede
+# aprender ningun entrenamiento» — y aqui ademas es gratis: la suma de dos terminos
+# lineales en la direccion de vista **sigue siendo lineal**, asi que las dos luces caben en
+# los mismos nueve coeficientes del grado 1. Basta sumar las normales giradas.
+RELLENO_RELIEVE = 0.8 / 3.0
+
+# ⚠️ **La oclusion ambiental NO cabe en los armonicos, y por eso va en columna aparte.**
+# Un surco esta oscuro lo mires desde donde lo mires: es independiente de la vista, asi que
+# dentro de los SH solo cabria en el grado 0 — que ES el albedo. Meterla ahi es volver a
+# contaminar el color que `clinical/observations.json` declara al lado, que es justo el
+# fallo que costo llegar a ΔE 0,35 por pieza.
+#
+# En una columna propia no hay ese problema: el emisor la calcula, la declara como
+# CALCULADA, y quien dibuja la multiplica. Quien lee `f_dc` para tomar un tono no se lleva
+# ninguna sombra — y eso importa, porque una lectura de color no debe oscurecerse porque la
+# pieza tenga una fisura al lado.
+#
+# Radio en mm de la cavidad que se mide. 2,0 es la escala de una tronera interproximal y
+# del surco gingival, que son las hendiduras que el ojo busca. Mas pequeno mide rugosidad
+# del mallado; mas grande oscurece la arcada entera por estar dentro de una boca.
+RADIO_OCLUSION_MM = 2.0
+# Vecinos que se consultan por punto. Con 32 la cuenta satura en las cavidades cerradas,
+# que es donde el valor tiene que saturar.
+VECINOS_OCLUSION = 32
+# Suelo de la oclusion: por debajo de esto no se oscurece mas. Sin suelo, el fondo de un
+# surco se va a negro y ahi se pierde el detalle que se queria ver.
+OCLUSION_MINIMA = 0.45
+# Cuanto oscurece un seno medio dado. Con 2,5 una superficie lisa —seno ~0— se queda en 1 y
+# el fondo de una tronera llega al suelo, que es el rango util. Es un juicio declarado.
+GANANCIA_OCLUSION = 2.5
 
 # Propiedades INRIA 3DGS grado 0 (las mismas que usa el visor web).
 PROPIEDADES_INRIA = (
     "x", "y", "z",
     "nx", "ny", "nz",
     "f_dc_0", "f_dc_1", "f_dc_2",
+    "f_rest_0", "f_rest_1", "f_rest_2",
+    "f_rest_3", "f_rest_4", "f_rest_5",
+    "f_rest_6", "f_rest_7", "f_rest_8",
+    "ao",
     "opacity",
     "scale_0", "scale_1", "scale_2",
     "rot_0", "rot_1", "rot_2", "rot_3",
@@ -694,6 +883,14 @@ def escribe_inria(
         scan_offset = np.asarray(params["scan_offset"], dtype=np.float64).reshape(3)
     if region_id is None and "region_id" in params:
         region_id = np.asarray(params["region_id"])
+    # Normales y relieve: si el entrenamiento los calculo viajan en `params`, igual que el
+    # `region_id`. Si no, van a cero — que es un grado 1 nulo, o sea el plano de antes, que
+    # es la degradacion correcta y no una invencion.
+    nrm = np.asarray(params["normales"], dtype=np.float64) if "normales" in params else None
+    sh1 = np.asarray(params["sh1"], dtype=np.float64) if "sh1" in params else None
+    # 1 = nada tapado. Sin malla no se puede calcular, y 1 es la respuesta correcta: no
+    # oscurecer. Cero seria afirmar que todo esta ocluido.
+    ao = np.asarray(params["ao"], dtype=np.float64) if "ao" in params else None
 
     # Des-normalizacion, en la forma que `scripts/blender_render_views.py` deja escrita
     # junto a los dos valores: `mundo = normalizado / scan_scale + scan_offset`.
@@ -753,6 +950,29 @@ def escribe_inria(
         # El 3DGS aprende ESO. Ademas ese degradado afirma el margen gingival por percentil
         # de altura, que es justo la frontera que este proyecto tiene medido que no sabe.
         *_comentarios_color(params),
+        *(("comment nx,ny,nz = normal del vertice de malla MAS CERCANO (antes iban a cero",
+           "comment por convencion INRIA). De ahi sale el relieve de abajo.",
+           "comment f_rest_* = SH grado 1 CALCULADO, no entrenado: vale exactamente",
+           f"comment {abs(FUERZA_RELIEVE)}*albedo*(n' . v) con n' la normal girada",
+           f"comment {RASANTE_GRADOS:.0f} grados sobre el eje superior mas un relleno",
+           "comment opuesto: es el mismo rig direccional que iluminaba los renders, que",
+           "comment cabe entero en el grado 1 porque es lineal en la direccion de vista.",
+           "comment Es un realce de forma que este emisor anade;",
+           "comment para que la pieza se lea con volumen. NO es medida y NO toca el color:",
+           "comment f_dc sigue siendo el albedo. Leyendo solo el grado 0 se recupera el",
+           "comment color medido sin nada horneado.")
+          if sh1 is not None else
+          ("comment f_rest_* van a cero: sin malla no hay normales con que calcular el",
+           "comment relieve, asi que el grado 1 es nulo y la escena se dibuja plana.",)),
+        *(("comment ao = oclusion ambiental CALCULADA por el emisor: fraccion de vecinos",
+           f"comment a menos de {RADIO_OCLUSION_MM:.0f} mm que caen por delante del plano",
+           "comment tangente, o sea cuanto se tapa el punto a si mismo. Es un factor de",
+           "comment VISUALIZACION en [0,1] que quien dibuja multiplica por el color; NO",
+           "comment esta metido en f_dc_* a proposito, porque una lectura de tono no debe",
+           "comment oscurecerse porque la pieza tenga una fisura al lado.")
+          if ao is not None else
+          ("comment ao va a 1: sin malla no hay con que calcular la oclusion, y 1 es no",
+           "comment oscurecer. Cero afirmaria que todo esta tapado.")),
         "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
         "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
         "comment rot es cuaternion (w,x,y,z) normalizado",
@@ -775,6 +995,8 @@ def escribe_inria(
         ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
         ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
         ("f_dc_0", "<f4"), ("f_dc_1", "<f4"), ("f_dc_2", "<f4"),
+        *((f"f_rest_{k}", "<f4") for k in range(9)),
+        ("ao", "<f4"),
         ("opacity", "<f4"),
         ("scale_0", "<f4"), ("scale_1", "<f4"), ("scale_2", "<f4"),
         ("rot_0", "<f4"), ("rot_1", "<f4"), ("rot_2", "<f4"), ("rot_3", "<f4"),
@@ -786,12 +1008,17 @@ def escribe_inria(
     filas["x"] = pos[:, 0]
     filas["y"] = pos[:, 1]
     filas["z"] = pos[:, 2]
-    filas["nx"] = 0.0
-    filas["ny"] = 0.0
-    filas["nz"] = 0.0
+    # ⚠️ `nx,ny,nz` iban a CERO por convencion INRIA — campos declarados y vacios. Van
+    # rellenos cuando se sabe la normal, porque de ahi sale el relieve de `f_rest_*` y un
+    # lector tiene que poder recalcularlo o contradecirlo.
+    for eje, col in zip(("nx", "ny", "nz"), range(3), strict=True):
+        filas[eje] = 0.0 if nrm is None else nrm[:, col].astype(np.float32)
     filas["f_dc_0"] = f_dc[:, 0].astype(np.float32)
     filas["f_dc_1"] = f_dc[:, 1].astype(np.float32)
     filas["f_dc_2"] = f_dc[:, 2].astype(np.float32)
+    for k in range(9):
+        filas[f"f_rest_{k}"] = 0.0 if sh1 is None else sh1[:, k].astype(np.float32)
+    filas["ao"] = 1.0 if ao is None else ao.astype(np.float32)
     filas["opacity"] = opa.astype(np.float32)
     filas["scale_0"] = esc[:, 0].astype(np.float32)
     filas["scale_1"] = esc[:, 1].astype(np.float32)
@@ -916,6 +1143,7 @@ def entrena_apariencia(
     # de una sombra.
     medido = interpolado = 0
     por_pieza: list = []
+    motivos_tono: list[str] = []
     if etiquetas is not None and lado_fotos:
         try:
             from analysis_agents.dental import ancho_admitido
@@ -1031,6 +1259,37 @@ def entrena_apariencia(
                 limite=LIMITE_VECINO * float(T["scan_scale"]),
             )
             params["region_id"] = reg
+            # ⚠️ **El relieve se calcula aqui, con la malla delante, y viaja en `params`.**
+            # Mismo criterio que el `region_id`: la normal sale del vertice MAS CERCANO,
+            # porque el optimizador movio, dividio y podo y no hay correspondencia 1:1 que
+            # heredar. Decir «vecino mas cercano» es exacto y auditable.
+            nrm, sh1 = _relieve_sh1(
+                np.asarray(params["means"], dtype=np.float64), Vn,
+                _normales_de_malla(Vn, np.asarray(caras, dtype=np.int64)),
+                np.clip(np.asarray(params["colors"], dtype=np.float64), 0.0, 1.0)
+                if "colors" in params else None,
+                eje_rasante=_eje_oclusal(posiciones, etiquetas),
+            )
+            if sh1 is not None:
+                params["normales"], params["sh1"] = nrm, sh1
+                # La oclusion se mide en MILIMETROS, asi que se calcula sobre la nube sin
+                # normalizar: `RADIO_OCLUSION_MM` no significa nada en el espacio de Blender.
+                escala = float(T["scan_scale"])
+                malla_mm = Vn / escala
+                normales_malla = _normales_de_malla(Vn, np.asarray(caras, dtype=np.int64))
+                # Se calcula en la malla y se lleva a cada gaussiana por el vertice mas
+                # cercano, igual que la normal y el `region_id`.
+                ao_malla = _oclusion_ambiental(malla_mm, normales_malla)
+                from scipy.spatial import cKDTree as _KD
+                ao = ao_malla[_KD(malla_mm).query(
+                    np.asarray(params["means"], dtype=np.float64) / escala, k=1
+                )[1]]
+                params["ao"] = ao
+                print(f"  relieve SH1 calculado sobre {len(sh1):,} gaussianas "
+                      f"(fuerza {abs(FUERZA_RELIEVE)}, rasante {RASANTE_GRADOS:.0f}°) "
+                      f"+ oclusion (mediana {np.median(ao):.2f}, "
+                      f"{(ao <= OCLUSION_MINIMA + 1e-6).mean() * 100:.0f}% al suelo): "
+                      "el color no se toca")
             print(f"  region_id por gaussiana: "
                   f"{len([c for c in set(reg.tolist()) if c > 0])} codigo(s) FDI · "
                   f"{(reg > 0).mean() * 100:.0f}% diente · "
@@ -1086,6 +1345,8 @@ def entrena_apariencia(
         n_vistas_train=len(T["frames"]) * 3 // 4,
         n_vistas_holdout=len(T["frames"]) // 4,
         resolucion=resolucion,
+        tonos=list(por_pieza),
+        motivos=list(motivos_tono),
     )
 
     return params, metricas

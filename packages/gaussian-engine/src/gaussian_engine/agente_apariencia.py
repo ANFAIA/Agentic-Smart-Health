@@ -17,7 +17,14 @@ from collections.abc import Iterable
 
 from core_schemas import ColumnaCampo
 
-from gaussian_engine.apariencia import PERFIL, PROPIEDADES_INRIA
+from gaussian_engine.apariencia import (
+    GANANCIA_OCLUSION,
+    OCLUSION_MINIMA,
+    PERFIL,
+    PROPIEDADES_INRIA,
+    RADIO_OCLUSION_MM,
+    VECINOS_OCLUSION,
+)
 
 PERFIL_APARIENCIA = PERFIL
 
@@ -34,17 +41,59 @@ ESQUEMA_INRIA: dict[str, dict] = {
         "significado": "centro de la gaussiana (movido por optimizador)",
         "medido": False,
     } for n in ("x", "y", "z")},
-    # Las normales existen porque el PLY de facto de INRIA las reserva, y van a cero
-    # porque el optimizador no las usa. Se declaran igualmente: quien monte el struct
-    # desde estas columnas necesita los doce bytes o lee todo lo demás desplazado.
+    # ⚠️ Las normales las reserva el perfil INRIA y **antes iban a cero**. Ahora llevan la
+    # normal del vértice de malla más cercano, porque de ahí sale el relieve de `f_rest_*`
+    # y un lector tiene que poder recalcularlo o contradecirlo en vez de creérselo.
     **{n: {
         "unidad": "",
         "significado": (
-            "normal reservada por el perfil INRIA, siempre 0 — existe para el stride, "
-            "no para leerla"
+            "normal del vertice de malla mas cercano; 0 si no habia malla con que "
+            "calcularla. Es la que genera el relieve declarado en f_rest_*"
         ),
         "medido": False,
     } for n in ("nx", "ny", "nz")},
+    # ⚠️ **El grado 1 no lo aprendió nadie: lo escribe este emisor.** El campo se entrena
+    # contra renders de albedo plano para que `f_dc` sea el color del paciente y no el de
+    # una iluminación que nos inventamos; el precio es que un albedo puro se dibuja plano.
+    # El grado 1 de los armónicos es exactamente una función lineal de la dirección de
+    # vista, así que un `n·v` cabe ahí exacto y devuelve el volumen sin tocar el grado 0.
+    # ⚠️ **La oclusión va aquí y NO dentro de `f_dc_*`, y ésa es toda la decisión.**
+    # Un surco está oscuro se mire desde donde se mire, así que dentro de los armónicos
+    # sólo cabría en el grado 0, que es el color. Meterla ahí contaminaría el tono que
+    # `clinical/observations.json` declara al lado — y una lectura de color no debe
+    # oscurecerse porque la pieza tenga una fisura pegada.
+    "ao": {
+        "unidad": "",
+        "significado": (
+            # ⚠️ **Los numeros salen de las constantes, no del teclado.** Este texto ya
+            # se quedo describiendo el metodo ANTERIOR —contar cuantos vecinos caen por
+            # delante del plano tangente— despues de que se midiera que ese metodo daba
+            # 0,5 en toda la superficie y se sustituyera. Un descriptor que se escribe a
+            # mano se desincroniza del codigo que describe; uno que se compone de las
+            # mismas constantes que el calculo, no puede.
+            "oclusion ambiental CALCULADA por el emisor: media de |sen| del angulo entre "
+            f"la normal y la direccion a cada uno de los {VECINOS_OCLUSION} vecinos a "
+            f"menos de {RADIO_OCLUSION_MM:g} mm, amplificada por {GANANCIA_OCLUSION:g} y "
+            f"acotada por abajo en {OCLUSION_MINIMA:g}. Se calcula SOBRE LA MALLA y "
+            "se transfiere a cada gaussiana por vecino mas cercano, porque el optimizador "
+            "mueve los centros fuera de la superficie. Factor de VISUALIZACION en [0,1] "
+            "que quien dibuja multiplica por el color. No es la oclusion de un trazador de "
+            "rayos y no se declara como tal: coincide en que las hendiduras se oscurecen y "
+            "las cuspides no. 1 = sin malla con que calcularla, o sea no oscurecer"
+        ),
+        "medido": False,
+    },
+    **{f"f_rest_{i}": {
+        "unidad": "",
+        "significado": (
+            "coeficiente de SH grado 1 CALCULADO por el emisor, no entrenado: vale "
+            "0.35*albedo*(n . v) con la normal de nx,ny,nz. Es un realce de forma para "
+            "que la pieza se lea con volumen; NO es medida y NO toca el color, que vive "
+            "entero en el grado 0. Leyendo solo f_dc_* se recupera el albedo sin nada "
+            "horneado. Van a cero si no habia malla con que calcular las normales"
+        ),
+        "medido": False,
+    } for i in range(9)},
     **{f"f_dc_{i}": {
         "unidad": "",
         "significado": (

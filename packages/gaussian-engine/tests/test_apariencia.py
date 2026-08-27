@@ -14,14 +14,31 @@ def _params(n=32):
     }
 
 
+def _dtype_de(cabecera: str):
+    """El dtype que el PLY DECLARA, no el que esperábamos.
+
+    ⚠️ Esta lista estaba escrita a mano y se quedó vieja en cuanto el escritor añadió los
+    `f_rest_*` del relieve: las pruebas leían con el stride antiguo y comparaban basura
+    contra el valor bueno. Es exactamente el fallo que el propio módulo ya arregló dos
+    veces —las unidades y el esquema del sidecar— y la misma cura: preguntar al fichero.
+    """
+    import numpy as np
+
+    tipos = {"float": "<f4", "double": "<f8", "short": "<i2", "int": "<i4", "uchar": "u1"}
+    campos = [
+        (linea.split()[2], tipos[linea.split()[1]])
+        for linea in cabecera.splitlines()
+        if linea.startswith("property ") and "list" not in linea
+    ]
+    return np.dtype(campos)
+
+
 def _lee(ruta, n):
     import numpy as np
 
     b = ruta.read_bytes()
     i = b.index(b"end_header") + len(b"end_header") + 1
-    dt = np.dtype([(k, "<f4") for k in (
-        "x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2",
-        "opacity", "s0", "s1", "s2", "r0", "r1", "r2", "r3")])
+    dt = _dtype_de(b[:i].decode("ascii", "replace"))
     return np.frombuffer(b, dtype=dt, offset=i, count=n)
 
 
@@ -48,7 +65,7 @@ def test_el_PLY_sale_en_MILIMETROS_y_no_en_el_espacio_de_blender(tmp_path):
     salida = np.stack([a["x"], a["y"], a["z"]], 1).astype(np.float64)
     assert np.allclose(salida, esperado, atol=1e-2), (salida[0], esperado[0])
     # Y la escala, que va en LOGARITMO: la correccion es una suma, no un producto.
-    assert np.allclose(np.exp(a["s0"]), np.exp(-3.5) / escala, rtol=1e-3)
+    assert np.allclose(np.exp(a["scale_0"]), np.exp(-3.5) / escala, rtol=1e-3)
 
 
 def test_sin_scan_scale_el_PLY_sale_en_el_espacio_NORMALIZADO(tmp_path):
@@ -101,10 +118,11 @@ def test_el_PLY_puede_llevar_el_FDI_por_gaussiana(tmp_path):
     assert "property short region_id" in cab
     assert "MAS CERCANA" in cab, "tiene que decir de dónde sale la etiqueta"
     i = b.index(b"end_header") + len(b"end_header") + 1
-    leido = np.frombuffer(b, dtype="<i2", offset=i + 17 * 4, count=1)  # 1ª fila
-    assert int(leido[0]) == 11
-    # y el stride cuadra: 17 floats + un int16
-    assert len(b) - i == 8 * (17 * 4 + 2)
+    dt = _dtype_de(cab)
+    assert "region_id" in dt.names
+    assert int(np.frombuffer(b, dtype=dt, offset=i, count=1)["region_id"][0]) == 11
+    # y el stride cuadra con lo que la cabecera declara
+    assert len(b) - i == 8 * dt.itemsize
     _ = struct
 
 
@@ -380,3 +398,180 @@ def test_la_cabecera_nombra_el_color_POR_PIEZA_cuando_es_el_que_manda() -> None:
 
     # Y sin nada medido, los dos tonos siguen declarandose como lo que son.
     assert "DOS tonos" in " ".join(_comentarios_color({}))
+
+
+def test_el_relieve_SH1_vale_EXACTAMENTE_n_por_v() -> None:
+    """⚠️ **El grado 1 no es una aproximación de la luz: es la luz, escrita.**
+
+    El rasterizador evalúa `c = C0·sh0 + C1·(−y·sh1 + z·sh2 − x·sh3) + 0,5` con `(x,y,z)` la
+    dirección de vista, o sea una función **lineal** de la dirección. Un término difuso
+    `n·v` tiene esa misma forma, así que cabe exacto y no hay que entrenarlo.
+
+    Esto existe porque el campo pasó a entrenarse contra renders de albedo plano —sin eso
+    las gaussianas guardaban el diente bajo un sol que nos inventábamos, y recuperar el
+    color medido costaba ΔE 28 en vez de 0,35 por pieza—. El precio era que un albedo puro
+    se dibuja plano; el grado 1 devuelve el volumen **sin tocar el grado 0**.
+    """
+    import numpy as np
+    from gaussian_engine.apariencia import C1, FUERZA_RELIEVE, _relieve_sh1
+
+    rng = np.random.default_rng(0)
+    malla = rng.normal(size=(64, 3))
+    normales = rng.normal(size=(64, 3))
+    normales /= np.linalg.norm(normales, axis=1, keepdims=True)
+    albedo = rng.uniform(0.2, 0.9, size=(64, 3))
+
+    n, sh = _relieve_sh1(malla, malla, normales, albedo)
+    assert sh is not None and sh.shape == (64, 9)
+    sh = sh.reshape(64, 3, 3)
+
+    for _ in range(4):
+        v = rng.normal(size=3)
+        v /= np.linalg.norm(v)
+        x, y, z = v
+        aporta = C1 * (-y * sh[:, :, 0] + z * sh[:, :, 1] - x * sh[:, :, 2])
+        assert np.allclose(aporta, FUERZA_RELIEVE * albedo * (n @ v)[:, None], atol=1e-12)
+
+
+def test_sin_albedo_no_hay_relieve_y_se_dice_con_None() -> None:
+    """Un grado 1 a cero se dibuja plano, que es la degradación correcta. Inventarlo, no."""
+    import numpy as np
+    from gaussian_engine.apariencia import _relieve_sh1
+
+    malla = np.zeros((8, 3))
+    assert _relieve_sh1(malla, malla, malla, None) == (None, None)
+
+
+def test_la_luz_del_relieve_es_RASANTE_y_la_normal_declarada_es_la_de_verdad() -> None:
+    """⚠️ **Codificar `n·v` a secas era poner la luz EN el eje de la cámara.**
+
+    `scripts/blender_render_views.py` ya tenía escrito por qué eso no vale: «una luz en el
+    eje de la cámara es plana: `n·l ≈ n·v`, así que toda superficie que te mira brilla
+    igual y el relieve se pierde». La luz oblicua no añade detalle — **alarga el gradiente**
+    del que ya está en la geometría, y por eso se ven las troneras.
+
+    Cabe en el mismo grado 1 porque rotar es lineal: `n·(R v) = (Rᵀn)·v`. Y el relleno
+    opuesto también, porque la suma de dos términos lineales sigue siendo lineal.
+
+    ⚠️ Lo que NO puede rotarse es lo que se declara: `nx,ny,nz` llevan la normal medida,
+    sin girar, para que un lector pueda recalcular el relieve o contradecirlo.
+    """
+    import numpy as np
+    from gaussian_engine.apariencia import _relieve_sh1, _rota
+
+    rng = np.random.default_rng(1)
+    malla = rng.normal(size=(48, 3))
+    normales = rng.normal(size=(48, 3))
+    normales /= np.linalg.norm(normales, axis=1, keepdims=True)
+    albedo = rng.uniform(0.3, 0.8, size=(48, 3))
+    eje = np.array([0.0, 0.0, 1.0])
+
+    n_recta, sh_recta = _relieve_sh1(malla, malla, normales, albedo)
+    n_rasante, sh_rasante = _relieve_sh1(malla, malla, normales, albedo, eje_rasante=eje)
+
+    # La normal declarada es la MISMA con y sin luz rasante: no se gira lo que se declara.
+    assert np.allclose(n_recta, n_rasante)
+    assert np.allclose(n_rasante, normales)
+    # Y el relieve sí cambia, que es el objetivo.
+    assert not np.allclose(sh_recta, sh_rasante)
+    # Girar 0 grados tiene que devolver la normal intacta (cordura de Rodrigues).
+    assert np.allclose(_rota(normales, eje, 0.0), normales)
+
+
+def _valle(nx: int = 40, paso: float = 0.4):
+    """Una loseta con un valle en `y = 0`: `z = 0,8·|y|`. Lo único cóncavo está ahí."""
+    import numpy as np
+
+    ys = np.arange(-6.0, 6.0 + paso, paso)
+    xs = np.arange(nx) * paso
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    pos = np.stack([X, Y, 0.8 * np.abs(Y)], axis=-1).reshape(-1, 3)
+    # Normal del valle: apunta hacia arriba, inclinada según el lado.
+    n = np.stack([np.zeros(len(pos)), -np.sign(pos[:, 1]) * 0.8, np.ones(len(pos))], 1)
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+    return pos, n
+
+
+def test_la_oclusion_oscurece_el_SURCO_y_no_la_superficie_lisa() -> None:
+    """⚠️ **Esto es lo que la oclusión tiene que hacer, y lo único que se le pide.**
+
+    No es la oclusión de un trazador de rayos y no se declara como tal: cuenta vecinos por
+    delante del plano tangente. Coincide con la de verdad en lo que aquí importa —que las
+    hendiduras se oscurezcan y las cúspides no— y no en el valor absoluto, que por eso
+    viaja como factor de visualización en [0,1] y no como magnitud física.
+    """
+    import numpy as np
+    from gaussian_engine.apariencia import OCLUSION_MINIMA, _oclusion_ambiental
+
+    pos, nor = _valle()
+    ao = _oclusion_ambiental(pos, nor)
+
+    assert ao.shape == (len(pos),)
+    assert ((ao >= OCLUSION_MINIMA - 1e-9) & (ao <= 1.0 + 1e-9)).all()
+    surco = np.abs(pos[:, 1]) < 0.5
+    liso = np.abs(pos[:, 1]) > 4.0
+    assert ao[surco].mean() < ao[liso].mean(), "el fondo del valle tiene que salir más oscuro"
+    # ⚠️ **Y sobre todo: lo liso NO se oscurece.** La primera versión contaba cuántos
+    # vecinos quedaban por delante del plano tangente, y sobre una superficie eso es la
+    # mitad se esté donde se esté: el 83 % de las gaussianas del caso real se iba al suelo
+    # del rango y la oclusión oscurecía la arcada entera por igual, que es no hacer nada.
+    # Ordenar bien surco y liso no basta si los dos están saturados.
+    assert ao[liso].mean() > 0.9, "una superficie lisa no tiene nada que la tape"
+    assert (ao <= OCLUSION_MINIMA + 1e-6).mean() < 0.25, "no puede saturar en todas partes"
+
+
+def test_la_oclusion_se_mide_en_la_SUPERFICIE_y_no_donde_caiga_la_gaussiana() -> None:
+    """⚠️ El fallo que costó dos regeneraciones, y la firma ya no lo permite.
+
+    Medirla en los centros de las gaussianas parecía natural —son los puntos que se pintan—
+    pero el optimizador los mueve fuera de la superficie, y uno que quede por dentro tiene
+    a **todos** sus vecinos por delante de su plano tangente: sale oscuro siempre. Sobre el
+    caso real eso mandaba el 78 % de las gaussianas al suelo del rango contra el 5 % que
+    sale midiendo en los vértices.
+
+    Aquí se reproduce con la malla desplazada hacia dentro: si la función aceptara puntos
+    sueltos, esto saturaría. Como sólo acepta la superficie y sus normales, el error no se
+    puede cometer — y el transporte a cada gaussiana es un vecino más cercano, igual que
+    con la normal y el `region_id`.
+    """
+    import numpy as np
+    from gaussian_engine.apariencia import OCLUSION_MINIMA, _oclusion_ambiental
+
+    pos, nor = _valle()
+    ao = _oclusion_ambiental(pos, nor)
+    assert ao.shape == (len(pos),)
+    # Transportada a puntos que NO están en la malla, sigue siendo la de la superficie.
+    from scipy.spatial import cKDTree
+
+    fuera = pos - 0.05 * nor          # medio milímetro por dentro, como una gaussiana movida
+    ao_fuera = ao[cKDTree(pos).query(fuera, k=1)[1]]
+    assert np.allclose(ao_fuera, ao)
+    assert (ao_fuera <= OCLUSION_MINIMA + 1e-6).mean() < 0.25
+
+
+def test_el_descriptor_de_la_oclusion_lleva_los_numeros_del_calculo() -> None:
+    """⚠️ **Un descriptor escrito a mano se desincroniza; uno compuesto no puede.**
+
+    El texto de `ao` estuvo describiendo el método ANTERIOR —«fracción de vecinos que caen
+    por delante del plano tangente»— después de que se midiera que ese método daba ~0,5 en
+    toda la superficie, dejara el 83 % de las gaussianas en el suelo del rango y se
+    sustituyera por la magnitud del seno. Quien leyera el contenedor tenía la descripción
+    de un cálculo que ya no se hacía.
+
+    Es el mismo fallo que ya apareció con las unidades, con el esquema y con la nota del
+    color: cuatro veces. Por eso lo que se prueba no es que el texto diga algo, sino que
+    los números que dice son los que usa el código.
+    """
+    from gaussian_engine.agente_apariencia import ESQUEMA_INRIA
+    from gaussian_engine.apariencia import (
+        GANANCIA_OCLUSION,
+        OCLUSION_MINIMA,
+        RADIO_OCLUSION_MM,
+        VECINOS_OCLUSION,
+    )
+
+    texto = ESQUEMA_INRIA["ao"]["significado"]
+    for valor in (VECINOS_OCLUSION, RADIO_OCLUSION_MM, GANANCIA_OCLUSION, OCLUSION_MINIMA):
+        assert f"{valor:g}" in texto, f"{valor} no aparece en el descriptor de `ao`"
+    # Y no puede seguir describiendo el método que se descartó.
+    assert "plano tangente" not in texto
