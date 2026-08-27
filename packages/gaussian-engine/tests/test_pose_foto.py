@@ -178,3 +178,20 @@ def test_una_pose_dentro_del_tope_si_pinta(monkeypatch, tmp_path):
     cm = pose_foto.color_por_vertice([foto], V, F, etq, respaldo_rgb=respaldo)
     assert cm.medido.sum() > 0, "una pose buena tiene que pintar"
     assert not cm.descartadas
+
+
+def test_sin_etiquetas_la_pose_dice_que_le_falta_el_dato(tmp_path):
+    """⚠️ **Un dato que falta no puede salir como un fallo de entrenamiento.**
+
+    Corriendo el pipeline sin `--fdi`, `etiquetas` llegaba aquí como `None` y la primera
+    comparación reventaba con «'>' not supported between instances of 'NoneType' and
+    'int'» desde dentro de una comprensión. Doscientas líneas más arriba el `except` de la
+    etapa lo imprimía como «Error entrenando apariencia» — y el entrenamiento no tenía
+    nada que ver: lo que faltaba era la segmentación.
+    """
+    import numpy as np
+    import pytest
+    from gaussian_engine.pose_foto import estima_pose
+
+    with pytest.raises(ValueError, match="region_id"):
+        estima_pose(tmp_path / "no-se-abre.jpg", np.zeros((4, 3)), None)

@@ -257,6 +257,19 @@ def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray) -> PoseFoto | 
     # de las piezas de verdad, y colarlo obligaba al watershed a partir la foto en una pieza
     # mas de las que hay. La consecuencia no es un aviso: es que todo el emparejamiento se
     # descoloca y la pose empeora en silencio.
+    # ⚠️ **Sin etiquetas no hay pose, y hay que decirlo aqui.** `estima_pose` empareja
+    # coronas de la foto con coronas de la malla: sin `region_id` por vertice no hay con que
+    # emparejar. Cuando el pipeline corre sin `--fdi`, `etiquetas` llega a `None` y esta
+    # linea lanzaba «'>' not supported between instances of 'NoneType' and 'int'» desde
+    # dentro de una comprension, doscientas lineas por debajo de la decision que lo causo.
+    # El `except` de la etapa lo anunciaba como «Error entrenando apariencia»: un dato que
+    # falta disfrazado de fallo de entrenamiento.
+    if etiquetas is None:
+        raise ValueError(
+            "estima_pose necesita `region_id` por vertice del escaneo y ha recibido "
+            "`None`: sin saber que corona es cada vertice no hay con que emparejar las de "
+            "la foto. El pipeline lo pasa desde `--fdi`."
+        )
     cuenta = {int(c): int((etiquetas == c).sum()) for c in np.unique(etiquetas) if c > 0}
     if not cuenta:
         return None
