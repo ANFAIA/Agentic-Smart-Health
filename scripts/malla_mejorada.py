@@ -41,6 +41,7 @@ for src in sorted(RAIZ.glob("packages/*/src")):
 from export_agents.malla_mejorada import (  # noqa: E402
     NEUTRO,
     color_desde_gaussianas,
+    descriptor,
     escribe_3mf,
     escribe_ply,
     escribe_stl_viscam,
@@ -166,12 +167,13 @@ def main() -> int:
 
     with zipfile.ZipFile(args.uos) as z:
         dentro = set(z.namelist())
+        manifiesto = json.loads(z.read("manifest.json"))
         malla = next((n for n in dentro if n.startswith("scene/scan.")), None)
         if malla is not None:
             crudo_malla = z.read(malla)
         elif args.malla is not None:
             crudo_malla = args.malla.read_bytes()
-            esperado = _sha256_declarado(json.loads(z.read("manifest.json")))
+            esperado = _sha256_declarado(manifiesto)
             visto = hashlib.sha256(crudo_malla).hexdigest()
             if esperado is None:
                 print("✗ El manifiesto no declara el `sha256` del escáner, así que no hay "
@@ -259,11 +261,18 @@ def main() -> int:
     escribe_stl_viscam(salida / "arcada-color.stl", pos, caras, rgb,
                        "arcada con color medido (RGB555 VisCAM, NO estandar)")
 
+    meta = descriptor(pos, caras, rgb, medido, codigos, origen=args.uos.name,
+                      sha256_malla=_sha256_declarado(manifiesto),
+                      piezas_con_color=[int(t["fdi"]) for t in piezas])
+    (salida / "arcada-color.meta.json").write_text(
+        json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
     print(f"  {len(pos):,} vertices · {len(caras):,} triangulos")
     print(f"  color medido en {100 * medido.mean():.1f} % de los vertices")
     if fdi is not None:
         print(f"  {int((fdi > 0).sum()):,} vertices con codigo FDI, orden comprobado")
-    for nombre in ("arcada-color.ply", "arcada-color.3mf", "arcada-color.stl"):
+    for nombre in ("arcada-color.ply", "arcada-color.3mf", "arcada-color.stl",
+                   "arcada-color.meta.json"):
         f = salida / nombre
         print(f"  → {f}  ({f.stat().st_size / 1e6:.1f} MB)")
     return 0

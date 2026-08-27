@@ -185,6 +185,69 @@ def rellena_huecos(caras: np.ndarray, rgb: np.ndarray, medido: np.ndarray,
     return salida
 
 
+def descriptor(pos: np.ndarray, caras: np.ndarray, rgb: np.ndarray, medido: np.ndarray,
+               fdi: np.ndarray, *, origen: str, sha256_malla: str | None,
+               piezas_con_color: list[int]) -> dict:
+    """Qué lleva cada columna y cada fichero, **derivado de los propios datos**.
+
+    ⚠️ **Sin esto, las capas sólo existen en la cabeza de quien las escribió.** Los campos
+    gaussianos de este proyecto viajan con su `.gs.json` diciendo columna a columna qué
+    significa, en qué unidad y si es medido; la malla mejorada llevaba comentarios de PLY,
+    que un programa no puede consultar y que el 3MF y el STL pierden enteros.
+
+    ⚠️ **Y dice lo que cada formato NO lleva.** De los tres ficheros sólo el PLY conserva
+    `fdi` y `medido`. El STL es el que más se abre en un laboratorio y es el que menos
+    afirma: color por cara y nada más. Callarlo haría que la pérdida pasara por ausencia.
+
+    Los números salen de los arrays, no del teclado: es la misma regla que ya se incumplió
+    cuatro veces en este proyecto con descriptores escritos a mano.
+    """
+    etiquetadas = sorted({int(f) for f in np.unique(fdi) if f > 0})
+    sin_color = [f for f in etiquetadas if f not in set(piezas_con_color)]
+    return {
+        "schema": "ash-malla-mejorada/1.0",
+        "role": "la malla del escaner con las capas que el gemelo mide encima",
+        "source": origen,
+        "n_vertices": int(len(pos)),
+        "n_faces": int(len(caras)),
+        "columns": [
+            {"name": "x,y,z", "unit": "mm", "measured": True,
+             "derived_from": None if sha256_malla is None else f"sha256:{sha256_malla}",
+             "meaning": "la geometria del escaner, SIN tocar: los mismos triangulos que "
+                        "entraron. El campo gaussiano no la corrige"},
+            {"name": "red,green,blue", "unit": "", "measured": False,
+             "derived_from": "scene/appearance.ply",
+             "meaning": "color leido del campo de apariencia mezclando como mezcla el "
+                        "rasterizador. El TONO de origen es medido sobre fotos del "
+                        "paciente, pero el campo lo reconstruye entrenando, asi que no hay "
+                        "correspondencia 1:1 con lo medido: por eso `measured` es false"},
+            {"name": "fdi", "unit": "", "measured": False,
+             "derived_from": "derived/seg_teeth.bin",
+             "meaning": f"codigo ISO-3950 por vertice; {int((fdi > 0).sum())} etiquetados, "
+                        f"0 = sin asignar. Salida de un modelo (layer 3), con el orden "
+                        f"comprobado contra esta malla"},
+            {"name": "medido", "unit": "", "measured": True,
+             "derived_from": None,
+             "meaning": f"1 donde el color es del paciente ({100 * float(medido.mean()):.1f} "
+                        "% de los vertices), 0 donde NO se midio. Los vertices a 0 llevan "
+                        "gris neutro o el color de sus vecinos: en ningun caso son dato"},
+        ],
+        "files": {
+            "arcada-color.ply": ["x,y,z", "red,green,blue", "fdi", "medido"],
+            "arcada-color.3mf": ["x,y,z", "red,green,blue"],
+            "arcada-color.stl": ["x,y,z", "red,green,blue"],
+        },
+        "lost_outside_ply": {
+            "columns": ["fdi", "medido"],
+            "note": "3MF y STL no tienen donde llevarlas. Quien abra uno de esos dos ve "
+                    "color y no puede saber que parte es del paciente ni que diente es "
+                    "cada superficie",
+        },
+        "pieces_without_measured_colour": sin_color,
+        "labelled_pieces": etiquetadas,
+    }
+
+
 def escribe_ply(ruta: Path, pos: np.ndarray, caras: np.ndarray, rgb: np.ndarray,
                 fdi: np.ndarray, comentarios: list[str],
                 medido: np.ndarray | None = None) -> None:

@@ -282,3 +282,49 @@ def test_una_pieza_ENTERA_sin_color_no_se_rellena_de_las_vecinas() -> None:
 
     salida = rellena_huecos(caras, rgb, medido, fdi)
     assert (salida[fdi == 17] == NEUTRO).all(), "el 17 se ha rellenado desde sus vecinas"
+
+
+def test_el_descriptor_sale_de_los_datos_y_no_del_teclado() -> None:
+    """⚠️ **Cuatro veces se ha desincronizado un descriptor escrito a mano en este repo.**
+
+    Unidades, esquema, nota del color y oclusión ambiental. Aquí los recuentos y las
+    fracciones se componen de los propios arrays, así que no pueden mentir sobre ellos.
+    """
+    from export_agents.malla_mejorada import descriptor
+
+    pos = np.zeros((10, 3))
+    caras = np.zeros((4, 3), np.int32)
+    rgb = np.zeros((10, 3), np.uint8)
+    medido = np.array([True] * 8 + [False] * 2)
+    fdi = np.array([11] * 5 + [17] * 3 + [0] * 2, np.int16)
+
+    meta = descriptor(pos, caras, rgb, medido, fdi, origen="caso.uos",
+                      sha256_malla="a" * 64, piezas_con_color=[11])
+    assert meta["n_vertices"] == 10 and meta["n_faces"] == 4
+    assert meta["labelled_pieces"] == [11, 17]
+    # El 17 tiene etiqueta pero nadie declaró su color: tiene que salir nombrado.
+    assert meta["pieces_without_measured_colour"] == [17]
+    col = {c["name"]: c for c in meta["columns"]}
+    assert "80.0 %" in col["medido"]["meaning"]
+    assert "8" not in col["fdi"]["meaning"].split(";")[0]  # el recuento va tras el `;`
+    assert col["fdi"]["meaning"].startswith("codigo ISO-3950")
+    assert "8 etiquetados" in col["fdi"]["meaning"]
+    assert col["x,y,z"]["derived_from"] == "sha256:" + "a" * 64
+
+
+def test_el_descriptor_dice_lo_que_el_3MF_y_el_STL_PIERDEN() -> None:
+    """⚠️ **El STL es el que más se abre en un laboratorio y el que menos afirma.**
+
+    Sólo el PLY conserva `fdi` y `medido`. Callarlo haría que la pérdida pasara por
+    ausencia: quien abre el STL ve color y no puede saber qué parte es del paciente.
+    """
+    from export_agents.malla_mejorada import descriptor
+
+    meta = descriptor(np.zeros((3, 3)), np.zeros((1, 3), np.int32),
+                      np.zeros((3, 3), np.uint8), np.ones(3, bool),
+                      np.zeros(3, np.int16), origen="c.uos", sha256_malla=None,
+                      piezas_con_color=[])
+    assert set(meta["files"]["arcada-color.ply"]) > set(meta["files"]["arcada-color.stl"])
+    assert meta["lost_outside_ply"]["columns"] == ["fdi", "medido"]
+    for f in ("arcada-color.3mf", "arcada-color.stl"):
+        assert "fdi" not in meta["files"][f] and "medido" not in meta["files"][f]
