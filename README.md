@@ -420,6 +420,7 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 | [`scripts/eval_informes.py`](scripts/eval_informes.py) | ¿Cuánto de lo que dice un informe acaba en el contrato? |
 | [`scripts/fetch_knowledge_base.py`](scripts/fetch_knowledge_base.py) | Materializa la knowledge base del `research-agent`. |
 | [`scripts/fetch_teeth3ds.sh`](scripts/fetch_teeth3ds.sh) | Descarga reproducible de Teeth3DS+ desde el Google Drive oficial. |
+| [`scripts/malla_mejorada.py`](scripts/malla_mejorada.py) | El STL mejorado, sacado del contenedor y de nada más. |
 | [`scripts/metricas.py`](scripts/metricas.py) | las cuatro cifras del brief, MEDIDAS y no prometidas. |
 | [`scripts/mide_segmentacion.py`](scripts/mide_segmentacion.py) | cuanto se puede DESCARTAR de la segmentacion FDI de un `.uos`. |
 | [`scripts/prepara_toothfairy.py`](scripts/prepara_toothfairy.py) | Descarga ToothFairy2 caso a caso y lo deja entrenable. |
