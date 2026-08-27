@@ -380,11 +380,14 @@ def test_pinta_malla_obedece_al_eje_oclusal() -> None:
 
 
 def test_color_de_encia_sale_de_lo_que_rodea_al_arco(tmp_path) -> None:
-    """⚠️ La encia tambien se MIDE, y no es un detalle.
+    """⚠️ La mucosa tambien se MIDE, y es UN valor.
 
-    El marron embarrado que se ve sobre la encia vestibular no es un color de encia: es
-    interpolacion tirando del vertice con color mas cercano, que ahi es una sombra
-    interdental de la foto oclusal. Con un valor medido no hay nada que interpolar.
+    El marron embarrado sobre la encia vestibular no es un color de encia: es interpolacion
+    tirando del vertice con color mas cercano, que ahi es una sombra interdental. Con un
+    valor medido no hay nada que interpolar.
+
+    Se probo a partirlo en paladar y vestibulo: medido, ΔE 2,9 — el umbral de lo que un ojo
+    distingue. Ver el docstring de `color_de_encia`.
     """
     from gaussian_engine.tono_foto import _lab, color_de_encia
 
@@ -392,14 +395,13 @@ def test_color_de_encia_sale_de_lo_que_rodea_al_arco(tmp_path) -> None:
     medida = color_de_encia([foto])
     assert medida is not None
     esperado = _lab(np.array([[(200, 90, 90)]], dtype=np.uint8))[0, 0]
-    # El tono medido tiene que parecerse al que se pinto, no al del diente.
     assert np.abs(medida - esperado).max() < 12.0
     diente = _lab(np.array([[(225, 195, 172)]], dtype=np.uint8))[0, 0]
     assert np.linalg.norm(medida - esperado) < np.linalg.norm(medida - diente)
 
 
-def test_color_de_encia_ignora_una_foto_sin_linea_de_mordida(tmp_path) -> None:
-    """Una oclusal no aporta encia por esta via: no pasa el filtro de la costura."""
+def test_color_de_encia_ignora_una_foto_sin_eje_cervical_incisal(tmp_path) -> None:
+    """Sin linea de mordida no se sabe que es mucosa vestibular y que es otra cosa."""
     from gaussian_engine.tono_foto import color_de_encia
     from PIL import Image
 

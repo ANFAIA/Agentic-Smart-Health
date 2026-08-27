@@ -543,6 +543,26 @@ def _comentarios_color(params: dict) -> list[str]:
     n = int(np.asarray(params.get("n_vertices_malla", 0)).reshape(-1)[0] or 0)
     med = int(np.asarray(params.get("n_vertices_medidos", 0)).reshape(-1)[0] or 0)
     interp = int(np.asarray(params.get("n_vertices_interpolados", 0)).reshape(-1)[0] or 0)
+    pieza = int(np.asarray(params.get("n_vertices_por_pieza", 0)).reshape(-1)[0] or 0)
+    piezas = int(np.asarray(params.get("n_piezas_con_tono", 0)).reshape(-1)[0] or 0)
+    # ⚠️ **Dos mecanismos distintos no caben en un contador.** Antes esta cabecera
+    # atribuia TODO a la proyeccion por vertice con PnP; con el color por pieza mandando,
+    # eso decia una procedencia falsa del 97 % de los vertices. Y los interpolados que
+    # declaraba eran los del camino viejo, que la pieza habia sobrescrito.
+    if n and pieza:
+        return [
+            f"comment f_dc_* = color MEDIDO POR PIEZA: {piezas} corona(s) con su",
+            "comment mediana de pixeles por tercio (cervical, medio, incisal) tomada de la",
+            "comment foto que mejor ve cada una, mas la encia medida aparte. NO hace falta",
+            "comment pose: la foto se parte en coronas y se alinea con el arco.",
+            f"comment {pieza} de {n} vertices reciben color de SU pieza. De los "
+            f"{n - pieza} restantes,",
+            f"comment {med} llevan pixel proyectado, {interp} lo heredan del medido mas "
+            f"cercano y {n - pieza - med - interp}",
+            "comment se pintan con el degradado de respaldo, que NO es color del paciente.",
+            "comment NO es measured=true: el optimizador movio, dividio y podo las",
+            "comment gaussianas, asi que no hay correspondencia 1:1 con lo proyectado",
+        ]
     if n and med:
         return [
             "comment f_dc_* = color MEDIDO: el pixel que una foto intraoral ve en cada",
@@ -929,6 +949,7 @@ def entrena_apariencia(
             print(f"    FDI {t.fdi}: {t.n_pixeles:,} px  "
                   + " ".join(f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in t.rgb))
 
+    cm = None
     try:
         from gaussian_engine.pose_foto import color_por_vertice
 
@@ -946,11 +967,17 @@ def entrena_apariencia(
         vcol = respaldo
         print(f"  ⚠ sin color medido ({e}): se pinta el degradado de dos tonos, que NO es "
               "color del paciente. Instala el extra `appearance`.")
+    n_por_pieza = 0
     if por_pieza:
         # El color por pieza MANDA donde lo hay; el de por vertice se queda para el resto,
         # que es sobre todo lo que ninguna corona reclama.
         vcol = np.where(med_pieza[:, None], vcol_pieza, vcol)
-        medido = max(medido, int(med_pieza.sum()))
+        n_por_pieza = int(med_pieza.sum())
+        # ⚠️ **Los interpolados hay que RECONTARLOS.** Los que la pieza reclamo estan
+        # sobrescritos por color medido; seguir declarandolos exagera lo que se ha
+        # inventado, y esta cabecera existe justo para no exagerar.
+        interpolado = 0 if cm is None else int((~med_pieza & cm.interpolado).sum())
+        medido = 0 if cm is None else int((~med_pieza & cm.medido).sum())
     elif medido == 0:
         print("  ⚠ ninguna foto ha dado una pose sostenible: el color son DOS TONOS y su "
               "frontera sale de las etiquetas FDI, que es inferencia (Layer 3).")
@@ -1022,6 +1049,8 @@ def entrena_apariencia(
     # respaldo, y suponer es lo que ya hizo que el contenedor declarase «color real del
     # paciente» sobre un degradado inventado. Con esto lo lee.
     params["n_vertices_medidos"] = np.asarray(medido, dtype=np.int64)
+    params["n_vertices_por_pieza"] = np.asarray(n_por_pieza, dtype=np.int64)
+    params["n_piezas_con_tono"] = np.asarray(len(por_pieza), dtype=np.int64)
     params["n_vertices_interpolados"] = np.asarray(interpolado, dtype=np.int64)
     params["n_vertices_malla"] = np.asarray(len(posiciones), dtype=np.int64)
 

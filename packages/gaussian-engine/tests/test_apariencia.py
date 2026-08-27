@@ -335,3 +335,48 @@ def test_sin_ambiguedad_el_voto_no_cambia_nada():
         np.zeros((1, 3)), vert, np.full(40, 26), limite=2.0,
     )
     assert reg[0] == 26 and cambiadas == 0
+
+
+def test_la_cabecera_nombra_el_color_POR_PIEZA_cuando_es_el_que_manda() -> None:
+    """⚠️ **Dos mecanismos distintos no caben en un contador.**
+
+    La version anterior atribuia TODO a la proyeccion por vertice con PnP. Con el color por
+    pieza mandando eso declaraba una procedencia falsa del 97 % de los vertices, y encima
+    seguia contando como «interpolados» unos que la pieza ya habia sobrescrito. Una
+    cabecera que exagera lo inventado es peor que no llevarla: es la unica procedencia que
+    viaja pegada al fichero.
+    """
+    import numpy as np
+    from gaussian_engine.apariencia import _comentarios_color
+
+    por_pieza = _comentarios_color({
+        "n_vertices_malla": np.asarray(112067),
+        "n_vertices_medidos": np.asarray(1200),
+        "n_vertices_interpolados": np.asarray(800),
+        "n_vertices_por_pieza": np.asarray(108922),
+        "n_piezas_con_tono": np.asarray(13),
+    })
+    junto = " ".join(por_pieza)
+    assert "POR PIEZA" in junto
+    assert "13 corona" in junto and "108922" in junto
+    assert "NO hace falta" in junto and "pose" in junto
+    # ⚠️ Los tres cubos tienen que sumar. La primera version decia «el resto lo hereda de
+    # la proyeccion por vertice (7 medidos, 97 interpolados)» y dejaba 3.041 vertices sin
+    # nombrar — los que se pintan con el degradado de respaldo, que es justo el unico
+    # cubo que NO es color del paciente y por tanto el que hay que declarar.
+    assert "3145 restantes" in junto
+    assert "1145" in junto or "respaldo" in junto
+    assert str(112067 - 108922 - 1200 - 800) in junto
+
+    # Sin color por pieza se conserva el texto del camino por vertice, que sigue siendo
+    # cierto cuando es el que pinta.
+    por_vertice = _comentarios_color({
+        "n_vertices_malla": np.asarray(112067),
+        "n_vertices_medidos": np.asarray(72430),
+        "n_vertices_interpolados": np.asarray(23457),
+    })
+    assert "PnP" in " ".join(por_vertice)
+    assert "POR PIEZA" not in " ".join(por_vertice)
+
+    # Y sin nada medido, los dos tonos siguen declarandose como lo que son.
+    assert "DOS tonos" in " ".join(_comentarios_color({}))

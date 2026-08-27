@@ -54,6 +54,7 @@ MINIMO_PIXELES = 60
 MINIMO_POR_TERCIO = 30
 
 
+
 def _lab(rgb: np.ndarray) -> np.ndarray:
     """CIELAB completo. `pose_foto._lab_a` solo devuelve `a*`, que aqui no basta."""
     s = np.asarray(rgb, dtype=np.float64) / 255.0
@@ -444,16 +445,28 @@ def tira_de_coronas(foto: Path, esperadas: int = 8,
 
 
 def color_de_encia(fotos: list[Path]) -> np.ndarray | None:
-    """`L*a*b*` de la encia, mediana sobre las fotos que tienen eje cervical-incisal.
+    """`L*a*b*` de la mucosa, mediana sobre las fotos con eje cervical-incisal.
 
     ⚠️ **Tambien medido, y no es un detalle.** El marron embarrado que se ve en el visor
     sobre la encia vestibular no es un color de encia: es interpolacion tirando del vertice
     con color mas cercano, que ahi es una sombra interdental de la oclusal. Con un valor
     medido no hay nada que interpolar.
 
-    Se toma de la region del arco que NO es diente y descartando el percentil alto de `L*`
-    —los brillos sobre mucosa mojada—.
+    ⚠️ **Es UN valor, y se probo a partirlo en dos.** La sospecha era que pintar el paladar
+    con el color de la mucosa vestibular lo dejaba demasiado oscuro. Medido, no: paladar
+    `L*55,4 a*24,6 b*23,8` contra vestibular `L*52,9 a*23,6 b*24,8`, **ΔE 2,9** — el umbral
+    de lo que un ojo distingue. El paladar ES de ese color bajo el flash.
+
+    ⚠️ Y por el camino se cayo la medida que motivaba el reparto. Tomar «lo que queda
+    dentro de la herradura» como los huecos que el rellenado deja **no da el paladar**: la
+    herradura esta abierta por detras, asi que el paladar conecta con el exterior y nunca
+    queda encerrado. Sobre la oclusal de un caso real eso devolvia 65 fragmentos de 1.460
+    px —huecos interproximales— y un ΔE de 15,4 que no era de ninguna mucosa. El paladar de
+    verdad sale de la envolvente CONVEXA del arco menos los dientes: 464.000 px, 1,6 veces
+    el area del propio arco.
     """
+    from scipy import ndimage
+
     muestras = []
     for foto in fotos:
         try:
@@ -464,9 +477,7 @@ def color_de_encia(fotos: list[Path]) -> np.ndarray | None:
         lum = np.asarray(rgb, dtype=np.float64).mean(axis=-1)
         if not arco.any() or not costura_es_real(arco, lum, costura_oclusal(arco, lum)):
             continue
-        # La encia esta pegada al arco pero fuera de la mascara de diente.
-        from scipy import ndimage
-
+        # La mucosa esta pegada al arco pero fuera de la mascara de diente.
         cerca = ndimage.binary_dilation(arco, np.ones((25, 25))) & ~mascara
         if cerca.sum() < MINIMO_PIXELES:
             continue
@@ -499,7 +510,7 @@ def pinta_malla(posiciones: np.ndarray, etiquetas: np.ndarray,
     medido = np.zeros(len(pos), bool)
 
     if encia is not None:
-        rgb[etq == 0] = rgb_de_lab(encia)
+        rgb[etq == 0] = rgb_de_lab(np.asarray(encia))
         medido[etq == 0] = True
 
     for tono in tonos:
