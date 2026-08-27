@@ -52,7 +52,8 @@ class SemanticFusionAgent(BaseFusionAgent):
     version = "0.1.0"
 
     def _fuse(  # type: ignore[override]
-        self, snapshot: TwinSnapshot, *, detected: Mapping[str, float]
+        self, snapshot: TwinSnapshot, *, detected: Mapping[str, float],
+        arcada_aportada: str | None = None,
     ) -> FusionOutput:
         if not detected:
             # Sin segmentación no hay nada contra lo que validar el anclaje. Es
@@ -119,7 +120,7 @@ class SemanticFusionAgent(BaseFusionAgent):
                     sin_arcada.setdefault(arco, []).append(fdi)
             ancladas.append(self._anclar(obs, confianza))
 
-        motivos += _falta_la_arcada(sin_arcada)
+        motivos += _falta_la_arcada(sin_arcada, arcada_aportada)
 
         return self._outcome(
             ModalityStatus.OK,
@@ -162,7 +163,8 @@ def _arcada_de(fdi: str) -> str:
     return describe(fdi).arch if is_valid_fdi(fdi) else "?"
 
 
-def _falta_la_arcada(sin_arcada: dict[str, list[str]]) -> list[str]:
+def _falta_la_arcada(sin_arcada: dict[str, list[str]],
+                     arcada_aportada: str | None = None) -> list[str]:
     """**Un** motivo por arcada no cubierta, no uno por diente. Y es la diferencia
     entre un gate que se lee y uno que se ignora.
 
@@ -176,16 +178,27 @@ def _falta_la_arcada(sin_arcada: dict[str, list[str]]) -> list[str]:
     confianza de esas observaciones sigue puesta a 0,0, así que tampoco se anclan. Lo que
     cambia es que se dice una vez.
 
-    ⚠️ **Y no se afirma la causa**, porque desde aquí no se puede saber: una arcada con
-    cero dientes puede ser que no se aportara escaneo o que la segmentación fallara
-    entera. Las dos piden revisión y piden cosas distintas, así que se declara el hecho
-    —ninguno cubierto— y lo decide quien mira.
+    ⚠️ **La causa se afirma SOLO si se sabe.** Este mensaje decía «puede ser que no se
+    aportara escaneo o que la segmentación fallara en ella» — una disyuntiva que el emisor
+    sí puede resolver cuando le llega `arcada_aportada`: el orquestador ya recibe qué
+    arcada trae el escáner intraoral (`fuse(..., arcada=...)`), así que sabía la respuesta
+    y la estaba escondiendo detrás de un «puede ser». Sobre un caso real eran quince
+    observaciones del informe declaradas como posible fallo de segmentación cuando lo que
+    pasaba es que de esa arcada **no hay escaneo**: no hay nada que arreglar ahí.
+
+    Sin `arcada_aportada` se mantiene la disyuntiva, que sigue siendo lo honesto cuando de
+    verdad no se sabe.
     """
     return [
         f"arcada {arco}: la segmentación no cubrió NINGÚN diente, así que las "
         f"{len(codigos)} observación(es) del informe sobre ella se quedan sin anclar "
-        f"(FDI {', '.join(sorted(codigos))}). Puede ser que no se aportara escaneo de esa "
-        f"arcada o que la segmentación fallara en ella: no es un desacuerdo diente a "
-        f"diente."
+        f"(FDI {', '.join(sorted(codigos))}). " + (
+            f"El escáner intraoral aportado es de la arcada {arcada_aportada}, así que de "
+            f"esta NO hay geometría a la que anclarlas: no es un fallo de la segmentación "
+            f"ni un desacuerdo diente a diente."
+            if arcada_aportada and arcada_aportada != arco else
+            "Puede ser que no se aportara escaneo de esa arcada o que la segmentación "
+            "fallara en ella: no es un desacuerdo diente a diente."
+        )
         for arco, codigos in sorted(sin_arcada.items())
     ]
