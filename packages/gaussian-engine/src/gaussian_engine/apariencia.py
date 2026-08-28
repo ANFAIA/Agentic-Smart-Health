@@ -367,6 +367,26 @@ def escribe_ply_coloreado(
         f.write(fd.tobytes())
 
 
+def _lee_ply_coloreado(ruta: Path) -> np.ndarray:
+    """El color por vertice `(N, 3)` float de un PLY escrito por `escribe_ply_coloreado`.
+
+    Es el inverso del escritor: sirve para REUSAR el color ya calculado de otra corrida
+    del mismo caso sin repetir la proyeccion de fotos. El dtype sale de las propiedades
+    DECLARADAS en la cabecera, no de una lista escrita aqui.
+    """
+    datos = ruta.read_bytes()
+    fin = datos.index(b"end_header\n") + len(b"end_header\n")
+    campos, n = [], 0
+    for linea in datos[:fin].decode("ascii").splitlines():
+        if linea.startswith("element vertex"):
+            n = int(linea.split()[-1])
+        elif linea.startswith("property ") and "list" not in linea:
+            _, tipo, nombre = linea.split()
+            campos.append((nombre, {"float": "<f4", "uchar": "u1"}[tipo]))
+    v = np.frombuffer(datos, np.dtype(campos), count=n, offset=fin)
+    return np.stack([v["red"], v["green"], v["blue"]], 1).astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Blender: render multivista
 # ---------------------------------------------------------------------------
@@ -433,6 +453,106 @@ def _render_blender(
     return T
 
 
+def _requisitos_profundidad(T: dict, destino: Path) -> None:
+    """Comprueba que la supervision de profundidad tiene su mapa por CADA vista, o falla alto.
+
+    ⚠️ El fallo es ALTO a proposito. Un entrenamiento con `peso_profundidad > 0` sin los
+    mapas fallaria con un `FileNotFoundError` dentro del bucle, 500 iteraciones tarde.
+    Se comprueba el CONTEO contra las vistas del render: un `depth/` de otra corrida con
+    distinto numero de vistas se detecta aqui y no a mitad de entrenamiento.
+    """
+    if not (destino / "depth").is_dir():
+        raise FileNotFoundError(
+            f"peso_profundidad > 0 pero {destino / 'depth'} no existe: "
+            "genera los mapas con _profundidad_raycast."
+        )
+    n = len(list((destino / "depth").glob("z_*.npy")))
+    if n != len(T["frames"]):
+        raise ValueError(
+            f"peso_profundidad > 0 pero {destino / 'depth'} trae {n} mapa(s) y el render "
+            f"{len(T['frames'])} vista(s): no son de la misma corrida."
+        )
+
+
+def _profundidad_raycast(
+    T: dict,
+    destino: Path,
+    posiciones: np.ndarray,
+    caras: np.ndarray,
+    *,
+    traza: bool = False,
+) -> None:
+    """Escribe `depth/z_%05d.npy` por vista: la distancia al plano de camara del PRIMER
+    impacto, por raycast de la malla con las poses EXACTAS del render.
+
+    ⚠️ Esto antes salia de la pasada Z de Blender, y ya no puede: Blender 5.x quito el
+    buffer Z del sistema de imagenes y el compositor nuevo no lo expone. El dato es el
+    MISMO —el Z de la primera superficie visible desde la camara, que es lo unico que el
+    render pudo dibujar— y aqui la malla y las poses son las mismas del render, asi que el
+    mapa es exacto salvo el antialias del borde, que la mascara de alfa recorta igual que
+    en la perdida.
+
+    El raycast usa trimesh+embree (unos 0,1-0,3 s por vista a 1.024 px). Los ficheros van
+    en `.npy` float32, en las MISMAS unidades normalizadas en que entrenan las camaras:
+    el lector no aplica ninguna escala.
+    """
+    import trimesh
+
+    P = np.asarray(posiciones, dtype=np.float64)
+    Pn = (P - np.asarray(T["scan_offset"], dtype=np.float64)) * float(T["scan_scale"])
+    malla = trimesh.Trimesh(
+        vertices=Pn.astype(np.float64), faces=np.asarray(caras, dtype=np.int64),
+        process=False,
+    )
+    if not hasattr(malla.ray, "intersects_location"):
+        raise ImportError(
+            "trimesh sin backend de rayos: instala `embreex` en el entorno de GPU."
+        )
+
+    W = H = T["w"]
+    fx = 0.5 * W / math.tan(0.5 * T["camera_angle_x"])
+    cx, cy = W / 2, H / 2
+    us, vs = np.meshgrid(np.arange(W), np.arange(H))
+    dir_cam = np.stack([(us - cx) / fx, (vs - cy) / fx, -np.ones_like(us, float)], -1)
+    dir_cam /= np.linalg.norm(dir_cam, axis=-1, keepdims=True)  # (H, W, 3)
+
+    (destino / "depth").mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
+    for k, f in enumerate(T["frames"]):
+        from PIL import Image
+
+        alfa = np.asarray(
+            Image.open(destino / f["file_path"]).convert("RGBA"), np.float32
+        )[..., 3]
+        m = (alfa > 127.0).ravel()
+        if not m.any():
+            np.save(destino / "depth" / f"z_{k:05d}.npy", np.zeros((H, W), np.float32))
+            continue
+        M = np.asarray(f["transform_matrix"], dtype=np.float64)
+        R, t = M[:3, :3], M[:3, 3]
+        # ⚠️ El rayo en MARCO DE CAMARA se gira al mundo antes del raycast: sin esto el
+        # trazado apuntaria siempre a -z del mundo y no a donde mira la camara.
+        rayos = np.flatnonzero(m)
+        dirs = (dir_cam.reshape(-1, 3)[m]) @ R.T  # mundo = R @ camara
+        ori = np.broadcast_to(t, dirs.shape)
+        locs, iray, _tri = malla.ray.intersects_location(
+            ori, dirs, multiple_hits=False
+        )
+        z = np.zeros((H, W), np.float32)
+        if len(locs):
+            p_cam = (locs - t) @ R          # R^T·(loc-t) con R ortogonal
+            # `iray` indexa DENTRO de los rayos enmascarados: los rayos sin impacto no
+            # aparecen, asi que se dispersa por el indice y no por la mascara entera.
+            z.ravel()[rayos[iray]] = -p_cam[:, 2]  # positivo delante (Blender mira -z)
+        np.save(destino / "depth" / f"z_{k:05d}.npy", z)
+        if traza and (k % 200 == 0 or k == len(T["frames"]) - 1):
+            dt = time.perf_counter() - t0
+            print(f"  profundidad: {k + 1}/{len(T['frames'])} vistas en {dt:.0f}s "
+                  f"({dt / (k + 1):.3f}s/vista)")
+    print(f"profundidad por raycast: {len(T['frames'])} vistas en "
+          f"{time.perf_counter() - t0:.0f}s")
+
+
 # ---------------------------------------------------------------------------
 # Entrenamiento gsplat
 # ---------------------------------------------------------------------------
@@ -483,6 +603,37 @@ def _entrena_gsplat(
     siembra: str = "vertice",
     dispositivo: str = "cuda",
     traza: bool = False,
+    # ⚠️ Estrategia de densificacion/poda. "mcmc" (Kheradmand et al. 2024) REUBICA las
+    # gaussianas muertas en vez de podarlas: la cuenta se mantiene cerca de `cap_max` y la
+    # niebla sale mucho menor. MEDIDO en este proyecto: con la estrategia clasica, la
+    # siembra por area de 1,09 M cayo a 120 k por las podas de opacidad, y con eso se fue
+    # la capacidad. Con "mcmc" no hay poda masiva: hay reubicacion.
+    estrategia: str = "default",
+    # ⚠️ Render ANTI-ALIASED (Mip-Splatting, CVPR 2024): filtro de huella de pixel que
+    # evita el halo por dilatacion y los primitivos degenerados. Es el modo pensado para
+    # que la recreacion se vea nitida a resoluciones mayores que la de entrenamiento.
+    antialiased: bool = False,
+    # ⚠️ Supervision de PROFUNDIDAD: compara el Z esperado del campo contra el Z por
+    # raycast de la malla (`depth/z_*.npy`), para que las gaussianas no floten.
+    # `_requisitos_profundidad` comprueba que los mapas estan y falla alto si no.
+    peso_profundidad: float = 0.0,
+    # ⚠️ El peso de profundidad entra EN RAMPA, y el porqué está MEDIDO: a peso pleno desde
+    # la iteracion 0, la E[z] de la niebla inicial es caotica y el anclaje pelea contra la
+    # imagen (holdout 26 dB contra los 36 del mismo caso sin profundidad). Tras la
+    # convergencia de imagen, el campo ya cumple E[z]≈superficie (mediana de error 0,005
+    # unidades sobre el campo de 36 dB, medida contra el raycast), asi que la profundidad
+    # PULE en vez de pelear.
+    profundidad_desde: int = 6_000,
+    profundidad_rampa: int = 3_000,
+    # ⚠️ Regularizador de APLANAMIENTO: penaliza el eje MENOR en absoluto (media de
+    # exp(scale_min)), empujando el elipsoide hacia el disco pegado a la superficie.
+    # ⚠️ La version anterior penalizaba la RAZON menor/mayor y era DEGENERADA, y esta
+    # MEDIDO: el gradiente del cociente tambien EXPANDE el eje mayor, y el resultado fue
+    # discos de espesor 3,4 µm con huella de 1.344 µm — peor que no regularizar. En
+    # absoluto el gradiente decrece con el propio eje (auto-limitante, no colapsa a cero)
+    # y el eje mayor queda solo a cargo de la perdida de imagen. 0 = desactivado.
+    peso_aplanado: float = 0.0,
+    aplanado_desde: int = 500,
 ) -> tuple[dict[str, Any], list[tuple[int, float, float, float]]]:
     """Bucle de entrenamiento 3DGS con gsplat.
 
@@ -560,13 +711,27 @@ def _entrena_gsplat(
         for f in T["frames"]
     ]).to(dev)
 
-    def carga_imagen(k: int) -> torch.Tensor:
-        """Carga imagen bajo demanda (a 1024px las 1600 son ~20 GB)."""
+    usa_profundidad = peso_profundidad > 0
+    if usa_profundidad:
+        _requisitos_profundidad(T, destino)
+
+    def carga_vista(k: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """RGB premultiplicado y alfa de la vista k, bajo demanda (las 1600 son ~20 GB)."""
         rgba = np.asarray(
             Image.open(destino / T["frames"][k]["file_path"]).convert("RGBA"),
             np.float32,
         ) / 255.0
-        return torch.from_numpy(rgba[..., :3] * rgba[..., 3:4]).to(dev)
+        alfa = torch.from_numpy(rgba[..., 3]).to(dev)
+        return torch.from_numpy(rgba[..., :3] * rgba[..., 3:4]).to(dev), alfa
+
+    def carga_imagen(k: int) -> torch.Tensor:
+        return carga_vista(k)[0]
+
+    def carga_profundidad(k: int) -> torch.Tensor:
+        """Z por raycast de la malla (`depth/z_*.npy`), en las mismas unidades de escena
+        que las camaras. 0 = pixel sin superficie. Ver `_profundidad_raycast`."""
+        gris = np.load(destino / "depth" / f"z_{k:05d}.npy")
+        return torch.from_numpy(gris.astype(np.float32)).to(dev)
 
     # Split train/holdout: 1 de cada 4 para validacion.
     idx = np.arange(len(T["frames"]))
@@ -583,6 +748,12 @@ def _entrena_gsplat(
             torch.sigmoid(params["opacities"]),
             torch.sigmoid(params["colors"]),
             vm[None], K[None], W, H, packed=False,
+            # ⚠️ Con profundidad el render trae 4 canales: RGB + la z ESPERADA del campo
+            # ("RGB+ED" = Σw·z/Σw, a lo largo del eje de vista). "RGB+D" no vale: es la z
+            # ACUMULADA sin normalizar, que se hunde donde la transmitancia no llega a 1 y
+            # anclaria el campo mas cerca de la camara. Medido sobre semillas en superficie.
+            render_mode="RGB+ED" if usa_profundidad else "RGB",
+            rasterize_mode="antialiased" if antialiased else "classic",
         )
         return out[0], info
 
@@ -590,7 +761,7 @@ def _entrena_gsplat(
         with torch.no_grad():
             return float(np.mean([
                 -10 * math.log10(
-                    ((render(viewmats[j])[0] - carga_imagen(j)) ** 2).mean().item()
+                    ((render(viewmats[j])[0][..., :3] - carga_imagen(j)) ** 2).mean().item()
                     + 1e-10
                 )
                 for j in js
@@ -603,19 +774,40 @@ def _entrena_gsplat(
     }
     opt = {k: torch.optim.Adam([v], lr=lr[k]) for k, v in params.items()}
 
-    # Control adaptativo de densidad (Kerbl et al. 2023):
-    # - densificacion suave (la siembra desde la malla ya es densa)
-    # - poda de gaussianas casi transparentes
-    # - reset periodico de opacidad
-    strat = DefaultStrategy(
-        refine_start_iter=500,
-        refine_stop_iter=iteraciones // 2,
-        reset_every=1500,
-        refine_every=100,
-        verbose=False,
-    )
+    # Control adaptativo de densidad. La clasica (Kerbl et al. 2023) densifica suave, poda
+    # casi-transparentes y resetea opacidad; la MCMC (Kheradmand et al. 2024) reubica las
+    # muertas y mantiene la cuenta cerca del tope. Ver `estrategia` en la firma.
+    from gsplat import MCMCStrategy
+
+    if estrategia == "mcmc":
+        strat = MCMCStrategy(
+            cap_max=1_000_000,
+            refine_start_iter=500,
+            # ⚠️ La densificacion tardia es la causa principal de floaters (medido por los
+            # autores del MCMC): se corta en el primer tercio y la cuenta ya no se mueve.
+            refine_stop_iter=6_000,
+            refine_every=100,
+            # ⚠️ El ruido Langevin por defecto (5e5) esta pensado para lr~1e-2 y escenas
+            # de gaussianas pequenas. MEDIDO aqui: con lr 1e-3 el desplazamiento es
+            # 500·s², que para una gaussiana grande de la niebla son saltos de 0,45
+            # unidades cada 100 pasos — el campo no se asienta nunca (12 dB a la 5.000 y
+            # E[z] aleatoria). Con 1e4 el salto es ~1 % del tamano de la gaussiana: la
+            # reubicacion sigue viva y el ruido deja de destrozar el ajuste.
+            noise_lr=1e4,
+            verbose=False,
+        )
+    else:
+        strat = DefaultStrategy(
+            refine_start_iter=500,
+            refine_stop_iter=iteraciones // 2,
+            reset_every=1500,
+            refine_every=100,
+            verbose=False,
+        )
     strat.check_sanity(params, opt)
-    estado = strat.initialize_state(scene_scale=1.0)
+    # ⚠️ La MCMC no usa la escala de escena: su estado es la tabla de binomios.
+    estado = (strat.initialize_state(scene_scale=1.0) if estrategia == "default"
+              else strat.initialize_state())
 
     torch.manual_seed(0)
     curva: list[tuple[int, float, float, float]] = []
@@ -626,26 +818,60 @@ def _entrena_gsplat(
         out, info = render(viewmats[i])
         strat.step_pre_backward(params, opt, estado, it, info)
 
-        tgt = carga_imagen(i)
-        a = out.permute(2, 0, 1).unsqueeze(0)
+        tgt, alfa = carga_vista(i)
+        rgb = out[..., :3]
+        a = rgb.permute(2, 0, 1).unsqueeze(0)
         b = tgt.permute(2, 0, 1).unsqueeze(0)
-        perdida = 0.8 * (out - tgt).abs().mean() + 0.2 * (1.0 - ssim(a, b, data_range=1.0))
+        perdida = 0.8 * (rgb - tgt).abs().mean() + 0.2 * (1.0 - ssim(a, b, data_range=1.0))
+        perdida_d = perdida_a = None
+
+        # ⚠️ Supervision de profundidad, enmascarada a los pixeles que el render de veras
+        # dibujo (alfa) y con Z de Blender valido. Impide que las gaussianas floten fuera
+        # de la superficie: el Z del campo se compara CONTRA la pasada Z del mismo render.
+        if usa_profundidad:
+            z_gt = carga_profundidad(i)
+            z_pr = out[..., 3]
+            # La mascara tambien exige Z renderizado > 0: donde el campo todavia no dibuja
+            # nada, gsplat devuelve z=0 y anclaria contra un valor que no es el campo.
+            m = (alfa > 0.5) & (z_gt > 0) & (z_pr > 0)
+            if m.any():
+                perdida_d = (z_pr[m] - z_gt[m]).abs().mean()
+                w = min(1.0, max(0.0, (it - profundidad_desde) / max(profundidad_rampa, 1)))
+                perdida = perdida + peso_profundidad * w * perdida_d
+
+        # ⚠️ Regularizador de aplanamiento: eje MENOR en absoluto, hacia disco pegado a la
+        # superficie. Ver la nota de la firma: la razon menor/mayor estaba descartada por
+        # degenerada (medido). Arranca en `aplanado_desde` para no aplastar antes de que
+        # la superficie se oriente.
+        if peso_aplanado > 0 and it >= aplanado_desde:
+            perdida_a = torch.exp(params["scales"]).min(dim=-1).values.mean()
+            perdida = perdida + peso_aplanado * perdida_a
 
         for o in opt.values():
             o.zero_grad()
         perdida.backward()
         for o in opt.values():
             o.step()
-        strat.step_post_backward(params, opt, estado, it, info, packed=False)
+        if estrategia == "mcmc":
+            # ⚠️ La MCMC no recibe `packed` y SI recibe el lr de `means`, que escala el
+            # ruido de Langevin de la reubicacion.
+            strat.step_post_backward(params, opt, estado, it, info, lr["means"])
+        else:
+            strat.step_post_backward(params, opt, estado, it, info, packed=False)
 
         if it % 500 == 0 or it == iteraciones - 1:
             ptr = psnr_en(train) if len(train) > 0 else 0.0
             pt = psnr_en(eval_test)
             curva.append((it, perdida.item(), ptr, pt))
             if traza:
+                extra = ""
+                if perdida_d is not None:
+                    extra += f"  z {perdida_d.item():.4f}"
+                if perdida_a is not None:
+                    extra += f"  plano {perdida_a.item():.4f}"
                 print(
                     f"  it {it:5d}  N={params['means'].shape[0]:>7,}  "
-                    f"loss {perdida.item():.4f}  train {ptr:.2f}  holdout {pt:.2f} dB"
+                    f"loss {perdida.item():.4f}{extra}  train {ptr:.2f}  holdout {pt:.2f} dB"
                 )
 
     tiempo_total = time.perf_counter() - t0
@@ -777,6 +1003,12 @@ def _comentarios_color(params: dict) -> list[str]:
     interp = int(np.asarray(params.get("n_vertices_interpolados", 0)).reshape(-1)[0] or 0)
     pieza = int(np.asarray(params.get("n_vertices_por_pieza", 0)).reshape(-1)[0] or 0)
     piezas = int(np.asarray(params.get("n_piezas_con_tono", 0)).reshape(-1)[0] or 0)
+    if int(np.asarray(params.get("color_reutilizado", 0)).reshape(-1)[0] or 0):
+        return [
+            "comment f_dc_* = color REUTILIZADO de otra corrida del mismo caso (su",
+            "comment scan_colored.ply), para comparar experimentos con identico color de",
+            "comment entrada. La procedencia del color la declara la corrida origen.",
+        ]
     # ⚠️ **Dos mecanismos distintos no caben en un contador.** Antes esta cabecera
     # atribuia TODO a la proyeccion por vertice con PnP; con el color por pieza mandando,
     # eso decia una procedencia falsa del 97 % de los vertices. Y los interpolados que
@@ -1120,6 +1352,9 @@ def entrena_apariencia(
     dispositivo: str = "cuda",
     script_blender: Path | None = None,
     traza: bool = False,
+    # Estrategia de densidad ("default" | "mcmc") y render antialiased: ver `_entrena_gsplat`.
+    estrategia: str = "default",
+    antialiased: bool = False,
     # FDI por vertice del escaneo. Si viene, cada gaussiana sale con el codigo de la corona
     # mas cercana, y entonces se puede seleccionar una pieza SIN tener la malla delante.
     etiquetas: np.ndarray | None = None,
@@ -1133,6 +1368,18 @@ def entrena_apariencia(
     # con 1.024 px sobre 65 mm de arcada un detalle de 0,2 mm son 3 pixeles, y a tres
     # pixeles la densificacion no tiene de que agarrarse.
     cerca: int = 0,
+    # Supervision de PROFUNDIDAD y regularizador de APLANAMIENTO: ver `_entrena_gsplat`.
+    # Van por defecto a 0 para que el pipeline emita exactamente igual que antes.
+    peso_profundidad: float = 0.0,
+    profundidad_desde: int = 6_000,
+    profundidad_rampa: int = 3_000,
+    peso_aplanado: float = 0.0,
+    aplanado_desde: int = 500,
+    # REUSAR el color y el render de otra corrida del mismo caso (directorio con
+    # `scan_colored.ply`, `transforms.json`, `images/`). Para comparar experimentos con
+    # IDENTICO color de entrada y IDENTICOS pixeles, sin que el RANSAC de la pose de foto
+    # ni el render metan ruido entre corridas. La cabecera del PLY lo declara.
+    reusa: Path | None = None,
 ) -> tuple[dict[str, np.ndarray], EntrenamientoApariencia]:
     """Entrena un campo de gaussianas sobre una malla pintada con dos tonos de las fotos.
 
@@ -1167,119 +1414,176 @@ def entrena_apariencia(
 
     destino.mkdir(parents=True, exist_ok=True)
 
-    # Paso 1: Color desde fotos
-    print("Paso 1/4: color desde las fotos...")
-    enamel_rgb, gingiva_rgb = _muestra_color_fotos(rutas_fotos)
-    print(f"  dos tonos de respaldo: esmalte {enamel_rgb.round().astype(int)} · "
-          f"encía {gingiva_rgb.round().astype(int)}")
-    respaldo = _colorea_malla(
-        posiciones, np.zeros_like(posiciones), enamel_rgb, gingiva_rgb, etiquetas
-    )
-
-    # ⚠️ **Se intenta color MEDIDO antes que los dos tonos.** Proyectar los pixeles de la
-    # foto sobre la malla necesita la pose de camara, y este proyecto tenia medido que no
-    # sabia sacarla: COLMAP da CERO pares geometricos entre las fotos clinicas. `pose_foto`
-    # la saca por PnP sobre correspondencias por diente —la Etapa 1 de DentalGS— y sobre un
-    # caso real da 0,74 mm de error, con 4,31 sigma de separacion esmalte/encia sobre la
-    # malla y dos piezas menos fuera de su caja anatomica a cobertura constante.
-    #
-    # Si no hay pose sostenible se cae al degradado de dos tonos, que es lo que habia, y se
-    # dice. `medido` viaja para que el descriptor no tenga que suponerlo.
-    # ⚠️ **Primero el color por PIEZA, que no necesita pose.** Proyectar por vertice deja
-    # sin medida el 35 % de la superficie —solo una de seis fotos resuelve pose— y ese hueco
-    # se rellena interpolando del vertice medido mas cercano, que en la cara vestibular es
-    # una sombra interdental: es el color raro que se ve en el visor. Por pieza no hay hueco
-    # que rellenar, y un vertice mal segmentado recibe el color de un diente vecino en vez
-    # de una sombra.
-    medido = interpolado = 0
-    por_pieza: list = []
-    motivos_tono: list[str] = []
-    if etiquetas is not None and lado_fotos:
-        try:
-            from analysis_agents.dental import ancho_admitido
-
-            from gaussian_engine.tono_foto import (
-                color_de_encia,
-                pinta_malla,
-                tonos_de_fotos,
+    if reusa is not None:
+        # ⚠️ REUSA: el color y el render de otra corrida del MISMO caso, tal cual. Existe
+        # para comparar experimentos con identicos pixeles de entrada: el color por vertice
+        # se relee del `scan_colored.ply` de la corrida origen y las vistas salen del mismo
+        # `images/`, asi que la unica diferencia entre corridas es la configuracion del
+        # entrenamiento. La cabecera del PLY declara el color como REUTILIZADO.
+        scan_coloreado = Path(reusa) / "scan_colored.ply"
+        if not (scan_coloreado.exists() and (Path(reusa) / "transforms.json").exists()):
+            raise FileNotFoundError(
+                f"reusa={reusa} no trae scan_colored.ply ni transforms.json"
             )
-
-            arco = [f for f in (17, 16, 15, 14, 13, 12, 11,
-                                21, 22, 23, 24, 25, 26, 27)
-                    if ancho_admitido(f) is not None]
-            anchos = np.array([ancho_admitido(f) for f in arco], dtype=np.float64)
-            por_pieza, motivos_tono = tonos_de_fotos(
-                list(rutas_fotos), arco, anchos, lado_conocido=lado_fotos
+        T = json.loads((Path(reusa) / "transforms.json").read_text())
+        vcol = _lee_ply_coloreado(scan_coloreado)
+        if len(vcol) != len(posiciones):
+            raise ValueError(
+                f"el scan_colored.ply reutilizado trae {len(vcol):,} vertices y esta "
+                f"malla tiene {len(posiciones):,}: no son del mismo escaneo"
             )
-            for m in motivos_tono:
-                print(f"    ⚠ {m}")
-        except ImportError as e:
-            print(f"  ⚠ sin color por pieza ({e})")
-
-    if por_pieza:
-        eje = _eje_oclusal(posiciones, etiquetas)
-        vcol_pieza, med_pieza = pinta_malla(
-            posiciones, etiquetas, por_pieza, color_de_encia(list(rutas_fotos)), eje
+        por_pieza, motivos_tono = [], []
+        medido = interpolado = n_por_pieza = 0
+        print(f"Paso 1-2/4: color y render REUTILIZADOS de {reusa}")
+    else:
+        # Paso 1: Color desde fotos
+        print("Paso 1/4: color desde las fotos...")
+        enamel_rgb, gingiva_rgb = _muestra_color_fotos(rutas_fotos)
+        print(f"  dos tonos de respaldo: esmalte {enamel_rgb.round().astype(int)} · "
+              f"encía {gingiva_rgb.round().astype(int)}")
+        respaldo = _colorea_malla(
+            posiciones, np.zeros_like(posiciones), enamel_rgb, gingiva_rgb, etiquetas
         )
-        print(f"  color por PIEZA: {len(por_pieza)} corona(s) medida(s), "
-              f"{100 * med_pieza.mean():.1f} % de los vertices sin interpolar nada")
-        for t in por_pieza:
-            print(f"    FDI {t.fdi}: {t.n_pixeles:,} px  "
-                  + " ".join(f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in t.rgb))
 
-    cm = None
-    try:
-        from gaussian_engine.pose_foto import color_por_vertice
+        # ⚠️ **Se intenta color MEDIDO antes que los dos tonos.** Proyectar los pixeles de la
+        # foto sobre la malla necesita la pose de camara, y este proyecto tenia medido que no
+        # sabia sacarla: COLMAP da CERO pares geometricos entre las fotos clinicas. `pose_foto`
+        # la saca por PnP sobre correspondencias por diente —la Etapa 1 de DentalGS— y sobre un
+        # caso real da 0,74 mm de error, con 4,31 sigma de separacion esmalte/encia sobre la
+        # malla y dos piezas menos fuera de su caja anatomica a cobertura constante.
+        #
+        # Si no hay pose sostenible se cae al degradado de dos tonos, que es lo que habia, y se
+        # dice. `medido` viaja para que el descriptor no tenga que suponerlo.
+        # ⚠️ **Primero el color por PIEZA, que no necesita pose.** Proyectar por vertice deja
+        # sin medida el 35 % de la superficie —solo una de seis fotos resuelve pose— y ese hueco
+        # se rellena interpolando del vertice medido mas cercano, que en la cara vestibular es
+        # una sombra interdental: es el color raro que se ve en el visor. Por pieza no hay hueco
+        # que rellenar, y un vertice mal segmentado recibe el color de un diente vecino en vez
+        # de una sombra.
+        medido = interpolado = 0
+        por_pieza: list = []
+        motivos_tono: list[str] = []
+        if etiquetas is not None and lado_fotos:
+            try:
+                from analysis_agents.dental import ancho_admitido
 
-        cm = color_por_vertice(list(rutas_fotos), posiciones, caras, etiquetas,
-                               respaldo_rgb=respaldo, traza=traza)
-        vcol = cm.rgb
-        medido, interpolado = int(cm.medido.sum()), int(cm.interpolado.sum())
-        print(f"  color MEDIDO: {cm.resumen()}")
-        for pose in cm.poses:
-            print(f"    {pose.ruta.name}: pose {pose.error_mm:.2f} mm · "
-                  f"apoyo {100*pose.apoyo:.0f} % · {pose.inliers}/{pose.correspondencias}")
-        for ruta, razon in cm.descartadas:
-            print(f"    ✗ {ruta.name}: {razon}")
-    except ImportError as e:
-        vcol = respaldo
-        print(f"  ⚠ sin color medido ({e}): se pinta el degradado de dos tonos, que NO es "
-              "color del paciente. Instala el extra `appearance`.")
-    n_por_pieza = 0
-    if por_pieza:
-        # El color por pieza MANDA donde lo hay; el de por vertice se queda para el resto,
-        # que es sobre todo lo que ninguna corona reclama.
-        vcol = np.where(med_pieza[:, None], vcol_pieza, vcol)
-        n_por_pieza = int(med_pieza.sum())
-        # ⚠️ **Los interpolados hay que RECONTARLOS.** Los que la pieza reclamo estan
-        # sobrescritos por color medido; seguir declarandolos exagera lo que se ha
-        # inventado, y esta cabecera existe justo para no exagerar.
-        interpolado = 0 if cm is None else int((~med_pieza & cm.interpolado).sum())
-        medido = 0 if cm is None else int((~med_pieza & cm.medido).sum())
-    elif medido == 0:
-        print("  ⚠ ninguna foto ha dado una pose sostenible: el color son DOS TONOS y su "
-              "frontera sale de las etiquetas FDI, que es inferencia (Layer 3).")
+                from gaussian_engine.tono_foto import (
+                    color_de_encia,
+                    pinta_malla,
+                    tonos_de_fotos,
+                )
 
-    # Paso 2: Render Blender
-    print("Paso 2/4: renderizando vistas Blender...")
-    scan_coloreado = destino / "scan_colored.ply"
-    escribe_ply_coloreado(scan_coloreado, posiciones, caras, vcol)
+                arco = [f for f in (17, 16, 15, 14, 13, 12, 11,
+                                    21, 22, 23, 24, 25, 26, 27)
+                        if ancho_admitido(f) is not None]
+                anchos = np.array([ancho_admitido(f) for f in arco], dtype=np.float64)
+                por_pieza, motivos_tono = tonos_de_fotos(
+                    list(rutas_fotos), arco, anchos, lado_conocido=lado_fotos
+                )
+                for m in motivos_tono:
+                    print(f"    ⚠ {m}")
+            except ImportError as e:
+                print(f"  ⚠ sin color por pieza ({e})")
 
-    T = _render_blender(
-        scan_coloreado, destino,
-        n_vistas=n_vistas, resolucion=resolucion,
-        script_blender=script_blender, cerca=cerca,
-    )
+        if por_pieza:
+            eje = _eje_oclusal(posiciones, etiquetas)
+            vcol_pieza, med_pieza = pinta_malla(
+                posiciones, etiquetas, por_pieza, color_de_encia(list(rutas_fotos)), eje
+            )
+            print(f"  color por PIEZA: {len(por_pieza)} corona(s) medida(s), "
+                  f"{100 * med_pieza.mean():.1f} % de los vertices sin interpolar nada")
+            for t in por_pieza:
+                print(f"    FDI {t.fdi}: {t.n_pixeles:,} px  "
+                      + " ".join(f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in t.rgb))
+
+        cm = None
+        try:
+            from gaussian_engine.pose_foto import color_por_vertice
+
+            diag_por_foto: dict[str, dict] = {}
+            cm = color_por_vertice(list(rutas_fotos), posiciones, caras, etiquetas,
+                                   respaldo_rgb=respaldo, traza=traza,
+                                   diag_por_foto=diag_por_foto)
+            vcol = cm.rgb
+            medido, interpolado = int(cm.medido.sum()), int(cm.interpolado.sum())
+            print(f"  color MEDIDO: {cm.resumen()}")
+            for pose in cm.poses:
+                print(f"    {pose.ruta.name}: pose {pose.error_mm:.2f} mm · "
+                      f"apoyo {100*pose.apoyo:.0f} % · "
+                      f"{pose.inliers}/{pose.correspondencias}")
+            for ruta, razon in cm.descartadas:
+                print(f"    ✗ {ruta.name}: {razon}")
+            # ⚠️ **El resultado de pose por foto SOLO existia en stdout**, y auditar un
+            # fallo de pose sin los candidatos es conjetura. Aqui se persiste: por foto, el
+            # motivo exacto del fallo (o la pose ganadora) y los candidatos parciales, que
+            # ademas son las semillas del refinamiento de `pose_refina`.
+            from PIL import Image
+
+            for ruta in rutas_fotos:
+                d = diag_por_foto.get(ruta.name, {"archivo": ruta.name,
+                                                  "motivo": "sin diagnostico"})
+                with Image.open(ruta) as im:
+                    d["pixeles"] = list(im.size)
+            (destino / "pose_diagnostico.json").write_text(
+                json.dumps({"fotos": list(diag_por_foto.values())},
+                           indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        except ImportError as e:
+            vcol = respaldo
+            print(f"  ⚠ sin color medido ({e}): se pinta el degradado de dos tonos, que NO "
+                  "es color del paciente. Instala el extra `appearance`.")
+        n_por_pieza = 0
+        if por_pieza:
+            # El color por pieza MANDA donde lo hay; el de por vertice se queda para el
+            # resto, que es sobre todo lo que ninguna corona reclama.
+            vcol = np.where(med_pieza[:, None], vcol_pieza, vcol)
+            n_por_pieza = int(med_pieza.sum())
+            # ⚠️ **Los interpolados hay que RECONTARLOS.** Los que la pieza reclamo estan
+            # sobrescritos por color medido; seguir declarandolos exagera lo que se ha
+            # inventado, y esta cabecera existe justo para no exagerar.
+            interpolado = 0 if cm is None else int((~med_pieza & cm.interpolado).sum())
+            medido = 0 if cm is None else int((~med_pieza & cm.medido).sum())
+        elif medido == 0:
+            print("  ⚠ ninguna foto ha dado una pose sostenible: el color son DOS TONOS y "
+                  "su frontera sale de las etiquetas FDI, que es inferencia (Layer 3).")
+
+        # Paso 2: Render Blender
+        print("Paso 2/4: renderizando vistas Blender...")
+        scan_coloreado = destino / "scan_colored.ply"
+        escribe_ply_coloreado(scan_coloreado, posiciones, caras, vcol)
+
+        T = _render_blender(
+            scan_coloreado, destino,
+            n_vistas=n_vistas, resolucion=resolucion,
+            script_blender=script_blender, cerca=cerca,
+        )
 
     # Paso 3: Entrenar gsplat
     print("Paso 3/4: entrenando 3DGS...")
+    # ⚠️ Con `reusa`, las vistas se leen del directorio de la corrida origen: el `destino`
+    # de esta solo recibe el PLY nuevo, y las imagenes no se tocan ni se copian.
+    render_dir = destino if reusa is None else Path(reusa)
+
+    # Paso 2b: mapas de profundidad por raycast, si la supervision los pide y el render no
+    # los trae ya. Se generan UNA vez por render y se reusan entre experimentos, igual que
+    # las propias vistas. Ver `_profundidad_raycast`: la pasada Z de Blender 5.x ya no es
+    # legible, y el dato es el mismo —la primera superficie visible desde cada camara—.
+    if peso_profundidad > 0 and not (render_dir / "depth").exists():
+        _profundidad_raycast(T, render_dir, posiciones, caras, traza=traza)
     params, curva = _entrena_gsplat(
         T, posiciones, vcol,
-        destino=destino,
+        destino=render_dir,
         iteraciones=iteraciones, semillas=semillas,
         caras=caras, siembra=siembra,
         dispositivo=dispositivo, traza=traza or traza,
+        estrategia=estrategia, antialiased=antialiased,
+        peso_profundidad=peso_profundidad,
+        profundidad_desde=profundidad_desde, profundidad_rampa=profundidad_rampa,
+        peso_aplanado=peso_aplanado, aplanado_desde=aplanado_desde,
     )
+    if reusa is not None:
+        # La cabecera del PLY declara que este color NO se proyecto en esta corrida: se
+        # reutilizo el de otra. Ver `_comentarios_color`.
+        params["color_reutilizado"] = np.asarray(1, dtype=np.int64)
 
     # Paso 4: Exportar PLY INRIA
     print("Paso 4/4: exportando PLY...")

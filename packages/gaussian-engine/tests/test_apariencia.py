@@ -575,3 +575,56 @@ def test_el_descriptor_de_la_oclusion_lleva_los_numeros_del_calculo() -> None:
         assert f"{valor:g}" in texto, f"{valor} no aparece en el descriptor de `ao`"
     # Y no puede seguir describiendo el método que se descartó.
     assert "plano tangente" not in texto
+
+
+# ── Supervisión de profundidad y reuso de corridas ───────────────────────────
+
+def test_el_color_reutilizado_se_lee_del_PLY_de_la_corrida_origen(tmp_path):
+    """`reusa` existe para comparar experimentos con identicos pixeles de entrada: el color
+    por vertice se relee del `scan_colored.ply` que la corrida origen escribio, y el lector
+    tiene que devolverlo igual — el dtype sale de la cabecera DECLARADA, no de una lista
+    escrita aqui, que es la misma familia de fallo que ya mordio tres veces."""
+    import numpy as np
+    from gaussian_engine.apariencia import _lee_ply_coloreado, escribe_ply_coloreado
+
+    rng = np.random.default_rng(3)
+    pos = rng.normal(size=(50, 3))
+    caras = rng.integers(0, 50, (40, 3))
+    rgb = rng.integers(0, 255, (50, 3)).astype(np.uint8)
+    ruta = tmp_path / "scan_colored.ply"
+    escribe_ply_coloreado(ruta, pos, caras, rgb)
+    leido = _lee_ply_coloreado(ruta)
+    assert leido.shape == (50, 3)
+    assert (leido == rgb.astype(np.float32)).all()
+
+
+def test_la_profundidad_sin_sus_mapas_falla_ALTO(tmp_path):
+    """Un `peso_profundidad > 0` sin `depth/z_*.npy` fallaria con un `FileNotFoundError`
+    500 iteraciones tarde, dentro del bucle. Aqui se comprueba ANTES de entrenar, y contra
+    el CONTEO de vistas: un `depth/` de otra corrida con distinto numero se detecta
+    tambien, en vez de comparar el campo contra mapas ajenos."""
+    import numpy as np
+    import pytest
+    from gaussian_engine.apariencia import _requisitos_profundidad
+
+    T = {"frames": [{}] * 3}
+    with pytest.raises(FileNotFoundError, match="depth"):
+        _requisitos_profundidad(T, tmp_path)
+    (tmp_path / "depth").mkdir()
+    with pytest.raises(ValueError, match="3 vista"):
+        _requisitos_profundidad(T, tmp_path)
+    for k in range(3):
+        np.save(tmp_path / "depth" / f"z_{k:05d}.npy", np.zeros((4, 4), np.float32))
+    _requisitos_profundidad(T, tmp_path)  # no lanza
+
+
+def test_la_cabecera_declara_el_color_REUTILIZADO():
+    """Reusar el color de otra corrida no lo convierte en DOS TONOS ni en MEDIDO: es un
+    tercer caso, y la cabecera lo dice con su nombre en vez de mentir la procedencia."""
+    import numpy as np
+    from gaussian_engine.apariencia import _comentarios_color
+
+    junto = " ".join(_comentarios_color({"color_reutilizado": np.asarray(1)}))
+    assert "REUTILIZADO" in junto
+    assert "DOS tonos" not in junto
+    assert "MEDIDO" not in junto

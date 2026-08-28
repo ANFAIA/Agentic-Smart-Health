@@ -189,6 +189,81 @@ def centros_oclusales(V: np.ndarray, etiquetas: np.ndarray,
     return np.asarray(out)
 
 
+def corona_oclusal(V: np.ndarray, etiquetas: np.ndarray, codigos: list[int]) -> np.ndarray:
+    """Los VERTICES del tercio oclusal de todas las piezas (el set del apoyo).
+
+    Vive a nivel de modulo —y no como clausura dentro de `estima_pose`— porque
+    `pose_refina` recalcula el apoyo con la MISMA corona: si cada uno tuviera la suya,
+    el apoyo de una pose refinada no seria comparable con el de la semilla.
+    """
+    eje = V[etiquetas > 0].mean(0) - V[etiquetas == 0].mean(0)
+    eje /= np.linalg.norm(eje)
+    return np.vstack([
+        P[(P @ eje) >= np.quantile(P @ eje, 1 - TERCIO)]
+        for c in codigos if (P := V[etiquetas == c]).size
+    ])
+
+
+def _apoyo(rv: np.ndarray, tv: np.ndarray, K: np.ndarray,
+           corona: np.ndarray, arco: np.ndarray) -> float:
+    """Fraccion de la corona reproyectada que cae sobre la mascara de diente.
+
+    ⚠️ **Es lo que decide si una pose vale, y no el error de reproyeccion.** Con cuatro
+    correspondencias el PnP ajusta cualquier cosa: salio una pose con 1,3 px de error que
+    solo veia el 10,8 % de la malla. El apoyo usa TODOS los pixeles de la corona.
+    """
+    import cv2
+
+    R, _ = cv2.Rodrigues(rv)
+    Vc = (R @ corona.T).T + tv.ravel()
+    d = Vc[:, 2] > 0
+    if d.sum() < 500:
+        return 0.0
+    uv = (K @ (Vc[d] / Vc[d][:, 2:3]).T).T[:, :2]
+    px = uv[:, 0].astype(int)
+    py = uv[:, 1].astype(int)
+    alto, ancho = arco.shape
+    ok = (px >= 0) & (px < ancho) & (py >= 0) & (py < alto)
+    if ok.sum() < 500:
+        return 0.0
+    return float(arco[py[ok], px[ok]].mean())
+
+
+def _blobs_para_pose(ruta: Path, cuantas: int) -> tuple[np.ndarray, np.ndarray, float, int]:
+    """`(arco, xy, umbral_a, fundidos)`: los centroides 2D que la pose va a emparejar.
+
+    La mascara, el watershed y el fundido de sobre-segmentacion viven AQUI y no en
+    `estima_pose` porque `pose_refina` tiene que rehacer exactamente el mismo calculo:
+    si cada uno lo hiciera por su cuenta, el refinado emparejaria contra unos centroides
+    distintos de los que dieron la semilla y su `error_mm` no seria comparable.
+    """
+    from scipy import ndimage
+
+    rgb, m, u = mascara_diente(ruta)
+    arco = _arco(m)
+    lab, ids = _parte_en_piezas(arco, cuantas)
+    cms = np.array([ndimage.center_of_mass(np.ones(arco.shape), lab, k) for k in ids])
+    xy = cms[:, ::-1]
+    fundidos = 0
+    if len(ids) > cuantas:
+        # ⚠️ **Sobre-segmentacion: se FUNDEN los blobs mas proximos, no se descarta.**
+        # Medido en el caso real: una foto daba 18 blobs para 14 piezas — un brillo o una
+        # fisura parten una corona en dos — y la pose fallaba entera antes de empezar. La
+        # corona partida es justo la que se recompone fundiendo la pareja mas cercana,
+        # una a una, hasta que quepan en el arco.
+        areas = np.array([(lab == k).sum() for k in ids], np.float64)
+        while len(xy) > cuantas:
+            d2 = ((xy[:, None] - xy[None, :]) ** 2).sum(-1)
+            np.fill_diagonal(d2, np.inf)
+            a, b = np.unravel_index(int(np.argmin(d2)), d2.shape)
+            xy[a] = (xy[a] * areas[a] + xy[b] * areas[b]) / (areas[a] + areas[b])
+            areas[a] += areas[b]
+            xy = np.delete(xy, b, 0)
+            areas = np.delete(areas, b)
+        fundidos = int(len(ids) - cuantas)
+    return arco, xy, float(u), fundidos
+
+
 def _arco(m: np.ndarray) -> np.ndarray:
     """La componente del arco, sin separadores.
 
@@ -242,15 +317,21 @@ def _parte_en_piezas(arco: np.ndarray, cuantas: int) -> tuple[np.ndarray, np.nda
     return mejor if mejor else (np.zeros(arco.shape, int), np.array([], int))
 
 
-def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray) -> PoseFoto | None:
+def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray,
+                diag: dict | None = None) -> PoseFoto | None:
     """La pose de esa foto respecto de la malla, o `None` si no se puede sostener.
 
     Devuelve `None` en vez de una pose mala **a proposito**: una vista con la pose torcida
     no aporta menos color, estropea el que las buenas ya habian puesto (medido: de +3
     piezas a +0). Quien llama decide con `apoyo` y `error_mm` delante.
+
+    `diag`, si se pasa, se rellena con el RECORRIDO del intento — piezas presentes, blobs,
+    candidatos por combinacion focal×ventana×sentido y el motivo exacto del fallo si lo
+    hay. Es lo que convierte un «no se ha podido resolver una pose» en una causa: existe
+    para auditar por que una foto falla y para dar semillas al refinamiento de `pose_refina`
+    (los candidatos con <6 inliers nunca optan a `mejor`, pero si viajan en `diag`).
     """
     import cv2
-    from scipy import ndimage
 
     # ⚠️ **Una esquirla no es un diente.** El umbral es RELATIVO a la propia arcada, no un
     # numero absoluto: en un caso real el FDI 28 traia 275 vertices frente a los 1.200-9.500
@@ -270,47 +351,37 @@ def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray) -> PoseFoto | 
             "`None`: sin saber que corona es cada vertice no hay con que emparejar las de "
             "la foto. El pipeline lo pasa desde `--fdi`."
         )
+    if diag is None:
+        diag = {}
+    diag.setdefault("archivo", ruta.name)
+    diag.setdefault("candidatos", [])
     cuenta = {int(c): int((etiquetas == c).sum()) for c in np.unique(etiquetas) if c > 0}
     if not cuenta:
+        diag["motivo"] = "la malla no trae ninguna pieza etiquetada"
         return None
     suelo = max(200, 0.15 * float(np.median(list(cuenta.values()))))
     presentes = {c for c, n in cuenta.items() if n >= suelo}
     arco_ref = (ARCO_MAXILAR if sum(c in presentes for c in ARCO_MAXILAR)
                 >= sum(c in presentes for c in ARCO_MANDIBULAR) else ARCO_MANDIBULAR)
     codigos = [c for c in arco_ref if c in presentes]
+    diag["arcada"] = "maxilar" if arco_ref is ARCO_MAXILAR else "mandibular"
+    diag["piezas"] = codigos
     if len(codigos) < 6:
+        diag["motivo"] = f"solo {len(codigos)} pieza(s) en la malla (minimo 6)"
         return None
 
-    rgb, m, u = mascara_diente(ruta)
-    arco = _arco(m)
+    arco, xy, u, fundidos = _blobs_para_pose(ruta, len(codigos))
     alto, ancho = arco.shape
-    lab, ids = _parte_en_piezas(arco, len(codigos))
-    if len(ids) < 6:
+    diag["mascara"] = [alto, ancho]
+    diag["umbral_a"] = u
+    diag["blobs"] = int(len(xy) + fundidos)
+    if fundidos:
+        diag["blobs_fundidos"] = fundidos
+    if len(xy) < 6:
+        diag["motivo"] = f"solo {len(xy)} blob(s) segmentado(s) (minimo 6)"
         return None
-    xy = np.array(ndimage.center_of_mass(np.ones(arco.shape), lab, list(ids)))[:, ::-1]
     p3_todos = centros_oclusales(V, etiquetas, codigos)
-
-    # Corona de referencia para el apoyo: el tercio oclusal de todas las piezas.
-    eje = V[etiquetas > 0].mean(0) - V[etiquetas == 0].mean(0)
-    eje /= np.linalg.norm(eje)
-    corona = np.vstack([
-        (lambda P: P[(P @ eje) >= np.quantile(P @ eje, 1 - TERCIO)])(V[etiquetas == c])
-        for c in codigos
-    ])
-
-    def apoyo_de(rv, tv, K):
-        R, _ = cv2.Rodrigues(rv)
-        Vc = (R @ corona.T).T + tv.ravel()
-        d = Vc[:, 2] > 0
-        if d.sum() < 500:
-            return 0.0
-        uv = (K @ (Vc[d] / Vc[d][:, 2:3]).T).T[:, :2]
-        px = uv[:, 0].astype(int)
-        py = uv[:, 1].astype(int)
-        ok = (px >= 0) & (px < ancho) & (py >= 0) & (py < alto)
-        if ok.sum() < 500:
-            return 0.0
-        return float(arco[py[ok], px[ok]].mean())
+    corona = corona_oclusal(V, etiquetas, codigos)
 
     # ⚠️ **Los blobs y las piezas tienen que EMPAREJARSE, no truncarse.** La primera version
     # cortaba la lista mas larga con `[:n]`, que empareja el blob i con la pieza i sin que
@@ -323,6 +394,8 @@ def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray) -> PoseFoto | 
                 else [(i, i + k) for i in range(len(codigos) - k + 1)] if k < len(codigos)
                 else [])
     if not ventanas:
+        diag["motivo"] = (f"{k} blob(s) para {len(codigos)} pieza(s): "
+                          "no hay ventana del arco que encaje")
         return None
 
     mejor = None
@@ -338,24 +411,45 @@ def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray) -> PoseFoto | 
                 ok, rv, tv, inl = cv2.solvePnPRansac(
                     p3, p2, K, None, reprojectionError=25.0,
                     iterationsCount=400, flags=cv2.SOLVEPNP_EPNP)
-                if not ok or inl is None or len(inl) < 6:
+                if not ok or inl is None or len(inl) < 4:
                     continue
                 i = inl.ravel()
-                ok, rv, tv = cv2.solvePnP(
-                    np.ascontiguousarray(p3[i]), np.ascontiguousarray(p2[i]), K, None,
-                    rvec=rv, tvec=tv, useExtrinsicGuess=True,
-                    flags=cv2.SOLVEPNP_ITERATIVE)
-                pr, _ = cv2.projectPoints(np.ascontiguousarray(p3[i]), rv, tv, K, None)
-                e = float(np.linalg.norm(pr.reshape(-1, 2) - p2[i], axis=1).mean())
-                sop = apoyo_de(rv, tv, K)
+                e = sop = None
+                if len(i) >= 6:
+                    ok, rv, tv = cv2.solvePnP(
+                        np.ascontiguousarray(p3[i]), np.ascontiguousarray(p2[i]), K, None,
+                        rvec=rv, tvec=tv, useExtrinsicGuess=True,
+                        flags=cv2.SOLVEPNP_ITERATIVE)
+                    pr, _ = cv2.projectPoints(np.ascontiguousarray(p3[i]), rv, tv, K, None)
+                    e = float(np.linalg.norm(pr.reshape(-1, 2) - p2[i], axis=1).mean())
+                    sop = _apoyo(rv, tv, K, corona, arco)
+                # ⚠️ Viaja en el diagnostico AUNQUE no opte a `mejor`: los candidatos con
+                # 4-5 inliers no valen para estimar, pero son semillas para `pose_refina`,
+                # y una semilla ES su pose — aqui viajan tambien el `rvec/tvec` (el refinado
+                # si hubo 6 inliers, el de RANSAC si no) y los INDICES de sus inliers, que
+                # es lo unico que deja recalcular el `error_mm` con la misma definicion
+                # despues del refinado.
+                diag["candidatos"].append({
+                    "focal": float(f), "ventana": [i0, i1], "sentido": sentido,
+                    "inliers": len(i), "inliers_idx": [int(x) for x in i],
+                    "error_px": e, "apoyo": sop,
+                    "rvec": [float(x) for x in np.asarray(rv).ravel()],
+                    "tvec": [float(x) for x in np.asarray(tv).ravel()],
+                })
+                if len(i) < 6:
+                    continue
                 punt = (round(sop, 3), len(i), -round(e, 1))
                 if mejor is None or punt > mejor[0]:
                     mejor = (punt, e, f, rv, tv, len(i), len(p3), sop, p3, p2)
     if mejor is None:
+        diag["motivo"] = ("ninguna combinacion focal×ventana×sentido da PnP "
+                          f"con 6 inliers ({len(diag['candidatos'])} candidato(s) parcial(es))")
         return None
     _, e, f, rv, tv, ninl, ncorr, sop, p3, p2 = mejor
     mm_px = (np.linalg.norm(p3.max(0) - p3.min(0))
              / max(np.linalg.norm(p2.max(0) - p2.min(0)), 1e-9))
+    diag["pose"] = {"error_mm": round(e * mm_px, 4), "apoyo": round(sop, 4),
+                    "inliers": ninl, "correspondencias": ncorr, "focal_px": round(float(f), 1)}
     return PoseFoto(ruta=ruta, rvec=rv, tvec=tv, focal_px=float(f), ancho=ancho, alto=alto,
                     error_px=e, error_mm=e * mm_px, inliers=ninl, correspondencias=ncorr,
                     umbral_a=u, apoyo=sop)
@@ -398,6 +492,24 @@ class ColorMedido:
                 f"{int(self.interpolado.sum()):,} interpolado(s) · {sin:,} sin color")
 
 
+def _refina_o_nada(ruta: Path, V: np.ndarray, etiquetas: np.ndarray,
+                   d: dict) -> PoseFoto | None:
+    """El refinado por silueta desde los candidatos del diagnostico, o `None`.
+
+    El import va dentro a proposito: `pose_refina` arrastra scipy.optimize, y la regla
+    del paquete es que importar `pose_foto` no arrastre nada pesado.
+    """
+    codigos = list(d.get("piezas") or [])
+    candidatos = list(d.get("candidatos") or [])
+    if len(codigos) < 6 or not candidatos:
+        return None
+    try:
+        from gaussian_engine.pose_refina import refina_desde_candidatos
+    except ImportError:
+        return None
+    return refina_desde_candidatos(ruta, V, etiquetas, codigos, candidatos, diag=d)
+
+
 def color_por_vertice(
     fotos: list[Path],
     V: np.ndarray,
@@ -406,6 +518,7 @@ def color_por_vertice(
     *,
     respaldo_rgb: np.ndarray | None = None,
     traza: bool = False,
+    diag_por_foto: dict[str, dict] | None = None,
 ) -> ColorMedido:
     """El color de cada vertice, tomado de las fotos que tengan pose sostenible.
 
@@ -419,6 +532,10 @@ def color_por_vertice(
 
     `respaldo_rgb` es lo que se pinta donde no llega ninguna camara ni la interpolacion —
     tipicamente los dos tonos de antes. Va declarado como lo que es: no medido.
+
+    `diag_por_foto`, si se pasa, recibe el diagnostico de `estima_pose` por nombre de
+    archivo, tambien para las descartadas: es lo que se persiste como
+    `pose_diagnostico.json` para auditar los fallos de pose con causa y no con conjetura.
     """
     import cv2
     from scipy.spatial import cKDTree
@@ -432,19 +549,40 @@ def color_por_vertice(
     poses: list[PoseFoto] = []
     descartadas: list[tuple[Path, str]] = []
 
+    refinadas: set[Path] = set()
     for ruta in fotos:
         if es_radiografia(ruta):
             descartadas.append((ruta, "es una radiografia: no trae color que proyectar"))
+            if diag_por_foto is not None:
+                diag_por_foto[ruta.name] = {
+                    "archivo": ruta.name,
+                    "motivo": "radiografia (canales RGB iguales): no trae color que proyectar",
+                }
             continue
-        pose = estima_pose(ruta, V, etiquetas)
-        if pose is None:
-            descartadas.append((ruta, "no se ha podido resolver una pose"))
-            continue
-        if pose.error_mm > ERROR_MAXIMO_MM:
-            descartadas.append(
-                (ruta, f"pose de {pose.error_mm:.2f} mm, por encima de "
-                       f"{ERROR_MAXIMO_MM} mm: una vista torcida estropea a las buenas"))
-            continue
+        d: dict = {}
+        if diag_por_foto is not None:
+            diag_por_foto[ruta.name] = d
+        pose = estima_pose(ruta, V, etiquetas, diag=d)
+        if pose is None or pose.error_mm > ERROR_MAXIMO_MM:
+            # ⚠️ **Antes de descartar se intenta el REFINADO por silueta.** Con los pocos
+            # centroides del PnP, una foto puede quedarse a un inlier del minimo o cuatro
+            # centesimas por encima del gate; el chamfer contra la mascara entera es la
+            # segunda oportunidad. El gate NO se relaja: la refinada se evalua con las
+            # mismas `error_mm` y `apoyo`, y `pose_refina` la descarta si no pasa.
+            r = _refina_o_nada(ruta, V, etiquetas, d)
+            if r is not None:
+                pose = r
+                refinadas.add(ruta)
+                d["pose_refinada"] = True
+            elif pose is None:
+                descartadas.append((ruta, "no se ha podido resolver una pose"))
+                continue
+            else:
+                d["motivo"] = (f"pose de {pose.error_mm:.2f} mm, por encima de "
+                               f"{ERROR_MAXIMO_MM} mm: una vista torcida estropea a las "
+                               "buenas")
+                descartadas.append((ruta, d["motivo"]))
+                continue
         rgb, _m, _u = mascara_diente(ruta)
         K = np.array([[pose.focal_px, 0, pose.ancho / 2],
                       [0, pose.focal_px, pose.alto / 2], [0, 0, 1]], float)
@@ -470,8 +608,9 @@ def color_por_vertice(
         medido |= gana
         poses.append(pose)
         if traza:
+            origen = " (refinada)" if ruta in refinadas else ""
             print(f"    {ruta.name}: pose {pose.error_mm:.2f} mm · apoyo "
-                  f"{100*pose.apoyo:.0f} % · aporta {int(gana.sum()):,} vertice(s)")
+                  f"{100*pose.apoyo:.0f} %{origen} · aporta {int(gana.sum()):,} vertice(s)")
 
     interpolado = np.zeros(len(V), bool)
     if medido.any() and (~medido).any():

@@ -195,3 +195,50 @@ def test_sin_etiquetas_la_pose_dice_que_le_falta_el_dato(tmp_path):
 
     with pytest.raises(ValueError, match="region_id"):
         estima_pose(tmp_path / "no-se-abre.jpg", np.zeros((4, 3)), None)
+
+
+def test_el_diagnostico_dice_por_que_no_hay_pose(tmp_path):
+    """Un fallo de pose tiene que decir POR QUE fallo, no solo que fallo.
+
+    «No se ha podido resolver una pose» no es auditable: el `diag` existe para que el
+    motivo quede escrito y la fase de refinamiento sepa de que candidatos partir.
+    """
+    _necesita_extra()
+    from gaussian_engine.pose_foto import estima_pose
+
+    V = np.random.default_rng(3).normal(size=(400, 3))
+    etq = np.zeros(400, np.int64)  # ninguna pieza etiquetada
+    d = {}
+    assert estima_pose(tmp_path / "no-se-abre.jpg", V, etq, diag=d) is None
+    assert "ninguna pieza etiquetada" in d["motivo"]
+    assert d["archivo"] == "no-se-abre.jpg"
+
+
+def test_el_diagnostico_se_rellena_para_las_descartadas(monkeypatch, tmp_path):
+    """El JSON de diagnostico cubre TODAS las fotos, no solo las que dan pose."""
+    _necesita_extra()
+    from gaussian_engine import pose_foto
+    from PIL import Image
+
+    foto = tmp_path / "foto.jpg"
+    a = np.zeros((64, 64, 3), np.uint8)
+    a[..., 0] = 200
+    a[..., 1] = 90
+    Image.fromarray(a).save(foto)
+    mala = pose_foto.PoseFoto(
+        ruta=foto, rvec=np.zeros(3), tvec=np.array([0.0, 0.0, 50.0]), focal_px=100.0,
+        ancho=64, alto=64, error_px=10.0,
+        error_mm=pose_foto.ERROR_MAXIMO_MM + 0.01,
+        inliers=9, correspondencias=14, umbral_a=17.0, apoyo=0.99)
+    monkeypatch.setattr(pose_foto, "estima_pose", lambda *a, **k: mala)
+
+    V = np.random.default_rng(1).normal(size=(300, 3))
+    F = np.array([[0, 1, 2]])
+    etq = np.zeros(300, np.int64)
+    respaldo = np.full((300, 3), 42, np.uint8)
+    diags: dict[str, dict] = {}
+    cm = pose_foto.color_por_vertice([foto], V, F, etq, respaldo_rgb=respaldo,
+                                     diag_por_foto=diags)
+    assert cm.medido.sum() == 0
+    assert foto.name in diags
+    assert "por encima" in diags[foto.name]["motivo"]
