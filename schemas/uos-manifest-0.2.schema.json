@@ -628,5 +628,5 @@
   "title": "UOS manifest v0.2",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://histora.dev/schemas/uos-manifest-0.2.schema.json"
+  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json"
 }
