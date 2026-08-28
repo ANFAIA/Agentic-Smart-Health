@@ -932,3 +932,162 @@ def test_el_sidecar_de_segmentacion_dice_de_que_pieza_fiarse() -> None:
     # Y sin el dato el bloque NO aparece: ausente no es «todas mal».
     assert "per_tooth_boundary" not in meta_segmentacion(
         etq, asset_origen="asset.scene", modelo="m", version=None)
+
+
+# --- KHR_gaussian_splatting: la apariencia dentro del glTF -------------------- #
+def _campo_apariencia(n=64, con_sh1=True, con_region=True):
+    """Un PLY INRIA de juguete, con las convenciones REALES: logit, log y (w,x,y,z)."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    props = [("x", "f4"), ("y", "f4"), ("z", "f4"),
+             ("f_dc_0", "f4"), ("f_dc_1", "f4"), ("f_dc_2", "f4")]
+    if con_sh1:
+        props += [(f"f_rest_{k}", "f4") for k in range(9)]
+    props += [("opacity", "f4"), ("scale_0", "f4"), ("scale_1", "f4"), ("scale_2", "f4"),
+              ("rot_0", "f4"), ("rot_1", "f4"), ("rot_2", "f4"), ("rot_3", "f4")]
+    if con_region:
+        props += [("region_id", "i2")]
+    fila = np.zeros(n, dtype=np.dtype([(k, v) for k, v in props]))
+    for k, v in props:
+        fila[k] = (rng.integers(11, 28, n) if k == "region_id"
+                   else rng.normal(0, 1, n).astype(v))
+    cab = ["ply", "format binary_little_endian 1.0", f"element vertex {n}"]
+    tipo = {"f4": "float", "i2": "short"}
+    cab += [f"property {tipo[v]} {k}" for k, v in props]
+    cab += ["end_header", ""]
+    # ⚠️ **El esquema es el de VERDAD, no uno escrito aquí.** Dos exportaciones del caso
+    # real murieron porque estos tests inventaban la forma del descriptor: primero un
+    # `{"columns": [...]}` donde el emisor pasa la lista pelada, y después dicts con clave
+    # `name` donde `esquema_apariencia` devuelve objetos `ColumnaCampo` con `.nombre`. Los
+    # tres tests en verde las dos veces. Un esquema de juguete prueba el juguete.
+    from gaussian_engine.agente_apariencia import esquema_apariencia
+
+    return ("\n".join(cab).encode("ascii") + fila.tobytes(),
+            esquema_apariencia([k for k, _ in props]))
+
+
+def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_path):
+    """La capa 3DGS como primitiva `KHR_gaussian_splatting`, no como puntero a un `.ply`.
+
+    ⚠️ **Es la diferencia entre un formato abierto y uno nuestro.** Con el fallback
+    `extras.uos_gs_uri` que el borrador admite, un visor glTF cualquiera abre la escena,
+    encuentra un puntero a un fichero opaco y **no dibuja la apariencia**: sólo la lee quien
+    conozca nuestra convención. Con la extensión la dibuja cualquier implementación
+    conforme sin saber nada de UOS.
+
+    Lo que se comprueba aquí es el CONTRATO de la extensión, atributo a atributo, porque
+    inventárselo sería exactamente lo contrario de interoperar.
+    """
+    import json as _json
+
+    import numpy as np
+    from uos.agente import _splats_khr
+    from uos.escena import construye_glb
+
+    crudo, columnas = _campo_apariencia()
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+
+    pos, etq = _arcada_de_juguete()
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    largo = int.from_bytes(glb[12:16], "little")
+    doc = _json.loads(glb[20:20 + largo])
+
+    assert doc["extensionsUsed"] == ["KHR_gaussian_splatting"]
+    # Nunca en `required`: un lector que no la entienda tiene que poder ver la malla.
+    assert "extensionsRequired" not in doc
+
+    prim = doc["meshes"][1]["primitives"][0]
+    assert prim["mode"] == 0, "la extensión exige modo POINTS"
+    ext = prim["extensions"]["KHR_gaussian_splatting"]
+    assert ext["kernel"] == "ellipse"
+    assert ext["colorSpace"] == "srgb_rec709_display"
+
+    a = prim["attributes"]
+    for nombre, tipo in [
+        ("POSITION", "VEC3"),
+        ("KHR_gaussian_splatting:ROTATION", "VEC4"),
+        ("KHR_gaussian_splatting:SCALE", "VEC3"),
+        ("KHR_gaussian_splatting:OPACITY", "SCALAR"),
+        ("KHR_gaussian_splatting:SH_DEGREE_0_COEF_0", "VEC3"),
+    ]:
+        assert nombre in a, f"falta el atributo obligatorio {nombre}"
+        assert doc["accessors"][a[nombre]]["type"] == tipo
+
+    # Grado 1 entero o nada: la extensión exige que si va un grado superior estén todos.
+    assert all(f"KHR_gaussian_splatting:SH_DEGREE_1_COEF_{k}" in a for k in range(3))
+    # El FDI por gaussiana no es de la extensión: va como atributo de aplicación.
+    assert "_REGION_ID" in a
+
+    # Y la apariencia cuelga del nodo de la malla, que ES el marco canónico (§5.1).
+    assert doc["nodes"][0]["children"] == [1]
+    assert doc["nodes"][1]["mesh"] == 1
+
+
+def test_las_unidades_de_la_extension_NO_son_las_del_PLY(tmp_path):
+    """Opacidad lineal en [0,1], escala lineal no negativa y cuaternión en orden glTF.
+
+    ⚠️ **Y se le pasa la LISTA de columnas, que es lo que le pasa el emisor.** Estos tests
+    pasaban un `{"columns": [...]}` y el conversor lo pedía así, mientras
+    `esquema_apariencia` devuelve la lista pelada: los tres tests en verde y la exportación
+    del caso real muerta con un `AttributeError` que el gate resumía como «uos-export-agent
+    falló». Un test que llama distinto que el código de verdad no prueba el código de verdad.
+
+    ⚠️ **Son tres conversiones reales, no tres renombrados.** El PLY INRIA guarda la
+    opacidad en logit, las escalas en logaritmo y el cuaternión como `(w,x,y,z)`; la
+    extensión pide lineal, lineal y `(x,y,z,w)`. Copiar los arrays tal cual produce un
+    fichero que valida y se dibuja mal: opacidades fuera de rango, elipses del tamaño
+    equivocado y cada una girada. Es el peor tipo de fallo — no revienta.
+    """
+    import numpy as np
+    from uos.agente import _splats_khr
+
+    crudo, columnas = _campo_apariencia(n=32)
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+
+    assert gs.opacidad.min() >= 0.0 and gs.opacidad.max() <= 1.0
+    assert gs.escala.min() > 0.0, "la escala llega en logaritmo: hay que exponenciarla"
+    # Cuaterniones unitarios, como exige la extensión.
+    assert np.allclose(np.linalg.norm(gs.rotacion, axis=1), 1.0, atol=1e-5)
+
+    # El orden: el último componente de la extensión es el `w`, que en el PLY es `rot_0`.
+    import numpy as _np
+    fila = _np.frombuffer(
+        crudo, _np.dtype([(c.nombre, "<i2" if c.nombre == "region_id" else "<f4")
+                          for c in columnas]),
+        count=32, offset=crudo.index(b"end_header\n") + len(b"end_header\n"),
+    )
+    esperado = _np.stack([fila["rot_1"], fila["rot_2"], fila["rot_3"], fila["rot_0"]], 1)
+    esperado /= _np.linalg.norm(esperado, axis=1, keepdims=True)
+    assert _np.allclose(gs.rotacion, esperado, atol=1e-6)
+
+
+def test_sin_grado_1_la_apariencia_sigue_siendo_valida(tmp_path):
+    """El grado 1 es opcional. Sin él no se emite ningún `SH_DEGREE_1_*`, y eso es correcto.
+
+    ⚠️ Emitir un grado 1 a cero «por si acaso» no sería neutro: la extensión obliga a que
+    si va un grado superior estén todos los inferiores, y un lector que los encuentre
+    asumirá que hay dependencia de la vista donde no la hay.
+    """
+    import json as _json
+
+    import numpy as np
+    from uos.agente import _splats_khr
+    from uos.escena import construye_glb
+
+    crudo, columnas = _campo_apariencia(n=16, con_sh1=False, con_region=False)
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+    assert gs.sh1 is None and gs.region_id is None
+
+    pos, etq = _arcada_de_juguete()
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    largo = int.from_bytes(glb[12:16], "little")
+    a = _json.loads(glb[20:20 + largo])["meshes"][1]["primitives"][0]["attributes"]
+    assert not any(k.startswith("KHR_gaussian_splatting:SH_DEGREE_1") for k in a)
+    assert "_REGION_ID" not in a

@@ -58,6 +58,7 @@ _BIN = 0x004E4942            # 'BIN\0'
 
 _FLOAT = 5126
 _UINT32 = 5125
+_SHORT = 5122
 _ARRAY_BUFFER = 34962
 _ELEMENT_ARRAY_BUFFER = 34963
 
@@ -79,6 +80,130 @@ class NodoGS(NamedTuple):
     nombre: str
     matriz_fila: list[float] | None = None
     extras: dict | None = None
+
+
+class SplatsKHR(NamedTuple):
+    """Una capa 3DGS lista para `KHR_gaussian_splatting`, con sus unidades YA convertidas.
+
+    ⚠️ **Los arrays llegan aqui en la convencion de la EXTENSION, no en la nuestra.** El
+    PLY INRIA guarda la opacidad en logit, las escalas en logaritmo y el cuaternion en
+    orden `(w,x,y,z)`; la extension pide opacidad lineal en `[0,1]`, escala lineal no
+    negativa y el cuaternion en orden glTF `(x,y,z,w)`. Convertir aqui dentro seria
+    esconder tres transformaciones en un constructor: quien las hace es quien ha leido el
+    descriptor que las declara, y este modulo solo escribe bytes.
+
+    `region_id` no es de la extension. Va como atributo de aplicacion `_REGION_ID`, que es
+    lo que glTF reserva con el guion bajo — es el codigo FDI por gaussiana, y sin el un
+    visor conforme dibuja la arcada pero no puede seleccionar un diente.
+    """
+
+    posiciones: np.ndarray          # (n,3) float32, mm, en el marco canonico
+    rotacion: np.ndarray            # (n,4) float32, cuaternion unitario, orden glTF
+    escala: np.ndarray              # (n,3) float32, LINEAL y no negativa
+    opacidad: np.ndarray            # (n,)  float32, lineal en [0,1]
+    sh0: np.ndarray                 # (n,3) float32, coeficiente DC
+    sh1: np.ndarray | None = None   # (n,3,3) float32, grado 1 (tres coeficientes VEC3)
+    region_id: np.ndarray | None = None   # (n,) int16, FDI por gaussiana
+    # ⚠️ **La oclusion ambiental NO es de la extension y sin ella la arcada se ve PLANA.**
+    # Es un factor de visualizacion en [0,1] que quien dibuja multiplica por el color;
+    # esta fuera de `f_dc` a proposito, porque una lectura de tono no debe oscurecerse
+    # porque la pieza tenga una fisura al lado. Pero si no viaja, el visor no puede
+    # aplicarla — y la primera version de esta primitiva la dejo fuera: la apariencia se
+    # dibujaba sin sombreado y no habia nada en el fichero que dijera que faltaba.
+    ao: np.ndarray | None = None          # (n,) float32 en [0,1]
+    # Las normales del vertice mas cercano. Van con el semantico ESTANDAR `NORMAL`, no con
+    # guion bajo: glTF ya lo define y una primitiva de puntos puede llevarlo.
+    normales: np.ndarray | None = None    # (n,3) float32, unitarias
+    nombre: str = "apariencia"
+    # ⚠️ Obligatorio en la extension y NO tiene defecto razonable: dice si el color esta
+    # en sRGB o en lineal, y equivocarse cambia el tono de toda la arcada. El nuestro sale
+    # del entrenamiento contra renders sRGB.
+    color_space: str = "srgb_rec709_display"
+    extras: dict | None = None
+
+
+def _mesh_splats(
+    gs: SplatsKHR, _anade: Any, accesos: list[dict],
+) -> dict:
+    """El *mesh* con la primitiva `KHR_gaussian_splatting`. Modo POINTS, como exige."""
+    n = len(gs.posiciones)
+    for nombre, arr in (
+        ("posiciones", gs.posiciones), ("rotacion", gs.rotacion),
+        ("escala", gs.escala), ("opacidad", gs.opacidad), ("sh0", gs.sh0),
+    ):
+        if len(arr) != n:
+            raise ValueError(
+                f"la capa de apariencia trae {n} posiciones y {len(arr)} en `{nombre}`"
+            )
+    if float(np.min(gs.escala)) < 0:
+        raise ValueError(
+            "`KHR_gaussian_splatting:SCALE` DEBE ser no negativa y llega con valores "
+            "negativos: parece una escala en logaritmo sin exponenciar"
+        )
+    if float(np.max(gs.opacidad)) > 1.0 or float(np.min(gs.opacidad)) < 0.0:
+        raise ValueError(
+            "`KHR_gaussian_splatting:OPACITY` DEBE ir en [0,1] y llega fuera de rango: "
+            "parece una opacidad en logit sin pasar por la sigmoide"
+        )
+
+    def _vec(datos: np.ndarray, tipo: str, con_extremos: bool = False) -> int:
+        a = np.ascontiguousarray(datos, dtype=np.float32)
+        acc: dict = {
+            "bufferView": _anade(a, _ARRAY_BUFFER), "componentType": _FLOAT,
+            "count": n, "type": tipo,
+        }
+        if con_extremos:
+            acc["min"] = [float(x) for x in a.reshape(n, -1).min(axis=0)]
+            acc["max"] = [float(x) for x in a.reshape(n, -1).max(axis=0)]
+        accesos.append(acc)
+        return len(accesos) - 1
+
+    atributos = {
+        "POSITION": _vec(gs.posiciones, "VEC3", con_extremos=True),
+        "KHR_gaussian_splatting:ROTATION": _vec(gs.rotacion, "VEC4"),
+        "KHR_gaussian_splatting:SCALE": _vec(gs.escala, "VEC3"),
+        "KHR_gaussian_splatting:OPACITY": _vec(gs.opacidad.reshape(n), "SCALAR"),
+        "KHR_gaussian_splatting:SH_DEGREE_0_COEF_0": _vec(gs.sh0, "VEC3"),
+    }
+    # ⚠️ El grado 1 es OPCIONAL, y si va tiene que ir entero: la extension exige que si se
+    # usa un grado superior esten todos los inferiores. Son tres coeficientes VEC3.
+    if gs.sh1 is not None:
+        for k in range(3):
+            atributos[f"KHR_gaussian_splatting:SH_DEGREE_1_COEF_{k}"] = _vec(
+                gs.sh1[:, k, :], "VEC3"
+            )
+    if gs.normales is not None:
+        atributos["NORMAL"] = _vec(gs.normales, "VEC3")
+    # ⚠️ Atributos de APLICACION, con guion bajo, que es lo que glTF reserva para lo que su
+    # especificacion no define. Un visor conforme los ignora y dibuja igual; el nuestro los
+    # usa para el sombreado y para seleccionar una pieza. Que no sean estandar es
+    # exactamente por lo que el sidecar `ash_gs_measured` sigue haciendo falta.
+    if gs.ao is not None:
+        atributos["_AO"] = _vec(np.asarray(gs.ao).reshape(n), "SCALAR")
+    if gs.region_id is not None:
+        r = np.ascontiguousarray(gs.region_id, dtype=np.int16).reshape(n)
+        accesos.append({
+            "bufferView": _anade(r, _ARRAY_BUFFER), "componentType": _SHORT,
+            "count": n, "type": "SCALAR",
+        })
+        atributos["_REGION_ID"] = len(accesos) - 1
+
+    return {
+        "name": gs.nombre,
+        "primitives": [{
+            "attributes": atributos,
+            # POINTS. La extension lo exige: cada gaussiana es un punto, y la elipse la
+            # levanta el rasterizador a partir de la escala y la rotacion.
+            "mode": 0,
+            "extensions": {
+                "KHR_gaussian_splatting": {
+                    "kernel": "ellipse",
+                    "colorSpace": gs.color_space,
+                },
+            },
+            **({"extras": gs.extras} if gs.extras else {}),
+        }],
+    }
 
 
 def _primitivas(
@@ -151,6 +276,7 @@ def construye_glb(
     extras: dict | None = None,
     nodos_gs: list[NodoGS] | None = None,
     etiquetas: np.ndarray | None = None,
+    splats: SplatsKHR | None = None,
 ) -> bytes:
     """La escena en un solo `bytes`. Indexada: el orden de vertices se conserva.
 
@@ -218,9 +344,27 @@ def construye_glb(
         atributos["NORMAL"] = len(accesos) - 1
 
     primitivas = _primitivas(idx, atributos, etiquetas, len(pos), _anade, accesos)
+    mallas: list[dict] = [{"name": nombre, "primitives": primitivas}]
 
     # El nodo 0 es la malla y ES el marco canonico (§5.1). Los GS van de hijos suyos.
     nodos: list[dict] = [{"mesh": 0, "name": nombre}]
+
+    # ⚠️ **La apariencia va DENTRO del glTF, que es lo que el §5.1 pedia desde el
+    # principio.** Iba como `.ply` aparte con un `extras.uos_gs_uri` apuntandolo — el
+    # fallback que el borrador admite mientras `KHR_gaussian_splatting` no este ratificada.
+    # El precio de ese fallback es que solo lo lee quien conozca la convencion: un visor
+    # glTF cualquiera abria la escena, veia un puntero a un fichero opaco y no dibujaba
+    # nada. Con la extension, la capa la renderiza cualquier implementacion conforme sin
+    # saber nada de UOS, que es la razon de existir de un formato abierto.
+    #
+    # Y va como HIJO del nodo de la malla, no suelto: el §5.1 dice que la registracion
+    # GS->malla se codifica como transformada de ese nodo. Aqui la apariencia se entreno
+    # en el marco del escaner, asi que la transformada es la identidad y se omite — pero
+    # la JERARQUIA queda dicha, que es lo que permite que otro emisor ponga ahi la suya.
+    if splats is not None:
+        mallas.append(_mesh_splats(splats, _anade, accesos))
+        nodos.append({"mesh": len(mallas) - 1, "name": splats.nombre})
+        nodos[0].setdefault("children", []).append(len(nodos) - 1)
     for n in nodos_gs or []:
         nodo: dict = {
             "name": n.nombre,
@@ -243,11 +387,17 @@ def construye_glb(
         "scene": 0,
         "scenes": [{"nodes": [0]}],
         "nodes": nodos,
-        "meshes": [{"name": nombre, "primitives": primitivas}],
+        "meshes": mallas,
         "accessors": accesos,
         "bufferViews": vistas,
         "buffers": [{"byteLength": desplazamiento}],
     }
+    # ⚠️ `extensionsUsed` y NUNCA `extensionsRequired`. Es la misma regla que aplicamos al
+    # manifiesto: un lector que no entienda la extension tiene que poder abrir la escena y
+    # ver la malla. Ponerla en `required` haria que un visor conforme se negara a abrir un
+    # caso cuya geometria puede enseñar perfectamente.
+    if splats is not None:
+        gltf["extensionsUsed"] = ["KHR_gaussian_splatting"]
     if extras:
         gltf["extras"] = extras
 

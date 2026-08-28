@@ -118,6 +118,100 @@ def _calidad_frontera(malla: Any, etq: Any) -> dict[int, dict] | None:
         return None
 
 
+def _splats_khr(ruta_ply: Path, columnas: Any) -> Any:
+    """El PLY de apariencia leido y convertido a las convenciones de `KHR_gaussian_splatting`.
+
+    ⚠️ **Se lee el FICHERO recien escrito, no los arrays del almacen.** Es la misma fuente
+    que el `.ply` que viaja, asi que la primitiva del glTF y el PLY llevan exactamente los
+    mismos numeros. Reconstruirlo de `params` volveria a pasar por las correcciones de
+    normalizacion de Blender, y basta que una se aplique dos veces —o ninguna— para que la
+    nube salga 32 veces mas pequeña con el descriptor afirmando milimetros. Ya pasó.
+
+    ⚠️ **Y las unidades se PREGUNTAN al esquema, columna a columna.** La extension exige
+    opacidad lineal en `[0,1]` y escala lineal no negativa; nuestro PLY las guarda en logit
+    y en logaritmo. Cual es cual lo dice el descriptor (`unit: "logit"`, `unit: "log(mm)"`),
+    no una lista de nombres escrita aqui: la primera version de este tipo de conversion
+    transformaba `scale_0..2` porque «las escalas son tres» y reventaba en cuanto el
+    descriptor traia una sola.
+
+    ⚠️ `columnas` es la LISTA de columnas —lo que devuelve `esquema_apariencia`— y se acepta
+    tambien el descriptor entero que la contiene. Esta escrito pidiendo un `dict` con clave
+    `columns` y recibia la lista: el `AttributeError` resultante no lo cogia ningun `except`
+    de aqui y tumbaba la exportacion ENTERA, con el gate diciendo solo «uos-export-agent
+    fallo». Que reviente es correcto —un contenedor a medias seria peor— pero que reviente
+    por una forma de argumento no lo es.
+    """
+    import numpy as np
+
+    from uos.escena import SplatsKHR
+
+    crudo = ruta_ply.read_bytes()
+    fin = crudo.index(b"end_header\n") + len(b"end_header\n")
+    tipos = {"float": "<f4", "double": "<f8", "int": "<i4", "uint": "<u4",
+             "short": "<i2", "ushort": "<u2", "char": "<i1", "uchar": "<u1"}
+    n = 0
+    campos: list[tuple[str, str]] = []
+    for linea in crudo[:fin].decode("ascii", "replace").splitlines():
+        if linea.startswith("element vertex"):
+            n = int(linea.split()[-1])
+        elif linea.startswith("property "):
+            _, tipo, nom = linea.split()
+            campos.append((nom, tipos[tipo]))
+    tabla = np.frombuffer(crudo, np.dtype(campos), count=n, offset=fin)
+    col = {nom: np.asarray(tabla[nom], np.float64) for nom, _ in campos}
+    esquema = columnas.get("columns", []) if isinstance(columnas, dict) else (columnas or [])
+    for c in esquema:
+        # ⚠️ **La misma columna llega con dos nombres de campo segun de donde venga**, y
+        # asumir uno costo dos exportaciones muertas: `esquema_apariencia` devuelve objetos
+        # `ColumnaCampo` con atributos en castellano (`nombre`, `unidad`) y el sidecar que
+        # acaba en el `.uos` los serializa en ingles (`name`, `unit`). Son la misma
+        # informacion y este conversor tiene que poder leer las dos, porque las dos existen
+        # y las dos llegan aqui.
+        nom = c["name"] if isinstance(c, dict) else getattr(c, "nombre", None)
+        unidad = (c.get("unit") if isinstance(c, dict) else getattr(c, "unidad", "")) or ""
+        if nom not in col:
+            continue
+        # La convencion viaja en la UNIDAD y no en un campo aparte: `logit` para la
+        # opacidad, `log(mm)` para las escalas. Ver `esquema_apariencia`.
+        if unidad == "logit":
+            col[nom] = 1.0 / (1.0 + np.exp(-col[nom]))
+        elif unidad.startswith("log"):
+            col[nom] = np.exp(col[nom])
+
+    apila = lambda *ns: np.stack([col[x] for x in ns], 1)  # noqa: E731
+    # ⚠️ El cuaternion cambia de ORDEN, no de valor. El PLY INRIA lo guarda `(w,x,y,z)` y
+    # glTF lo quiere `(x,y,z,w)`. Escribirlo tal cual no revienta: coloca cada elipse
+    # girada, que es exactamente el tipo de fallo que nadie ve hasta que mira de cerca.
+    rot = apila("rot_1", "rot_2", "rot_3", "rot_0")
+    largo = np.linalg.norm(rot, axis=1, keepdims=True)
+    rot = np.divide(rot, largo, out=np.zeros_like(rot), where=largo > 0)
+
+    sh1 = None
+    if all(f"f_rest_{k}" in col for k in range(9)):
+        # Grado 1: tres coeficientes, cada uno RGB. El PLY los guarda por canal —los tres
+        # de rojo, los tres de verde, los tres de azul— y la extension los quiere por
+        # coeficiente, asi que hay que trasponer y no solo recortar.
+        crudo_sh1 = np.stack([col[f"f_rest_{k}"] for k in range(9)], 1).reshape(-1, 3, 3)
+        sh1 = np.transpose(crudo_sh1, (0, 2, 1))
+
+    return SplatsKHR(
+        posiciones=apila("x", "y", "z").astype(np.float32),
+        rotacion=rot.astype(np.float32),
+        escala=apila("scale_0", "scale_1", "scale_2").astype(np.float32),
+        opacidad=col["opacity"].astype(np.float32),
+        sh0=apila("f_dc_0", "f_dc_1", "f_dc_2").astype(np.float32),
+        sh1=None if sh1 is None else sh1.astype(np.float32),
+        region_id=(col["region_id"].astype(np.int16) if "region_id" in col else None),
+        # La oclusion y las normales viajan si el PLY las trae. Sin `ao` el visor dibuja la
+        # arcada sin sombreado; sin normales no pasa nada al dibujar —el relieve ya esta en
+        # el grado 1— pero se pierde el dato con el que se calculo.
+        ao=(col["ao"].astype(np.float32) if "ao" in col else None),
+        normales=(apila("nx", "ny", "nz").astype(np.float32)
+                  if all(k in col for k in ("nx", "ny", "nz")) else None),
+        nombre="apariencia real entrenada con gsplat",
+    )
+
+
 class UOSExportAgent(BaseExportAgent):
     """Empaqueta el twin como Unified Oral Scene.
 
@@ -410,6 +504,8 @@ class UOSExportAgent(BaseExportAgent):
         # no coinciden con las claves de `_escribe_ply` (`centers`, `rotations`,
         # `density`). Usamos `escribe_inria` que conoce el formato INRIA de
         # primera mano — el mismo que escribe el PLY en el pipeline.
+        splats_khr = None
+        descriptor_ap: str | None = None
         if (snapshot.apariencia_ref is not None and self.store is not None):
             try:
                 from gaussian_engine.agente_apariencia import esquema_apariencia
@@ -417,16 +513,25 @@ class UOSExportAgent(BaseExportAgent):
                     escribe_inria as _escribe_inria,
                 )
                 datos_ap = self.store.load(snapshot.apariencia_ref)
+                # ⚠️ **El PLY se escribe y NO viaja: es un paso intermedio.** La capa de
+                # apariencia va dentro de `scene.glb` como primitiva
+                # `KHR_gaussian_splatting`, y llevarla ademas como `.ply` suelto eran 12,5
+                # MB duplicando un dato que ya esta ahi — con el riesgo clasico de dos
+                # copias: que diverjan y nadie sepa cual manda.
+                #
+                # Se sigue escribiendo porque es de donde salen los numeros: `escribe_inria`
+                # aplica las correcciones de normalizacion de Blender (`scan_scale`,
+                # `scan_offset`) y reconstruirlas aparte seria tenerlas en dos sitios. El
+                # fichero se queda en `destination` para inspeccion y no se declara como
+                # asset.
                 uri_ap = "scene/appearance.ply"
                 destino_ap = destination / uri_ap
                 destino_ap.parent.mkdir(parents=True, exist_ok=True)
-                # Escribir el PLY INRIA directamente con los arrays del almacén.
                 _escribe_inria(
                     destino_ap, datos_ap,
                     n_vistas=datos_ap.get("n_vistas", 0),
                     iteraciones=datos_ap.get("iteraciones", 0),
                 )
-                ficheros[uri_ap] = destino_ap
                 _u_ap, _n_ap, _props_ap = self._cabecera_ply(destino_ap)
                 # ⚠️ El esquema se deriva de las propiedades QUE TRAE EL PLY recien
                 # escrito, no de una lista fija. `escribe_inria` emite `region_id` solo
@@ -454,23 +559,25 @@ class UOSExportAgent(BaseExportAgent):
                     n_primitives_override=(_n_ap or len(datos_ap["means"])),
                     unidades_override=_u_ap,
                 ))
-                assets.append(asset_de(
-                    destination / uri_ap, uri_ap,
-                    id_="asset.apariencia",
-                    kind=Clase.MESH_GS_SCENE, visit=visita.id,
-                    frame=FRAME_IOS, media_type="application/octet-stream",
-                    load_priority=25, sidecar_uri=descriptor_ap,
-                    regulatory=Regulatorio(layer=1, status="derived"),
-                ))
-                nodos_gs.append(NodoGS(
-                    uri=uri_ap,
-                    nombre="apariencia real entrenada con gsplat",
-                    matriz_fila=None,  # ya en frame canónico (escáner)
-                    extras={
-                        "uos_descriptor_uri": descriptor_ap,
-                        "uos_measured": False,
-                    },
-                ))
+                # ⚠️ **No hay `asset.apariencia` ni `NodoGS`: la capa ES la primitiva.**
+                # Habia las dos cosas —un `.ply` de 12,5 MB declarado como asset y un nodo
+                # con `extras.uos_gs_uri` apuntandolo— porque era el fallback que el
+                # borrador admite mientras `KHR_gaussian_splatting` no este ratificada. Con
+                # la primitiva dentro, mantenerlos seria llevar el mismo dato dos veces y
+                # dejar que diverjan sin que nadie sepa cual manda.
+                #
+                # Lo que SI se conserva es el descriptor: sigue siendo donde se declara que
+                # `region_id` es inferencia y no medida, que `f_dc` es color medido por
+                # pieza y que `ao` es visualizacion. La extension no tiene donde decir nada
+                # de eso, asi que cuelga de `asset.scene` como su `sidecar_uri`.
+                try:
+                    splats_khr = _splats_khr(destino_ap, esq_ap)
+                except (KeyError, ValueError) as e:
+                    splats_khr = None
+                    aviso_derivados.append(
+                        f"la apariencia NO viaja: no se pudo construir la primitiva "
+                        f"`KHR_gaussian_splatting` desde el campo entrenado: {e}"
+                    )
             except (KeyError, OSError, ValueError) as e:
                 aviso_derivados.append(
                     f"apariencia no incluida en el `.uos`: {e}"
@@ -502,6 +609,7 @@ class UOSExportAgent(BaseExportAgent):
                 malla_ingerida.get("normals"), nombre="scan",
                 generador=f"{self.name}@{self.version}",
                 nodos_gs=nodos_gs,
+                splats=splats_khr,
                 # ⚠️ El FDI por vertice parte la malla en un primitive por diente con
                 # `extras.uos_fdi` (§5.1). Sin eso, el picking semantico del §11.3 —que
                 # esta definido sobre ese campo— no funciona en un visor ajeno, por mucho
@@ -523,6 +631,12 @@ class UOSExportAgent(BaseExportAgent):
                     glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
                     visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
                     load_priority=10,
+                    # El descriptor de las columnas de la capa 3DGS que va DENTRO de este
+                    # glTF. `KHR_gaussian_splatting` transporta gaussianas; no tiene donde
+                    # decir que `region_id` es inferencia con vocabulario ISO-3950 ni que
+                    # `f_dc` es color medido corona a corona. Eso lo dice el sidecar, y sin
+                    # el unas etiquetas de modelo se leerian como medidas.
+                    sidecar_uri=(descriptor_ap if splats_khr is not None else None),
                     # De donde sale esta malla, DICHO EN EL MANIFIESTO. Es el escaner
                     # reindexado a glTF —misma geometria, mismos 220.085 triangulos—, y sin
                     # esta linea la unica forma de saberlo era parsear el GLB entero.
@@ -1157,17 +1271,19 @@ class UOSExportAgent(BaseExportAgent):
         # geometria de `asset.scene` y el color de `asset.apariencia`. Llevarla ademas
         # serian 19 MB para duplicar una geometria que el contenedor sabe reconstruir, y
         # dos verdades sobre la misma superficie que pueden divergir.
-        if "asset.scene" in ids and "asset.apariencia" in ids:
+        if "asset.scene" in ids:
             fuera["ash_reversible"] = Extension(
                 name="ash_reversible", version="1.0",
                 schema_id="ash-reversible/1.0",
                 description=(
-                    "de `asset.scene` (geometria y `extras.uos_fdi` por primitiva) mas la "
-                    "columna de color de `asset.apariencia` se regenera una malla de "
-                    "arcada con color por vertice, codigo FDI y una columna `medido` que "
-                    "dice que vertices llevan color del paciente y cuales el degradado de "
-                    "respaldo. El color se toma de las gaussianas que cubren cada vertice "
-                    "dentro de 3 sigmas, ponderadas por alfa. No viaja: se reconstruye"
+                    "de `asset.scene` se regenera una malla de arcada con color por "
+                    "vertice, codigo FDI y una columna `medido` que dice que vertices "
+                    "llevan color del paciente y cuales el degradado de respaldo. La "
+                    "geometria y el FDI salen de sus primitivas de malla "
+                    "(`extras.uos_fdi`); el color, de su primitiva "
+                    "`KHR_gaussian_splatting`, tomandolo de las gaussianas que cubren cada "
+                    "vertice dentro de 3 sigmas y ponderandolo por alfa. La malla no "
+                    "viaja: se reconstruye"
                 ),
             )
         return fuera
