@@ -59,6 +59,19 @@ ap.add_argument("--res", type=int, default=512)
 ap.add_argument("--samples", type=int, default=16)     # muestras EEVEE por píxel
 ap.add_argument("--elevations", type=int, default=3)   # anillos de la órbita
 ap.add_argument("--elev-max", type=float, default=60.0)  # ± grados del anillo más alto/bajo
+# ⚠️ **Vistas de CERCA, encuadrando una zona y no la arcada entera.** Medido sobre el caso
+# real: con 1.024 px encuadrando 65 mm de arcada salen 15,8 px/mm, o sea 126 px por corona
+# y 3,2 px por fisura. A tres pixeles el optimizador no tiene señal para densificar ahi —no
+# es que le falten iteraciones, es que en la imagen no hay nada que optimizar—. Estas
+# vistas acercan la camara a un punto de la superficie, asi que la misma resolucion cubre
+# menos milimetros y el detalle fino entra en el render.
+#
+# No sustituyen a la orbita: la orbita da la forma global y la coherencia entre piezas.
+# Van MEZCLADAS, que es el patron multiescala de cualquier 3DGS.
+ap.add_argument("--cerca", type=int, default=0,
+                help="vistas de cerca sobre la superficie, ademas de las de orbita")
+ap.add_argument("--cerca-radio", type=float, default=1.0,
+                help="distancia de la camara al punto, en unidades normalizadas")
 ap.add_argument("--fov-deg", type=float, default=40.0)
 # Luz rasante: grados que se separa la luz del eje de la cámara. Ver la nota junto al
 # montaje de las luces; 0 = frontal puro, que es plano.
@@ -284,6 +297,50 @@ for elev in elev_angles:
         scene.render.filepath = str(out / rel)
         bpy.ops.render.render(write_still=True)
 
+        frames.append({
+            "file_path": rel,
+            "transform_matrix": [list(row) for row in cam.matrix_world],
+        })
+        idx += 1
+
+# --------------------------------------------------------------------------- #
+# Vistas de cerca: la camara se acerca a puntos repartidos por la superficie
+# --------------------------------------------------------------------------- #
+# ⚠️ **Los puntos se eligen por muestreo del PUNTO MAS LEJANO, no al azar.** Al azar, con
+# la densidad de vertices de un escaneo, la mitad de las camaras acaba sobre los molares
+# —que tienen mas superficie— y los incisivos se quedan sin vistas de cerca. El muestreo
+# por lejania reparte por la geometria y no por el recuento de vertices.
+if args.cerca > 0:
+    verts = [obj.matrix_world @ v.co for v in obj.data.vertices]
+    total = len(verts)
+    paso = max(1, total // 4000)
+    cand = verts[::paso]
+    elegidos = [cand[0]]
+    dist = [(c - cand[0]).length for c in cand]
+    for _ in range(min(args.cerca, len(cand)) - 1):
+        k = max(range(len(cand)), key=lambda i: dist[i])
+        elegidos.append(cand[k])
+        for i, c in enumerate(cand):
+            d = (c - cand[k]).length
+            if d < dist[i]:
+                dist[i] = d
+
+    centro = mathutils.Vector((0.0, 0.0, 0.0))
+    for punto in elegidos:
+        # La camara se pone sobre la normal APROXIMADA —la direccion desde el centro de la
+        # arcada hacia el punto—, que para una superficie envolvente como una arcada es
+        # suficiente y no exige calcular normales por vertice aqui.
+        fuera = (punto - centro)
+        if fuera.length < 1e-6:
+            continue
+        fuera.normalize()
+        cam.location = punto + fuera * args.cerca_radio
+        look_at(cam, punto)
+        bpy.context.view_layer.update()
+
+        rel = f"images/r_{idx:05d}.png"
+        scene.render.filepath = str(out / rel)
+        bpy.ops.render.render(write_still=True)
         frames.append({
             "file_path": rel,
             "transform_matrix": [list(row) for row in cam.matrix_world],

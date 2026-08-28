@@ -378,6 +378,7 @@ def _render_blender(
     n_vistas: int = N_VISTAS,
     resolucion: int = RESOLUCION,
     script_blender: Path | None = None,
+    cerca: int = 0,
 ) -> dict:
     """Llama a Blender headless para renderizar N vistas con pose exacta.
 
@@ -409,6 +410,7 @@ def _render_blender(
             "--res", str(resolucion),
             "--samples", "16",
             "--elevations", "8",
+            *(["--cerca", str(cerca)] if cerca else []),
         ],
         capture_output=True,
         text=True,
@@ -435,6 +437,40 @@ def _render_blender(
 # Entrenamiento gsplat
 # ---------------------------------------------------------------------------
 
+def _siembra_superficie(
+    P: np.ndarray, caras: np.ndarray, colores_rgb: np.ndarray,
+    n: int, rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Semillas repartidas por AREA sobre los triangulos, no una por vertice.
+
+    ⚠️ **Es lo unico que separa la resolucion del campo de la de la malla.** Sembrando por
+    vertice —`rng.choice(len(P), min(semillas, len(P)))`— el numero de gaussianas queda
+    acotado por arriba al numero de vertices, y el campo hereda su densidad: 5,11 muestras
+    por mm sobre una arcada de 4.366 mm2, o sea 0,11 Mpx para la boca entera. Las vistas se
+    renderizan a 15,8 px/mm, tres veces mas finas: ese detalle se captura y no se guarda en
+    ningun sitio.
+
+    Muestreando puntos baricentricos con probabilidad proporcional al area, la apariencia
+    puede ser mas fina que la geometria —que es lo que hace una textura sobre una malla de
+    pocos poligonos— y `semillas` vuelve a significar lo que dice.
+
+    El color se interpola con los mismos pesos baricentricos: un punto dentro de un
+    triangulo no tiene color propio, lo hereda de sus tres vertices.
+    """
+    v = P[caras]
+    area = 0.5 * np.linalg.norm(np.cross(v[:, 1] - v[:, 0], v[:, 2] - v[:, 0]), axis=1)
+    idx = rng.choice(len(caras), n, p=area / area.sum())
+    # Reflejar el cuadrado unidad sobre la diagonal da un uniforme en el triangulo.
+    u, w = rng.random(n), rng.random(n)
+    fuera = u + w > 1
+    u[fuera], w[fuera] = 1 - u[fuera], 1 - w[fuera]
+    bar = np.stack([1 - u - w, u, w], 1)[:, :, None]
+    tri = caras[idx]
+    pts = (bar * P[tri]).sum(1)
+    col = (bar * colores_rgb[tri].astype(np.float64)).sum(1)
+    return pts.astype(np.float32), col.astype(np.float32)
+
+
 def _entrena_gsplat(
     T: dict,
     posiciones: np.ndarray,
@@ -443,6 +479,8 @@ def _entrena_gsplat(
     destino: Path,
     iteraciones: int = ITERACIONES,
     semillas: int = SEMILLAS,
+    caras: np.ndarray | None = None,
+    siembra: str = "vertice",
     dispositivo: str = "cuda",
     traza: bool = False,
 ) -> tuple[dict[str, Any], list[tuple[int, float, float, float]]]:
@@ -471,17 +509,22 @@ def _entrena_gsplat(
     P = (P - centro) * (2.0 / (P.max(0) - P.min(0)).max())
 
     rng = np.random.default_rng(0)
-    sel = rng.choice(len(P), min(semillas, len(P)), replace=False)
-    means0 = torch.tensor(P[sel], device=dev)
-    n0 = len(sel)
+    if siembra == "area" and caras is not None:
+        pts, col_np = _siembra_superficie(P, caras, colores_rgb, semillas, rng)
+    else:
+        # ⚠️ El `min()` ACOTA las semillas al numero de vertices: pedir mas no da mas. Es
+        # el comportamiento historico y se conserva por defecto; `siembra="area"` es el
+        # que deja que `semillas` signifique lo que dice.
+        sel = rng.choice(len(P), min(semillas, len(P)), replace=False)
+        pts, col_np = P[sel], colores_rgb[sel].astype(np.float32)
+    means0 = torch.tensor(pts, device=dev)
+    n0 = len(pts)
 
     # Sigma inicial: distancia media a los 4 vecinos mas cercanos.
     d = torch.cdist(means0[:2000], means0[:2000]).topk(4, largest=False).values[:, 1:].mean()
 
     # Color inicial: el muestreado de las fotos, no un gris constante.
-    col0 = torch.tensor(
-        colores_rgb[sel].astype(np.float32) / 255.0, device=dev
-    ).clamp(0.01, 0.99)
+    col0 = torch.tensor(col_np / 255.0, device=dev).clamp(0.01, 0.99)
 
     # ParameterDict con un Adam POR clave: lo que DefaultStrategy necesita para
     # anadir/quitar filas (densificar y podar) sin descuadrar el estado de Adam.
@@ -1071,6 +1114,9 @@ def entrena_apariencia(
     resolucion: int = RESOLUCION,
     iteraciones: int = ITERACIONES,
     semillas: int = SEMILLAS,
+    # "vertice" acota las semillas al numero de vertices de la malla; "area" las reparte
+    # por los triangulos y deja que el campo sea mas fino que la geometria.
+    siembra: str = "vertice",
     dispositivo: str = "cuda",
     script_blender: Path | None = None,
     traza: bool = False,
@@ -1083,6 +1129,10 @@ def entrena_apariencia(
     # tira (ver `tono_foto.alinea_con_el_arco`). Sin esto no se usa color por pieza y se
     # cae al de por vertice; con esto, el resto sigue siendo medido.
     lado_fotos: dict[Path, int] | None = None,
+    # Vistas de CERCA que se añaden a la orbita. Ver `--cerca` en el script de Blender:
+    # con 1.024 px sobre 65 mm de arcada un detalle de 0,2 mm son 3 pixeles, y a tres
+    # pixeles la densificacion no tiene de que agarrarse.
+    cerca: int = 0,
 ) -> tuple[dict[str, np.ndarray], EntrenamientoApariencia]:
     """Entrena un campo de gaussianas sobre una malla pintada con dos tonos de las fotos.
 
@@ -1218,7 +1268,7 @@ def entrena_apariencia(
     T = _render_blender(
         scan_coloreado, destino,
         n_vistas=n_vistas, resolucion=resolucion,
-        script_blender=script_blender,
+        script_blender=script_blender, cerca=cerca,
     )
 
     # Paso 3: Entrenar gsplat
@@ -1227,6 +1277,7 @@ def entrena_apariencia(
         T, posiciones, vcol,
         destino=destino,
         iteraciones=iteraciones, semillas=semillas,
+        caras=caras, siembra=siembra,
         dispositivo=dispositivo, traza=traza or traza,
     )
 
