@@ -1710,11 +1710,159 @@ no slice is missing.
 \MUSTNOT: a local filesystem path in \code{uri}. That is what would leak exactly what the
 pseudonym exists to prevent.
 
+\subsection{Regenerate the improved mesh}\label{rec:reversible}
+
+This is what \code{ash\_reversible} declares, and the practical answer to ``why keep the
+container if I already have the STL''. What comes back is not the file that went in: it is
+that geometry with a per-vertex colour measured from the patient's own photographs and a
+per-vertex FDI code, neither of which the ingested STL ever had.
+
+\begin{enumerate}
+  \item Read \code{scene/scene.glb}. Take \code{POSITION} and the index buffers of the
+  \emph{mesh} primitives; the \code{extras.uos\_fdi} of each primitive gives the code for
+  the vertices its faces touch.
+  \item From the \code{KHR\_gaussian\_splatting} primitive take \code{POSITION},
+  \code{SH\_DEGREE\_0\_COEF\_0}, \code{OPACITY} and \code{SCALE}.
+  \item For each mesh vertex, take the Gaussians within $3\sigma$ --- the same cut-off the
+  extension defines (\S\ref{sec:khr}) --- and average their colour weighted by
+  \emph{opacity $\times$ Gaussian falloff}. That is the colour \emph{seen} at that point,
+  which is not the colour of the nearest centre.
+  \item Record, per vertex, whether it received colour at all. Write it out as a
+  \code{measured} column.
+\end{enumerate}
+
+\begin{lstlisting}[style=py]
+from export_agents.malla_mejorada import (
+    color_desde_gaussianas, descriptor, escribe_ply, escribe_3mf, escribe_stl_viscam)
+
+rgb, medido = color_desde_gaussianas(pos, centros, f_dc, opacidad, escalas)
+meta = descriptor(pos, caras, rgb, medido, fdi,
+                  origen="asset.scene", sha256_malla=sha, piezas_con_color=piezas)
+escribe_ply(ruta.with_suffix(".ply"), pos, caras, rgb, fdi, meta["comentarios"], medido)
+\end{lstlisting}
+
+\paragraph{Normative: the colour \MUST{} come from the Gaussian layer.} Not from any
+intermediate painted mesh the producing pipeline happened to hold. That distinction is the
+whole point: a recipient with the container and nothing else --- no repository, a year later
+--- has to be able to obtain this. If the colour came from a file that does not travel, the
+Gaussian layer would be contributing nothing and the chain would not close.
+
+\paragraph{The \code{measured} column is not decoration.} Without it, ``I have no colour
+here'' and ``I have the wrong colour here'' look identical. On the reference case
+108{,}922 of 112{,}067 vertices take colour from their own tooth; of the remainder, 97
+inherit it from the nearest measured vertex and 3{,}041 are painted with a fallback
+gradient that is \textbf{not the patient's colour}. One byte per vertex turns that from a
+doubt into a question anyone can answer without opening the \code{.uos}.
+
+\paragraph{Ambient occlusion is deliberately not applied.} \code{\_AO} is a visualisation
+factor. It has no place in a file somebody may print or take measurements on: darkening a
+crown because there is a fissure beside it would put a shadow of ours inside the patient's
+data.
+
+\paragraph{Three formats, because none alone suffices --- and each says what it loses.}
+\code{.ply} carries per-vertex colour, the FDI code and the \code{measured} flag, and any
+mesh viewer opens it. \code{.3mf} is what slicers accept with colour and units inside.
+\code{.stl} with per-face colour is a non-standard convention almost nothing reads, emitted
+because there are laboratory workflows that accept nothing else --- it is the most widely
+opened and the one that asserts least, and the descriptor says so rather than letting the
+loss pass for absence.
+
+\paragraph{Whole arch, no root, no per-tooth files.} Composing a scanner crown with a CBCT
+root joins two surfaces measured by different machines across a 0.666\,mm registration, and
+the seam shows. The scanner STL has no root, so giving it one makes it a different object:
+reversibility asks for the same piece back, improved. Per-tooth files additionally depend on
+a segmentation that does not currently separate crowns reliably (\S\ref{sec:limits}).
+
 \subsection{Strip inference before distribution}
 
 Delete every entry under \code{derived/}, delete the corresponding \code{assets[]} entries,
 re-serialise, and write a new version with a note saying what was removed. Re-validate. The
 result is a valid, complete \code{.uos} at the same conformance levels.
+
+% =============================================================================
+\section{Versioning and compatibility}\label{sec:versioning}
+
+\code{uos\_version} is the first field a reader checks, and this section says what checking
+it buys. The format is versioned so that it can keep being developed without stranding the
+implementations already written against it.
+
+\subsection{What each kind of version change promises}
+
+\begin{longtable}{L{3.0cm} L{12.2cm}}
+\toprule
+\textbf{Change} & \textbf{Guarantee}\\
+\midrule
+\endhead
+\textbf{Minor} (0.2 $\to$ 0.3) & A reader written for the earlier version \MUST{} still be
+able to open the container. A minor \MAY{} add optional fields, add extensions, and add
+values to an open vocabulary. It \MUSTNOT{} add a required field, change what an existing
+field means, or remove one.\\
+\textbf{Major} (0.x $\to$ 1.0) & No compatibility is promised. A reader \MUST{} check
+\code{uos\_version} and refuse what it does not implement rather than guess.\\
+\bottomrule
+\end{longtable}
+
+\subsection{How that survives a strict schema}
+
+\paragraph{The rule that makes minor compatibility real}
+Each version publishes \textbf{its own} schema, and every schema sets
+\code{additionalProperties: false}. That strictness is deliberate and is \emph{about that
+version}: within a version a reader must refuse rather than guess, which is the premise of
+\S\ref{sec:manifest}. 
+\vspace{6px}
+It is not a claim about later versions. So:
+\begin{itemize}
+  \item Reading a container whose \code{uos\_version} is \textbf{the reader's own}, an
+  unknown field is an error.
+  \item Reading a container whose \code{uos\_version} is a \textbf{higher minor}, an
+  unknown field \MUST{} be ignored, and the reader \MUST{} report which version it read as
+  which. Validating it against the older schema is not a conformance failure of the
+  container.
+\end{itemize}
+This is why check 3 of \S\ref{sec:algo} is a warning and not an error: the contract decides
+validity, and a schema left behind is the publisher's problem, not the file's.
+
+\paragraph{Reading a higher minor, in practice.} A reader \MUST{} branch on the declared
+version \emph{before} validating anything: a container it will refuse is not one it should
+have parsed. The reference implementation does this in \code{uos.version}, and the lenient
+path asks the validator which fields it rejected rather than keeping a second, permissive
+copy of the model --- a duplicated model drifts from the real one at the first field
+somebody adds, which is the same failure that makes this document's schema generated rather
+than hand-written.
+
+\paragraph{Normative: reading a higher minor and re-emitting it are mutually exclusive.}
+A reader that ignores fields it does not understand \MUSTNOT{} then write version $N{+}1$
+of that case. It would drop those fields, and the provenance chain would still verify: the
+new version would be a cryptographically legitimate successor of the old one, with content
+silently missing. That is worse than refusing, because nothing downstream can detect it.
+Preserving unknown fields and emitting them back is the other way out, and it is more work
+than is needed while no later version exists. So the rule is the narrow one: read it, do
+not succeed it.
+
+\subsection{Deprecation}
+
+A field being withdrawn \MUST{} spend one full version marked deprecated before it goes:
+
+\begin{enumerate}
+  \item In the version that deprecates it, the field is still emitted, still valid, and the
+  validator \MUST{} warn that it is on its way out and say what replaces it.
+  \item In the next version it is removed from the schema.
+\end{enumerate}
+
+One version of notice is what lets an implementer migrate on their own schedule instead of
+discovering the change when their reader breaks. The warning is also the written record of
+\emph{why} the field went, which a diff of the schema does not carry.
+
+\subsection{What is versioned alongside the format}
+
+\begin{itemize}
+  \item The manifest schema: \code{uos-manifest-<version>.schema.json}, whose \code{\$id}
+  is pinned to a release tag so the identifier always names the same document
+  (\S\ref{sec:artifacts}). A published tag \MUSTNOT{} be moved; a correction is a new one.
+  \item Extensions, independently. \code{ash\_clinical} at 1.0 does not become 1.1 because
+  UOS did (\S\ref{sec:extensions}).
+  \item This document, whose version is on its title page.
+\end{itemize}
 
 % =============================================================================
 \section{What v0.2 deliberately does not do}\label{sec:limits}
@@ -1810,6 +1958,7 @@ CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
 \bottomrule
 \end{longtable}
 
+\newpage
 \subsection*{What has been measured, and what it supports}
 
 \begin{longtable}{L{4.6cm} L{4.0cm} L{6.8cm}}

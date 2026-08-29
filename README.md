@@ -146,7 +146,7 @@ clínico real cierra en **419 entradas · 397 cortes DICOM · conformidad UOS-Co
 [visor de referencia](https://github.com/lgarbayo/uos-viewer) (repo aparte) lo abre en el
 navegador **por rangos y sin subir nada**: malla, capa clínica por pieza, vistas guardadas
 y las capas del campo gaussiano. Qué lleva dentro y a quién le sirve:
-[`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md).
+[`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
 
 **Todavía no**: color **per-píxel** y `pathology-agent`. Sobre el color, la pregunta se ha
 estrechado y conviene el matiz: la **señal está medida** —un umbral sobre `a*` separa
@@ -297,7 +297,7 @@ Dos decisiones que se ven raras hasta que se leen: el PLY del campo **no es un `
 
 **El contenedor y su manifiesto** — el entregable del proyecto. Un `.uos` es un ZIP **sin comprimir** (STORE, `manifest.json` primero) que lleva un caso dental entero **con las relaciones entre sus partes declaradas**: los ficheros nativos intactos y verificables por hash, los marcos de coordenadas y las registraciones que los unen, las vistas guardadas, la capa clínica colgada de códigos FDI, la procedencia encadenada y el estado PHI. Módulos por responsabilidad: `contenedor` · `manifiesto` · `escena` · `volumen` · `vistas` · `clinico` · `derivados` · `procedencia` · `validador` · `esquema`.
 
-La regla que lo sostiene: **lo medido y lo inferido no se mezclan**. Todo lo que sale de un modelo vive solo bajo `derived/` con `regulatory.layer: 3` y su sidecar, y **un `.uos` sin `derived/` sigue siendo válido y completo**. Esquema publicado en [`schemas/`](schemas/); qué lleva y a quién le sirve, en [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md).
+La regla que lo sostiene: **lo medido y lo inferido no se mezclan**. Todo lo que sale de un modelo vive solo bajo `derived/` con `regulatory.layer: 3` y su sidecar, y **un `.uos` sin `derived/` sigue siendo válido y completo**. Esquema publicado en [`schemas/`](schemas/); qué lleva y a quién le sirve, en [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
 
 ### `fusion-agents`
 
@@ -546,7 +546,7 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 | Documento | Responde a |
 |---|---|
 | [`docs/cierre-mvp.md`](docs/cierre-mvp.md) | qué está medido, qué no está resuelto y qué queda para después |
-| [`docs/architecture/formato-uos.md`](docs/architecture/formato-uos.md) | qué lleva un `.uos` y a quién le sirve |
+| [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex) | la especificación del formato: qué lleva un `.uos`, cómo se lee, cómo se amplía |
 | [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | por qué la segmentación FDI no está resuelta, con la medida |
 | [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
 | [`docs/research/color-por-pieza-desde-foto.md`](docs/research/color-por-pieza-desde-foto.md) | el tono de cada corona, y cómo se descuenta la caída del flash sin invertirla |
