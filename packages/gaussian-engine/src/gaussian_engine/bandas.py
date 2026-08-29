@@ -121,6 +121,11 @@ def siembra_por_banda(
             "density": density,
             "origin": origin.astype(np.float64),
             "hu_range": np.asarray([n_lo, n_hi], dtype=np.float64),
+            # El tramo de HU de la partición, ya recortado por la máscara de paciente
+            # (qué vóxeles caen AQUÍ): lo necesita quien compute la DRR objetivo de la
+            # capa, y sin el recorte la banda baja arrastraría tejido blando que la
+            # semilla no sembró.
+            "hu_particion": np.asarray([max(hu_paciente, p_lo), p_hi], dtype=np.float64),
             "paso": paso.astype(np.int64),
             "n_origen": n_origen,
         }

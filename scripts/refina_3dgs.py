@@ -138,9 +138,10 @@ def psnr_t(a: torch.Tensor, b: torch.Tensor) -> float:
     return float("inf") if mse == 0 else 10 * np.log10(pico**2 / mse)
 
 
-def refina(
+def _refina(
     campo: dict[str, np.ndarray],
-    serie,
+    mu: np.ndarray,
+    spacing,
     *,
     n_vistas: int = 12,
     pasos: int = 400,
@@ -148,26 +149,14 @@ def refina(
     lado: int = 192,
     registro=print,
 ) -> tuple[dict[str, np.ndarray], dict]:
-    """Optimiza el campo semilla contra los DRR del volumen. `(arrays, informe)`.
+    """Optimiza UN campo contra el volumen `mu` ya normalizado. `(arrays, informe)`.
 
-    Es la fase que el ADR 001 describía y que no existía: el `cbct-agent` **siembra** el
-    campo y hasta ahora el pipeline saltaba de la semilla a exportación, así que el gemelo
-    nunca se entrenaba como 3DGS.
-
-    Devuelve los arrays refinados **sin persistirlos**: guardar es de quien tenga el
-    almacén, igual que en `GeometricFusionAgent.transfer_color`. Así esto puede ser una
-    etapa del orquestador en vez de un script que ingiere por su cuenta.
-
-    `informe` trae el PSNR sobre vistas **retenidas** antes y después, que es el único
-    número que dice si el refinado aporta: sobre las vistas de ajuste, «mejora» solo
-    significa que el optimizador sabe memorizar lo que ve.
+    `mu` es la densidad objetivo en la MISMA escala que `campo["density"]` (el `cbct-agent`
+    la normaliza y cada banda de `siembra_por_banda` la suya). Quien llama decide qué es
+    `mu`: el volumen entero, o un solo tramo de HU con el resto a cero.
     """
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # El volumen se normaliza igual que el `cbct-agent` normaliza la densidad, para que
-    # τ del campo y τ del volumen vivan en la misma escala y el residuo sea comparable.
-    hu = np.clip(serie.volume.astype(np.float32), 300.0, HU_SATURATION)
-    mu = (hu - 300.0) / (HU_SATURATION - 300.0)
     vol = torch.from_numpy(mu).to(dev)
     registro(f"volumen {tuple(vol.shape)} · campo {len(campo['centers']):,} gaussianas · {dev}")
 
@@ -185,7 +174,7 @@ def refina(
     objetivo = {}
     with torch.no_grad():
         for v in todas:
-            objetivo[v.nombre] = proyecta_volumen(vol, serie.spacing, v.base, lado,
+            objetivo[v.nombre] = proyecta_volumen(vol, spacing, v.base, lado,
                                                   MM_POR_PIXEL)
     del vol
     torch.cuda.empty_cache()
@@ -259,6 +248,62 @@ def refina(
         "pasos": pasos,
     }
     return arrays, informe
+
+
+def refina(
+    campo: dict[str, np.ndarray],
+    serie,
+    *,
+    n_vistas: int = 12,
+    pasos: int = 400,
+    vistas_por_paso: int = 4,
+    lado: int = 192,
+    registro=print,
+) -> tuple[dict[str, np.ndarray], dict]:
+    """El campo único optimizado contra los DRR del volumen completo.
+
+    Firma original: `caso_completo.py` la llama con `--refina-3dgs`. Normaliza el
+    volumen igual que el `cbct-agent` (una sola ventana de σ) y delega en `_refina`.
+    """
+    hu = np.clip(serie.volume.astype(np.float32), 300.0, HU_SATURATION)
+    mu = (hu - 300.0) / (HU_SATURATION - 300.0)
+    return _refina(campo, mu, serie.spacing, n_vistas=n_vistas, pasos=pasos,
+                   vistas_por_paso=vistas_por_paso, lado=lado, registro=registro)
+
+
+def refina_por_banda(
+    campos,
+    serie,
+    *,
+    n_vistas: int = 12,
+    pasos: int = 400,
+    vistas_por_paso: int = 4,
+    lado: int = 192,
+    registro=print,
+) -> list[tuple[str, dict[str, np.ndarray], dict]]:
+    """Refina N capas por separado, cada una contra la DRR de SU tramo de HU.
+
+    `campos` son los `CampoBanda` de `siembra_por_banda` (cada uno trae `banda`,
+    `arrays` con `hu_particion` y `hu_range`). La DRR objetivo de cada capa es el
+    volumen con SOLO sus vóxeles, en su propia escala de σ: es la descomposición que
+    `docs/research/3dgs-volumetrico-cbct.md` midió en +2,48 dB.
+    """
+    hu = serie.volume.astype(np.float32)
+    resultados = []
+    for c in campos:
+        banda = c.banda
+        arrays = c.arrays
+        p_lo, p_hi = arrays["hu_particion"]
+        n_lo, n_hi = arrays["hu_range"]
+        dentro = (hu >= p_lo) & (hu < p_hi)
+        mu = np.where(dentro, np.clip((hu - n_lo) / (n_hi - n_lo), 0.0, 1.0),
+                      0.0).astype(np.float32)
+        registro(f"— banda {banda} ({p_lo:.0f}..{p_hi:.0f} HU, σ {n_lo:.0f}..{n_hi:.0f})")
+        arr, informe = _refina(arrays, mu, serie.spacing, n_vistas=n_vistas, pasos=pasos,
+                               vistas_por_paso=vistas_por_paso, lado=lado,
+                               registro=registro)
+        resultados.append((banda, arr, informe))
+    return resultados
 
 
 def main() -> int:
