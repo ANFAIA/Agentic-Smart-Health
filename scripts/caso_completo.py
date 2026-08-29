@@ -300,12 +300,6 @@ def main() -> int:
     )
     ap.add_argument("--pasos-3dgs", type=int, default=400)
     ap.add_argument(
-        "--capas-hu", action="store_true",
-        help="Descompone el campo de densidad en N capas por tramos de HU, entrena cada "
-             "una contra su DRR y las emite como capas externas en el `.uos` (necesita GPU "
-             "y --refina-3dgs). Medido: +2,48 dB y encendido/apagado por densidad.",
-    )
-    ap.add_argument(
         "--max-primitivas", type=int, default=1_500_000,
         help="Tope de gaussianas del campo. El defecto del agente (500.000) esta pensado "
              "para un FOV acotado; sobre una cabeza entera deja los dientes con el 7%% de "
@@ -770,65 +764,11 @@ def main() -> int:
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
     # completas y separadas, que es lo que un clínico reconoce. El compuesto del CBCT
     # cubre el 51 % del volumen de cada pieza y de forma desigual.
-
-    # ── Capas de densidad por HU ─────────────────────────────────────────
-    # La descomposición que `docs/research/3dgs-volumetrico-cbct.md` midió en +2,48 dB:
-    # N campos, uno por tramo de HU, cada uno entrenado contra la DRR de SU tramo. Se
-    # emiten como capas externas del `.uos` (el formato ya soporta N capas). El campo
-    # único de `fus.snapshot` NO se sustituye: la semilla sigue siendo el dato medido, y
-    # las capas van AÑADIDAS como vista descompuesta.
-    campos_densidad = None
-    if args.capas_hu:
-        from export_agents.field import COLUMNAS_DE_ARRAY, escribe_ply
-        from gaussian_engine.bandas import siembra_por_banda
-        from ingestion_agents.cbct_agent import _read_series
-        from refina_3dgs import refina_por_banda
-
-        print("\n--- 3c · CAPAS DE DENSIDAD POR HU (siembra + DRR por banda) ---")
-        serie = _read_series(caso.cbct)
-        campos = siembra_por_banda(serie.volume, serie.spacing, serie.z,
-                                   max_primitivas=500_000)
-        refinados = refina_por_banda(campos, serie, pasos=args.pasos_3dgs,
-                                     registro=lambda m: print(f"  {m}"))
-        destino_capas = args.salida / "capas"
-        destino_capas.mkdir(parents=True, exist_ok=True)
-        papeles = {
-            "densidad-muy-alta": "densidad 2000+ HU (esmalte/metal)",
-            "densidad-alta": "densidad 1250-2000 HU",
-            "densidad-media": "densidad 700-1250 HU",
-            "densidad-baja": "densidad 300-700 HU",
-        }
-        campos_densidad = []
-        for banda, arrays, informe in refinados:
-            columnas: dict = {}
-            for clave, nombres in COLUMNAS_DE_ARRAY.items():
-                if clave not in arrays:
-                    continue
-                v = arrays[clave]
-                for i, nombre in enumerate(nombres):
-                    columnas[nombre] = v[:, i] if v.ndim == 2 else v
-            comentarios = ["unidades mm", "densidad es sigma normalizada, no opacidad"]
-            if "origin" in arrays:
-                o = " ".join(f"{x:.6f}" for x in arrays["origin"].ravel())
-                comentarios.append(f"origin {o}")
-            ruta = destino_capas / f"banda-{banda}.ply"
-            escribe_ply(ruta, columnas, comentarios=comentarios)
-            campos_densidad.append({
-                "id_": f"asset.field_{banda}",
-                "papel": papeles.get(banda, banda),
-                "nota": (f"tramo de densidad {banda}; sigma normalizada sobre "
-                         f"{arrays['hu_range'][0]:.0f}..{arrays['hu_range'][1]:.0f} HU"),
-                "ruta": ruta,
-            })
-            print(f"  → {banda}: {informe['psnr_refinado_db']:.2f} dB "
-                  f"({informe['delta_db']:+.2f} sobre la semilla) · {ruta.name}")
-
     fin = pipe.exportar(
         fus, args.salida / "export",
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
         sin_malla=args.solo_gaussianas,
         gs_apariencia=args.gs_apariencia,
-        campos_densidad=campos_densidad,
         # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
         # y las fotos tal como entraron, con su sha256, para que quien lo reciba pueda
         # verificar que no los tocamos.

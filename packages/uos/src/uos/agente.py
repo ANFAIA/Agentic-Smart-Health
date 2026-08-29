@@ -237,12 +237,6 @@ class UOSExportAgent(BaseExportAgent):
         malla: Path | None = None,
         escena_gs: Path | None = None,
         campo: Path | None = None,
-        # ⚠️ **Capas de densidad (descomposición por HU).** En vez del campo único, N capas
-        # disjuntas de densidad, cada una con su PLY + descriptor + nodo. Cada entrada trae
-        # `id_` (p. ej. `asset.field_densidad-media`), `papel`, `nota` y `ruta` (el PLY).
-        # El formato ya soporta N capas externas (§"External Gaussian layers"); esto es lo
-        # que faltaba: que el exportador las emita en vez de un único `campo`.
-        campos_densidad: list[dict[str, Any]] | None = None,
         compuesto: Path | None = None,
         imagenes: list[Path] | None = None,
         # ⚠️ **Los informes del caso, tal como llegaron.** Antes NO viajaba ninguno: el
@@ -384,11 +378,7 @@ class UOSExportAgent(BaseExportAgent):
             snapshot.apariencia_ref is not None
             and escena_gs is not None
         )
-        # ⚠️ **El campo único es UN caso particular de la lista de capas.** Con
-        # `campos_densidad`, las N capas por HU SUSTITUYEN al `campo` (el compuesto y la
-        # apariencia se conservan). El bucle de abajo es el mismo: por capa, un PLY, un
-        # descriptor `.gs.json` y un `NodoGS`.
-        capas = [
+        for ruta, id_, papel, medido, marco, nota in (
             (campo, "asset.field", "campo gaussiano del twin", True, FRAME_CBCT,
              "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
              "las escalas van en milimetros lineales, NO en logaritmo"),
@@ -398,12 +388,7 @@ class UOSExportAgent(BaseExportAgent):
             (escena_gs, "asset.gs", "apariencia del escaner", False, FRAME_IOS,
              "reconstruida entrenando 3DGS contra renders de la malla, NO medida. Su "
              "color y su opacidad son del modelo, no del paciente"),
-        ]
-        if campos_densidad:
-            capas = ([(c["ruta"], c["id_"], c["papel"], True, FRAME_CBCT, c["nota"])
-                      for c in campos_densidad]
-                     + capas[1:])
-        for ruta, id_, papel, medido, marco, nota in capas:
+        ):
             if ruta is None or not ruta.exists():
                 continue
             # Si hay `apariencia_ref`, el bloque `asset.apariencia` gestiona esta capa
