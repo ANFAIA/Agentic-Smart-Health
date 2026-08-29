@@ -259,9 +259,10 @@ que el U-Net se pierde cae en `hueso-cortical` con la normalización de σ equiv
 suma reproduce peor que un campo único. El encendido clínico por tejido queda condicionado
 a una segmentación de diente mejor.
 
-⚠️ Alcance: el campo de densidad que lleva hoy el `.uos` de la demo es de `ajusta_campo`
-(regresión a densidad), NO de la rama DRR; estos números son de la rama volumétrica y no
-alteran el contenedor actual — dicen cuánto ganaría la demo si adoptara el campo en capas.
+⚠️ Alcance: el campo de densidad que lleva hoy el `.uos` de la demo es la **semilla cruda**
+del `cbct-agent` (perfil `ash-twin/1.0`, submuestreo 3×3×1), sin entrenar — ni DRR ni
+`ajusta_campo`. Estos números son de la rama volumétrica y no alteran el contenedor actual
+— dicen cuánto ganaría la demo si adoptara el campo en capas.
 
 ## Nota de reproducibilidad
 
