@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -148,25 +149,25 @@ class Asset(BaseModel):
     # que se declara FUERA por su hash—, asi que quien recibiera el contenedor no tenia
     # como saber que esa malla es una conversion del escaner y no una fuente independiente.
     # El dato estaba, pero dentro del propio GLB (`extras.uos_source_asset`): habia que
-    # parsear cinco megas de glTF para enterarse de algo que el manifiesto puede decir en
-    # una linea.
+    # parsear dieciocho megas de glTF para enterarse de algo que el manifiesto puede decir
+    # en una linea.
     #
     # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
     # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
     derived_from: list[str] = Field(default_factory=list)
-    # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es el perfil
-    # ligero: el `.uos` lleva el campo gaussiano y el manifiesto, y los originales
-    # —DICOM, STL— se referencian por `uri` y se acreditan por `sha256`.
+    # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es lo que hace
+    # TODO original adquirido —DICOM, STL, fotos, informes—: se referencia por su direccion
+    # de contenido y se acredita por `sha256`. No es un perfil ni una variante; es el
+    # formato, y por eso el defecto de este campo es lo unico que sorprende: `False` porque
+    # describe el sobre, no una recomendacion.
     #
-    # Lo que cambia es la GARANTIA, y hay que decirlo en voz alta. Con el asset dentro, el
-    # contenedor afirma «el DICOM que sale es byte-identico al que entro» y el validador lo
-    # comprueba. Con `external: true` afirma «se el hash de lo que deberia haber ahi»: sigue
-    # siendo auditable —quien tenga el fichero puede probar que es el mismo— pero el
-    # contenedor ya no lo custodia, y el §1.1 del spec, que exige que el DICOM adquirido
-    # viaje byte-identico, deja de cumplirse por construccion.
+    # Lo que el contenedor afirma de un asset asi es «se que fichero es», no «lo tengo». La
+    # verificacion byte a byte que el §1.1 del borrador pide del DICOM adquirido no se puede
+    # dar por construccion, y no se finge: `parts` sigue viajando para que quien SI lo
+    # custodie pueda demostrar que no le falta un corte.
     #
-    # Por eso el validador AVISA por cada asset externo en vez de callarse: no es un error
-    # —el perfil es deliberado— pero tampoco es gratis.
+    # El validador lo dice UNA vez por contenedor y no una por asset: si todos los
+    # originales son externos siempre, un aviso por cada uno no distingue nada.
     external: bool = False
 
     @field_validator("uri")
@@ -203,7 +204,7 @@ class Asset(BaseModel):
 
         ⚠️ Y tiene una propiedad que una ruta no tiene: **no puede llevar dato de
         paciente**. La ruta local de un caso clinico lleva el directorio del paciente; un
-        hash no lleva nada. El perfil ligero saca ficheros del contenedor, no identidades.
+        hash no lleva nada. Referenciar saca ficheros del contenedor, no identidades.
 
         Se comprueba en los dos sentidos, y el segundo importa igual: una direccion de
         contenido en un asset que SI viaja seria un asset imposible de localizar dentro del
@@ -282,10 +283,27 @@ class Registro(BaseModel):
     verified_by: str | None = None
     regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
 
+    #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
+    #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
+    AUTO: ClassVar[str] = "auto:"
+
     @property
     def provisional(self) -> bool:
-        """Automatico y sin verificar por una persona."""
-        return self.method == "auto_dl" and not self.verified_by
+        """Automatico y sin verificar por una persona.
+
+        ⚠️ **Mira QUIEN lo calculo, no COMO.** Antes exigia `method == "auto_dl"`, y la
+        consecuencia es que no cubria ni nuestro propio caso: la unica registracion que
+        emitimos declara `method: "icp_surface"` con `operator: "auto:geometric-fusion-
+        agent@0.2.0"` y `verified_by` vacio. Automatica, sin revisar, 0,666 mm de residuo
+        — y no disparaba la regla que existe para ella.
+
+        Una salvaguarda escrita contra el nombre de UN algoritmo deja de funcionar en
+        cuanto alguien usa otro, que es siempre. Lo que decide si una alineacion es
+        provisional es si la miro una persona; `method` describe la tecnica y es otro dato.
+        """
+        return bool(self.operator and self.operator.startswith(self.AUTO)) and not (
+            self.verified_by
+        )
 
 
 class Visita(BaseModel):
@@ -328,9 +346,9 @@ class RecursoFHIR(BaseModel):
 class Extension(BaseModel):
     """Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).
 
-    **Por que hace falta.** UOS se apoya en glTF, que resolvio esto hace anos con
-    `extensionsUsed` / `extensionsRequired`: un lector abre el fichero, ve que extensiones
-    trae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese
+    **Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /
+    `extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre
+    el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese
     mecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde
     decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
 

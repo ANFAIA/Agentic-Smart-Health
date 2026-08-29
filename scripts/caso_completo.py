@@ -355,11 +355,12 @@ def main() -> int:
     )
     ap.add_argument(
         "--solo-gaussianas", action="store_true",
-        help="El contenedor lleva SOLO el campo gaussiano y el manifiesto: fuera los "
-             "originales (STL, DICOM) y fuera también la malla convertida `scene.glb`. "
-             "⚠️ Sin la malla, `derived/seg_teeth` tampoco viaja —indexa sus vértices— "
-             "así que el FDI tiene que ir por gaussiana en el propio campo. Implica "
-             "--sin-originales.",
+        help="El contenedor lleva SOLO el campo gaussiano y el manifiesto: fuera también "
+             "la malla convertida `scene.glb`. Los originales (STL, DICOM, fotos, "
+             "informes) no viajan nunca, con esta bandera o sin ella: se declaran por su "
+             "dirección de contenido. ⚠️ Sin la malla, `derived/seg_teeth` tampoco viaja "
+             "—indexa sus vértices— así que el FDI tiene que ir por gaussiana en el "
+             "propio campo.",
     )
     ap.add_argument(
         "--fdi", type=Path, default=None,

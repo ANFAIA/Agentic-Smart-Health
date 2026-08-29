@@ -48,6 +48,13 @@ class Informe:
     # no hay historial que recorrer, y son cosas distintas.
     version: int = 0
     vistas: int = 0
+    # Cuantos originales adquiridos REFERENCIA el contenedor sin custodiarlos.
+    #
+    # ⚠️ Es un RECUENTO y no un aviso por asset, y la diferencia importa: que los
+    # originales no viajen es la definicion del formato, no una excepcion. Un aviso por
+    # cada uno saltaria en todos los assets de todos los contenedores siempre, y un aviso
+    # que nunca distingue nada deja de leerse — enterrando los que si dicen algo.
+    externos: int = 0
 
     @property
     def valido(self) -> bool:
@@ -124,14 +131,10 @@ def _valida_esquema(crudo: bytes, inf: Informe) -> None:
 def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
     """Cada asset existe y su hash cuadra. Verificar es la politica en ingesta (§8)."""
     dentro = set(z.namelist())
+    referenciados: list[str] = []
     for a in m.assets:
         if a.external:
-            # No es un error: el perfil ligero declara el original y no lo custodia. Pero
-            # tampoco es gratis, y callarselo seria vender la misma garantia por menos.
-            inf.avisos.append(
-                f"asset {a.id}: EXTERNO ({a.uri}). El contenedor declara su sha256 y su "
-                "tamano, pero no lo lleva: no se puede verificar aqui."
-            )
+            referenciados.append(a.id)
             continue
         if a.uri.endswith("/"):
             _valida_serie(z, a, dentro, inf)
@@ -149,6 +152,19 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
             inf.errores.append(
                 f"asset {a.id}: declara {a.bytes} bytes y tiene {len(crudo)}"
             )
+
+    # ⚠️ **Una linea por CONTENEDOR, no una por asset.** Los originales adquiridos se
+    # referencian y no viajan: es el formato (ver `Asset.external`), asi que avisar de cada
+    # uno seria repetir la definicion tantas veces como assets tenga el caso. Lo que sigue
+    # mereciendo decirse una vez es que de estos el validador no puede comprobar NADA: su
+    # `sha256` acredita cual es el fichero, y quien lo custodie tendra que demostrarlo.
+    if referenciados:
+        inf.externos = len(referenciados)
+        inf.avisos.append(
+            f"el contenedor REFERENCIA {len(referenciados)} original(es) adquirido(s) que "
+            "no custodia, asi que su contenido no se verifica aqui: "
+            + ", ".join(referenciados)
+        )
 
 
 def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Informe) -> None:

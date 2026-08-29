@@ -249,9 +249,9 @@ class UOSExportAgent(BaseExportAgent):
         # (marca, referencia, lote, fecha y posicion FDI) que NO aparecen en ningun otro
         # documento del caso. Era la unica constancia, y se caia — ni dentro ni declarado.
         #
-        # Siguen `sin_originales` como todo lo demas: en el perfil ligero se declaran por
-        # su `sha256` y los custodia otro sistema. Lo que se arregla aqui no es que viajen
-        # SIEMPRE, es que EXISTAN en el manifiesto.
+        # Se declaran como todo original adquirido: por su `sha256`, y los custodia otro
+        # sistema. Lo que se arregla aqui no es que viajen —no viaja ninguno—, es que
+        # EXISTAN en el manifiesto.
         informes: list[Path] | None = None,
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
@@ -278,12 +278,6 @@ class UOSExportAgent(BaseExportAgent):
         # que el fichero que le den es exactamente el que se ingirio, sin que el fichero
         # tenga que estar dentro.
         #
-        # ⚠️ **Y esto cambia la GARANTIA, asi que se declara.** Con los originales dentro el
-        # contenedor afirma «lo que sale es lo que entro» y el validador lo comprueba (§1.1
-        # del spec); sin ellos afirma «se el hash de lo que deberia haber ahi». El validador
-        # avisa por cada asset externo, que es lo correcto: es una diferencia real y quien
-        # reciba el fichero tiene que verla.
-        sin_originales: bool = True,
         # ⚠️ **Perfil de solo gaussianas: fuera tambien la malla convertida.** `scene.glb`
         # no es un original —es presentacion, el STL convertido a float32— pero sigue
         # siendo una malla, y la decision de producto es que el contenedor lleve el campo
@@ -347,8 +341,6 @@ class UOSExportAgent(BaseExportAgent):
         # y `1574` es el numero de caso. Se nombra por su papel en la escena y la
         # trazabilidad la da el sha256, que es mas fuerte que un nombre.
         uri = f"scene/scan{malla.suffix.lower()}"
-        if not sin_originales:
-            ficheros[uri] = malla
         # ⚠️ `document`, no `mesh_gs_scene`. Lo dice el §5.1: la escena es el `.glb`, y el
         # STL original «PUEDE incluirse como asset document para trazabilidad». Declararlo
         # escena haria que un visor viera dos escenas y no supiera cual montar.
@@ -356,7 +348,7 @@ class UOSExportAgent(BaseExportAgent):
             malla, uri, id_="asset.ios", kind=Clase.DOCUMENT, visit=visita.id,
             frame=FRAME_IOS, media_type=_MEDIA.get(malla.suffix.lower(), "model/stl"),
             acquisition=Adquisicion(time=snapshot.timestamp),
-            external=sin_originales,
+            external=True,
         ))
         # ⚠️ **La ESCENA, ademas del STL.** El §3.1 dibuja `scene/scene.glb` como «STL
         # convertido» y el §1.1 dice que UOS no re-encodea datos fuente: las dos cosas solo
@@ -619,9 +611,16 @@ class UOSExportAgent(BaseExportAgent):
                     "uos_frame": FRAME_IOS,
                     "uos_units": "mm",
                     "uos_source_asset": "asset.ios",
+                    # ⚠️ Decia «el asset reversible es asset.ios, byte-identico al
+                    # fichero del escaner». Cierto como identidad —ese hash ES el fichero
+                    # del escaner— pero se escribio cuando el STL viajaba dentro, y ahora
+                    # se lee como si el contenedor lo custodiara. No lo custodia: lo
+                    # nombra. Y la reversibilidad no es devolverlo, es regenerar la malla
+                    # desde esta escena (extension `ash_reversible`).
                     "uos_note": (
-                        "presentacion: float32 desde float64. El asset reversible es "
-                        "asset.ios, byte-identico al fichero del escaner"
+                        "presentacion: float32 desde float64. El original es asset.ios, "
+                        "referenciado por su direccion de contenido y no incluido aqui; "
+                        "la malla se regenera desde esta escena"
                     ),
                 },
             )
@@ -687,16 +686,14 @@ class UOSExportAgent(BaseExportAgent):
             # ⚠️ El nombre del fichero NO viaja: los de un proveedor llevan identificadores
             # del paciente. Se renumera y la trazabilidad la da el sha256.
             uri = f"images/img_{i:03d}{foto.suffix.lower()}"
-            # ⚠️ **Las fotos son originales, igual que el STL y el DICOM.** Iban atadas a
-            # `sin_malla` —el perfil de solo gaussianas— y no a `sin_originales`, asi que
-            # un contenedor que decia no llevar originales llevaba 18 MB de fotografias
-            # del paciente dentro. Es el mismo criterio para las tres cosas: lo que viaja
-            # es la direccion de contenido, no el fichero.
-            if not sin_originales:
-                ficheros[uri] = foto
+            # ⚠️ **Las fotos son originales, igual que el STL y el DICOM.** Estuvieron
+            # atadas a `sin_malla` —el perfil de solo gaussianas— en vez de a la regla de
+            # los originales, y un contenedor que decia no llevarlos llevaba 18 MB de
+            # fotografias del paciente dentro. Es el mismo criterio para las tres cosas: lo
+            # que viaja es la direccion de contenido, no el fichero.
             assets.append(asset_de(
                 foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
-                external=sin_originales,
+                external=True,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
                 # §5.3. Lo unico que se puede afirmar de estas: son fotos intraorales.
@@ -712,17 +709,14 @@ class UOSExportAgent(BaseExportAgent):
             # ⚠️ El nombre NO viaja: los de una clinica llevan apellidos del paciente.
             # Se renumera, igual que las fotos.
             uri = f"clinical/documents/doc_{i:03d}{doc.suffix.lower()}"
-            # ⚠️ Obedecen la MISMA bandera que el STL y las fotos. Un informe no es un
-            # caso aparte: o el perfil lleva los originales o no los lleva, y una
-            # excepcion para los PDF haria que «ligero» significara una cosa distinta
-            # segun el asset. Con `sin_originales` se declaran por su direccion de
-            # contenido —`sha256:<hex>`— igual que el resto, y es el mismo hash con el
-            # que el gate nombra el que nadie pudo leer.
-            if not sin_originales:
-                ficheros[uri] = doc
+            # ⚠️ Obedecen la MISMA regla que el STL y las fotos. Un informe no es un caso
+            # aparte: ningun original adquirido viaja, y una excepcion para los PDF haria
+            # que la regla significara una cosa distinta segun el asset. Se declaran por su
+            # direccion de contenido —`sha256:<hex>`— igual que el resto, y es el mismo
+            # hash con el que el gate nombra el que nadie pudo leer.
             assets.append(asset_de(
                 doc, uri, id_=f"asset.doc_{i:03d}", kind=Clase.DOCUMENT, visit=visita.id,
-                external=sin_originales,
+                external=True,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(doc.suffix.lower(), "application/pdf"),
                 # §5.1 Layer 1: es el registro que firmo una persona, no salida de un
@@ -790,18 +784,16 @@ class UOSExportAgent(BaseExportAgent):
             uri = "volume/ct_001/"
             sidecar_uri = SIDECAR.format(id="ct_001")
             sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
-            if not sin_originales:
-                directorios[uri] = cbct
-            # ⚠️ El sidecar del volumen viaja SIEMPRE, tambien en el perfil ligero: es lo
-            # que dice dimensiones, espaciado y orientacion sin parsear DICOM (§5.2). Sin el
-            # un contenedor ligero no podria ni situar el volumen que referencia.
+            # ⚠️ El sidecar del volumen SI viaja, y es lo que hace utilizable un volumen
+            # referenciado: dice dimensiones, espaciado y orientacion sin parsear DICOM
+            # (§5.2). Sin el, el contenedor no podria ni situar el volumen que referencia.
             extras[sidecar_uri] = json_de(sidecar)
             assets.append(asset_de_directorio(
                 cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
                 frame=FRAME_CBCT, media_type="application/dicom",
                 acquisition=Adquisicion(time=snapshot.timestamp),
                 sidecar_uri=sidecar_uri,
-                external=sin_originales,
+                external=True,
             ))
 
         fhir = self._fhir(assets)

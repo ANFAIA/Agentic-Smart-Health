@@ -151,13 +151,57 @@ def test_un_registro_automatico_sin_verificar_es_un_AVISO_no_un_error(tmp_path, 
     m = _manifiesto([a], registrations=[Registro(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
-        method="auto_dl",
+        method="auto_dl", operator="auto:un-agente@0.1.0",
     )])
     salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
     inf = valida(salida)
     assert inf.valido
     assert any("PROVISIONAL" in a_ for a_ in inf.avisos)
+
+
+def test_provisional_mira_QUIEN_lo_calculo_y_no_con_que_algoritmo(tmp_path, malla):
+    """El registro que de verdad emitimos, que la regla anterior NO cazaba.
+
+    ⚠️ `provisional` exigía `method == "auto_dl"`. Nuestra única registración declara
+    `method: "icp_surface"` —porque eso es lo que usa— con `operator` de máquina y sin
+    verificar: automática, sin revisar, 0,666 mm de residuo, y no disparaba el aviso que
+    existe justo para ella. Una salvaguarda escrita contra el nombre de UN algoritmo deja
+    de funcionar en cuanto alguien usa otro, que es siempre.
+
+    Lo que decide si una alineación es provisional es si la miró una persona. `method`
+    describe la técnica y es otro dato.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", rms_error_mm=0.666,
+        operator="auto:geometric-fusion-agent@0.2.0",
+    )])
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert inf.valido, inf.errores
+    assert any("PROVISIONAL" in a_ and "reg.ct_to_ios" in a_ for a_ in inf.avisos), inf.avisos
+
+
+def test_un_registro_de_una_PERSONA_sin_verificar_no_es_provisional(tmp_path, malla):
+    """El contrario: lo que separa no es que falte `verified_by`, es que no hubo nadie.
+
+    Un registro que alineó una persona a mano y que nadie más ha contrafirmado no es un
+    resultado sin supervisar. Avisar de él gastaría la misma palabra en dos cosas distintas
+    y le quitaría valor a la que importa.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="manual", operator="user:pedro",
+    )])
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    assert not any("PROVISIONAL" in a_ for a_ in valida(salida).avisos)
 
 
 def test_layer_3_tiene_que_vivir_en_derived(tmp_path, malla):
@@ -708,7 +752,6 @@ def test_sin_originales_el_STL_se_DECLARA_y_no_viaja(tmp_path, malla):
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
-        sin_originales=True,
     )
     assert salida.ok, salida.detail
     m = lee_manifiesto(salida.path)
@@ -728,38 +771,80 @@ def test_sin_originales_el_validador_AVISA_y_no_falla(tmp_path, malla):
     dentro el contenedor afirma «lo que sale es lo que entró» y el validador lo comprueba;
     sin él afirma «sé el hash de lo que debería haber ahí». Si el validador no lo dijera,
     las dos afirmaciones serían indistinguibles desde fuera.
+
+    ⚠️ **Y se dice UNA vez, no una por asset.** Que los originales no viajen es el formato,
+    así que un aviso por cada uno repetiría la definición tantas veces como assets tenga el
+    caso —y un aviso que sale siempre deja de leerse, enterrando los que sí distinguen algo.
+    Lo comprueba `test_los_originales_referenciados_producen_UN_solo_aviso`.
     """
     from uos import UOSExportAgent
     from uos.validador import valida
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
-        sin_originales=True,
     )
     inf = valida(salida.path)
     assert inf.errores == [], inf.errores
-    assert any("EXTERNO" in a and "asset.ios" in a for a in inf.avisos), inf.avisos
+    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
+    assert len(referencias) == 1, inf.avisos
+    assert "asset.ios" in referencias[0], referencias
+    assert inf.externos >= 1
 
 
-def test_con_originales_no_hay_ningun_aviso_de_externo(tmp_path, malla):
+def test_sin_assets_externos_NO_se_dice_nada(tmp_path, malla):
     """El contrario, para que el test de arriba pueda fallar.
 
     Sin esto, un validador que avisara SIEMPRE pasaría los dos y no probaría nada.
 
-    ⚠️ Pide `sin_originales=False` **explícitamente** porque ya no es el defecto: nuestro
-    formato no lleva originales. El perfil con originales sigue existiendo en el agente
-    porque es lo que el §1.1 del borrador especifica, y ninguna bandera de la CLI lo activa.
+    ⚠️ El contenedor lo escribe el test, no el exportador. El exportador ya no sabe emitir
+    un original dentro —ninguno viaja— y devolverle esa capacidad sólo para tener un
+    contrario sería mantener en producción un camino que la especificación prohíbe. Lo que
+    se prueba aquí es el VALIDADOR, y un validador corre sobre lo que escribió otro.
     """
-    from uos import UOSExportAgent
     from uos.validador import valida
 
-    salida = UOSExportAgent(None).export(
-        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
-        sin_originales=False,
-    )
-    inf = valida(salida.path)
+    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+                         [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
     assert inf.errores == [], inf.errores
-    assert not any("EXTERNO" in a for a in inf.avisos), inf.avisos
+    assert not any("REFERENCIA" in a for a in inf.avisos), inf.avisos
+    assert inf.externos == 0
+
+
+def test_los_originales_referenciados_producen_UN_solo_aviso(tmp_path, malla):
+    """Un contenedor con varios originales referenciados avisa UNA vez, no una por asset.
+
+    ⚠️ **Es la regresión que hace falta cazar, y antes no se cazaba.** El validador emitía
+    un aviso por cada asset externo. Mientras el caso de prueba tenía un solo original eso
+    parecía razonable; con un caso real —el escáner, la serie de CBCT, nueve fotos y tres
+    informes— son trece líneas diciendo lo mismo, y ninguna dice nada: que los originales
+    adquiridos no viajen es la DEFINICIÓN del formato, no una excepción de este contenedor.
+    Un aviso que sale siempre deja de leerse y entierra a los que sí distinguen algo —el
+    registro sin verificar, la extensión obligatoria—, que son justo los que hay que ver.
+
+    Lo que sí merece decirse una vez, y por eso el aviso no desaparece del todo, es que de
+    esos assets el validador no puede comprobar nada.
+    """
+    from uos.validador import valida
+
+    externos = [
+        _asset(malla, id=f"asset.ext_{i}", external=True,
+               uri=f"sha256:{hashlib.sha256(malla.read_bytes()).hexdigest()}")
+        for i in range(4)
+    ]
+    salida = escribe_uos(
+        tmp_path / "caso.uos",
+        _manifiesto([_asset(malla), *externos]), [("scene/scan.stl", malla)],
+    )
+
+    inf = valida(salida)
+    assert inf.errores == [], inf.errores
+    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
+    assert len(referencias) == 1, f"un aviso por asset otra vez: {referencias}"
+    assert inf.externos == 4
+    # Y los nombra, porque «hay cuatro» sin decir cuáles no se puede accionar.
+    assert all(f"asset.ext_{i}" in referencias[0] for i in range(4)), referencias[0]
 
 
 def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
@@ -769,7 +854,7 @@ def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
     dentro**, así que una ruta sería una promesa sobre un ZIP en el que no está; lo único
     que sigue siendo cierto de él es qué fichero es. Y una dirección de contenido **no puede
     llevar dato de paciente**: la ruta local de un caso clínico lleva el directorio del
-    paciente, un hash no lleva nada. El perfil ligero saca ficheros del contenedor, no
+    paciente, un hash no lleva nada. Referenciar saca ficheros del contenedor, no
     identidades.
     """
     import hashlib
@@ -778,7 +863,6 @@ def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
-        sin_originales=True,
     )
     m = lee_manifiesto(salida.path)
     ios = next(a for a in m.assets if a.id == "asset.ios")
