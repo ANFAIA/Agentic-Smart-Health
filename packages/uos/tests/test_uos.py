@@ -331,6 +331,67 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
     assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.ios")
 
 
+def test_campos_densidad_emiten_N_capas_en_vez_del_campo_unico(tmp_path, malla):
+    """La descomposición por HU viaja como N capas externas, no como un campo único.
+
+    El formato ya soporta N capas (`scene/*.ply` + `*.gs.json`, un nodo por capa); esto
+    comprueba que el EXPORTADOR las emite cuando se le pasa `campos_densidad`, y que el
+    `asset.field` único desaparece.
+    """
+    import struct
+    import zipfile
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, RigidTransform, TwinSnapshot
+    from uos import UOSExportAgent, lee_manifiesto
+
+    def _ply_densidad(ruta: Path, n: int = 3) -> None:
+        cab = ["ply", "format binary_little_endian 1.0", "comment unidades mm",
+               f"element vertex {n}",
+               "property float x", "property float y", "property float z",
+               "property float scale_0", "property float scale_1", "property float scale_2",
+               "property float rot_0", "property float rot_1", "property float rot_2",
+               "property float rot_3", "property float density", "end_header"]
+        ruta.write_bytes(("\n".join(cab) + "\n").encode("ascii")
+                         + struct.pack(f"<{n * 12}f", *range(n * 12)))
+
+    baja = tmp_path / "baja.ply"
+    _ply_densidad(baja)
+    alta = tmp_path / "alta.ply"
+    _ply_densidad(alta)
+
+    snap = TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0",
+        provenance=Provenance(
+            source_file="x", modality=Modality.CBCT, agent="a@0",
+            # La capa CBCT necesita la registración al canónico para validar.
+            transform=RigidTransform(rotation=(1.0, 0.0, 0.0, 0.0),
+                                     translation=(0.0, 0.0, 0.0)),
+        ),
+    )
+    salida = UOSExportAgent(None).export(
+        snap, tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        campos_densidad=[
+            {"id_": "asset.field_densidad-baja", "papel": "densidad 300-700 HU",
+             "nota": "tramo bajo", "ruta": baja},
+            {"id_": "asset.field_densidad-alta", "papel": "densidad 1250-2000 HU",
+             "nota": "tramo alto", "ruta": alta},
+        ],
+    )
+    assert salida.ok, salida.detail
+    m = lee_manifiesto(salida.path)
+    ids = {a.id for a in m.assets}
+    assert "asset.field_densidad-baja" in ids
+    assert "asset.field_densidad-alta" in ids
+    assert "asset.field" not in ids, "el campo único no se emite cuando hay capas"
+    with zipfile.ZipFile(salida.path) as z:
+        nombres = z.namelist()
+        assert "scene/field_densidad-baja.ply" in nombres
+        assert "scene/field_densidad-alta.ply" in nombres
+        assert "scene/field_densidad-baja.gs.json" in nombres
+        assert "scene/field_densidad-alta.gs.json" in nombres
+
 
 def test_un_informe_ilegible_QUEDA_DECLARADO_en_el_manifiesto(tmp_path, malla):
     """Un PDF sin capa de texto **no se pierde**: queda declarado por su `sha256`.
