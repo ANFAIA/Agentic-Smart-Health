@@ -250,9 +250,7 @@ Manifest JSON Schema & JSON Schema 2020-12, at
 its \code{\$id},
 \url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json}
 --- pinned to a tag, so the identifier always names the same document. It is
-\emph{generated} from the reference implementation's types, never hand-written.
-
-\quad\textbf{What it does and does not check.} It is the only artifact a third party needs
+\emph{generated} from the reference implementation's types, never hand-written. \textbf{What it does and does not check.} It is the only artifact a third party needs
 to check a manifest's \emph{shape}. It cannot check truth: not that a \code{sha256} matches
 its asset, that the frame graph reaches the canonical frame, or that \code{derived/} carries
 its sidecar. That is why \S\ref{sec:conformance} requires both the schema and the validation
@@ -264,9 +262,12 @@ the sections of this document: \code{manifiesto.py} (\S\ref{sec:manifest}),
 \code{derivados.py} (\S\ref{sec:derived}), \code{vistas.py} (\S\ref{sec:views}),
 \code{procedencia.py} (\S\ref{sec:provenance}), \code{validador.py}
 (\S\ref{sec:conformance}).\\
-Example container & \code{another\_patient.uos} --- 12 entries, 18 views,
-3 declared extensions, provenance chain of 3 versions. It is the container this document quotes
-whenever it shows a real value.\\
+The measured container & \code{another\_patient.uos} --- 12 entries, 18 views, 3 declared
+extensions, a provenance chain of 3 versions. Every real value quoted in this document is
+read from it. \textbf{It is not distributed with this specification}: it holds one
+patient's case, pseudonymised but real, and it is held by the project rather than published.
+A reader should not go looking for a file that does not accompany the document. A
+distributable conformance fixture is listed as pending in \S\ref{sec:limits}.\\
 \bottomrule
 \end{longtable}
 
@@ -1878,6 +1879,11 @@ discovering the change when their reader breaks. The warning is also the written
   \item \textbf{Camera pose for 2D imaging is not emitted.} \S\ref{sec:image2d}.
   \item \textbf{\code{COLOR\_0} is not emitted} on splat primitives, so non-extension
   viewers see an uncoloured point cloud. \S\ref{sec:khr}.
+  \item \textbf{There is no distributable example container.} Every figure here was
+  measured on a real patient's case, which the project holds and does not publish. A
+  conformance fixture --- synthetic, or built from an openly licensed dataset --- is what
+  would let an implementer check their reader against something other than their own
+  output, and it does not exist yet.
   \item \textbf{The media type is unregistered.} \code{application/vnd.histora.uos}
   awaits an IANA registration in the \code{vnd.} tree, and \code{histora.dev} --- the
   namespace it names --- is not a domain anybody holds. The schema's \code{\$id} therefore
