@@ -223,6 +223,46 @@ de formatos volumétricos (`.mha`, `.nii.gz`), no un agente.
    clínico querría mirar el twin. Depende del `segmentation-agent` para que los
    nombres signifiquen algo; sin él, la partición por densidad es la versión honesta.
 
+## Replicación sobre el caso clínico real (demo, 2026-08-28)
+
+Los hallazgos 4 y 5 se replicaron sobre el **caso clínico real de la demo** (serie
+DICOM de la clínica, no la cohorte CC BY-NC-SA), para comprobar que el margen no era
+propio de la cohorte. Protocolo: DICOM → vóxel 0,30 mm → 252 vistas en órbita, 800×800,
+7000 iteraciones, holdout 1/8, y el control entrenado con la MISMA rama volumétrica
+(DRR) para que la comparación sea sobre la misma imagen.
+
+**Partición por densidad sola** (`PARTICION_HU`, sin etiquetas — máscara de paciente
+sintetizada como HU > 300):
+
+| | PSNR holdout |
+|---|---|
+| campo único (DRR) | 37,35 dB |
+| suma de 4 capas por HU | **39,83 dB** |
+| **Δ** | **+2,48 dB** |
+
+Replica el hallazgo 4 dentro de su horquilla (+2,08 a +7,41). La descomposición por
+densidad no necesita segmentación y recupera el margen en el caso real.
+
+**Capas cruzadas** (diente/hueso, con el U-Net de diente entrenado del proyecto,
+F1 de validación 0,956):
+
+| | PSNR holdout |
+|---|---|
+| campo único (DRR) | 37,32 dB |
+| suma de 4 capas cruzadas | 36,07 dB |
+| **Δ** | **−1,25 dB** |
+
+La partición por CLASE **resta** en el caso real, a diferencia de la cohorte (donde el
+mapa de 6 clases venía del dataset). Confirma el techo declarado en el hallazgo 4: la
+calidad de las capas cruzadas está topada por la **segmentación de entrada** — el esmalte
+que el U-Net se pierde cae en `hueso-cortical` con la normalización de σ equivocada y la
+suma reproduce peor que un campo único. El encendido clínico por tejido queda condicionado
+a una segmentación de diente mejor.
+
+⚠️ Alcance: el campo de densidad que lleva hoy el `.uos` de la demo es de `ajusta_campo`
+(regresión a densidad), NO de la rama DRR; estos números son de la rama volumétrica y no
+alteran el contenedor actual — dicen cuánto ganaría la demo si adoptara el campo en capas.
+
 ## Nota de reproducibilidad
 
 El código de la exploración y los artefactos derivados están **fuera del control de
