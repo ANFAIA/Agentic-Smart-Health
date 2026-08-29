@@ -31,6 +31,13 @@ human-readable and linked to the relevant pull request or issue where applicable
   from it.
 - `Informe.externos` in the UOS validator: how many acquired originals a container
   references without holding.
+- `uos.version`: version branching for readers. A container declaring the reader's own
+  version or older is parsed strictly; a higher **minor** is parsed leniently, ignoring and
+  naming the fields it does not know; a higher **major** is refused. The danger in the last
+  case is not the unknown fields — those could be ignored too — but the known ones, which a
+  major is free to redefine.
+- Versioning policy and a recipe for regenerating the improved mesh, both in the format
+  specification.
 
 <!-- List new features, agents, schemas, or capabilities added since the last release. -->
 
@@ -58,6 +65,12 @@ human-readable and linked to the relevant pull request or issue where applicable
 
 ### Fixed
 
+- **`uos_version` was written and never read.** Neither the reader nor the validator
+  compared it with their own, so the compatibility a version number exists to provide was
+  unenforceable: every model sets `extra="forbid"`, and an optional field added by a later
+  minor did not warn, it broke parsing. A reader that ignores fields it does not understand
+  is additionally barred from re-emitting that case — it would drop them, and the provenance
+  chain would still verify a successor with content silently missing.
 - **A registration is provisional by who computed it, not by which algorithm.** The rule
   required `method == "auto_dl"`, and the only registration the pipeline emits declares
   `icp_surface`: automatic, unverified, 0.666 mm of residual — and it did not trip the

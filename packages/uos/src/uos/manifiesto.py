@@ -348,8 +348,9 @@ class Extension(BaseModel):
 
     **Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /
     `extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre
-    el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese
-    mecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde
+    el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.
+    UOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
+    sobre de asset tienen donde
     decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
 
     La consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,

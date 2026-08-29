@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from uos.manifiesto import Asset, Manifiesto, Parte, digesto_de_partes
+from uos.manifiesto import UOS_VERSION, Asset, Manifiesto, Parte, digesto_de_partes
 
 MANIFIESTO = "manifest.json"
 
@@ -101,7 +101,14 @@ def escribe_uos(
 
 
 def lee_manifiesto(ruta: Path) -> Manifiesto:
-    """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada."""
+    """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada.
+
+    ⚠️ **Y comprobando la VERSION, que es lo primero que el spec pide mirar y no se
+    miraba.** El campo se escribia, se declaraba en el modelo y no lo leia nadie: un
+    contenedor de una version posterior se parseaba con el contrato de esta, y como todos
+    los modelos llevan `extra="forbid"`, un campo opcional nuevo —justo lo que una version
+    menor tiene permitido anadir— no daba un aviso, reventaba el parseo. Ver `uos.version`.
+    """
     with zipfile.ZipFile(ruta) as z:
         nombres = z.namelist()
         if not nombres or nombres[0] != MANIFIESTO:
@@ -109,7 +116,30 @@ def lee_manifiesto(ruta: Path) -> Manifiesto:
                 f"{ruta.name}: la primera entrada es {nombres[0] if nombres else 'ninguna'!r} "
                 f"y el spec exige {MANIFIESTO!r} — sin eso no hay identificacion positiva."
             )
-        return Manifiesto.model_validate_json(z.read(MANIFIESTO))
+        return lee_manifiesto_de(z.read(MANIFIESTO), nombre=ruta.name)[0]
+
+
+def lee_manifiesto_de(
+    crudo: bytes, *, nombre: str = "manifest.json"
+) -> tuple[Manifiesto, list[str]]:
+    """`(manifiesto, campos ignorados)` aplicando la rama de version que toque (§15)."""
+    import json
+
+    from uos.version import Lectura, como_leer, lee_permisivo
+
+    declarada = str(json.loads(crudo).get("uos_version", ""))
+    rama = como_leer(declarada)
+    if rama is Lectura.RECHAZO:
+        raise ValueError(
+            f"{nombre}: declara uos_version {declarada!r} y este lector implementa "
+            f"{UOS_VERSION!r}. Una version mayor no promete compatibilidad, y el riesgo no "
+            "son los campos que no conozco sino los que SI conozco y pueden haber cambiado "
+            "de significado: abrirlo seria adivinar."
+        )
+    if rama is Lectura.PERMISIVA:
+        m, ignorados = lee_permisivo(crudo)
+        return m, ignorados
+    return Manifiesto.model_validate_json(crudo), []
 
 
 def asset_de(

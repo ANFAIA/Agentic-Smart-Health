@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from uos.contenedor import MANIFIESTO
-from uos.manifiesto import Clase, Manifiesto, digesto_de_partes
+from uos.contenedor import MANIFIESTO, lee_manifiesto_de
+from uos.manifiesto import UOS_VERSION, Clase, Manifiesto, digesto_de_partes
 from uos.procedencia import CADENA, FIRMAS, Cadena, revisa_cadena
 from uos.vistas import VISTAS, Vista
 
@@ -81,7 +81,16 @@ def valida(ruta: Path) -> Informe:
                 break
         crudo = z.read(MANIFIESTO)
         _valida_esquema(crudo, inf)
-        m = Manifiesto.model_validate_json(crudo)
+        # ⚠️ La rama de version PRIMERO: si el contenedor declara una mayor superior esto
+        # eleva, y es lo correcto — no se valida lo que no se sabe interpretar (§15).
+        m, ignorados = lee_manifiesto_de(crudo, nombre=ruta.name)
+        if ignorados:
+            inf.avisos.append(
+                f"el contenedor declara uos_version {m.uos_version!r} y este validador "
+                f"implementa {UOS_VERSION!r}: se han IGNORADO {len(ignorados)} campo(s) que "
+                "no conoce, y por eso no puede emitir una version nueva de este caso: "
+                + ", ".join(ignorados)
+            )
         _valida_assets(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
