@@ -35,6 +35,11 @@
 \usepackage[colorlinks=true,linkcolor=uosblack,urlcolor=uosblack,citecolor=uosblack]{hyperref}
 
 % ------------------------------------------------------------------ misc ----
+% Identificadores como `extensions_required` no se parten, y en una columna estrecha se
+% salen al margen. Esto deja a TeX estirar el espaciado en la linea desesperada en vez
+% de desbordarla: una linea algo suelta se lee, una que invade el margen no.
+\setlength{\emergencystretch}{3em}
+
 \setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
 \renewcommand{\arraystretch}{1.25}
 \titleformat{\section}{\Large\bfseries\color{uosblack}}{\thesection}{0.7em}{}
