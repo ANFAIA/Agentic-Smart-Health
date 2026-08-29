@@ -1,0 +1,1903 @@
+% !TeX program = pdflatex
+% =============================================================================
+%  UOS — Unified Oral Scene. Format Specification v0.2
+%  Single-file LaTeX source. Compiles on Overleaf with pdfLaTeX, no extra files.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[english]{babel}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath}          % \text in the SH formula
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{indentfirst}
+
+% ---------------------------------------------------------------- palette ----
+% Defined BEFORE hyperref, whose options below name these colours.
+\definecolor{uosblack}{HTML}{000000}
+\definecolor{uosgrey}{HTML}{5A6570}
+\definecolor{uoslight}{HTML}{F2F5F7}
+\definecolor{uosrule}{HTML}{C8D2D9}
+\definecolor{uosred}{HTML}{8C2F2F}
+\definecolor{uosgreen}{HTML}{2F6B45}
+\definecolor{uosamber}{HTML}{8A6212}
+
+\usepackage[colorlinks=true,linkcolor=uosblack,urlcolor=uosblack,citecolor=uosblack]{hyperref}
+
+% ------------------------------------------------------------------ misc ----
+\setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
+\renewcommand{\arraystretch}{1.25}
+\titleformat{\section}{\Large\bfseries\color{uosblack}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries\color{uosblack}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.7em}{}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\footnotesize\color{uosgrey}UOS: Unified Oral Scene v0.2}
+\fancyhead[R]{\footnotesize\color{uosgrey}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% conformance keywords
+\newcommand{\MUST}{\textcolor{uosred}{\textbf{MUST}}}
+\newcommand{\MUSTNOT}{\textcolor{uosred}{\textbf{MUST NOT}}}
+\newcommand{\SHOULD}{\textcolor{uosamber}{\textbf{SHOULD}}}
+\newcommand{\SHOULDNOT}{\textcolor{uosamber}{\textbf{SHOULD NOT}}}
+\newcommand{\MAY}{\textcolor{uosgreen}{\textbf{MAY}}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% Callout: rules above and below rather than a box, so it may break across pages
+% and may contain lists and verbatim listings. No tcolorbox/mdframed dependency.
+\newenvironment{callout}[1]
+ {\par\medskip\noindent{\color{uosblack}\rule{\linewidth}{0.9pt}}\par\nobreak\vspace{3pt}
+  \noindent{\bfseries\color{uosblack}#1}\par\nobreak\vspace{2pt}}
+ {\par\vspace{2pt}\noindent{\color{uosrule}\rule{\linewidth}{0.6pt}}\par\medskip}
+
+% ------------------------------------------------------------- listings -----
+% Only language-level keys here; presentation keys live in the styles below.
+\lstdefinelanguage{json}{
+  sensitive=false,
+  morestring=[b]",
+  morecomment=[l]{//},
+  literate=
+   *{\{}{{{\color{uosblack}\{}}}{1} {\}}{{{\color{uosblack}\}}}}{1}
+    {[}{{{\color{uosblack}[}}}{1}   {]}{{{\color{uosblack}]}}}{1},
+}
+\lstdefinestyle{box}{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{uoslight},
+  frame=single, rulecolor=\color{uosrule},
+  framexleftmargin=4pt, framexrightmargin=4pt,
+  xleftmargin=4pt, xrightmargin=4pt,
+  breaklines=true, columns=fullflexible, keepspaces=true,
+  captionpos=b, aboveskip=8pt, belowskip=8pt,
+}
+\lstset{style=box}
+\lstdefinestyle{py}{style=box,language=Python,
+  keywordstyle=\color{uosblack}\bfseries,
+  commentstyle=\color{uosgrey}\itshape,
+  stringstyle=\color{uosgreen}}
+\lstdefinestyle{js}{style=box,language=json,
+  showstringspaces=false,
+  stringstyle=\color{uosgreen},
+  commentstyle=\color{uosgrey}\itshape}
+\lstdefinestyle{plain}{style=box,language={}}
+
+% table column helpers
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% =============================================================================
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\color{uosgrey}\large Format Specification}\\[0.6cm]
+{\color{uosblack}\Huge\bfseries UOS: Unified Oral Scene}\\[0.5cm]
+{\color{uosblack}\LARGE Version 0.2}\\[1.4cm]
+{\large An open container for a complete dental case:\\
+geometry, volume, appearance, imaging, clinical findings\\
+and the \emph{relations between them}, in one file.}\\[2.2cm]
+
+\begin{tabular}{@{}rl@{}}
+\textbf{Status} & Draft; reference implementation complete and shipping\\
+\textbf{Container media type} & \code{application/vnd.histora.uos} (proposed, unregistered)\\
+\textbf{File extension} & \code{.uos}\\
+\textbf{Manifest schema} & \code{schemas/uos-manifest-0.2.schema.json}\\
+ & (JSON Schema 2020-12; see \S\ref{sec:artifacts} for its \code{\$id})\\
+\textbf{Dependencies} & glTF 2.0 and \code{KHR\_gaussian\_splatting} (Release Candidate)\\
+\textbf{References} & DICOM PS3.10; FHIR R4; ISO 3950 (FDI)\\
+\textbf{Audience} & Implementers of readers, writers, viewers and agents\\
+\end{tabular}
+
+\vspace{1.0cm}
+
+\begin{tabular}{@{}rl@{}}
+\textbf{Editor} & Luis Garbayo Fern\'andez\\
+\textbf{Licence} & Apache License 2.0\\
+\textbf{Produced under} & Version 0.2 was written during the Becas de Verano ANFAIA\\
+ & 2026, on a clinical case contributed by Histora.\\
+\textbf{Version} & 0.2 --- last revised \today\\
+\end{tabular}
+
+\vspace{0.8cm}
+{\color{uosgrey}\small Every figure in this document was measured on a real clinical case
+contributed by Histora. This is a versioned, living specification, not the deliverable
+of a fixed term. Later versions revise it under the process of
+\S\ref{sec:limits}; \S\ref{sec:artifacts} names where the schema for each
+version lives.}
+
+\vfill
+{\color{uosgrey}\small This document is the contract. An implementation that follows it
+can open, render, verify, extend and re-emit a \code{.uos} without access to the
+reference implementation and without asking its authors anything.}
+\vspace{1.5cm}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduction}\label{sec:intro}
+
+\subsection{What a \code{.uos} is}
+A dental case today is three unrelated things: one or two STL files from the intraoral
+scanner, a directory of several hundred DICOM slices from the CBCT, and a PDF report.
+Each lives in its own coordinate system, each opens in a different program, and the
+\emph{relations} between them, where this CBCT sits with respect to this scan, which
+tooth this finding refers to, live in someone's head or inside proprietary software.
+Those relations do not travel with the data.
+
+A \code{.uos} is those three things \textbf{plus the relations between them}, in one
+file, addressable over HTTP, verifiable byte by byte, and openable in a browser.
+
+\textbf{The one-sentence definition}. A \code{.uos} is an \textbf{uncompressed ZIP} whose first entry is a \code{manifest.json} that declares every payload it carries by content hash, the named coordinate frames those
+payloads live in, and the measured transforms that relate those frames.
+
+\subsection{What a \code{.uos} is not}
+
+\begin{itemize}
+  \item \textbf{It is not a pixel format.} UOS never re-encodes source data. DICOM travels
+  byte-identical; the STL travels byte-identical. What UOS adds is composition.
+  \item \textbf{It is not a replacement for DICOM, glTF or FHIR.} It references them. A
+  reader that already has a DICOM parser, a glTF loader and a FHIR client needs almost no
+  new code, see \S\ref{sec:cookbook}.
+  \item \textbf{It is not a clinical validation.} Everything produced by a model is
+  isolated under \code{derived/} and marked \code{investigational} (\S\ref{sec:derived}).
+  \item \textbf{It is not yet a standard.} It is a container proposal with a schema
+  and a validator, both distributed with the reference implementation. Until a second implementer opens one, it is nothing more.
+\end{itemize}
+
+\subsection{How to read this document}\label{sec:howtoread}
+
+This document is long because it is exhaustive, not because all of it is for everybody.
+Find your task below and read only that path; each one is self-contained and ends in a
+worked recipe.
+
+\begin{itemize}[leftmargin=1.2em]
+  \item \textbf{To show a \code{.uos} on screen} --- read \S\ref{sec:container} (the
+  container), \S\ref{sec:manifest} (the manifest), \S\ref{sec:scenes} (scenes,
+  \emph{in full}) and \S\ref{sec:views} (views), then the recipe \emph{Render it}
+  (\S\ref{rec:render}). A minimal viewer is about thirty lines.
+
+  \item \textbf{To open one and check it is valid} --- read \S\ref{sec:container} (the
+  container), \S\ref{sec:model} (the data model), \S\ref{sec:manifest} (the manifest) and
+  \S\ref{sec:conformance} (the validation algorithm), then the recipe \emph{Open a case
+  and verify it} (\S\ref{rec:open}).
+
+  \item \textbf{To add data and re-emit it} --- read \S\ref{sec:model} (the data model),
+  \S\ref{sec:manifest} (the manifest), \S\ref{sec:provenance} (versioning: a \code{.uos}
+  is never edited in place) and, if the base format has no place for what you carry,
+  \S\ref{sec:extensions} (extensions). The recipes are in \S\ref{sec:cookbook}.
+
+  \item \textbf{To act on one as an autonomous agent} --- \S\ref{sec:conformance} and
+  Appendix~\ref{app:cheat} are enough to operate: what to verify, what to refuse, what may
+  be added and where. Everything else is justification for decisions you do not need to
+  re-derive.
+
+  \item \textbf{To judge the design rather than implement it} --- read \S\ref{sec:intro}
+  for the problem this format exists to solve, the \emph{Rationale} paragraphs and the
+  highlighted boxes for why each decision went the way it did, and \S\ref{sec:limits} for
+  what v0.2 deliberately does not do.
+\end{itemize}
+
+\subsection{Conformance language}
+
+The key words \MUST, \MUSTNOT, \SHOULD, \SHOULDNOT{} and \MAY{} are to be interpreted as
+described in RFC 2119. Sections and paragraphs marked \emph{Rationale} are informative;
+everything else is normative.
+
+Two failure classes are used throughout and they are not interchangeable:
+
+\begin{longtable}{L{2.6cm} L{12.8cm}}
+\toprule
+\textbf{Class} & \textbf{Meaning for a reader}\\
+\midrule
+\endhead
+\textbf{Error} & The container is invalid. A reader \MUST{} refuse to present it as a
+valid case. Errors are always about internal contradiction --- a declared hash that does
+not match, an asset that is referenced and absent.\\
+\textbf{Warning} & The container is valid but carries a weaker guarantee than it could,
+and the reader \MUST{} surface that to the user rather than swallow it. An unverified
+registration and an externalised original are the two canonical examples.\\
+\bottomrule
+\end{longtable}
+
+\textbf{The design rule behind every warning in this document}. 
+The format's central commitment is that \textbf{two things that are not the same must
+never look the same}. An automatic alignment nobody reviewed and one signed by a clinician
+are different facts. A DICOM series carried inside the container and one merely referenced
+by hash are different guarantees. Where the format cannot enforce the difference, it
+\MUST{} at minimum name it.
+
+\subsection{Normative artifacts}\label{sec:artifacts}
+
+\begin{longtable}{L{4.6cm} L{10.8cm}}
+\toprule
+\textbf{Artifact} & \textbf{Location and role}\\
+\midrule
+\endhead
+Manifest JSON Schema & JSON Schema 2020-12, at
+\code{schemas/uos-manifest-0.2.schema.json} in the reference repository and retrievable at
+its \code{\$id},
+\url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json}
+--- pinned to a tag, so the identifier always names the same document. It is
+\emph{generated} from the reference implementation's types, never hand-written.
+
+\quad\textbf{What it does and does not check.} It is the only artifact a third party needs
+to check a manifest's \emph{shape}. It cannot check truth: not that a \code{sha256} matches
+its asset, that the frame graph reaches the canonical frame, or that \code{derived/} carries
+its sidecar. That is why \S\ref{sec:conformance} requires both the schema and the validation
+algorithm, and why passing the schema alone is not conformance.\\
+Reference implementation & Python package \code{uos} (v0.2.0). Modules map one-to-one onto
+the sections of this document: \code{manifiesto.py} (\S\ref{sec:manifest}),
+\code{contenedor.py} (\S\ref{sec:container}), \code{escena.py} (\S\ref{sec:scenes}),
+\code{volumen.py} (\S\ref{sec:volume}), \code{clinico.py} (\S\ref{sec:clinical}),
+\code{derivados.py} (\S\ref{sec:derived}), \code{vistas.py} (\S\ref{sec:views}),
+\code{procedencia.py} (\S\ref{sec:provenance}), \code{validador.py}
+(\S\ref{sec:conformance}).\\
+Example container & \code{another\_patient.uos} --- 12 entries, 18 views,
+3 declared extensions, provenance chain of 3 versions. It is the container this document quotes
+whenever it shows a real value.\\
+\bottomrule
+\end{longtable}
+
+Where this document and the reference implementation disagree, \textbf{this document is
+wrong and \MUST{} be corrected}; but a reader encountering the disagreement \SHOULD{}
+follow the implementation, because that is what the containers in the wild were written
+by.
+
+% =============================================================================
+\newpage
+\section{The container}\label{sec:container}
+
+\subsection{Physical format}
+
+A \code{.uos} file \MUST{} be a ZIP archive (PKZIP, ISO/IEC 21320-1 profile) in which:
+
+\begin{enumerate}
+  \item Every entry \MUST{} use compression method \code{STORE} (0). A reader \MUST{}
+  report an error on any deflated entry.
+  \item The \textbf{first physical entry} \MUST{} be named \code{manifest.json}.
+  \item Entry names \MUST{} be relative, use \code{/} as separator, be pure ASCII, and
+  \MUSTNOT{} contain a \code{..} path segment or a leading \code{/}.
+  \item An entry name ending in \code{/} denotes a \emph{directory asset} (\S\ref{sec:dirasset}).
+\end{enumerate}
+
+\paragraph{Rationale: why STORE.} With STORE and the ZIP central directory at the end,
+an HTTP client issuing \emph{range requests} reads the index and pulls a single asset
+without downloading the case. On the example container that is the difference between
+fetching 17.9\,MB of scene and fetching 183\,MB of case. Deflating the archive would take
+that away: a compressed entry has to be inflated from its start, so there is no useful
+byte range to ask for, and the container stops being addressable and becomes a package you
+open whole before touching anything.
+
+\paragraph{And what STORE costs, measured rather than assumed.} It is not free, and the
+usual justification --- ``the payloads are already compressed'' --- is only half true here.
+On the example container the entries total 183.2\,MB stored against 37.3\,MB deflated: the
+\code{.glb} is near its limit at 81\,\%, but the \code{.ply} layers, which are raw
+\code{float32}, fall to 13--15\,\%. The container is therefore about five times the size a
+compressed archive would be, and a writer should know that before quoting a transfer time. The trade is still taken, because \textbf{the right place to compress is inside the asset,
+not in the container}. A Gaussian layer stored as SPZ, or a mesh carrying Draco, shrinks by
+the same order \emph{and} stays addressable by range; deflating the ZIP buys the same bytes
+and gives up the one property the container exists to provide. Compression belongs to the
+payload's own format, where a reader that understands the payload can undo it, rather than
+to the envelope, where undoing it is a precondition for reading anything at all.
+
+\paragraph{The precedent, and how far it goes.} \code{.usdz} made the same trade: it is a
+ZIP whose entries are stored uncompressed, so a runtime can read a texture in place instead
+of unpacking the archive first. It goes one step further and \emph{aligns} each entry,
+which is what makes the bytes mappable into memory without a copy. UOS does not align: an
+HTTP range request has no such requirement, and the property cannot be granted
+retroactively --- alignment moves offsets, so containers written today would not acquire it
+when a later version asked for it. A future revision that wants zero-copy local reads has
+to add the rule and accept that it splits the format.
+
+\paragraph{Rationale: why the manifest goes first.} It is the format's positive
+identification. A reader opens the first bytes, sees the entry and its \code{uos\_version}
+field, and knows what it is holding without trusting the file extension or a magic number
+we would have had to invent.
+
+\subsection{Media type and identification}
+
+\begin{itemize}
+  \item \textbf{Media type:} \code{application/vnd.histora.uos} --- \textbf{proposed}. The \code{vnd.} tree is to be registered with IANA when this specification is published. Until then a reader \MUSTNOT{} rely on it and \MUST{} identify by rule 2 above.
+  
+  \item \textbf{Extension:} \code{.uos}
+  
+  \item \textbf{Magic:} None of its own. \code{PK\textbackslash x03\textbackslash x04} followed by the local file header of \code{manifest.json}.
+  
+  \item \textbf{Fragment identifier:} \code{caso.uos\#view=<view.id>} selects a stored view (\S\ref{sec:views}). Readers that do not implement views \MUST{} ignore the fragment.
+\end{itemize}
+
+\subsection{Reserved paths}\label{sec:paths}
+
+The following paths are reserved by this specification. A writer \MUSTNOT{} place unrelated
+content at them; a reader \MAY{} rely on their meaning.
+
+\begin{longtable}{L{5.4cm} L{3.2cm} L{6.2cm}}
+\toprule
+\textbf{Path} & \textbf{Required} & \textbf{Contents}\\
+\midrule
+\endhead
+\code{manifest.json} & \MUST, first entry & \S\ref{sec:manifest}\\
+\code{scene/} & --- & Mesh scene, Gaussian layers, their descriptors (\S\ref{sec:scenes})\\
+\code{scene/scene.glb} & by convention & The glTF binary scene\\
+\code{scene/*.gs.json} & --- & Gaussian layer descriptors, extension
+\code{ash\_gs\_measured}\\
+\code{volume/<id>.volume.json} & --- & The volume sidecar --- dimensions, spacing,
+orientation, encoding (\S\ref{sec:volume}). The DICOM series it describes is referenced,
+not carried, so this file is normally the only thing under \code{volume/}\\
+\code{clinical/observations.json} & --- & Per-tooth clinical layer, extension
+\code{ash\_clinical} (\S\ref{sec:clinical})\\
+\code{derived/} & --- & \textbf{Everything} produced by inference (\S\ref{sec:derived})\\
+\code{views.json} & --- & Stored presentation states (\S\ref{sec:views})\\
+\code{provenance/chain.json} & --- & Version chain (\S\ref{sec:provenance})\\
+\code{provenance/signatures/} & --- & Reserved for Ed25519 signatures; \textbf{not
+specified in v0.2}\\
+\bottomrule
+\end{longtable}
+
+\textbf{A referenced original occupies no path at all}. 
+Acquired originals are named by content address and never by location
+(\S\ref{sec:external}), so no reserved path corresponds to one. There is no \code{images/}
+holding the photographs and no \code{volume/ct\_001/} holding the slices: those assets are
+in the manifest, addressed as \code{sha256:<hex>}, and nowhere in the ZIP. That is the property worth protecting. A path would have to be either the local one --- and
+the local path of a clinical case carries the patient's own directory name --- or an invented
+logical one, which would be a promise about a location inside an archive the file is not in.
+A hash is neither: it says which file it is and nothing about where anyone keeps it.
+\newline
+
+\begin{lstlisting}[style=plain, caption={Directory layout of the example container}]
+manifest.json                 <- first entry, always
+scene/scene.glb               <- glTF scene: mesh + appearance splats
+scene/field.ply               <- Gaussian field of the CBCT (measured density)
+scene/field.gs.json           <- its column descriptor
+scene/composite.ply           <- scanner + CBCT in one frame
+scene/composite.gs.json
+scene/appearance.gs.json      <- descriptor of the splats embedded in scene.glb
+views.json                    <- 18 stored camera states
+clinical/observations.json    <- per-tooth findings, keyed by FDI
+derived/seg_teeth.bin         <- int16 FDI label per vertex  (layer 3)
+derived/seg_teeth.meta.json   <- which model produced it     (layer 3)
+provenance/chain.json         <- 3 versions of this case
+\end{lstlisting}
+
+% =============================================================================
+\section{Data model}\label{sec:model}
+
+\subsection{The three planes}
+
+Everything in a \code{.uos} belongs to exactly one of three planes, and the separation is
+deliberate:
+
+\begin{longtable}{L{2.4cm} L{3.2cm} L{9.6cm}}
+\toprule
+\textbf{Plane} & \textbf{Where} & \textbf{What it is, and what may be done to it}\\
+\midrule
+\endhead
+\textbf{Data} & \code{assets[]} & Acquired measurements, and the representations UOS
+composes from them --- each declaring its source in \code{derived\_from} and, where the
+conversion loses something, saying so (\S\ref{sec:scenes}). Regulatory layer 1. Immutable:
+a writer never edits an asset in place (\S\ref{sec:provenance}).\\
+\textbf{Presentation} & \code{views.json} & Camera states, layer visibility, clipping.
+Layer 1, disposable, versionable, cheap to rewrite.\\
+\textbf{Inference} & \code{derived/} & Anything a model produced. Regulatory layer 3.
+\textbf{Removable}: deleting the directory and its manifest entries leaves a valid,
+complete \code{.uos}.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Rationale.} The third plane is what makes the format shippable. Distributing
+the same case in a jurisdiction where the AI module is not cleared requires deleting a
+directory, not re-exporting anything. That property only holds if it is enforced --- which
+is why \S\ref{sec:conformance} makes ``layer 3 outside \code{derived/}'' an error in both
+directions.
+
+\subsection{Frames and registrations}\label{sec:frames}
+
+A \textbf{frame} is a named coordinate system. Every asset declares exactly one. One frame
+is the \code{canonical\_frame}: the geometric hub of the case, conventionally the intraoral
+scanner's frame. A \textbf{registration} is a first-class object carrying the $4\times4$
+homogeneous transform that maps points from \code{source\_frame} into \code{target\_frame},
+together with \emph{how it was obtained and how well it fits}.
+
+\paragraph{Normative: frame connectivity.} Treat \code{registrations[]} as undirected edges
+over the set of frames. Every frame named by any asset \MUST{} be reachable from
+\code{canonical\_frame}. A reader \MUST{} report an error otherwise --- an asset in a frame
+that cannot be related to the hub would be placed somewhere arbitrary, and nothing
+downstream could detect it.
+
+\paragraph{Conventions within a container.}
+
+\begin{itemize}
+  \item Units are \textbf{millimetres}, and this one is checked:
+  \code{canonical\_frame.units} \MUST{} be \code{"mm"}.
+  \item Handedness is \textbf{right}. It is the default every frame carries and no emitter
+  varies it, but \textbf{no validator enforces it} --- a frame declaring otherwise is
+  accepted and would mirror everything placed through it. Treat it as a convention a reader
+  \SHOULD{} check for itself until a later version makes it normative.
+  \item \code{transform\_4x4\_row\_major} is exactly 16 numbers in \textbf{row-major}
+  order. glTF stores matrices column-major; a writer emitting this transform into a glTF
+  node \MUST{} transpose (\S\ref{sec:gsnodes}). Getting this wrong does not crash --- it
+  places the cloud rotated and mirrored, which is worse.
+\end{itemize}
+
+\subsection{Visits}
+
+\code{visits[]} names the temporal axis. Every asset and every view declares the visit it
+belongs to. Longitudinal comparison, the same case with a baseline and a follow-up in
+the same frame, is a matter of two visits and one shared registration, not a second
+study.
+
+\subsection{Identity: how anything in a \code{.uos} is named and verified}\label{sec:identity}
+
+\subsubsection{File assets}
+\code{sha256} is the SHA-256 of the exact bytes stored in the ZIP entry, lowercase hex,
+64 characters. \code{bytes} is their length. A reader \MUST{} verify both.
+
+\subsubsection{Directory assets}\label{sec:dirasset}
+A \textbf{directory asset} is one whole multi-file series --- in practice a DICOM study.
+What identifies it is that it carries a \code{parts[]} array, one entry per file, with a
+relative \code{name}, a \code{sha256} and \code{bytes}. Its \code{uri} follows the same
+rule as any other asset: a path ending in \code{/} if the series travels, a content address
+if it is referenced (\S\ref{sec:external}), which for an acquired series is always the case.
+
+\paragraph{\code{parts[]} travels even when the series does not.} That is the point of
+splitting it out: the container cannot verify a series it does not hold, but whoever holds
+it can --- file by file, against these hashes. Referencing gives up custody, not
+traceability.
+
+\vspace{6px}
+The asset's own \code{sha256} is a \textbf{digest over the part names and hashes}, defined
+here because the format needs writer and validator to compute it identically:
+
+\begin{lstlisting}[style=py]
+def digest_of_parts(parts):
+    h = hashlib.sha256()
+    for p in sorted(parts, key=lambda x: x.name):     # sort by name, byte order
+        h.update(f"{p.name}\0{p.sha256}\n".encode())  # NAME, NUL, HEX HASH, LF
+    return h.hexdigest()
+\end{lstlisting}
+
+\paragraph{Rationale.} It runs over names and hashes rather than concatenated bytes for
+two reasons: renaming a slice changes the digest --- correct, because the ordering of a
+DICOM series is clinical data --- and verifying it costs nothing beyond the manifest,
+without re-reading the series itself. Per-file hashes are the difference between reporting
+``this series does not match'' and reporting ``slice 214 is corrupt''.
+
+\subsubsection{Referenced originals, and content addressing}\label{sec:external}
+
+\paragraph{Normative: acquired originals are referenced, not carried.} No acquired original
+\MUST{} travel inside a \code{.uos} --- not the DICOM series, not the scanner STL, not the
+clinical photographs, not the reports. They are declared with \code{external: true} and
+named by content address. What a container carries is what UOS composes: the scene, the
+Gaussian layers, the views, the clinical layer, and anything under \code{derived/}.
+\textbf{This is the format, not a variant of it.} There is no ``full'' packaging to opt
+into. A container found to carry an acquired original is a writer defect, not a richer
+case: it is duplicated source data whose custody the format never claimed. The photographs
+are worth naming explicitly because they are the ones that slipped --- eighteen megabytes
+of patient images once travelled inside a container that declared it carried no originals,
+because they were tied to a different flag from the STL and the DICOM.
+
+\vspace{6px}
+An asset that is declared but not carried sets \code{external} to \code{true}, and its
+\code{uri} \MUST{} be a \textbf{content address}, not a path:
+
+\begin{lstlisting}[style=js]
+{ "id": "asset.ios", "external": true,
+  "uri":    "sha256:abca87e971dab2d6a49d60edfe7f73f95ce62410603df86e72373a8c874197cb",
+  "sha256":        "abca87e971dab2d6a49d60edfe7f73f95ce62410603df86e72373a8c874197cb",
+  "bytes": 11004334, "media_type": "model/stl", "frame": "frame.ios_master" }
+\end{lstlisting}
+
+Normative rules, checked in both directions:
+\begin{itemize}
+  \item \code{external: true} $\Rightarrow$ \code{uri} matches \code{\^{}sha256:[0-9a-f]\{64\}\$}.
+  \item \code{uri} is a content address $\Rightarrow$ \code{external} is \code{true}
+  (otherwise the asset would be unlocatable inside the ZIP).
+  \item The hash inside the \code{uri} \MUST{} equal the \code{sha256} field.
+  \item A reader \MUST{} make plain, once per container, which originals are referenced
+  rather than carried: the container declares what each file is and cannot prove it holds
+  it. This is a statement about custody, not a defect to be flagged per asset --- since
+  every acquired original is referenced, a per-asset warning would fire on every container
+  and distinguish nothing.
+\end{itemize}
+
+\paragraph{What is lost, and what replaces it.} A referenced original is not in the
+container, so ``the DICOM that comes out is byte-identical to the one that went in'' is a
+claim this format does not make about a file it does not hold. What it does hold is enough
+to make two weaker, useful claims: \textbf{identity} --- whoever has the file can prove it
+is the one this case was built from, slice by slice (\S\ref{sec:dirasset}) --- and
+\textbf{reconstruction}: the \code{ash\_reversible} extension regenerates an arch mesh from
+the scene itself (\S\ref{sec:extensions}). Reversibility here means producing the mesh
+again from what travels, not handing back the file that was ingested. And what comes back is not the file that went in: the regenerated mesh carries per-vertex
+colour sampled from the patient's own photographs and an FDI code per vertex, neither of
+which the ingested STL ever had. It is exported as \code{.ply}, \code{.stl} or \code{.3mf}
+--- the colour and the codes surviving in the two formats able to carry them --- so the
+practical answer to ``why not just keep the STL'' is that the container hands back an
+improved one.
+
+\paragraph{Rationale: why not a path.} A file that does not travel has no location
+inside the container, so a path would be a promise about a ZIP it is not in. What remains
+true of it is \emph{which file it is}, and that is exactly what a content address states.
+It also has a property a path does not: the local path of a clinical case contains the
+patient's directory name; a hash contains nothing. Referencing takes files out of the
+container, never identities.
+
+% =============================================================================
+\section{manifest.json}\label{sec:manifest}
+
+The manifest is the contract. What is not declared here cannot be in a \code{.uos}, the
+point being that a reader can \emph{refuse} rather than guess. The schema sets
+\code{additionalProperties: false} on every object: an unknown field is an error, and new
+information is added through the extension mechanism (\S\ref{sec:extensions}), not by
+sprinkling keys.
+
+\subsection{Top level}
+
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{uos\_version} & string & default \code{"0.2"} & Format version. A reader \MUST{}
+check it before anything else.\\
+\code{case\_id} & string & \MUST & Stable case identifier. Conventionally
+\code{urn:uuid:<v5>}; \MUSTNOT{} encode patient identity.\\
+\code{created} & date-time & --- & RFC 3339, UTC.\\
+\code{generator} & map str$\to$str & \MUST & Who wrote this container, e.g.
+\code{\{"name": "...", "version": "0.4.0"\}}.\\
+\code{phi\_state} & enum & \MUST & \S\ref{sec:phi}.\\
+\code{subject} & \code{Subject} & \MUST & \S\ref{sec:phi}.\\
+\code{canonical\_frame} & \code{Frame} & \MUST & The geometric hub. \code{units} \MUST{}
+be \code{"mm"}.\\
+\code{frames} & \code{Frame[]} & --- & Every \emph{other} frame. The canonical one is not
+repeated here.\\
+\code{visits} & \code{Visit[]} & --- & Temporal axis.\\
+\code{assets} & \code{Asset[]} & --- & The data plane.\\
+\code{registrations} & \code{Registration[]} & --- & The relations. \S\ref{sec:frames}.\\
+\code{fhir\_map} & map str$\to$\code{FhirResource} & --- & Keyed by asset \code{id}, plus
+the reserved key \code{"case"} for the container itself. \S\ref{sec:fhir}.\\
+\code{extensions} & map str$\to$\code{Extension} & --- & \S\ref{sec:extensions}.\\
+\code{extensions\_used} & string[] & --- & \S\ref{sec:extensions}.\\
+\code{extensions\_required} & string[] & --- & \S\ref{sec:extensions}.\\
+\code{provenance} & \code{Provenance} & --- & \S\ref{sec:provenance}.\\
+\bottomrule
+\end{longtable}
+
+\subsection{Asset}
+
+\begin{longtable}{L{3.2cm} L{2.9cm} C{1.4cm} L{6.8cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{id} & string & \MUST & Unique within the manifest. Convention \code{asset.<name>};
+this is the key used by \code{fhir\_map}, \code{derived\_from} and sidecars.\\
+\code{kind} & enum & \MUST & \code{volume}, \code{mesh\_gs\_scene}, \code{image2d},
+\code{signal}, \code{derived\_seg}, \code{document}.\\
+\code{visit} & string & \MUST & A \code{visits[].id}.\\
+\code{uri} & string & \MUST & Internal path, or \code{/}-terminated directory, or a
+content address --- which is what every acquired original carries (\S\ref{sec:external}).\\
+\code{media\_type} & string & \MUST & IANA type of the payload, e.g.
+\code{model/gltf-binary}, \code{application/dicom}, \code{model/stl},
+\code{image/jpeg}. Declared for referenced assets too: it says what the file \emph{is},
+which stays true whether or not the container holds it.\\
+\code{sha256} & hex(64) & \MUST & \S\ref{sec:identity}.\\
+\code{bytes} & int $\geq 0$ & \MUST & For a directory asset, the sum over \code{parts}.\\
+\code{frame} & string & \MUST & Must be reachable from the canonical frame.\\
+\code{acquisition} & object & --- & \code{\{time: date-time|null, device: map str->str\}}.\\
+\code{load\_priority} & int & default 30 & Progressive-loading hint; lower loads first.
+See table below.\\
+\code{regulatory} & \code{Regulatory} & --- & \code{\{layer: 1..3, status: str|null,
+jurisdictions: str[]\}}. \S\ref{sec:derived}.\\
+\code{projection} & \code{Projection}\,|\,null & --- & 2D imaging only. \S\ref{sec:image2d}.\\
+\code{parts} & \code{Part[]} & --- & Directory assets only, carried or referenced.
+\S\ref{sec:dirasset}.\\
+\code{sidecar\_uri} & string\,|\,null & --- & A description of the asset that spares the
+reader from parsing it. If present it \MUST{} exist in the container --- including when the
+asset it describes does not (\S\ref{sec:volume}).\\
+\code{derived\_from} & string[] & --- & Asset ids this one was produced from. Purely
+additive: a reader that ignores it still opens the case.\\
+\code{external} & bool & default \code{false} & \S\ref{sec:external}. The default is
+\code{false} because it is a property of the envelope, not a recommendation: every acquired
+original sets it to \code{true}.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Default load priorities.} \code{mesh\_gs\_scene} 10, \code{image2d} 20,
+\code{volume} 30, \code{signal} 30, \code{derived\_seg} 40, \code{document} 50. The mesh
+scene comes first because it is what lets a viewer show something useful having fetched
+only the manifest and one asset. A writer \MAY{} override a single asset's value --- the
+example container gives its Gaussian field 25, ahead of the volume it was fitted to.
+
+\paragraph{On \code{derived\_from}, and why the field exists.} \code{scene/scene.glb}
+is the scanner mesh re-indexed into glTF: the same 220{,}085 triangles as the STL. Without
+this field the manifest declared it as a free-standing \code{mesh\_gs\_scene} with no link
+to the \code{asset.ios} it converts, so a recipient had no way to know it was a conversion
+rather than an independent source. The information existed --- inside the GLB, as
+\code{extras.uos\_source\_asset} --- but recovering it meant parsing eighteen megabytes of
+glTF to learn something the manifest states in one line.
+
+\subsection{Registration}
+
+\begin{longtable}{L{4.0cm} L{3.4cm} C{1.3cm} L{5.6cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{id} & string & \MUST & e.g. \code{reg.ct\_to\_ios}.\\
+\code{source\_frame} & string & \MUST & Points are mapped \emph{from} here.\\
+\code{target\_frame} & string & \MUST & \ldots{}\emph{to} here.\\
+\code{transform\_4x4\_row\_major} & number[16] & \MUST & Row-major, mm, right-handed.\\
+\code{method} & string & \MUST & How it was computed. Free-form; observed values are
+\code{icp\_surface}, \code{auto\_dl}, \code{manual}, \code{fiducial}. It describes the
+algorithm, \textbf{not} whether a human stood behind it.\\
+\code{rms\_error\_mm} & number\,|\,null & --- & Residual of the fit. \code{null} means
+\emph{not reported}, never \emph{zero}.\\
+\code{computed} & date-time\,|\,null & --- & When.\\
+\code{operator} & string\,|\,null & --- & Who or what produced it. A machine \MUST{} write
+\code{auto:<agent>@<version>}; this prefix is what marks the registration as unattended.\\
+\code{verified\_by} & string\,|\,null & --- & The human who reviewed it. \code{null} means
+\textbf{nobody has}.\\
+\code{regulatory} & \code{Regulatory} & --- & As for assets.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Normative: provisional registrations.} A registration is \textbf{provisional}
+when it was produced without a human, \code{operator} beginning \code{auto:}, and
+\code{verified\_by} is \code{null}. A validator \MUST{} warn, and a viewer \MUST{} present
+it as unverified. An automatic alignment nobody has looked at and one signed by a clinician
+are not the same claim, and the format refuses to let them look alike.
+
+\paragraph{The rule keys on the operator, and it must.} The reference implementation
+originally keyed it on \code{method == "auto\_dl"}, and the consequence is instructive: the
+only registration it emits declares \code{method: "icp\_surface"}, so the case in the
+example container, automatic, unverified, 0.666\,mm of residual, \emph{did not trip
+the rule it exists for}. A safeguard written against one algorithm's name stops working the
+moment someone uses a different algorithm, which is every time. Who computed it is the
+question; how, is a separate field.
+
+\begin{lstlisting}[style=js]
+{ "id": "reg.ct_to_ios", "source_frame": "frame.ct_001", "target_frame": "frame.ios_master",
+  "transform_4x4_row_major": [0.99786, 0.02798, 0.05902, -89.3628,
+                             -0.05533,-0.11815, 0.99145, -22.6927,
+                              0.03471,-0.99260,-0.11635,  38.7773,
+                              0.0,     0.0,     0.0,       1.0],
+  "method": "icp_surface", "rms_error_mm": 0.666,
+  "operator": "auto:geometric-fusion-agent@0.2.0", "verified_by": null }
+\end{lstlisting}
+
+\subsection{PHI and subject}\label{sec:phi}
+
+\code{phi\_state} is an \textbf{explicit state}, one of \code{identified},
+\code{pseudonymized}, \code{anonymized}, \code{quarantined}. Without the field, ``I do not
+know whether this carries identifiers'' and ``it does not'' would be indistinguishable,
+which is the worst way to handle PHI. Viewers \MUST{} honour it in banners and export
+policy.
+
+\code{subject} carries \code{pseudonym} (an opaque token; the reference implementation uses
+a truncated hash) and an optional \code{fhir\_patient} reference. A patient name \MUSTNOT{}
+appear anywhere in a \code{.uos}.
+
+\paragraph{The obligation this puts on a writer.} \code{phi\_state} is a claim about the
+\emph{case}, and a case includes originals the container does not hold
+(\S\ref{sec:external}). DICOM headers carry \code{PatientName}, \code{PatientBirthDate},
+\code{InstitutionName} and friends; a writer declaring \code{pseudonymized} \MUST{} have
+inspected those tags at ingestion rather than assumed someone else's work, and it is the
+writer's last chance to, because once the series is referenced the container cannot be
+re-inspected. Note that \code{PatientID} is deliberately \emph{not} on that list: a
+correctly pseudonymised export populates it with an opaque token, and rejecting it would
+reject perfectly anonymous series.
+
+\vspace{6px}
+Referencing does not weaken this and does not strengthen it either. It keeps identifiers out
+of \emph{this file} --- a content address carries no patient directory, no filename, no tags
+--- but the tags still exist in the series someone else holds, and \code{phi\_state} still
+speaks for them.
+
+\subsection{FHIR mapping}\label{sec:fhir}
+
+\code{fhir\_map} tells a practice-management connector what to create for each asset.
+
+\begin{longtable}{L{3.4cm} L{2.8cm} C{1.2cm} L{7.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{resource\_type} & string & \MUST & An R4 resource \emph{type}: \code{ImagingStudy},
+\code{DocumentReference}, \code{Media}, \code{Observation}.\\
+\code{resource} & string\,|\,null & --- & A \emph{reference} to a resource that exists on
+a server, e.g. \code{ImagingStudy/is-9911}. \code{null} until the case actually lives in a
+PMS.\\
+\code{note} & string & --- & Why this mapping and not another.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Rationale, type versus reference.} They are not the same thing and conflating
+them is an active hazard: a connector reading a fabricated \code{resource} would try to
+resolve it. So a writer declares what it actually knows, the type, and leaves the
+reference null.
+
+\paragraph{The honest gap.} FHIR R4 has \textbf{no resource for dental geometry}, and
+\code{Media} is defined for photo, video and audio. Meshes and Gaussian layers therefore
+map to \code{DocumentReference}, the generic clinical-binary envelope, and the \code{note}
+field says so out loud rather than pretending the mapping is exact.
+
+% =============================================================================
+\section{Scenes}\label{sec:scenes}
+
+This is the section a viewer implementer needs in full. ``Scene'' in UOS means three
+distinct, separable things, and conflating them is the most common way to misread a
+container.
+
+\paragraph{First, what a Gaussian layer is here.} A \code{.uos} carries Gaussian layers of
+\textbf{two kinds that must never be confused}, and the format spends an entire extension
+keeping them apart:
+
+\begin{itemize}
+  \item A \textbf{measured} layer is a physical measurement expressed as Gaussians. The
+  CBCT density field is one primitive per occupied voxel carrying the attenuation the
+  scanner actually measured --- \code{density} is normalised sigma, Beer--Lambert, in the
+  patient's frame and in linear millimetres. It is clinical data that happens to be
+  rendered by a splat rasteriser, not a rendering that happens to look like data.
+  \item A \textbf{reconstructed} layer is appearance fitted by an optimiser: the trained
+  colour of the arch. The colour \textbf{is the patient's own}, sampled from their
+  photographs; what \code{measured: false} denies is narrower and specific --- the
+  optimiser moved, split and pruned the primitives, so no Gaussian corresponds one-to-one
+  with the pixels its colour came from. Provenance of the colour and traceability of each
+  primitive are different claims, and only the second is lost.
+\end{itemize}
+
+De-facto 3DGS knows only the second kind, and its column names --- \code{density},
+\code{scale}, \code{opacity} --- carry that meaning by default. Reading a measured layer
+with those assumptions produces an image that looks right and means nothing. That is why
+every layer travels with a descriptor stating which kind it is (\S\ref{sec:gsjson}), and
+why \code{ash\_gs\_measured} exists at all: it is the part of this format the base draft
+has no vocabulary for.
+
+\paragraph{And what \code{mesh\_gs\_scene} means.} It is the asset \code{kind}
+(\S\ref{sec:manifest}) for anything that is part of the renderable scene --- the glTF
+binary and every Gaussian layer alike. One \code{kind} covers both because a viewer treats
+them as one thing to compose; what separates a mesh from a splat layer, and a measured
+layer from a reconstructed one, is said elsewhere and more precisely.
+
+\vspace{6px}
+With that established, the three things:
+
+\begin{longtable}{L{3.6cm} L{4.4cm} L{7.0cm}}
+\toprule
+\textbf{Thing} & \textbf{Where} & \textbf{What it is}\\
+\midrule
+\endhead
+\textbf{The scene graph} & \code{scene/scene.glb} & A glTF 2.0 binary asset. The node
+hierarchy \emph{is} the spatial composition: node 0 is the canonical frame and every other
+layer hangs off it with its registration baked into the node transform.\\
+\textbf{Embedded appearance} & a primitive inside that GLB & A
+\code{KHR\_gaussian\_splatting} point primitive. Any conformant glTF loader renders it
+without knowing anything about UOS.\\
+\textbf{External Gaussian layers} & \code{scene/*.ply} + \code{*.gs.json} & Layers too
+large or too semantically specific to embed --- notably the \emph{measured} CBCT density
+field. Referenced from a glTF node via \code{extras.uos\_gs\_uri}.\\
+\bottomrule
+\end{longtable}
+
+\subsection{Why a glTF conversion exists at all}
+
+An STL is a triangle soup: no indices, no attributes, not one metadata field. Semantic
+picking (\S\ref{sec:picking}) is defined over per-sub-mesh metadata, and an STL cannot
+carry any. glTF can.
+
+\paragraph{Normative: the conversion is lossy, so the original stays declared.}
+glTF requires \code{float32} positions and the ingested mesh is \code{float64}. At
+$\pm$100\,mm that leaves roughly 10\,nm of resolution, irrelevant for looking, not
+irrelevant for claiming reversibility. Therefore a container carrying
+\code{scene/scene.glb} \MUST{} declare the source asset it was converted from --- by
+content address, since acquired originals are referenced and not carried
+(\S\ref{sec:external}) --- and the GLB \SHOULD{} name it in \code{extras.uos\_source\_asset}
+\emph{and} in the manifest's \code{derived\_from}. The converted scene is
+\textbf{presentation}; the original is the record, and the record is identified even where
+it is not held.
+
+\vspace{6px}
+
+Measured reversibility on the reference case: the mesh regenerates from the container with
+$4.59\times10^{-6}$\,mm of error against a 0.1\,mm budget --- the residual is the
+\code{float32} of the STL itself.
+
+\subsection{The scene graph}\label{sec:graph}
+
+\begin{lstlisting}[style=plain]
+scene 0
+`-- node 0  "scan"                       mesh 0   <- THE CANONICAL FRAME
+    |-- node 1  "apariencia real..."     mesh 1   <- KHR_gaussian_splatting primitive
+    |                                              (no matrix: trained in the canonical
+    |                                               frame, so transform = identity)
+    |-- node 2  "campo gaussiano..."     no mesh  <- external layer, extras.uos_gs_uri
+    |                                              matrix = reg.ct_to_ios, COLUMN-major
+    `-- node 3  "compuesto CBCT+escaner" no mesh  <- external layer
+\end{lstlisting}
+
+Normative rules for the graph:
+
+\begin{enumerate}
+  \item \code{scenes[0].nodes} \MUST{} contain exactly the root node, and that root node
+  \MUST{} carry the mesh geometry expressed in the canonical frame.
+  \item Every Gaussian layer, embedded or external, \MUST{} be a \textbf{child} of the root
+  node. Its node transform \MUST{} be the registration that carries it into the canonical
+  frame. The identity transform \MAY{} be omitted.
+  \item Node \code{matrix} is \textbf{column-major} (glTF rule) while
+  \code{transform\_4x4\_row\_major} in the manifest is row-major. A writer \MUST{}
+  transpose; a reader converting the other way \MUST{} transpose back.
+  \item A node transform on a splat node \MUST{} decompose into translation, rotation and
+  \emph{positive} scale (a \code{KHR\_gaussian\_splatting} requirement). Registrations from
+  rigid alignment satisfy this; a mirrored or degenerate matrix does not, and its rendering
+  is undefined.
+  \item The manifest remains the auditable statement of the same relation. A reader
+  \MAY{} place layers using only the GLB --- which is the point: an off-the-shelf
+  \code{GLTFLoader} composes the case correctly with no UOS knowledge --- but an auditor
+  \MUST{} read \code{registrations[]}, which is where the error and the verification status
+  live.
+\end{enumerate}
+
+\subsubsection{Scene-level extras}
+\begin{lstlisting}[style=js]
+"extras": { "uos_frame": "frame.ios_master", "uos_units": "mm",
+            "uos_source_asset": "asset.ios",
+            "uos_note": "presentation: float32 from float64. The original is asset.ios,
+                         referenced by content address and not carried here; the mesh is
+                         regenerated from this scene" }
+\end{lstlisting}
+
+\subsection{Mesh primitives and semantic picking}\label{sec:picking}
+
+The mesh is split into \textbf{one primitive per tooth}, plus one primitive holding
+everything else. Each tooth primitive carries its FDI code:
+
+\begin{lstlisting}[style=js]
+{ "attributes": {"POSITION": 0, "NORMAL": 1}, "indices": 16, "mode": 4,
+  "extras": {"uos_fdi": "27"} }
+\end{lstlisting}
+
+\begin{longtable}{L{4.2cm} L{11.2cm}}
+\toprule
+\textbf{Rule} & \textbf{Statement}\\
+\midrule
+\endhead
+Vertex order is invariant & All primitives \MUST{} share \emph{the same} \code{POSITION}
+and \code{NORMAL} accessors. Only the index buffer is partitioned. This is what allows
+\code{derived/seg\_teeth.bin} to be a flat array indexed by vertex, joined by position and
+nothing else. A writer that re-orders vertices here breaks that join silently.\\
+Face assignment & A face belongs to a tooth when \textbf{all three} of its vertices carry
+that label. Two would suffice to keep the border, but would drag in triangles crossing to
+the neighbouring tooth and the crown would come out with lateral flash.\\
+The remainder & Faces belonging to no tooth --- gingiva, and faces crossing between teeth
+--- go into a primitive with \emph{no} \code{uos\_fdi}. They are neither redistributed
+(which would invent a boundary) nor discarded (which would leave holes a viewer would draw
+as perforations of the scan).\\
+Code type & \code{uos\_fdi} is a \textbf{string} (\code{"27"}, not \code{27}). An FDI code
+is not a quantity, and writing it as a number invites arithmetic on it.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{The compromise this section encodes, stated plainly.}
+The partition into primitives comes from a segmentation model --- i.e. from layer 3 ---
+and it is baked into a layer-1 scene. So deleting \code{derived/} no longer erases
+\emph{every} trace of inference: it leaves the mesh split into fourteen pieces carrying
+their codes. What it does erase is the \textbf{per-vertex} label, which is the one with
+enough resolution to paint and to measure; what survives is primitive granularity, which
+is only enough to select. This is a trade, not a clean rule, and it is documented as one. It is made because picking
+is defined over \code{extras.uos\_fdi}: without it a foreign
+viewer opens the container and cannot select a tooth, however faithfully the labels travel
+in \code{derived/}. A writer that needs the clean rule instead \MAY{} emit the mesh
+unpartitioned and declare in the manifest that picking requires \code{derived/}.
+
+\subsection{Appearance: the \code{KHR\_gaussian\_splatting} primitive}\label{sec:khr}
+
+\paragraph{Upstream status.} \code{KHR\_gaussian\_splatting} is a Khronos \emph{Release
+Candidate} at the time of writing, written against the glTF 2.0 spec. UOS v0.2 emits it and
+additionally keeps the external-layer fallback of \S\ref{sec:gsnodes}. When the extension
+is ratified, UOS v1.0 retires that fallback.
+
+\vspace{6px}
+The primitive \MUST{} use \code{mode: 0} (POINTS) --- each Gaussian is a point, and the
+ellipse is raised by the rasteriser from scale and rotation. The extension object carries
+two required properties:
+
+\begin{lstlisting}[style=js]
+"extensions": { "KHR_gaussian_splatting": { "kernel": "ellipse",
+                                            "colorSpace": "srgb_rec709_display" } }
+\end{lstlisting}
+
+\begin{longtable}{L{3.0cm} L{1.6cm} C{3.2cm} L{7.6cm}}
+\toprule
+\textbf{Property} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{kernel} & string & \MUST & \code{"ellipse"} is the only defined value.\\
+\code{colorSpace} & string & \MUST & \code{"srgb\_rec709\_display"} or
+\code{"lin\_rec709\_display"} (ASWF CIF naming). \textbf{No sensible default exists};
+getting it wrong shifts the hue of the whole arch. UOS appearance layers trained against
+sRGB renders declare the former.\\
+\code{projection} & string & default \code{"perspective"} & Splat rendering assumes a
+perspective camera.\\
+\code{sortingMethod} & string & default \code{"cameraDistance"} & Back-to-front sorting.\\
+\bottomrule
+\end{longtable}
+
+\subsubsection{Attributes}
+
+\begin{longtable}{L{7.0cm} L{1.8cm} C{1.8cm} L{4.6cm}}
+\toprule
+\textbf{Semantic} & \textbf{Type} & \textbf{Req.} & \textbf{Meaning / units}\\
+\midrule
+\endhead
+\code{POSITION} & VEC3 f32 & \MUST & Gaussian centre, mm, in this node's frame.
+\code{min}/\code{max} are mandatory in glTF for this accessor.\\
+\code{KHR\_gaussian\_splatting:ROTATION} & VEC4 & \MUST & Unit quaternion in
+\textbf{glTF order $(x,y,z,w)$}.\\
+\code{KHR\_gaussian\_splatting:SCALE} & VEC3 & \MUST & \textbf{Linear and non-negative},
+mm.\\
+\code{KHR\_gaussian\_splatting:OPACITY} & SCALAR & \MUST & \textbf{Linear}, in $[0,1]$.\\
+\code{KHR\_gaussian\_splatting:}\allowbreak\code{SH\_DEGREE\_0\_COEF\_0} & VEC3 f32 & \MUST & DC term of the
+spherical-harmonic colour.\\
+\code{KHR\_gaussian\_splatting:}\allowbreak\code{SH\_DEGREE\_$l$\_COEF\_$k$} & VEC3 f32 & \MAY & Degrees
+1--3. If a degree is present, \textbf{all lower degrees \MUST{} be present and complete}
+(degree 1 is exactly three VEC3 coefficients). Partial degrees are prohibited.\\
+\code{COLOR\_0} & VEC3\allowbreak/VEC4 & \SHOULD & Fallback diffuse colour for renderers without the
+extension. See below.\\
+\code{NORMAL} & VEC3 f32 & \MAY & Standard glTF semantic; a point primitive may carry it.
+UOS uses the nearest mesh vertex's normal.\\
+\code{\_AO} & SCALAR f32 & \MAY & \textbf{Application attribute} (UOS). Ambient occlusion
+in $[0,1]$, to be multiplied into the colour at draw time.\\
+\code{\_REGION\_ID} & SCALAR i16 & \MAY & \textbf{Application attribute} (UOS). FDI code
+per Gaussian.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Reconstructing colour from SH.} The zeroth-order coefficient is not a colour;
+it becomes one through the SH basis constant and the training bias:
+\[
+  \mathrm{RGB}_{\text{diffuse}} \;=\; \mathrm{SH}_{0,0} \times 0.2820947917738781 \;+\; 0.5
+\]
+A writer emitting the \code{COLOR\_0} fallback \MUST{} compute it as that expression
+clamped to $[0,1]$; for an sRGB \code{colorSpace} it must be converted from sRGB to linear
+before storage. \textbf{UOS v0.2 does not emit \code{COLOR\_0}}, which means a glTF viewer
+without the extension draws the appearance layer as an uncoloured point cloud. Writers
+\SHOULD{} emit it; this is expected to become a \MUST{} in v1.0.
+
+\paragraph{Extent.} Splats assume a $3\sigma$ cut-off (Mahalanobis distance 3). This is the
+same convention the \code{ash\_reversible} extension uses when sampling colour per vertex,
+and it is cited rather than redefined.
+
+\paragraph{Underscore attributes.} \code{\_AO} and \code{\_REGION\_ID} use the underscore
+prefix glTF reserves for what its specification does not define. A conformant viewer
+ignores them and draws correctly; the UOS viewer uses them for shading and for tooth
+selection. That they are non-standard is precisely why the \code{ash\_gs\_measured}
+descriptor still exists.
+
+\paragraph{Normative: unit conversions happen \emph{before} this primitive.}
+An INRIA-convention 3DGS \code{.ply} stores opacity as a logit, scales as logarithms and
+the quaternion as $(w,x,y,z)$. This extension requires linear opacity in $[0,1]$,
+non-negative linear scale, and glTF quaternion order $(x,y,z,w)$. A writer \MUST{} apply
+sigmoid, exponential and reordering before emitting, and \SHOULD{} validate:
+\begin{itemize}
+  \item any negative \code{SCALE} means a logarithmic scale was never exponentiated;
+  \item any \code{OPACITY} outside $[0,1]$ means a logit never went through the sigmoid.
+\end{itemize}
+The reference implementation raises on both, because a container that ships either renders
+plausibly and wrongly.
+
+\subsection{External Gaussian layers}\label{sec:gsnodes}
+
+Layers that do not embed --- the measured CBCT density field is 1{,}341{,}990 primitives
+and 78\,MB --- travel as separate entries inside the container and are referenced from a
+child node:
+
+\begin{lstlisting}[style=js]
+{ "name": "campo gaussiano del twin",
+  "extras": { "uos_gs_uri": "scene/field.ply",
+              "uos_descriptor_uri": "scene/field.gs.json",
+              "uos_measured": true },
+  "matrix": [ /* 16 numbers, COLUMN-major: the transpose of reg.ct_to_ios */ ] }
+\end{lstlisting}
+
+A reader that does not understand \code{uos\_gs\_uri} sees an empty node and renders the
+rest of the scene correctly. A reader that does \MUST{} read the descriptor
+(\S\ref{sec:gsjson}) before interpreting any column, because the column names collide with
+de-facto 3DGS and \emph{mean something else}.
+
+\subsection{The \code{.gs.json} layer descriptor}\label{sec:gsjson}
+
+Declared by extension \code{ash\_gs\_measured}. One descriptor per Gaussian layer,
+column by column.
+
+\begin{longtable}{L{3.0cm} L{2.2cm} L{9.8cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\endhead
+\code{role} & string & Human-readable role of the layer.\\
+\code{measured} & bool & \textbf{The load-bearing field.} \code{true} = the values are a
+physical measurement; \code{false} = they are a reconstruction.\\
+\code{profile} & string & e.g. \code{ash-twin/1.0}, \code{ash-gs-apariencia/1.0}.\\
+\code{frame} & string & The frame the coordinates are in.\\
+\code{units} & string & \code{"mm"}.\\
+\code{n\_primitives} & int & Gaussian count.\\
+\code{columns} & object[] & Per column: \code{name}, \code{unit}, \code{scale}
+(\code{lineal}\,|\,\code{log}), \code{measured}, \code{derived\_from}, \code{meaning},
+\code{vocabulary}.\\
+\code{note} & string & What a consumer would otherwise get wrong.\\
+\multicolumn{3}{@{}p{14.8cm}@{}}{\small A profile \MAY{} add keys of its own ---
+\code{ash-twin/1.0} carries \code{subsampling} with the voxel step and the counts before
+and after. A reader \MUST{} ignore keys it does not know; the fields above are the ones
+every descriptor has.}\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Why this descriptor is not optional in practice.}
+The CBCT field's \code{density} column is \textbf{normalised sigma --- Beer--Lambert
+attenuation --- and not opacity}, and its scales are in \emph{linear millimetres, not
+logarithms}. Those column names are identical to de-facto 3DGS and mean something else. A
+consumer that assumes the usual convention will exponentiate a value that is already
+linear and render a physically meaningless image that looks fine.
+
+\newpage
+Two real descriptors, abridged:
+
+\begin{lstlisting}[style=js]
+// scene/field.gs.json -- the CBCT density field
+{ "role": "campo gaussiano del twin", "measured": true, "profile": "ash-twin/1.0",
+  "frame": "frame.ct_001", "units": "mm", "n_primitives": 1341990,
+  "note": "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and
+           the scales are in linear millimetres, NOT logarithms",
+  "subsampling": {"step_voxels": [3,3,1], "from": 12072785, "to": 1341990},
+  "columns": [ {"name":"x","unit":"mm","scale":"lineal","measured":true,  ...},
+               {"name":"scale_0","unit":"mm","scale":"lineal","measured":true, ...},
+               {"name":"density","unit":"sigma_normalizada","scale":"lineal",
+                "measured":true, ...},
+               {"name":"region_id","unit":"","scale":"lineal","measured":false, ...} ] }
+
+// scene/appearance.gs.json -- the trained appearance embedded in scene.glb
+{ "role": "apariencia real entrenada con gsplat", "measured": false,
+  "profile": "ash-gs-apariencia/1.0", "frame": "frame.ios_master", "n_primitives": 113827,
+  "note": "f_dc_* = colour MEASURED PER TOOTH ... NOT measured=true: the optimiser moved,
+           split and pruned the Gaussians, so there is no 1:1 correspondence with what was
+           projected" }
+\end{lstlisting}
+
+\subsection{What a viewer must do, in order}\label{sec:vieweralgo}
+
+\begin{enumerate}
+  \item Read \code{manifest.json}; check \code{uos\_version}.
+  \item Sort \code{assets} by \code{load\_priority} and fetch in that order. Several
+  assets share \code{kind: mesh\_gs\_scene}; the one to fetch first is the glTF binary,
+  which the manifest gives the lowest priority and which alone is enough to show the case.
+  \item Load \code{scene/scene.glb} with any glTF 2.0 loader. Node 0 is already in the
+  canonical frame; children are already positioned.
+  \item For each child node carrying \code{extras.uos\_gs\_uri}: fetch the descriptor,
+  \emph{then} the payload, \emph{then} apply the node matrix. Skip the layer if the
+  descriptor is missing --- do not guess the column semantics.
+  \item Read \code{views.json}, apply the default or fragment-selected view
+  (\S\ref{sec:views}).
+  \item Read \code{registrations[]} and mark every provisional one in the UI.
+  \item If \code{derived/} is present and the deployment is permitted to show inference,
+  load it \emph{as a separate toggleable layer} labelled with its regulatory status.
+\end{enumerate}
+
+% =============================================================================
+\section{Volume}\label{sec:volume}
+
+A CBCT series is a \textbf{directory asset} (\S\ref{sec:dirasset}): \code{kind: volume},
+one \code{parts[]} entry per slice with its own hash, and, being an acquired original, a content address for its \code{uri} (\S\ref{sec:external}). The slices do not travel;
+\code{parts[]} and the sidecar do.
+
+\paragraph{What \code{parts[]} guarantees, and what a validator can check.}
+Per-slice hashes let \textbf{whoever holds the series} prove it is the one this case was
+built from, and prove it slice by slice, which is the difference between ``this series
+does not match'' and ``slice 214 is corrupt''. The container itself cannot check a series
+it does not hold, and \MUSTNOT{} claim to. Where a series \emph{is} carried (a container from another emitter, since ours never does) a validator \MUST{} check it in both directions: a slice present in the ZIP that
+the manifest does not declare is as fatal as a declared slice that is missing. Either means
+the series coming out is not the one claimed to have gone in. The reference test suite
+builds such a container itself and removes a slice, adds a spurious one and alters one,
+expecting three distinct errors.
+
+\newpage
+Slice names travel verbatim in \code{parts[]}. Renaming them to \code{IM0001.dcm} would
+change the digest and describe a series nobody has, and the ordering of a series is clinical
+data. Names produced by CBCT exports are equipment-generated (\code{3DSlice100.dcm}); a
+vendor emitting patient identifiers in filenames is an ingestion problem, not a container
+problem, by then the DICOM carries them in its tags anyway.
+
+\subsection{The volume sidecar}
+
+\code{sidecar\_uri} points at \code{volume/<id>.volume.json}. It exists so that a web
+viewer does not need a complete DICOM parser (hundreds of files, transfer syntaxes,
+per-slice rescale) merely to learn what the volume is. It matters more, not less, now
+that the series is referenced: the sidecar is all a reader has until it resolves the series
+elsewhere. It \MUST{} be read from the ingested bytes themselves, never from a description
+computed somewhere else, and it \MUST{} travel even though the series does not.
+
+\begin{longtable}{L{4.6cm} L{2.6cm} L{7.8cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\endhead
+\code{frame} & string & The frame this volume is in. \textbf{Nothing else about alignment
+appears here} --- the transform lives in \code{registrations[]}, and a system with two
+homes for one transform ends up with two different transforms.\\
+\code{dimensions} & int[3] & Columns, rows, slice count.\\
+\code{spacing\_mm} & number[3] & $(x, y, z)$; $z$ from the measured inter-slice distance
+when available, which overrides the declared \code{SliceThickness}.\\
+\code{orientation} & number[3][3] & Rows from \code{ImageOrientationPatient}, third row
+their cross product. \textbf{Read, never assumed} --- a volume with an assumed orientation
+renders just as well, mirrored.\\
+\code{origin\_mm} & number[3]\,|\,null & \code{ImagePositionPatient} of the first slice;
+\code{null} with a warning if absent.\\
+\code{rescale} & object & \code{\{slope, intercept\}}.\\
+\code{value\_range} & number[2]\,|\,null & Rescaled $[\min,\max]$, from
+\code{Smallest/LargestImagePixelValue} when the series declares them. \textbf{\code{null}
+otherwise}, with a warning: sweeping every pixel of the series on each export is too
+expensive, and inventing a plausible CBCT range would feed a fabricated number straight
+into a viewer's windowing.\\
+\code{pixel\_encoding} & string & e.g. \code{int16-le}. Byte order comes from the transfer
+syntax, not from a convention --- ``almost all modern DICOM is little-endian'' is not
+``all'', and a viewer that assumes reads good-looking garbage.\\
+\code{modality} & string & DICOM \code{Modality}.\\
+\code{transfer\_function\_presets} & string[] & Named presets a viewer may offer:
+\code{cbct\_bone}, \code{cbct\_soft}, \code{cbct\_metal\_suppress}. These are names, not
+data.\\
+\bottomrule
+\end{longtable}
+
+% =============================================================================
+\section{2D imaging and documents}\label{sec:image2d}
+
+\code{kind: image2d} assets are clinical photographs and 2D radiographs. They are acquired
+originals, so they are referenced by content address and not carried (\S\ref{sec:external});
+what the manifest keeps is their identity, their \code{media\_type} and the optional
+\code{projection} object, which says what kind of image it is and which teeth it targets:
+
+\begin{lstlisting}[style=js]
+"projection": { "type": "intraoral_frontal", "fdi_targets": ["11","12","13"] }
+\end{lstlisting}
+
+\paragraph{Normative: \code{fdi\_targets} empty means \emph{not recorded}.}
+It does not mean \emph{none}. A loose photograph from a clinic folder does not say which
+tooth it points at, and inferring it from the pixels is exactly the work the format
+declines to assume has been done. A consumer \MUSTNOT{} read the empty array as a negative
+assertion.
+
+\vspace{6px}
+Camera \code{pose} is explicitly optional in v0.2 and the reference implementation does not
+emit it: computing it requires photo$\leftrightarrow$mesh fusion, which is measurable and
+does not converge cheaply without calibration.
+
+\code{kind: document} covers PDFs, reports and any other file the case declares whose type
+has no better \code{kind} --- including the referenced scanner STL, which is a mesh but not
+part of the renderable scene.
+
+% =============================================================================
+\section{The clinical layer}\label{sec:clinical}
+
+\code{clinical/observations.json}, declared by extension \code{ash\_clinical}.
+
+\paragraph{Why it exists.} v0.2 gives per-tooth clinical attributes no place: the FHIR
+mapping (\S\ref{sec:fhir}) sends them to an \code{Observation} on an external server. The practical consequence is
+that a standalone \code{.uos} cannot answer ``what does the report say about tooth 24'',
+which is the question a clinician asks while looking at the model. So it is declared as an
+extension, carried as \code{kind: document}, mapped to \code{Observation} in
+\code{fhir\_map}, and written down as \emph{ours} so nobody mistakes it for ratified.
+
+\paragraph{Why layer 1 and not \code{derived/}.} What travels is the \textbf{transcription
+of a report a person signed}. That is clinical record. Putting it under \code{derived/}
+would make it removable, and removing \code{derived/} would then strip the case of what the
+report says, which is not what that operation means.
+
+\paragraph{Normative: extraction provenance per value.} Transcription is layer 1, but the \emph{extraction} may well be inference, and every value declares which. \code{derivation} is \code{deterministic} (a pattern found it written),
+\code{inferred} (a model proposed it), or \code{null}. \textbf{\code{null} means not
+declared, not deterministic}, and a consumer \MUSTNOT{} treat an undeclared value as
+reproducible. Silence never gets promoted to an assertion.
+
+\newpage
+\begin{lstlisting}[style=js]
+{ "schema": "ash-clinical/1.0",
+  "vocabulary": "ISO-3950 (FDI) for teeth; the finding vocabulary is closed",
+  "regulatory": {"layer": 1, "note": "transcription of a report signed by a person"},
+  "teeth": [
+    { "fdi": "11", "findings": ["aparato_ortodoncico"], "confidence": 0.745,
+      "agent": "report-agent@0.1.0", "derivation": "deterministic",
+      "observed": "2026-08-17T15:39:38.921947+00:00",
+      "n_roots": 1, "n_canals": 1,
+      "color": { "space": "CIELAB",
+                 "cervical": [74.89, 9.83, 24.06],
+                 "middle":   [74.83, 6.70, 20.93],
+                 "incisal":  [71.56, 6.77, 19.14],
+                 "from_photo": "sha256:baeb31fa...", "n_pixels": 33508, "measured": true,
+                 "illumination_slope": [0.649, 0.577, 0.677],
+                 "note": "measured per tooth; NOT a certified shade-guide value; flash
+                          falloff removed using the patient's own gingiva as reference, so
+                          teeth ARE comparable to each other; the absolute level is not,
+                          because the photograph carries no grey reference" } } ] }
+\end{lstlisting}
+
+Note the shape of that \code{note}: it states what the measurement supports (relative
+comparison between teeth) and what it does not (absolute shade), instead of shipping a
+number that looks like a shade match.
+
+% =============================================================================
+\section{{derived/} --- the inference plane}\label{sec:derived}
+
+\textbf{The three hard rules}
+\begin{enumerate}
+  \item Everything a model produced lives \textbf{only} under \code{derived/}.
+  \item Every such asset declares \code{regulatory.layer: 3}, and \emph{nothing outside}
+  \code{derived/} may declare layer 3. A validator \MUST{} report an error in both
+  directions.
+  \item Every such asset has a sidecar declaring which model produced it, at which version,
+  with which weights hash, over which source assets.
+\end{enumerate}
+And the consequence that makes them worth enforcing: \textbf{a \code{.uos} with no
+\code{derived/} is still valid and complete}. Deleting the directory and its manifest
+entries is a supported operation, requiring no re-export.
+
+\subsection{Tooth segmentation}
+
+\begin{longtable}{L{5cm} L{10.4cm}}
+\toprule
+\code{derived/seg\_teeth.bin} & FDI codes as \code{int16} little-endian, one per vertex of
+the source asset, in the order the scene declares them. \code{0} = unassigned.\\
+\code{derived/seg\_teeth.meta.json} & The sidecar below.\\
+\bottomrule
+\end{longtable}
+
+\begin{lstlisting}[style=js]
+{ "model": {"name": "ash-seg-teeth", "version": null, "weights_sha256": "ea0060d5..."},
+  "source_assets": ["asset.scene"],
+  "regulatory": {"layer": 3, "status": "investigational", "jurisdictions": []},
+  "generated": "2026-08-28T02:07:17.244507+00:00",
+  "encoding": { "dtype": "int16-le", "count": 112067,
+                "indexes": "one code per vertex of `asset.scene`, in the same order the
+                            scene declares them. 0 = unassigned.",
+                "vocabulary": "ISO-3950 (FDI)" } }
+\end{lstlisting}
+
+\paragraph{Why not DICOM SEG or NRRD.} Both are designed for segmentation over a grid. This
+one is not on a grid: it is a label \textbf{per primitive}, which is a third legitimate
+shape and the only one that loses nothing. Inventing a grid to fit a known format would
+resample the data to suit the wrapper.
+
+\paragraph{\code{weights\_sha256: null} is normative.} It is \code{null} when unknown and
+\MUSTNOT{} be filled with the hash of something else. The field exists so the inference can
+be reproduced; a hash that is not the weights' turns ``I don't know'' into ``I do'' and is
+indistinguishable from outside.
+
+% =============================================================================
+\section{views.json}\label{sec:views}
+
+A view is a stored presentation state: ``what the clinician was looking at''. Views are
+layer 1, cheap, versionable, and they are the natural mechanism for deep links
+(\code{caso.uos\#view=view.pieza\_24} --- a \textbf{proposed} fragment syntax, since the
+media type that would define it is not registered and no viewer implements it yet) and for
+longitudinal comparison: the same view applied to \code{v1} and \code{v2}, side by side.
+The example container stores 18.
+
+\begin{lstlisting}[style=js]
+{ "views": [
+  { "id": "view.oclusal", "label": "Oclusal", "visit": "v1",
+    "camera": { "position": [-11.852,-179.860, 31.622],
+                "target":   [ -3.013,   0.415,   3.980],
+                "up":       [ -0.256,   0.159,   0.953], "fov": 35.0 },
+    "layers": { "mesh": {"visible": true, "opacity": 1.0} },
+    "mpr": null, "clip_planes": null } ] }
+\end{lstlisting}
+
+\begin{longtable}{L{2.9cm} L{2.9cm} C{1.2cm} L{7.8cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{id} & string & \MUST & Unique within the file. Conventions: \code{view.oclusal},
+\code{view.frontal}, \code{view.vestibular\_derecha}, \code{view.vestibular\_izquierda},
+\code{view.pieza\_<FDI>}.\\
+\code{label} & string & \MUST & Display name.\\
+\code{visit} & string & \MUST & \textbf{Must} name a declared visit; a validator errors
+otherwise.\\
+\code{camera} & object & \MUST & \code{position}, \code{target}, \code{up} (3 numbers each,
+mm, canonical frame) and \code{fov} in degrees, default 35.\\
+\code{layers} & map & --- & Per layer \code{\{visible: bool, opacity: 0..1\}}. Known keys:
+\code{mesh}, \code{gs}, \code{volume}.\\
+\code{mpr} & object\,|\,null & --- & \code{\{enabled, plane, window\}}. \\
+\code{clip\_planes} & array\,|\,null & --- & Clipping planes.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Normative: \code{mpr} and \code{clip\_planes} are null when there is no volume.}
+They are volume controls. In a \code{.uos} that carries no volume, emitting them --- even
+empty --- implies there is a plane to cut and a window to adjust. When a volume \emph{is}
+present, omitting them is the opposite error: a viewer expects them.
+
+\vspace{6px}
+Four conventions worth copying, each with its reason:
+
+\begin{itemize}
+  \item The appearance layer defaults to \code{opacity: 0.85}, below 1.0, because it is
+  reconstructed rather than measured and the viewer must let the mesh show through.
+  \item The volume layer defaults to \textbf{off}. Composing translucent Gaussians with a
+  translucent volume has no exact solution in two independent passes, so enabling it by
+  default would store the view in the one state the format itself calls ill-defined.
+  \item \code{fov} of 35$^\circ$: narrower flattens the arch, wider distorts its edges. It
+  is the range in which a molar does not read as a cylinder.
+  \item \code{time\_cursor\_s} is defined by the format for signal timelines and is not
+  emitted by a writer that produces no signals --- a temporal cursor over a case with no
+  time series points at nothing.
+\end{itemize}
+
+% =============================================================================
+\section{Provenance, versioning and PHI}\label{sec:provenance}
+
+\subsection{A \code{.uos} is logically append-only}
+
+Modifying a case is \textbf{not} editing its \code{.uos}. It is writing a new version of
+the manifest that points at the hash of the previous one. Assets are never touched in
+place. That turns ``this case has changed'' into something the recipient can verify without
+trusting the sender and without holding the intermediate versions.
+
+\begin{longtable}{L{5.7cm} L{9.7cm}}
+\toprule
+\code{provenance.prev\_manifest\_sha256} & \textbf{Where the authority lives.} The SHA-256
+of the bytes of the previous version's \code{manifest.json}.\\
+\code{provenance.chain} & Path to the materialised chain; \MUST{} be
+\code{"provenance/chain.json"} when present.\\
+\bottomrule
+\end{longtable}
+
+\begin{lstlisting}[style=js]
+{ "case_id": "urn:uuid:6a91c924-de59-5abc-94ec-8432c9f446ed",
+  "links": [
+    { "version": 1, "manifest_sha256": "f25b5a65...", "prev_manifest_sha256": null,
+      "created": "2026-08-27T21:20:52.280181Z",
+      "generator": {"name": "agentic-smart-health", "version": "0.4.0"},
+      "assets": 19, "note": "18 view(s), 1 registration(s)" },
+    { "version": 2, "manifest_sha256": "5f2e4a35...",
+      "prev_manifest_sha256": "f25b5a65...", ... } ] }
+\end{lstlisting}
+
+\paragraph{What the chain does and does not guarantee.}
+\code{chain.json} is a \emph{materialisation}: it makes the history legible at a glance and
+walkable without opening every version. It adds no cryptographic guarantee --- it is not
+covered by any hash in the manifest, and whoever rewrites the file breaks nothing
+cryptographic. What a validator does detect, and what actually matters, is the chain and
+the manifests \textbf{telling different stories}.
+
+\paragraph{Hashing the manifest.} The hash is over the \textbf{exact bytes written into the
+ZIP entry}. A writer therefore \MUST{} serialise once and hash those bytes; re-serialising
+to compute the hash leaves it pointing at a second copy that merely resembles the first.
+The reference implementation emits canonical JSON (stable key order, \code{indent=1}, nulls
+retained, UTF-8).
+
+\paragraph{Signatures.} \code{provenance/signatures/} is reserved. \textbf{v0.2 does not
+specify signing.} What is missing is not code but a decision --- which key signs (the
+issuing clinic, the platform, or both) and where it lives. Signing with an invented key
+would produce a \code{.uos} that \emph{looks} signed, which is worse than one that declares
+it is not. A validator that encounters the directory \MUST{} warn that the signatures are
+present and unverified rather than ignore them silently.
+
+% =============================================================================
+\section{Extensions}\label{sec:extensions}
+
+UOS builds on glTF, which has had \code{extensionsUsed} / \code{extensionsRequired} since
+glTF 1.0 and carries them unchanged into 2.0: a reader opens the file, sees which extensions it carries, and
+knows whether it can read it fully, partly, or not at all. v0.2 of the draft did not
+inherit that mechanism at container level, and the practical consequence showed up
+immediately: our extensions lived in their own directories and \textbf{a foreign reader
+ignored them without noticing that it was ignoring them}. That turns an open format into
+one only its author reads completely --- exactly what UOS exists to avoid.
+
+\paragraph{And that gap is what the rest of this section closes.} With the mechanism
+below, a reader that does not implement \code{ash\_clinical} still opens the case, still
+renders it, and can say precisely what it left unread. Being open was never the problem;
+being silent about what a reader was missing was.
+
+\begin{longtable}{L{2.9cm} L{2.6cm} C{1.2cm} L{8.1cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{name} & string & \MUST & Registry key; also the map key in \code{extensions}.\\
+\code{version} & string & \MUST & Extension version, independent of \code{uos\_version}.\\
+\code{uri} & string\,|\,null & --- & The asset that carries it, if any. If non-null it
+\MUST{} be a declared asset \code{uri}.\\
+\code{schema\_id} & string\,|\,null & --- & Identifier of its schema, e.g.
+\code{ash-clinical/1.0}.\\
+\code{description} & string & --- & What it adds and why the base format needed it.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Normative: \code{used} versus \code{required} is the whole mechanism.}
+\begin{itemize}
+  \item \code{extensions\_used} --- ``this file contains this; ignore it if you must''. A
+  reader that does not know it \MUST{} warn and \MUST{} still open the case.
+  \item \code{extensions\_required} --- ``\textbf{do not open this file without
+  understanding this}''. A reader that does not implement it \MUST{} refuse.
+  \item Everything in \code{extensions\_used} \MUST{} be declared in \code{extensions};
+  everything in \code{extensions\_required} \MUST{} also appear in \code{extensions\_used}.
+  Violations are errors.
+  \item An extension that only \emph{adds} information belongs in \code{used} and
+  \textbf{never} in \code{required} --- otherwise a conformant viewer refuses a case whose
+  geometry it could have shown perfectly.
+\end{itemize}
+Every extension the reference implementation emits is \code{used}; \code{required} is
+empty, deliberately.
+
+\subsection{Registered extensions}
+
+\begin{longtable}{L{3.0cm} L{2.0cm} L{10.0cm}}
+\toprule
+\textbf{Name} & \textbf{Version} & \textbf{What it adds}\\
+\midrule
+\endhead
+\code{ash\_clinical} & 1.0 & Per-tooth clinical attributes (pH, roots, canals, findings,
+measured colour) with per-value extraction provenance. \S\ref{sec:clinical}. Carried at
+\code{clinical/observations.json}.\\
+\code{ash\_gs\_measured} & 1.0 & The \code{.gs.json} descriptor per Gaussian layer:
+whether it is \emph{measured} or reconstructed, and the schema of its columns.
+\S\ref{sec:gsjson}. The base format treats 3DGS as appearance in a reconstruction frame;
+here there are fields fitted to CBCT density, in the patient frame, with error in HU.\\
+\code{ash\_reversible} & 1.0 & Declares that an arch mesh with per-vertex colour, FDI code
+and a \code{measured} column can be \emph{regenerated} from \code{asset.scene}: geometry
+and FDI from the mesh primitives (\code{extras.uos\_fdi}), colour from the
+\code{KHR\_gaussian\_splatting} primitive, taking Gaussians that cover each vertex within
+$3\sigma$ and weighting by alpha. \textbf{The mesh does not travel: it is reconstructed.}\\
+\bottomrule
+\end{longtable}
+
+\subsection{Defining your own}
+
+\begin{enumerate}
+  \item Pick a prefixed name (\code{<vendor>\_<thing>}); do not squat on \code{ash\_} or
+  \code{KHR\_}.
+  \item Put its payload at a path of your own, declared as an asset like any other, with
+  its hash. Extension payloads are not exempt from verification.
+  \item Add an \code{Extension} entry and list it in \code{extensions\_used}.
+  \item Put it in \code{extensions\_required} \textbf{only} if a reader that ignores it
+  would show the user something \emph{wrong} --- not merely something incomplete.
+  \item If it applies to inference output, it still obeys \S\ref{sec:derived}: under
+  \code{derived/}, layer 3, with a model sidecar.
+\end{enumerate}
+
+% =============================================================================
+\section{Conformance and validation}\label{sec:conformance}
+
+\subsection{Conformance levels}
+
+Levels are derived from what a container \emph{actually holds}, not from what it claims. A
+writer does not choose them.
+
+\begin{longtable}{L{2.8cm} L{4.4cm} L{7.8cm}}
+\toprule
+\textbf{Level} & \textbf{Requires asset kinds} & \textbf{Meaning}\\
+\midrule
+\endhead
+\code{UOS-Core} & \code{mesh\_gs\_scene} & Manifest + a renderable scene. The floor.\\
+\code{UOS-Vol} & \code{+ volume} & Plus a DICOM volume.\\
+\code{UOS-Sig} & \code{+ signal} & Plus time-series signals. \emph{Not implemented in
+v0.2.}\\
+\code{UOS-Full} & \code{mesh\_gs\_scene + volume + signal} & All of the above.\\
+\bottomrule
+\end{longtable}
+
+A container reports every level whose required set is a subset of the kinds present.
+
+\paragraph{Levels count declared kinds, not carried bytes.}
+An acquired original is referenced rather than carried (\S\ref{sec:external}), and it is
+still a declared asset of its \code{kind}. A container whose CBCT is referenced therefore
+reports \code{UOS-Vol} exactly like one that somehow held the slices: the level says the
+case \emph{has} a volume and that this container knows how it relates to everything else,
+which is what an implementer needs in order to decide whether it can open it. What a level does \MUSTNOT{} be read as is a custody claim. Custody is stated separately,
+per asset, by \code{external} --- and a reader that conflates the two will promise a file
+it does not have.
+
+\subsection{The validation algorithm}\label{sec:algo}
+
+A conforming validator performs these checks in this order. \textbf{E} = error,
+\textbf{W} = warning.
+
+\begin{longtable}{C{0.8cm} C{0.9cm} L{13.4cm}}
+\toprule
+\textbf{\#} & \textbf{Cls} & \textbf{Check}\\
+\midrule
+\endhead
+1 & E & First ZIP entry is \code{manifest.json}. If not, stop.\\
+2 & E & No entry uses a compression method other than STORE.\\
+3 & W & The manifest validates against the distributed JSON Schema. A failure here is
+a warning, not an error: what it detects is that our distributed schema has fallen behind the
+contract, which is our publication problem, not the file's.\\
+4 & E & The manifest parses against the contract (types, required fields, no unknown
+keys).\\
+5 & E & For each non-external asset: the \code{uri} exists in the ZIP; its SHA-256 and byte
+length match.\\
+6 & W & Referenced originals: \textbf{one} line per container naming how many there are
+and which, not one warning per asset. Report the count separately so a caller can act on it
+without parsing prose.\\
+7 & E & For each directory asset: \code{parts} is non-empty; every declared part exists and
+matches; \textbf{no undeclared file exists under the prefix}; the parts digest
+(\S\ref{sec:dirasset}) equals the asset \code{sha256}; the byte sum matches.\\
+8 & E & Every \code{sidecar\_uri} exists in the container.\\
+9 & E & Provenance: if \code{chain} is declared it equals \code{provenance/chain.json}, the
+entry exists, parses, its \code{case\_id} matches, and its links are consistent with
+\code{prev\_manifest\_sha256} and with the hash of this manifest.\\
+10 & W & \code{prev\_manifest\_sha256} present but no \code{chain}: history exists but
+cannot be walked.\\
+11 & E & \code{provenance/chain.json} present in the ZIP but not declared: a chain nobody
+references cannot be verified.\\
+12 & W & \code{provenance/signatures/} present: $n$ signatures that this validator does not
+check.\\
+13 & E & Views: each \code{visit} names a declared visit; ids are unique.\\
+14 & W & No \code{views.json}: no stored views.\\
+15 & E & Frame connectivity (\S\ref{sec:frames}).\\
+16 & W & Each provisional registration (\S\ref{sec:manifest}).\\
+17 & E & Regulatory: every asset under \code{derived/} has layer 3, and every layer-3 asset
+is under \code{derived/}.\\
+18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
+\code{used}; every non-null extension \code{uri} is a declared asset.\\
+19 & W & Extensions declared but unused; and one warning per required extension, since a
+reader that does not implement it must not open the container.\\
+20 & E & \code{canonical\_frame.units == "mm"}.\\
+21 & --- & Report the conformance levels satisfied, the chain length, and the view count.\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Why check 3 is only a warning.} Validating against the distributed schema is not
+redundant with validating against the implementation's types. The implementation checks
+that a manifest fits \emph{our} contract; the schema shipped alongside it is the only artifact a
+third party can check \emph{theirs} against. Running both is what guarantees the schema we publish
+is the one we actually accept --- and if they drift, this check says so before an outside
+implementer discovers it.
+
+\paragraph{Reporting.} A validator \SHOULD{} report the chain length as \code{version} and
+0 when no chain is declared. Zero means ``there is no history to walk'', not ``this is the
+first version''; they are different facts.
+
+% =============================================================================
+\section{Recipes}\label{sec:cookbook}
+
+Python examples use the reference package. Every one of them has a language-agnostic
+equivalent stated alongside, because none of this requires that package.
+
+\subsection{Open a case and verify it}\label{rec:open}
+
+\begin{lstlisting}[style=py]
+from pathlib import Path
+from uos import lee_manifiesto, valida
+
+m = lee_manifiesto(Path("case.uos"))       # errors unless manifest.json is entry #0
+print(m.case_id, m.uos_version, m.phi_state)
+
+report = valida(Path("case.uos"))          # the algorithm of section 12.3
+print(report.valido, report.niveles)       # e.g. True [UOS-Core, UOS-Vol]
+for e in report.errores: print("ERROR  ", e)
+for w in report.avisos:  print("WARNING", w)
+\end{lstlisting}
+
+Without the package: open the ZIP, assert entry 0 is \code{manifest.json}, parse it,
+validate against the distributed JSON Schema, then walk the checks in \S\ref{sec:algo}. No
+step needs anything but a ZIP reader, a JSON parser and SHA-256.
+
+\subsection{Render it}\label{rec:render}
+
+Follow \S\ref{sec:vieweralgo} exactly. The minimum viable viewer is: read the manifest,
+extract \code{scene/scene.glb}, hand it to a stock glTF loader, apply
+\code{views.json}[0]. That already gives correct geometry, correct appearance and the
+clinician's framing, and it is roughly thirty lines. Everything after that --- volume, MPR,
+provisional badges, derived toggles --- is additive.
+
+\subsection{Add an asset (e.g. a clinical photograph)}\label{rec:add}
+
+\begin{lstlisting}[style=py]
+from uos.contenedor import asset_de, escribe_uos
+from uos.manifiesto import Clase
+
+nuevo = asset_de(                       # hashes and measures the real file
+    Path("/data/photo_09.jpg"), "images/img_009.jpg",
+    id_="asset.img_009", kind=Clase.IMAGE2D, visit="v1",
+    frame="frame.ios_master", media_type="image/jpeg",
+)
+m.assets.append(nuevo)
+m.fhir_map["asset.img_009"] = RecursoFHIR(
+    resource_type="Media", note="clinical photograph; Media is the non-DICOM image resource")
+\end{lstlisting}
+
+Checklist for \emph{any} new asset, in order:
+\begin{enumerate}
+  \item Choose a \code{kind} and a path consistent with \S\ref{sec:paths}.
+  \item Hash the exact bytes you will store; set \code{sha256} and \code{bytes}.
+  \item Name a \code{frame} that is reachable from the canonical one --- adding a new frame
+  means also adding the \code{registrations[]} edge that connects it.
+  \item Name a declared \code{visit}.
+  \item If it came from a model, it goes under \code{derived/} with layer 3 and a sidecar,
+  no exceptions (\S\ref{sec:derived}).
+  \item If it came from another asset, populate \code{derived\_from}.
+  \item Map it in \code{fhir\_map} if a connector should know what to create.
+  \item Then write a \textbf{new version}, per \S\ref{rec:version}.
+\end{enumerate}
+
+\subsection{Add a view}
+
+Append to \code{views.json} with a unique \code{id}, a declared \code{visit}, camera
+vectors in millimetres in the canonical frame, and \code{mpr}/\code{clip\_planes} null
+unless the container carries a volume. Views are cheap and rewriting them wholesale is
+fine.
+
+\subsection{Add a derived layer}
+
+\begin{enumerate}
+  \item Write the payload at \code{derived/<name>.<ext>} and a sidecar at
+  \code{derived/<name>.meta.json} carrying \code{model} (name, version,
+  \code{weights\_sha256} --- \code{null} if unknown, never a substitute hash),
+  \code{source\_assets}, \code{regulatory} (layer 3, \code{status}, \code{jurisdictions}),
+  \code{generated}, and an \code{encoding} block that says \textbf{what the bytes index}.
+  \item Declare both as assets with \code{regulatory.layer: 3}.
+  \item Verify the removability invariant: delete \code{derived/} and its manifest entries,
+  re-run the validator, and confirm the container is still valid. If it is not, you have
+  put inference in the wrong plane.
+\end{enumerate}
+
+\subsection{Write version $N{+}1$}\label{rec:version}
+
+\begin{lstlisting}[style=py]
+# 1. serialise ONCE; the hash must be of the bytes that go into the ZIP
+texto = manifiesto.json_canonico()
+sha   = sha256_texto(texto)
+
+# 2. link it to the previous version
+manifiesto.provenance.prev_manifest_sha256 = sha_anterior
+manifiesto.provenance.chain = "provenance/chain.json"
+cadena = cadena_anterior.continua(Eslabon(
+    version=len(cadena_anterior.links) + 1, manifest_sha256=sha,
+    prev_manifest_sha256=sha_anterior, created=datetime.now(UTC),
+    generator=manifiesto.generator, assets=len(manifiesto.assets), note="added img_009"))
+
+# 3. write atomically; pass the SAME serialisation you hashed
+escribe_uos(Path("case-v4.uos"), manifiesto, ficheros,
+            directorios=dirs, extras={"provenance/chain.json": cadena.json_canonico()},
+            json_manifiesto=texto)
+\end{lstlisting}
+
+Rules a writer \MUST{} honour here: assets are never edited in place; the file is written
+to a temporary path and renamed, so a half-written container never sits where someone could
+mistake it for the good one; and every \code{uri} in the manifest must have a file and
+every supplied file must be declared --- a dangling reference is an error, not a gap.
+
+\subsection{Declare an acquired original}\label{rec:external}
+
+Every acquired original is declared this way; none is packed into the container
+(\S\ref{sec:external}). Set \code{external: true}, put the content address
+\code{sha256:<hash>} in \code{uri}, and keep \code{sha256}, \code{bytes},
+\code{media\_type} and --- for a series --- the whole \code{parts[]} array. Referencing
+gives up \emph{custody}, not traceability: whoever holds the series can still prove that
+no slice is missing.
+
+\MUSTNOT: a local filesystem path in \code{uri}. That is what would leak exactly what the
+pseudonym exists to prevent.
+
+\subsection{Strip inference before distribution}
+
+Delete every entry under \code{derived/}, delete the corresponding \code{assets[]} entries,
+re-serialise, and write a new version with a note saying what was removed. Re-validate. The
+result is a valid, complete \code{.uos} at the same conformance levels.
+
+% =============================================================================
+\section{What v0.2 deliberately does not do}\label{sec:limits}
+
+\begin{itemize}
+  \item \textbf{It validates nothing clinically.} Everything inferred ships as
+  \code{investigational}, on purpose.
+  \item \textbf{Signals (\code{UOS-Sig}) are unimplemented.} The \code{kind} exists; no
+  writer emits it and \code{time\_cursor\_s} in views is therefore never populated.
+  \item \textbf{Signatures are unspecified.} \S\ref{sec:provenance}.
+  \item \textbf{\code{value\_range} may be null.} Filling it with an invented number would
+  be worse than leaving it empty --- a viewer would window on it.
+  \item \textbf{Camera pose for 2D imaging is not emitted.} \S\ref{sec:image2d}.
+  \item \textbf{\code{COLOR\_0} is not emitted} on splat primitives, so non-extension
+  viewers see an uncoloured point cloud. \S\ref{sec:khr}.
+  \item \textbf{The media type is unregistered.} \code{application/vnd.histora.uos}
+  awaits an IANA registration in the \code{vnd.} tree, and \code{histora.dev} --- the
+  namespace it names --- is not a domain anybody holds. The schema's \code{\$id} therefore
+  resolves through the reference repository, not through that namespace.
+
+
+  \item \textbf{It is not a standard.} It is a container proposal with a schema and a
+  validator; the schema's \code{\$id} does not yet resolve to a published document.
+\end{itemize}
+
+% =============================================================================
+\appendix
+\section{Agent cheat sheet}\label{app:cheat}
+
+Enough to act on a \code{.uos} without reading the rest of this document.
+
+\begin{longtable}{L{4.6cm} L{10.8cm}}
+\toprule
+\textbf{Question} & \textbf{Answer}\\
+\midrule
+\endhead
+Is this file a \code{.uos}? & ZIP whose first entry is \code{manifest.json} containing
+\code{uos\_version}.\\
+Where is everything? & \code{manifest.json} $\to$ \code{assets[]}. Nothing is discovered by
+walking the ZIP; the manifest is exhaustive.\\
+Can I trust a payload? & Re-hash it. \code{sha256} + \code{bytes} on every asset;
+\code{parts[]} for directories.\\
+Where is the geometry? & \code{scene/scene.glb}, stock glTF 2.0. Node 0 = canonical frame.\\
+Where is the colour? & The \code{KHR\_gaussian\_splatting} primitive in that GLB.
+$\mathrm{RGB} = \mathrm{SH}_0 \times 0.282094791 + 0.5$.\\
+Which tooth is this? & Mesh primitive \code{extras.uos\_fdi} (string, FDI/ISO-3950), or
+\code{\_REGION\_ID} per Gaussian, or \code{derived/seg\_teeth.bin} per vertex.\\
+Where is the CBCT? & Directory asset under \code{volume/}, \code{kind: volume}, with a
+\code{.volume.json} sidecar so you need no DICOM parser to inspect it.\\
+How do two frames relate? & \code{registrations[]}, row-major, mm. Transpose for glTF.\\
+Is this alignment trustworthy? & \code{rms\_error\_mm} + \code{verified\_by}. \code{null}
+means nobody checked.\\
+What did a model produce? & Everything under \code{derived/}, and only that. Layer 3.\\
+What does the report say about tooth 24? & \code{clinical/observations.json},
+\code{teeth[].fdi == "24"}.\\
+Has this case changed? & \code{provenance.prev\_manifest\_sha256} and
+\code{provenance/chain.json}.\\
+Can I add data? & Yes: new asset + hash + frame + visit, then a \textbf{new version}. Never
+edit in place.\\
+Can I remove the AI output? & Yes: delete \code{derived/} and its manifest entries. The
+container stays valid.\\
+What must I never do? & Invent a hash; put a local path in an external \code{uri}; put a
+patient name anywhere; re-order scene vertices; treat an empty \code{fdi\_targets} as ``no
+teeth''; treat \code{derivation: null} as deterministic.\\
+\bottomrule
+\end{longtable}
+
+\section{Measured figures}\label{app:figures}
+
+Every number in this document comes from a real clinical case --- a maxillary arch, an
+intraoral scan, a CBCT, nine photographs and three reports --- not from an example built
+to illustrate it. They are grouped by what each one is evidence \emph{for}.
+
+\subsection*{What the example container holds}
+
+These are the figures a reader will meet on opening \code{another\_patient.uos}, and they
+describe a container emitted exactly as \S\ref{sec:external} requires: the acquired
+originals are referenced, everything UOS composes is inside.
+
+\begin{longtable}{L{6.2cm} L{9.2cm}}
+\toprule
+\textbf{Item} & \textbf{Value}\\
+\midrule
+\endhead
+ZIP entries & 12\\
+Stored views & 18 (four anatomical, the rest one per annotated tooth)\\
+Declared extensions & 3, all in \code{extensions\_used}, none required\\
+Provenance chain & 3 versions\\
+Mesh & 112{,}067 vertices, 220{,}085 triangles, 15 primitives (14 teeth + remainder)\\
+Appearance layer & 113{,}827 Gaussians, SH degree 1, \code{srgb\_rec709\_display}\\
+CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
+12{,}072{,}785\\
+\bottomrule
+\end{longtable}
+
+\subsection*{What has been measured, and what it supports}
+
+\begin{longtable}{L{4.6cm} L{4.0cm} L{6.8cm}}
+\toprule
+\textbf{Measurement} & \textbf{Value} & \textbf{The claim it backs}\\
+\midrule
+\endhead
+CBCT$\to$scanner registration & \code{icp\_surface}, RMS 0.666\,mm, \code{verified\_by}
+null & That a registration carries its own error and its own verification status
+(\S\ref{sec:manifest}) --- this one is provisional and a viewer must say so.\\
+
+Mesh reversibility & $4.59\times10^{-6}$\,mm against a 0.1\,mm budget & That reversibility
+means regenerating the mesh from what travels, not returning the ingested file
+(\S\ref{sec:external}). The residual is the \code{float32} of the STL itself.\\
+
+Per-slice verification at scale & 397 slices, 419 entries, 0 errors, 0 warnings & That
+\S\ref{sec:dirasset} works on a full series: a missing, altered or extra slice is caught
+individually. Measured on a container written before originals stopped travelling
+(\S\ref{sec:external}); the machinery it exercised is the same one that now emits
+\code{parts[]} for a referenced series, so that whoever holds the CBCT can prove no slice
+is missing.\\
+
+Closed arch export & watertight, 12{,}025 closing faces, 11{,}936\,mm$^3$, 3.2\,s & That
+the composed scene yields something the scan alone does not: a printable solid, and a
+per-tooth file with a scanner-measured crown and a CBCT-reconstructed root.\\
+\bottomrule
+\end{longtable}
+
+\section{References}\label{app:refs}
+
+Every document this specification depends on or cites normatively. Web resources were
+consulted on \textbf{2026-08}; where a link points at a branch rather than a tag, its
+content may have moved since.
+
+\subsection*{Normative dependencies}
+A reader cannot implement UOS without these.
+
+\begin{itemize}
+  \item Khronos Group, \emph{glTF 2.0 Specification}.
+  \url{https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html}
+  \item Khronos Group, \emph{\code{KHR\_gaussian\_splatting}} --- \textbf{Release
+  Candidate}, not yet ratified; ratification was announced for Q2 2026. Cited here as it
+  stood on 2026-08-28.
+  \url{https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_gaussian_splatting}
+  \item ISO/IEC 21320-1:2015, \emph{Document Container File --- Part 1: Core} --- the ZIP
+  profile \S\ref{sec:container} requires.
+  \item \emph{JSON Schema}, draft 2020-12 --- the manifest schema's dialect
+  (\S\ref{sec:artifacts}). \url{https://json-schema.org/draft/2020-12/schema}
+  \item RFC 2119, \emph{Key words for use in RFCs to Indicate Requirement Levels}, Bradner,
+  March 1997 --- the conformance language of \S\ref{sec:intro}.
+\end{itemize}
+
+\subsection*{Referenced vocabularies and formats}
+Needed to interpret what a container carries, not to open one.
+
+\begin{itemize}
+  \item NEMA, \emph{DICOM Standard}: PS3.10 (media storage and file format) and PS3.15
+  Annex E.1 (attribute confidentiality profiles) --- \S\ref{sec:volume},
+  \S\ref{sec:phi}.
+  \item HL7, \emph{FHIR Release 4} (4.0.1), 2019: \code{ImagingStudy},
+  \code{DocumentReference}, \code{Media}, \code{Observation} --- \S\ref{sec:fhir}.
+  \item ISO 3950:2016, \emph{Dentistry --- Designation system for teeth and areas of the
+  oral cavity} --- the FDI two-digit notation used throughout.
+  \item RFC 3339, \emph{Date and Time on the Internet: Timestamps}, Klyne and Newman,
+  July 2002 --- the format of every timestamp in the manifest.
+  \item RFC 6838, \emph{Media Type Specifications and Registration Procedures}, Freed,
+  Klensin and Hansen, January 2013 --- the registration template \S\ref{sec:container}
+  follows.
+  \item ASWF Color Interoperability Forum --- the naming behind
+  \code{srgb\_rec709\_display} and \code{lin\_rec709\_display} (\S\ref{sec:khr}).
+\end{itemize}
+
+\subsection*{Precedents and recommended payload formats}
+Cited as prior art or as the compression this specification points a writer towards
+(\S\ref{sec:container}); neither is required.
+
+\begin{itemize}
+  \item Apple, \emph{USDZ File Format Specification} --- the uncompressed-ZIP precedent,
+  including the alignment rule UOS does \emph{not} adopt.
+  \url{https://openusd.org/release/spec_usdz.html}
+  \item Niantic Labs, \emph{SPZ} --- a compressed interchange format for Gaussian splats.
+  \url{https://github.com/nianticlabs/spz}
+  \item Khronos Group, \emph{\code{KHR\_draco\_mesh\_compression}}.
+  \url{https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_draco_mesh_compression}
+  \item Kerbl, Kopanas, Leimkühler and Drettakis, \emph{3D Gaussian Splatting for
+  Real-Time Radiance Field Rendering}, ACM Transactions on Graphics 42(4), SIGGRAPH 2023
+  --- the INRIA \code{.ply} conventions this format converts away from
+  (\S\ref{sec:khr}).
+\end{itemize}
+
+\end{document}
