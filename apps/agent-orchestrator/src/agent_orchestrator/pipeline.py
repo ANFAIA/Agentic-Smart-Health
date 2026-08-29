@@ -703,6 +703,10 @@ class IngestionPipeline:
         # Version declarada del segmentador. Sin dato va `None` y el sidecar dice `null`:
         # el hash de los pesos es lo que identifica el checkpoint de verdad.
         version_segmentador: str | None = None,
+        # Las capas de densidad por HU, ya escritas como PLY. Cada entrada `{id_, papel,
+        # nota, ruta}` sustituye al campo único en el `.uos`. Las produce quien tiene el
+        # CBCT a mano (caso_completo --capas-hu); aquí solo se reenvían al exportador UOS.
+        campos_densidad: list[dict[str, Any]] | None = None,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
 
@@ -824,6 +828,7 @@ class IngestionPipeline:
                 # El GEMELO y la fusión, que hasta ahora se quedaban fuera del
                 # contenedor: el campo gaussiano medido y el compuesto CBCT+escáner.
                 campo=campo.path if campo.ok else None,
+                campos_densidad=campos_densidad,
                 compuesto=compuesto.path if compuesto.ok else None,
                 modelo_segmentacion=modelo_segmentacion,
                 motivos=list(result.hitl_reasons),
