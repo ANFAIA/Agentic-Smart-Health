@@ -1,217 +1,201 @@
-# Cierre del MVP — qué está medido, qué no está resuelto y qué queda para después
+# MVP close-out — what is measured, what is unresolved and what is left for later
 
-**Fecha: 2026-08-25.** Corresponde al hito de semana 8 del brief: «MVP testado, validación
-preliminar con la organización partner, documentación técnica final».
+**Date: 2026-08-25.** This corresponds to the week 8 milestone of the brief: "MVP tested,
+preliminary validation with the partner organisation, final technical documentation".
 
-Este documento es el inventario honesto. Lo que funciona va con su número; lo que no
-funciona va con su número también, y con la causa medida cuando la hay. Un MVP que se
-cierra diciendo solo lo que sale bien no sirve para decidir qué se hace después.
+This document is the honest inventory. What works comes with its number; what does not
+work comes with its number too, and with the measured cause where there is one. An MVP
+closed by reporting only what went well is useless for deciding what to do next.
 
 ---
 
-## 1 · Las cuatro cifras del brief
+## 1 · The four figures from the brief
 
-Medidas con `scripts/metricas.py`, no prometidas.
+Measured with [`scripts/metricas.py`](../scripts/metricas.py), not promised. Three are met;
+the fourth is not, and it is declared:
 
-| Compromiso | Objetivo | Medido | |
+| Commitment | Target | Measured | |
 |---|---|---|---|
-| Latencia de ingesta de un conjunto completo | < 60 s | **12,7 s** | cumple |
-| Fidelidad de la malla regenerada desde el gemelo | < 0,1 mm | **4,59 × 10⁻⁶ mm** | cumple |
-| Cobertura de pruebas | > 80 % | **95,1 %** | cumple |
-| Fiabilidad de los agentes de ingesta | > 95 % | **93,8 %** (N = 16) | **no cumple** |
+| Ingestion latency for a complete set (STL + CBCT + report) | < 60 s <!--const:LATENCY_BUDGET_S--> | **12.7 s** | met |
+| Fidelity of the mesh regenerated from the Digital Twin | < 0.1 mm <!--const:REVERSIBILITY_BUDGET_MM--> | **4.59 × 10⁻⁶ mm** | met |
+| Automated test coverage | > 80% | **95.1%** | met |
+| Reliability of the ingestion agents | > 95% | **93.8%** (N = 16) | **not met** |
 
-**Sobre la reversibilidad.** El error que queda es el `float32` del propio STL: el
-`mesh-agent` guarda posiciones en `float64` y la topología completa de caras, así que la
-regeneración no reconstruye, **devuelve**. No hay marching cubes en ningún punto del
-camino, y eso es deliberado.
+**On reversibility.** The error that remains is the `float32` of the STL itself: the
+`mesh-agent` stores positions in `float64` along with the complete face topology, so
+regeneration does not reconstruct, it **returns**. There is no marching cubes anywhere
+along the path, and that is deliberate.
 
-**Sobre la fiabilidad, que es la que falla.** El fallo es un informe clínico escaneado
-**sin capa de texto**: el agente no extrae nada y se declara `FAILED`, que es lo correcto.
-Con N = 16 casos reales, un solo fallo son 6,2 puntos. Es decir: la cifra está por debajo
-del objetivo por un caso, y arreglarlo es OCR, no arquitectura. Se declara así en vez de
-subir el N con casos sintéticos hasta que el porcentaje quede bien.
+**On reliability, which is the one that fails.** The failure is a clinical report scanned
+**without a text layer**: the agent extracts nothing and declares itself `FAILED`, which is
+the correct behaviour. With N = 16 real cases, a single failure is 6.2 points. In other
+words: the figure sits below target by one case, and fixing it is OCR, not architecture. It
+is published this way rather than raising N with synthetic cases until the percentage looks
+good.
 
-**Y una que no es del brief pero es la que sostiene el resto:** el `mesh-agent` sobre
-**120 mallas** de Teeth3DS+ da **100 %**. Las dos cifras van con su N al lado a propósito:
-un N pequeño declarado es defendible; escondido detrás de un porcentaje, no.
-
----
-
-## 2 · Lo que está terminado y medido
-
-**El contenedor.** Un caso real cierra en **12 entradas, 18 assets (13 externos),
-conformidad UOS-Core + UOS-Vol, 0 errores, 18 vistas**. Lo adquirido no viaja dentro: la
-serie CBCT se declara por su dirección de contenido, con hash por corte para sus 397
-cortes, y hay tests que lo comprueban quitando un corte, colando uno de más y alterando
-uno.
-
-**El pipeline de agentes.** Ingesta de las cuatro modalidades → fusión geométrica (ICP,
-rms 0,67 mm) → fusión semántica → segmentación → composición → exportación, ejecutable de
-principio a fin sobre un caso clínico real con un comando.
-
-**El compuesto imprimible.** Arcada cerrada como sólido estanco (12.025 caras de cierre,
-11.936 mm³, 3,2 s) más un STL por pieza con corona medida y raíz reconstruida. Cada
-fichero declara su procedencia en la cabecera del propio STL.
-
-**El visor.** Abre un `.uos` en el navegador sin subir nada: malla con color anatómico,
-capas del campo gaussiano, vistas con nombre, ficha por pieza y encendido de la pieza
-seleccionada.
-
-**La disciplina de resultados negativos.** Tres cosas se implementaron, se midieron, no
-funcionaron y **se retiraron en vez de enviarse**: el eje apical por pieza (60° de
-desviación), el segundo segmentador de CBCT (ganaba el banco de pruebas y perdía la tarea
-real), y el relleno de huecos por distancia (funcionaba sobre datos reales por una razón
-circular, que es la peor clase de acierto). Están documentadas con su medida.
+**And one that is not in the brief but holds up the rest:** the `mesh-agent` over **120
+meshes** from Teeth3DS+ gives **100%**. Both figures travel with their N beside them on
+purpose: a small N that is declared is defensible; hidden behind a percentage, it is not.
 
 ---
 
-## 3 · Lo que no está resuelto
+## 2 · What is finished and measured
 
-### 3.1 · La segmentación FDI — el hueco principal
+**The container.** A real case closes at **12 entries, 18 assets (13 external), UOS-Core +
+UOS-Vol conformance, 0 errors, 18 views**. Acquired data does not travel inside: the CBCT
+series is declared by its content address, with a per-slice hash for its 397 slices, and
+there are tests that check this by removing a slice, slipping in an extra one and altering
+one.
 
-**11 de 14 piezas se pueden descartar por anatomía. Cota superior de correctas: 21 %.**
-Ficha completa con la tabla, los dos criterios y las causas medidas en
+**The agent pipeline.** Ingestion of the four modalities → geometric fusion (ICP, rms
+0.67 mm) → semantic fusion → segmentation → composition → export, runnable end to end over
+a real clinical case with a single command.
+
+**The printable composite.** An arch closed as a watertight solid (12,025 closing faces,
+11,936 mm³, 3.2 s) plus one STL per tooth with a measured crown and a reconstructed root.
+Each file declares its provenance in the STL header itself.
+
+**The viewer.** Opens a `.uos` in the browser without uploading anything: mesh with
+anatomical colour, Gaussian field layers, named views, a card per tooth and highlighting of
+the selected tooth.
+
+**The discipline around negative results.** Three things were implemented, measured, did
+not work and **were withdrawn rather than shipped**: the per-tooth apical axis (60° of
+deviation), the second CBCT segmenter (it won the benchmark and lost the real task), and
+distance-based hole filling (it worked on real data for a circular reason, which is the
+worst kind of success). All three are documented with their measurement.
+
+---
+
+## 3 · What is unresolved
+
+### 3.1 · FDI segmentation — the main gap
+
+**11 of 14 teeth can be discarded on anatomical grounds. Upper bound on correct ones:
+21%.** The full card, with the table, the two criteria and the measured causes, is in
 `docs/research/segmentacion-fdi-escaner.md`.
 
-En una línea: el modelo se entrenó sobre Teeth3DS+ (0,932 de FDI por diente **en su
-propio test**), aquí no hay etiquetas de estos pacientes con las que medir acierto, y el
-error dominante no es el contacto interproximal sino que **la corona se come el margen
-gingival y la encía adherida**. Se ve como «no toda la encía se colorea»: no está sin
-colorear, está coloreada de diente.
+In one line: the model was trained on Teeth3DS+ (0.932 per-tooth FDI **on its own test
+set**), there are no labels for these patients to measure accuracy against, and the
+dominant error is not interproximal contact but that **the crown eats into the gingival
+margin and the attached gingiva**. It shows up as "not all the gum gets coloured": it is
+not uncoloured, it is coloured as tooth.
 
-Lo que falta no es afinar un umbral: es **el color**, que es la señal con la que un
-clínico ve dónde acaba el esmalte y que hoy no llega al modelo. Y está dentro del propio
-contenedor, en las fotos clínicas — medido en `docs/research/frontera-encia-desde-foto.md`.
+What is missing is not tuning a threshold: it is **colour**, the signal a clinician uses to
+see where enamel ends, and which today never reaches the model. And it is inside the
+container already, in the clinical photographs — measured in
+`docs/research/frontera-encia-desde-foto.md`.
 
-### 3.2 · El volumen se ve como puntos sueltos, y es un fallo de submuestreo
+### 3.2 · The volume looks like scattered points, and it is a subsampling bug
 
-Medido, y con una causa concreta que **no** es una limitación de fondo:
+Measured, with a concrete cause that is **not** a fundamental limitation:
 
-- el `cbct-agent` siembra σ = **medio vóxel en cada eje** — (0,075, 0,075, 0,225) mm sobre
-  un vóxel de 0,15 × 0,15 × 0,45. Eso es correcto;
-- pero el volumen trae ~**12 millones** de vóxeles de tejido duro y el tope son 1,5 M, así
-  que el agente submuestrea con `occupied[::step]`, `step = 9`, y quedan 1.341.421;
-- `[::9]` recorta sobre un array en **orden raster**, así que se come ocho de cada nueve
-  **a lo largo de un solo eje**. Medida la separación entre gaussianas consecutivas dentro
-  de una fila: **1,35 mm en el 73 % de los casos**;
-- luego **σ/separación = 0,056 en ese eje**: las gaussianas son dieciocho veces más
-  pequeñas que su propia separación. Sondeado dentro del hueso más denso, el campo va de
-  1,21 en el centro de una gaussiana a 0,016 entre ellas — **rizado del 99 %**.
+- the `cbct-agent` seeds σ = **half a voxel on each axis** — (0.075, 0.075, 0.225) mm over
+  a voxel of 0.15 × 0.15 × 0.45. That part is correct;
+- but the volume brings ~**12 million** hard-tissue voxels and the cap is 1.5 M, so the
+  agent subsamples with `occupied[::step]`, `step = 9`, leaving 1,341,421;
+- `[::9]` slices an array in **raster order**, so it eats eight out of every nine **along a
+  single axis**. Measured spacing between consecutive Gaussians within a row: **1.35 mm in
+  73% of cases**;
+- which makes **σ/spacing = 0.056 on that axis**: the Gaussians are eighteen times smaller
+  than their own spacing. Probed inside the densest bone, the field runs from 1.21 at the
+  centre of a Gaussian to 0.016 between them — **99% ripple**.
 
-Es decir: el campo exportado no es una nube, son **planos densos separados 1,35 mm**. Y no
-es el precio de que el dato sea medido: **es que el submuestreo es anisótropo por
-construcción y σ no se reescala con él.**
+In other words: the exported field is not a cloud, it is **dense planes 1.35 mm apart**.
+And this is not the price of the data being measured: **it is that the subsampling is
+anisotropic by construction and σ is not rescaled with it.**
 
-Dos arreglos, los dos pequeños:
+Two fixes, both small:
 
-1. **Diezmar en el espacio y no en el raster.** Quedarse con uno de cada dos vóxeles *en
-   cada eje* es el mismo 8:1 pero isótropo: 0,30 mm en los tres ejes en vez de 1,35 en uno.
-2. **Escalar σ con el factor de diezmado** (×`step`^⅓). Hoy no crece nada.
+1. **Decimate in space, not in the raster.** Keeping one voxel in two *on each axis* is the
+   same 8:1 but isotropic: 0.30 mm on all three axes instead of 1.35 on one.
+2. **Scale σ with the decimation factor** (×`step`^⅓). Today it does not grow at all.
 
-Con las dos, σ/separación vuelve a ~0,5 y el campo se lee como volumen **sin dejar de ser
-una medida**.
+With both, σ/spacing returns to ~0.5 and the field reads as a volume **without ceasing to
+be a measurement**.
 
-⚠️ **Y una consecuencia de conformidad, aparte del aspecto:** el campo que viaja en el
-contenedor **no es el volumen, es una submuestra de uno de cada nueve**. El agente lo sabe
-—baja su confianza a 0,9 por ello— pero el sidecar `.gs.json` **no lo declara**. Quien mida
-sobre ese campo está midiendo una submuestra sin que el fichero se lo diga.
+⚠️ **And a conformance consequence, quite apart from how it looks:** the field that travels
+in the container **is not the volume, it is a one-in-nine subsample**. The agent knows this
+— it lowers its confidence to 0.9 because of it — but the `.gs.json` sidecar **does not
+declare it**. Anyone measuring on that field is measuring a subsample without the file
+saying so.
 
-En el visor, mientras tanto, cada sprite se dibuja inflado hasta el espaciado medido de la
-nube. Es un apaño, y encima insuficiente: ese espaciado (0,212 mm) es la distancia al
-vecino de otra fila, no el hueco real de 1,35 mm.
+In the viewer, meanwhile, each sprite is drawn inflated to the cloud's measured spacing.
+That is a patch, and an insufficient one: that spacing (0.212 mm) is the distance to a
+neighbour in another row, not the real 1.35 mm gap.
 
-### 3.3 · La raíz reconstruida es un bulto
+### 3.3 · The reconstructed root is a blob
 
-~2.000 gaussianas por diente a través de un complejo alfa. Sirve para imprimir un
-contexto; no sirve para medir. Y 12 de las 14 raíces salen más largas de lo que su tipo
-admite: está **declarado**, no corregido, porque recortarlas por longitud anatómica es un
-*prior* y no una medida, y medir longitud radicular sobre el resultado sería medir lo que
-se ha supuesto.
+~2,000 Gaussians per tooth through an alpha complex. Good enough to print context; not good
+enough to measure. And 12 of the 14 roots come out longer than their type admits: this is
+**declared**, not corrected, because trimming them to anatomical length is a *prior* and not
+a measurement, and measuring root length on the result would be measuring what was assumed.
 
-### 3.4 · Lo demás, corto
+### 3.4 · The rest, briefly
 
-- **`value_range` sigue a `null`**, con su aviso. La alternativa medida es barrer 259 MB
-  por exportación. Se cierra cuando entre el renderizador volumétrico (§3.2).
-- **`verified_by` del registro es `null`** en todos los casos: nadie ha firmado ninguno.
-  El visor lo pinta como «sin verificar», que es lo que es.
-- **El margen gingival no está anclado** a la cresta de curvatura cervical. La limpieza
-  tiene prohibido moverlo, y esa prohibición es correcta.
-- **Ninguna cifra de acierto clínico existe**, porque no hay verdad de campo de estos
-  pacientes. Todo lo que se publica son cotas superiores o consistencias.
-
----
-
-## 4 · Qué haría falta para lo siguiente, en orden
-
-El orden importa: los tres primeros desbloquean cosas que hoy no se pueden ni medir.
-
-1. **La frontera diente-encía, del color de las fotos clínicas.** Desbloquea §3.1, y es
-   la vía **medida**: un umbral de Otsu sobre `a*` separa diente de encía con 3,4–4,3 σ en
-   las cuatro fotos de arcada que el contenedor **ya lleva**, y dibuja el festoneado
-   cervical pieza a pieza. Lo que falta no es el color: es la **pose de cámara**, que hoy
-   va a `projection: null` con el campo ya definido en el esquema. Ficha:
-   `docs/research/frontera-encia-desde-foto.md`.
-2. **Anotar diez arcadas propias.** Sin esto no habrá nunca una cifra de acierto, solo
-   cotas. Cambia más que otro entrenamiento sobre Teeth3DS+ — y eso está medido en
-   `docs/research/segmentacion-diente-cbct.md`, donde el modelo mejor perdió en la tarea
-   real.
-3. **Arreglar el submuestreo del campo** (§3.2): diezmar en el espacio en vez de en el
-   raster, escalar σ con el factor, y declararlo en el `.gs.json`. Es pequeño y es la
-   causa real de que el campo se vea como puntos sueltos.
-4. **Renderizador volumétrico en el visor.** Desbloquea §3.4 y es lo que convierte el CBCT
-   del contenedor en algo que un clínico mira en vez de un adorno.
-5. Anclar el margen a la curvatura cervical (§3.4).
-6. OCR para informes escaneados: es el único fallo de la cifra de fiabilidad (§1).
-7. Segunda visita real, para ejercitar `visits[]` de verdad y convertir el seguimiento
-   longitudinal en una resta.
+- **`value_range` is still `null`**, with its warning. The measured alternative is sweeping
+  259 MB per export. It closes when the volumetric renderer lands (§3.2).
+- **`verified_by` on registrations is `null`** in every case: nobody has signed any of
+  them. The viewer paints it as "unverified", which is what it is.
+- **The gingival margin is not anchored** to the cervical curvature ridge. The cleanup is
+  forbidden from moving it, and that prohibition is correct.
+- **No clinical accuracy figure exists**, because there is no ground truth for these
+  patients. Everything published is either an upper bound or a consistency check.
 
 ---
 
-## 5 · Qué se lleva alguien de aquí
+## 4 · What the next step would take, in order
 
-Un formato de contenedor con esquema publicado, validador, procedencia encadenada y una
-regla que se sostiene sola: **lo medido y lo inferido no se mezclan, y lo inferido se
-puede borrar sin romper el caso**. Eso es lo que hace que una etapa que no funciona —hoy,
-la segmentación— sea una pieza separable y no una contaminación del entregable.
+The order matters: the first three unblock things that today cannot even be measured.
 
-Y un pipeline que llega de los ficheros crudos de una clínica a ese contenedor, con las
-cuatro cifras del brief medidas, tres de las cuatro cumplidas, y la cuarta fallando por un
-caso y por una razón nombrada.
-
-Lo que no se lleva: un producto validado clínicamente. Nunca se prometió, y no lo hay.
+1. **The tooth-gum boundary, from the colour of the clinical photographs.** Unblocks §3.1,
+   and it is the **measured** route: an Otsu threshold on `a*` separates tooth from gum at
+   3.4–4.3 σ across the four arch photographs the container **already carries**, and traces
+   the cervical scalloping tooth by tooth. What is missing is not the colour: it is
+   **camera pose**, which today goes out as `projection: null` with the field already
+   defined in the schema. Card: `docs/research/frontera-encia-desde-foto.md`.
+2. **Annotate ten arches of our own.** Without this there will never be an accuracy figure,
+   only bounds. It changes more than another training run on Teeth3DS+ — and that is
+   measured in `docs/research/segmentacion-diente-cbct.md`, where the better model lost on
+   the real task.
+3. **Fix the field's subsampling** (§3.2): decimate in space rather than in the raster,
+   scale σ with the factor, and declare it in the `.gs.json`. It is small, and it is the
+   actual cause of the field looking like scattered points.
+4. **A volumetric renderer in the viewer.** Unblocks §3.4 and is what turns the container's
+   CBCT into something a clinician looks at rather than an ornament.
+5. Anchor the margin to the cervical curvature (§3.4).
+6. OCR for scanned reports: it is the single failure behind the reliability figure (§1).
+7. A second real visit, to exercise `visits[]` properly and turn longitudinal follow-up
+   into a subtraction.
 
 ---
 
-## Hitos del proyecto
+## 5 · What someone takes away from here
 
-| Semana | Hito | |
+A container format with a published schema, a validator, chained provenance and a rule that
+holds up on its own: **the measured and the inferred do not mix, and the inferred can be
+deleted without breaking the case**. That is what makes a stage that does not work — today,
+segmentation — a separable piece rather than a contamination of the deliverable.
+
+And a pipeline that goes from a clinic's raw files to that container, with the brief's four
+figures measured, three of the four met, and the fourth failing by one case and for a named
+reason.
+
+What nobody takes away: a clinically validated product. It was never promised, and there
+isn't one.
+
+---
+
+## Project milestones
+
+| Week | Milestone | |
 |---|---|---|
-| 2 | Revisión de arquitectura multiagente y esquema de atributos clínicos del Digital Twin | ✅ |
-| 4 | Demo PoC: agentes de ingesta + primera versión del Digital Twin con datos sintéticos | ✅ |
-| 6 | Sistema integrado: agentes de fusión y exportación, regeneración STL desde el Digital Twin | ✅ |
-| 8 | MVP testado, validación preliminar con la organización partner, documentación técnica final | 🟡 |
+| 2 | Multi-agent architecture review and clinical attribute schema for the Digital Twin | ✅ |
+| 4 | PoC demo: ingestion agents + first version of the Digital Twin on synthetic data | ✅ |
+| 6 | Integrated system: fusion and export agents, STL regeneration from the Digital Twin | ✅ |
+| 8 | MVP tested, preliminary validation with the partner organisation, final technical documentation | 🟡 |
 
-🟡 **La semana 8 va a medias, y la mitad que falta es la que no depende del código.** El MVP
-está testado y la documentación técnica cerrada (este documento);
-lo que no ha ocurrido es la **validación con la organización partner**, que necesita que
-alguien de fuera abra un `.uos` que no hayamos escrito nosotros.
-
----
-
-## Métricas de éxito
-
-Las cuatro del brief, **medidas** con [`scripts/metricas.py`](../scripts/metricas.py) y no
-prometidas. Tres cumplen; la cuarta no, y se declara:
-
-| Compromiso | Objetivo | Medido | |
-|---|---|---|---|
-| Latencia de ingesta de un conjunto completo (STL + CBCT + informe) | < 60 s <!--const:LATENCY_BUDGET_S--> | **12,7 s** | cumple |
-| Fidelidad de la malla regenerada desde el Digital Twin | < 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM--> | **4,59 × 10⁻⁶ mm** | cumple |
-| Cobertura de pruebas automatizadas | > 80 % | **95,1 %** | cumple |
-| Fiabilidad de los agentes de ingesta | > 95 % | **93,8 %** (N = 16) | **no cumple** |
-
-⚠️ **El fallo de fiabilidad es un informe escaneado sin capa de texto**: el agente no
-extrae nada y se declara `FAILED`, que es el comportamiento correcto. Con N = 16 casos
-reales un solo fallo son 6,2 puntos. Se publica así en vez de subir el N con casos
-sintéticos hasta que el porcentaje quede bien. Por separado, el `mesh-agent` sobre **120
-mallas** de Teeth3DS+ da **100 %**: las dos cifras van con su N al lado a propósito.
+🟡 **Week 8 is half done, and the missing half is the half that does not depend on code.**
+The MVP is tested and the technical documentation is closed (this document); what has not
+happened is the **validation with the partner organisation**, which needs someone outside
+the project to open a `.uos` we did not write ourselves.
