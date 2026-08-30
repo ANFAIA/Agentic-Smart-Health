@@ -436,17 +436,9 @@ Technical documentation aimed at developers and contributors stays in this READM
 
 ## Institutions & Support
 
-- **[ANFAIA](https://github.com/ANFAIA)** — the association that runs the summer grant
-  programme this project was built under, and that hosts the repository. Founded by
-  Ismael Faro, it exists to make research work of this kind possible in Galicia; the
-  proposal to bring Gaussian Splatting to bear on dental data came from there.
+- **[ANFAIA](https://github.com/ANFAIA)** — Artificial Intelligence Non-Profit Research Association driving open-source AI solutions for global health.
 
-- **HISTORA** — the dental startup this work was carried out with. Founded by two oral
-  surgeons, Dr. Pedro Guitián and Dr. Elena López Alvar, with Matías Molinas as CTO, it
-  works on the clinical side of dental digitisation. HISTORA contributed the real
-  clinical case — CBCT, intraoral scan, report and photographs — that every measurement
-  in this repository was taken on, and set out what a clinician actually needs to
-  measure.
+- **HISTORA** — the dental startup this work was carried out with.
 
 ---
 
