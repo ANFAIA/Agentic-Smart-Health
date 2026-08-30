@@ -66,24 +66,57 @@ def sha256_texto(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 
-def lee_version_previa(ruta: Path) -> tuple[str | None, Cadena | None]:
-    """`(hash del manifiesto, cadena)` de un `.uos` anterior, o `(None, None)`.
+def lee_version_previa(ruta: Path) -> tuple[str | None, Cadena | None, str | None]:
+    """`(hash del manifiesto, cadena, aviso)` de un `.uos` anterior.
 
     Tolerante a proposito: si el fichero anterior no se puede abrir o no lleva cadena, se
     empieza una nueva. Un contenedor previo ilegible no debe impedir escribir el actual;
     lo que no puede pasar es que se declare una continuidad que no existe.
+
+    ⚠️ **Y por eso la cadena previa se COMPRUEBA antes de continuarla.** Si su ultimo
+    eslabon dice un hash que no es el del manifiesto que lo acompana, esa cadena ya estaba
+    rota antes de llegar aqui: encadenar encima produciria una version N+1 cuyo `prev`
+    apunta al manifiesto real y no al que el eslabon N declara, y el validador lo rechaza
+    — con razon, pero rechazando el caso ENTERO por una corrupcion heredada.
+
+    Paso de verdad: un contenedor con cuatro versiones donde el eslabon 3 declaraba
+    `38f0a225…` y su manifiesto hasheaba `0ec380e4…`. La exportacion siguiente fallo
+    completa, y el caso quedaba inexportable para siempre.
+
+    Lo correcto no es ignorarlo ni repararlo —una cadena de procedencia que se auto-repara
+    no sirve para nada—: es **no reclamar continuidad con algo que no cuadra**, empezar
+    cadena nueva y decir por que. El aviso sube al gate de revision humana.
     """
     if not ruta.exists():
-        return None, None
+        return None, None, None
     try:
         with zipfile.ZipFile(ruta) as z:
             crudo = z.read("manifest.json")
             previo = hashlib.sha256(crudo).hexdigest()
-            if CADENA in z.namelist():
-                return previo, Cadena.model_validate_json(z.read(CADENA))
-            return previo, None
+            if CADENA not in z.namelist():
+                return previo, None, None
+            cadena = Cadena.model_validate_json(z.read(CADENA))
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
-        return None, None
+        return None, None, None
+
+    # ⚠️ Se revisa la cadena ENTERA, no su ultimo eslabon. Comprobar solo el ultimo fue mi
+    # primer intento y no sirvio: tras una exportacion fallida el ultimo eslabon cuadraba
+    # con su manifiesto —lo escribio bien— y la rotura estaba DENTRO, entre la v3 y la v4.
+    # La comprobacion lo daba por bueno, se encadenaba encima, y el validador seguia
+    # rechazando el contenedor entero. Una cadena vale lo que valga su eslabon mas debil.
+    roturas = revisa_cadena(
+        cadena,
+        case_id=cadena.case_id,
+        manifiesto_sha256=previo,
+        prev_declarado=cadena.links[-1].prev_manifest_sha256 if cadena.links else None,
+    )
+    if roturas:
+        return None, None, (
+            f"la version anterior de {ruta.name} tiene la cadena de procedencia ROTA "
+            f"({roturas[0]}). No se encadena encima de eso: esta version empieza cadena "
+            "nueva y la anterior queda como esta, que es lo que hay que poder auditar."
+        )
+    return previo, cadena, None
 
 
 def encadena(

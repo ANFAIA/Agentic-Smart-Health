@@ -112,6 +112,61 @@ LONGITUD_MM: dict[str, float] = {
     "molar": 22.0,
 }
 
+# Ancho MESIODISTAL de corona, en mm, por (arcada, posicion en el cuadrante). De las
+# mismas tablas anatomicas que `LONGITUD_MM`.
+#
+# ⚠️ **Va por POSICION y no por tipo de diente, al reves que `LONGITUD_MM`, y no es una
+# incoherencia.** La longitud casi no distingue un incisivo central de uno lateral; el
+# ancho si —8,5 mm contra 6,5, un 31 % — y con una sola entrada por tipo el central
+# pareceria estrecho y el lateral se pasaria siempre. La posicion es el segundo digito
+# del codigo FDI, o sea que sale del propio vocabulario ISO-3950 y no hay que inventarla.
+#
+# Para que sirve, y para que NO: mide si la ETIQUETA se ha pasado del punto de contacto,
+# que es lo que se ve en el visor como «este diente pinta parte de su vecino». No mide la
+# corona del paciente —la anatomia real varia entre personas— asi que un exceso de dos
+# milimetros es una senal para mirar, no un diagnostico.
+ANCHO_MM: dict[tuple[str, int], float] = {
+    ("maxilar", 1): 8.5, ("maxilar", 2): 6.5, ("maxilar", 3): 7.5, ("maxilar", 4): 7.0,
+    ("maxilar", 5): 6.5, ("maxilar", 6): 10.0, ("maxilar", 7): 9.0, ("maxilar", 8): 8.5,
+    ("mandibular", 1): 5.0, ("mandibular", 2): 5.5, ("mandibular", 3): 7.0,
+    ("mandibular", 4): 7.0, ("mandibular", 5): 7.0, ("mandibular", 6): 11.0,
+    ("mandibular", 7): 10.5, ("mandibular", 8): 11.0,
+}
+
+
+def ancho_admitido(fdi: int) -> float | None:
+    """El ancho mesiodistal de tabla para un codigo FDI, o `None` si no es de los 32."""
+    cuadrante, posicion = divmod(int(fdi), 10)
+    if cuadrante not in (1, 2, 3, 4) or not 1 <= posicion <= 8:
+        return None
+    return ANCHO_MM.get(("maxilar" if cuadrante in (1, 2) else "mandibular", posicion))
+
+
+# Altura de corona CLINICA (Wheeler), la misma fuente y el mismo criterio que `ANCHO_MM`:
+# es la dimension del diente que asoma, no la del diente entero.
+#
+# ⚠️ **Para lo que sirve, y sobre todo para lo que NO.** No dice donde esta el margen
+# gingival — esa frontera este proyecto tiene medido que no la sabe (razon de concavidad
+# −0,06 contra +1,82 de anotacion de experto). Lo que da es una COTA: ninguna corona asoma
+# mas de esto, asi que un vertice mucho mas apical que el borde incisal de su pieza no
+# puede ser corona, sea lo que sea lo que diga la etiqueta. Sirve para no AFIRMAR color
+# medido donde seguro que no toca; no para decidir donde acaba el diente.
+ALTURA_MM: dict[tuple[str, int], float] = {
+    ("maxilar", 1): 10.5, ("maxilar", 2): 9.0, ("maxilar", 3): 10.0, ("maxilar", 4): 8.5,
+    ("maxilar", 5): 8.5, ("maxilar", 6): 7.5, ("maxilar", 7): 7.0, ("maxilar", 8): 6.5,
+    ("mandibular", 1): 9.0, ("mandibular", 2): 9.5, ("mandibular", 3): 11.0,
+    ("mandibular", 4): 8.5, ("mandibular", 5): 8.0, ("mandibular", 6): 7.5,
+    ("mandibular", 7): 7.0, ("mandibular", 8): 7.0,
+}
+
+
+def altura_admitida(fdi: int) -> float | None:
+    """La altura de corona clinica de tabla para un FDI, o `None` si no es de los 32."""
+    cuadrante, posicion = divmod(int(fdi), 10)
+    if cuadrante not in (1, 2, 3, 4) or not 1 <= posicion <= 8:
+        return None
+    return ALTURA_MM.get(("maxilar" if cuadrante in (1, 2) else "mandibular", posicion))
+
 # ⚠️ **La cota se mide sobre el eje GLOBAL de la arcada, y no por falta de intentarlo.**
 # Un eje por pieza deberia cortar mejor —los molares superiores estan inclinados— pero el
 # escaner no contiene esa direccion, y esta medido. Tres estimadores sacados de la corona,

@@ -131,3 +131,62 @@ def test_la_cota_es_SUPERIOR_no_una_nota(tmp_path):
     r = ms.mide(_boca(tmp_path, piezas))
     assert r["n_descartadas"] == 0
     assert r["cota_superior_correctas_pct"] == 100.0
+
+
+def _valle(tooth_desde: float, nx: int = 64, paso: float = 0.5):
+    """Una loseta plana con UN pliegue recto en `y = 0`, y las etiquetas donde se pida.
+
+    `z = 0.4·|y|` es un valle: la unica concavidad de toda la malla esta en `y = 0`. Con
+    `tooth_desde = 0` la frontera cae dentro del pliegue —que es lo que hace un anotador—;
+    con `tooth_desde = 3` cae sobre la parte lisa, que es lo que hace nuestro modelo. La
+    misma geometria y dos fronteras: lo unico que cambia es lo que se quiere medir.
+    """
+    ys = np.arange(-10.0, 10.0 + paso, paso)
+    xs = np.arange(nx) * paso
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    pos = np.stack([X, Y, 0.4 * np.abs(Y)], axis=-1).reshape(-1, 3)
+    ny = len(ys)
+    tri = []
+    for i in range(nx - 1):
+        for j in range(ny - 1):
+            a, b = i * ny + j, i * ny + j + 1
+            c, d = (i + 1) * ny + j, (i + 1) * ny + j + 1
+            tri += [(a, c, b), (b, c, d)]
+    etq = np.where(pos[:, 1] >= tooth_desde, 11, 0).astype(np.int64)
+    return pos, np.asarray(tri, dtype=np.int64), etq
+
+
+def test_una_frontera_EN_el_pliegue_da_una_razon_alta():
+    """El caso del anotador: el borde cae donde la superficie se dobla."""
+    pos, tri, etq = _valle(0.0)
+    razon = ms.razon_de_concavidad(pos, tri, etq)
+    assert razon is not None
+    assert razon > ms.RAZON_CONCAVIDAD_MINIMA
+
+
+def test_la_misma_malla_con_la_frontera_CORRIDA_da_una_razon_de_cero():
+    """⚠️ **Y esto es lo que ninguna de las otras dos pruebas ve.**
+
+    La geometria es identica y las piezas siguen midiendo lo que median; lo unico que ha
+    cambiado es que el borde se ha ido tres milimetros del pliegue, a un sitio liso. La
+    diagonal contra el tipo y la simetria contralateral dan exactamente lo mismo.
+    """
+    pos, tri, etq = _valle(3.0)
+    razon = ms.razon_de_concavidad(pos, tri, etq)
+    assert razon is not None
+    assert abs(razon) < ms.RAZON_CONCAVIDAD_MINIMA
+
+
+def test_sin_frontera_diente_encia_no_se_inventa_una_cifra():
+    """`None` y no cero: no medir y medir cero son cosas distintas."""
+    pos, tri, _ = _valle(0.0)
+    todo_diente = np.full(len(pos), 11, dtype=np.int64)
+    assert ms.razon_de_concavidad(pos, tri, todo_diente) is None
+
+
+def test_la_boca_de_cubos_no_declara_frontera(tmp_path):
+    """Las bocas sinteticas de arriba no traen encia, asi que la prueba se abstiene."""
+    caso = _boca(tmp_path, {11: ((0, 0, 0), (8.5, 7.0, 10.5))})
+    r = ms.mide(caso)
+    assert r["razon_concavidad"] is None
+    assert r["frontera_en_el_pliegue"] is None

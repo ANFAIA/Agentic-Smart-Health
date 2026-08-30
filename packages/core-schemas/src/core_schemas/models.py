@@ -371,12 +371,59 @@ class Hallazgo(str, Enum):
     APARATO_ORTODONCICO = "aparato_ortodoncico"
 
 
+class ColorCorona(BaseModel):
+    """El color MEDIDO de una corona, por tercios, y de qué fotografía salió.
+
+    **Por tercios y no un color por diente**, porque un diente no es de un color: se
+    oscurece hacia el cuello y se vuelve translúcido hacia el borde. Es como se toma el
+    tono en clínica —una guía VITA da un valor por tercio— y da un degradado natural
+    *dentro* de la pieza sin interpolar entre piezas.
+
+    **En CIELAB y no en RGB.** Lo que se declara es la medida; el RGB es una forma de
+    pintarla y depende del espacio de color de quien la pinte. `L*` va de 0 a 100 y
+    `a*`/`b*` caben de sobra en ±128.
+
+    ⚠️ **Esto es color medido, NO un tono certificado.** Sin corregir, el `L*` de un caso
+    real bajaba 22,7 puntos entre el 21 y el 27 —correlación −0,86 con la distancia a la
+    línea media—: eso no es que los molares sean más oscuros, es el flash cayendo hacia el
+    fondo de la boca. `correccion_iluminacion` dice si esa caída se descontó y con qué
+    pendiente. Aun descontada, el NIVEL absoluto sigue sin calibrar: para afirmar un tono
+    de guía haría falta una referencia gris dentro del encuadre, y una serie clínica no la
+    lleva. Lo que se puede afirmar es la comparación entre piezas del mismo caso.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cervical: tuple[float, float, float]
+    medio: tuple[float, float, float]
+    incisal: tuple[float, float, float]
+    foto_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """De qué fotografía salió. El nombre del fichero NO viaja: lleva datos del paciente."""
+    n_pixeles: int = Field(ge=1)
+    """Sobre cuántos píxeles se tomó la mediana. Una medida sin su soporte no se puede pesar."""
+    correccion_iluminacion: tuple[float, float, float] | None = None
+    """Pendiente por canal con la que se descontó la caída del flash usando la encía del
+    propio paciente como referencia, o `None` si la pieza NO se pudo corregir.
+
+    ⚠️ **Ausente no es cero: es «no comparable».** Una pieza sin corregir lleva dentro lo
+    lejos que le llegó el flash, así que su `L*` no se puede poner al lado del de una
+    corregida. Por eso el campo es opcional y no un `0.0` por defecto."""
+
+
 class ClinicalAttributes(BaseModel):
     """Metadatos clínicos definidos por zona/diente (no por punto).
 
-    Un valor por región FDI. Extensible: hoy el pH, la anatomía radicular y los
-    hallazgos; mañana movilidad, sangrado, profundidad de sondaje. Mantener aquí solo lo
-    que sea genuinamente regional (el color y la densidad viven en `GaussianPrimitive`).
+    Un valor por región FDI. Extensible: hoy el pH, la anatomía radicular, los hallazgos y
+    el color de la corona; mañana movilidad, sangrado, profundidad de sondaje.
+
+    ⚠️ **El color entró aquí y antes estaba excluido a propósito.** Esta docstring decía
+    «el color y la densidad viven en `GaussianPrimitive`», y para la densidad sigue siendo
+    cierto. Para el color dejó de serlo al medirlo: proyectar una fotografía vértice a
+    vértice exige resolver su pose, y de seis fotos aprovechables de un caso real **solo
+    una** la resuelve — el 35 % de la superficie se queda sin medida y hay que rellenarla.
+    Por pieza no hay nada que rellenar, la mediana de miles de píxeles aguanta un brillo, y
+    un vértice mal segmentado recibe el color de un diente vecino en vez de una sombra. El
+    color medido es REGIONAL; el per-primitiva que queda en el campo es presentación.
 
     **Por qué la anatomía radicular vive aquí y no en el campo gaussiano.** El número de
     raíces y de conductos es una propiedad *del diente*, no de un punto: no hay forma de
@@ -400,6 +447,10 @@ class ClinicalAttributes(BaseModel):
     hallazgos: list[Hallazgo] = Field(
         default_factory=list,
         description="Hallazgos del informe para esta pieza, en vocabulario controlado.",
+    )
+    color: ColorCorona | None = Field(
+        default=None,
+        description="Color medido de la corona por tercios. Ver `ColorCorona`.",
     )
 
 
@@ -584,6 +635,16 @@ class TwinSnapshot(BaseModel):
         "existe en el contrato antes de que la fusión geométrica proyecte su color "
         "sobre las gaussianas. Mismo invariante fail-loud: una referencia colgante "
         "es un error.",
+    )
+    apariencia_ref: str | None = Field(
+        default=None,
+        description="Hash/URI de la capa de apariencia entrenada con gsplat (perfil "
+        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con un degradado de "
+        "dos tonos tomados de las fotos —NO color medido— del "
+        "paciente optimizado contra fotos intraorales. No es el campo de densidad "
+        "(medido en HU) ni el visor (decimado para pantalla): es una capa derivada "
+        "que añade el color que el CBCT no puede medir. Null si no se entrenó "
+        "apariencia. Mismo invariante fail-loud: referencia colgante = error.",
     )
     n_primitives: int | None = Field(default=None, ge=0)
     medidas: list[Medida] = Field(

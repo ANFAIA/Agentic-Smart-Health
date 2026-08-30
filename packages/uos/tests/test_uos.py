@@ -151,13 +151,57 @@ def test_un_registro_automatico_sin_verificar_es_un_AVISO_no_un_error(tmp_path, 
     m = _manifiesto([a], registrations=[Registro(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
-        method="auto_dl",
+        method="auto_dl", operator="auto:un-agente@0.1.0",
     )])
     salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
     inf = valida(salida)
     assert inf.valido
     assert any("PROVISIONAL" in a_ for a_ in inf.avisos)
+
+
+def test_provisional_mira_QUIEN_lo_calculo_y_no_con_que_algoritmo(tmp_path, malla):
+    """El registro que de verdad emitimos, que la regla anterior NO cazaba.
+
+    ⚠️ `provisional` exigía `method == "auto_dl"`. Nuestra única registración declara
+    `method: "icp_surface"` —porque eso es lo que usa— con `operator` de máquina y sin
+    verificar: automática, sin revisar, 0,666 mm de residuo, y no disparaba el aviso que
+    existe justo para ella. Una salvaguarda escrita contra el nombre de UN algoritmo deja
+    de funcionar en cuanto alguien usa otro, que es siempre.
+
+    Lo que decide si una alineación es provisional es si la miró una persona. `method`
+    describe la técnica y es otro dato.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", rms_error_mm=0.666,
+        operator="auto:geometric-fusion-agent@0.2.0",
+    )])
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert inf.valido, inf.errores
+    assert any("PROVISIONAL" in a_ and "reg.ct_to_ios" in a_ for a_ in inf.avisos), inf.avisos
+
+
+def test_un_registro_de_una_PERSONA_sin_verificar_no_es_provisional(tmp_path, malla):
+    """El contrario: lo que separa no es que falte `verified_by`, es que no hubo nadie.
+
+    Un registro que alineó una persona a mano y que nadie más ha contrafirmado no es un
+    resultado sin supervisar. Avisar de él gastaría la misma palabra en dos cosas distintas
+    y le quitaría valor a la que importa.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="manual", operator="user:pedro",
+    )])
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    assert not any("PROVISIONAL" in a_ for a_ in valida(salida).avisos)
 
 
 def test_layer_3_tiene_que_vivir_en_derived(tmp_path, malla):
@@ -279,14 +323,53 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
     m = lee_manifiesto(salida.path)
     uris = " ".join(a.uri for a in m.assets)
     assert "PEREZ" not in uris and "0000144500014386" not in uris
-    assert "images/img_000.jpg" in uris
+    assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.img_000")
     # Y la malla igual: su nombre tampoco entra.
     assert malla.stem not in uris
-    assert "scene/scan" in uris
+    # ⚠️ Y ahora es MÁS fuerte que antes: el escáner ni siquiera viaja, así que su `uri`
+    # es su dirección de contenido. Un `sha256` no puede llevar el nombre de nadie.
+    assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.ios")
 
 
 
-# --- el agente, vistas y cadena ---------------------------------------------- #
+def test_un_informe_ilegible_QUEDA_DECLARADO_en_el_manifiesto(tmp_path, malla):
+    """Un PDF sin capa de texto **no se pierde**: queda declarado por su `sha256`.
+
+    Antes solo viajaba lo que el `report-agent` conseguia transcribir, asi que un informe
+    escaneado desaparecia entero — el gate decia «hay un PDF que nadie pudo leer» y el
+    PDF no estaba en ninguna parte para que alguien lo leyera. En el caso real que lo
+    destapo ese fichero era el **pasaporte de implantes**: tres implantes con su posicion
+    FDI, su fecha, su marca y su lote, y ningun otro documento del caso los mencionaba.
+
+    Obedece la misma regla que el escaner y las fotos: **ningun original viaja dentro**, se
+    declara por su direccion de contenido. Lo que se arreglo no es que viaje, es que EXISTA
+    en el manifiesto — antes no habia ni asset, y el documento se caia entero del caso.
+    """
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, TwinSnapshot
+    from uos import UOSExportAgent, lee_manifiesto
+
+    doc = tmp_path / "APELLIDOS_NOMBRE_Informe.pdf"
+    doc.write_bytes(b"%PDF-1.4 escaneado sin texto")
+    snap = TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0",
+        provenance=Provenance(source_file="x", modality=Modality.MESH, agent="a@0"),
+    )
+    salida = UOSExportAgent(None).export(
+        snap, tmp_path / "caso", pseudonimo="P-1", malla=malla, informes=[doc],
+    )
+
+    assert salida.ok, salida.detail
+    m = lee_manifiesto(salida.path)
+    docs = [a for a in m.assets if a.id.startswith("asset.doc_")]
+    assert len(docs) == 1, "el informe ilegible no existe en el manifiesto"
+    # Declarado por su contenido, no por una ruta: no viaja y no lleva el nombre de nadie.
+    assert docs[0].uri.startswith("sha256:")
+    assert "APELLIDOS" not in docs[0].uri and "NOMBRE" not in docs[0].uri
+
+
 def _snapshot(**kw):
     """Un snapshot minimo. `surface_ref` y `regional` son lo que alimenta las vistas."""
     from datetime import datetime
@@ -640,3 +723,455 @@ def test_el_esquema_del_repositorio_NO_se_queda_atras(tmp_path):
     assert _json.loads(publicado.read_text()) == esquema_del_manifiesto(), (
         f"{RUTA} se ha quedado atras respecto al contrato: regeneralo"
     )
+
+
+# --- perfil ligero: los originales se declaran y no viajan -------------------- #
+def _snap_min():
+    from datetime import datetime
+
+    from core_schemas import Modality, Provenance, TwinSnapshot
+
+    return TwinSnapshot(
+        acquisition_id="acq-1", timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:0",
+        provenance=Provenance(source_file="x", modality=Modality.MESH, agent="a@0"),
+    )
+
+
+def test_sin_originales_el_STL_se_DECLARA_y_no_viaja(tmp_path, malla):
+    """El perfil ligero: identidad del original dentro, fichero fuera.
+
+    Lo que se comprueba es lo que hace que siga siendo auditable: el asset sigue en el
+    manifiesto, con su `sha256` y su tamaño REALES —no ceros, no `null`—, y lo único que
+    cambia es que sus bytes no están en el ZIP.
+    """
+    import hashlib
+    import zipfile
+
+    from uos import UOSExportAgent, lee_manifiesto
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+    )
+    assert salida.ok, salida.detail
+    m = lee_manifiesto(salida.path)
+    ios = next(a for a in m.assets if a.id == "asset.ios")
+
+    assert ios.external is True
+    assert ios.sha256 == hashlib.sha256(malla.read_bytes()).hexdigest()
+    assert ios.bytes == malla.stat().st_size
+    with zipfile.ZipFile(salida.path) as z:
+        assert ios.uri not in set(z.namelist()), "el original ha viajado igualmente"
+
+
+def test_sin_originales_el_validador_AVISA_y_no_falla(tmp_path, malla):
+    """Un asset que no se puede verificar no es un error, pero tampoco se calla.
+
+    ⚠️ Es la diferencia entre las dos garantías, y por eso hay un test: con el original
+    dentro el contenedor afirma «lo que sale es lo que entró» y el validador lo comprueba;
+    sin él afirma «sé el hash de lo que debería haber ahí». Si el validador no lo dijera,
+    las dos afirmaciones serían indistinguibles desde fuera.
+
+    ⚠️ **Y se dice UNA vez, no una por asset.** Que los originales no viajen es el formato,
+    así que un aviso por cada uno repetiría la definición tantas veces como assets tenga el
+    caso —y un aviso que sale siempre deja de leerse, enterrando los que sí distinguen algo.
+    Lo comprueba `test_los_originales_referenciados_producen_UN_solo_aviso`.
+    """
+    from uos import UOSExportAgent
+    from uos.validador import valida
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+    )
+    inf = valida(salida.path)
+    assert inf.errores == [], inf.errores
+    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
+    assert len(referencias) == 1, inf.avisos
+    assert "asset.ios" in referencias[0], referencias
+    assert inf.externos >= 1
+
+
+def test_sin_assets_externos_NO_se_dice_nada(tmp_path, malla):
+    """El contrario, para que el test de arriba pueda fallar.
+
+    Sin esto, un validador que avisara SIEMPRE pasaría los dos y no probaría nada.
+
+    ⚠️ El contenedor lo escribe el test, no el exportador. El exportador ya no sabe emitir
+    un original dentro —ninguno viaja— y devolverle esa capacidad sólo para tener un
+    contrario sería mantener en producción un camino que la especificación prohíbe. Lo que
+    se prueba aquí es el VALIDADOR, y un validador corre sobre lo que escribió otro.
+    """
+    from uos.validador import valida
+
+    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+                         [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert inf.errores == [], inf.errores
+    assert not any("REFERENCIA" in a for a in inf.avisos), inf.avisos
+    assert inf.externos == 0
+
+
+def test_los_originales_referenciados_producen_UN_solo_aviso(tmp_path, malla):
+    """Un contenedor con varios originales referenciados avisa UNA vez, no una por asset.
+
+    ⚠️ **Es la regresión que hace falta cazar, y antes no se cazaba.** El validador emitía
+    un aviso por cada asset externo. Mientras el caso de prueba tenía un solo original eso
+    parecía razonable; con un caso real —el escáner, la serie de CBCT, nueve fotos y tres
+    informes— son trece líneas diciendo lo mismo, y ninguna dice nada: que los originales
+    adquiridos no viajen es la DEFINICIÓN del formato, no una excepción de este contenedor.
+    Un aviso que sale siempre deja de leerse y entierra a los que sí distinguen algo —el
+    registro sin verificar, la extensión obligatoria—, que son justo los que hay que ver.
+
+    Lo que sí merece decirse una vez, y por eso el aviso no desaparece del todo, es que de
+    esos assets el validador no puede comprobar nada.
+    """
+    from uos.validador import valida
+
+    externos = [
+        _asset(malla, id=f"asset.ext_{i}", external=True,
+               uri=f"sha256:{hashlib.sha256(malla.read_bytes()).hexdigest()}")
+        for i in range(4)
+    ]
+    salida = escribe_uos(
+        tmp_path / "caso.uos",
+        _manifiesto([_asset(malla), *externos]), [("scene/scan.stl", malla)],
+    )
+
+    inf = valida(salida)
+    assert inf.errores == [], inf.errores
+    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
+    assert len(referencias) == 1, f"un aviso por asset otra vez: {referencias}"
+    assert inf.externos == 4
+    # Y los nombra, porque «hay cuatro» sin decir cuáles no se puede accionar.
+    assert all(f"asset.ext_{i}" in referencias[0] for i in range(4)), referencias[0]
+
+
+def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
+    """La `uri` de un asset que no viaja es `sha256:<hex>`, no una ruta.
+
+    ⚠️ Dos razones, y la segunda es de dato. Un fichero que no está dentro **no tiene sitio
+    dentro**, así que una ruta sería una promesa sobre un ZIP en el que no está; lo único
+    que sigue siendo cierto de él es qué fichero es. Y una dirección de contenido **no puede
+    llevar dato de paciente**: la ruta local de un caso clínico lleva el directorio del
+    paciente, un hash no lleva nada. Referenciar saca ficheros del contenedor, no
+    identidades.
+    """
+    import hashlib
+
+    from uos import UOSExportAgent, lee_manifiesto
+
+    salida = UOSExportAgent(None).export(
+        _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
+    )
+    m = lee_manifiesto(salida.path)
+    ios = next(a for a in m.assets if a.id == "asset.ios")
+
+    esperado = hashlib.sha256(malla.read_bytes()).hexdigest()
+    assert ios.uri == f"sha256:{esperado}"
+    assert ios.sha256 == esperado, "la dirección y el campo del contrato tienen que cuadrar"
+    # Y nada del disco ni del proveedor viaja en ella.
+    assert str(tmp_path) not in ios.uri and malla.stem not in ios.uri
+
+
+def test_una_direccion_de_contenido_en_un_asset_que_SI_viaja_se_rechaza():
+    """El sentido contrario, que es el que hace que la regla signifique algo.
+
+    Un asset con dirección de contenido que además viaja dentro sería imposible de
+    localizar en el ZIP: el lector buscaría una entrada llamada `sha256:…`.
+    """
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="viaja dentro"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+              media_type="model/stl", sha256="a" * 64, bytes=1, frame="frame.ios_master")
+
+
+def test_un_asset_externo_con_RUTA_se_rechaza():
+    """Y el otro sentido: externo obliga a dirección de contenido."""
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="es una ruta"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="scene/scan.stl",
+              media_type="model/stl", sha256="a" * 64, bytes=1,
+              frame="frame.ios_master", external=True)
+
+
+def test_la_direccion_tiene_que_ser_el_MISMO_hash_que_el_campo_del_contrato():
+    """Dos sitios con el mismo dato se separan. Que no puedan es el punto."""
+    from uos import Asset
+    from uos.manifiesto import Clase
+
+    with pytest.raises(ValueError, match="no.*son el mismo hash"):
+        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+              media_type="model/stl", sha256="b" * 64, bytes=1,
+              frame="frame.ios_master", external=True)
+
+
+# --- el descriptor describe el FICHERO, no lo que alguien cree ---------------- #
+def _ply_apariencia(ruta, *, unidades: str | None, n: int = 7) -> None:
+    """Un PLY de apariencia mínimo, con o sin la línea de unidades."""
+    import struct
+
+    cab = ["ply", "format binary_little_endian 1.0",
+           "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida"]
+    if unidades is not None:
+        cab.append(f"comment unidades {unidades}")
+    cab += [f"element vertex {n}", "property float x", "end_header"]
+    ruta.write_bytes(("\n".join(cab) + "\n").encode("ascii") + struct.pack(f"<{n}f", *range(n)))
+
+
+def test_el_descriptor_lee_las_unidades_DEL_FICHERO(tmp_path):
+    """⚠️ El fallo que esto guarda: el sidecar afirmaba `units: "mm"` con un literal y el
+    PLY de apariencia estaba en el espacio normalizado de Blender —32 veces más pequeño—.
+    Nada contrastaba una cosa con la otra, así que la contradicción no podía fallar: solo
+    verse, y solo comparando la nube con la malla.
+    """
+    from uos import UOSExportAgent
+
+    p = tmp_path / "a.ply"
+    _ply_apariencia(p, unidades="normalizado", n=11)
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("normalizado", 11, ["x"])
+
+    _ply_apariencia(p, unidades="mm", n=11)
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 11, ["x"])
+
+
+def test_un_ply_que_no_declara_unidades_devuelve_None_y_no_un_defecto(tmp_path):
+    """Suponer es lo que falló. `None` deja que se vea; `"mm"` lo taparía otra vez."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "b.ply"
+    _ply_apariencia(p, unidades=None, n=5)
+    assert UOSExportAgent(None)._cabecera_ply(p) == (None, 5, ["x"])
+
+
+def test_la_cabecera_se_lee_sin_cargar_el_fichero_entero(tmp_path):
+    """Un PLY de apariencia pesa decenas de megas; la cabecera son cientos de bytes."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "c.ply"
+    _ply_apariencia(p, unidades="mm", n=3)
+    p.write_bytes(p.read_bytes() + b"\x00" * (5 * 1024 * 1024))
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 3, ["x"])
+
+
+def test_la_cabecera_devuelve_las_propiedades_en_el_orden_del_fichero(tmp_path):
+    """⚠️ Lo que faltaba: `esquema_apariencia()` enumeraba catorce columnas mientras el
+    escritor emitía dieciocho propiedades, y `region_id` —el código FDI por gaussiana—
+    viajaba en los bytes sin aparecer en el sidecar. El orden importa: `columns` es la
+    receta para montar el registro binario."""
+    import struct
+
+    from uos import UOSExportAgent
+
+    p = tmp_path / "e.ply"
+    cab = ["ply", "format binary_little_endian 1.0", "comment unidades mm",
+           "element vertex 2", "property float x", "property float y",
+           "property short region_id", "end_header"]
+    p.write_bytes(("\n".join(cab) + "\n").encode("ascii")
+                  + struct.pack("<ffhffh", 0, 0, 11, 1, 1, 21))
+    assert UOSExportAgent(None)._cabecera_ply(p) == ("mm", 2, ["x", "y", "region_id"])
+
+
+def test_un_fichero_que_no_es_un_ply_no_revienta(tmp_path):
+    """El descriptor no puede tumbar una exportación por no entender un asset."""
+    from uos import UOSExportAgent
+
+    p = tmp_path / "d.bin"
+    p.write_bytes(b"\x00\x01\x02")
+    assert UOSExportAgent(None)._cabecera_ply(p) == (None, None, [])
+    assert UOSExportAgent(None)._cabecera_ply(tmp_path / "no-existe.ply") == (None, None, [])
+
+
+def test_el_sidecar_de_segmentacion_dice_de_que_pieza_fiarse() -> None:
+    """⚠️ **Sin esto, seleccionar una pieza en el visor puede mentir en silencio.**
+
+    El contenedor dice la verdad sobre la pieza —su color, su pH, sus hallazgos— y enciende
+    una superficie que arrastra medio diente vecino. Lo que se lee al lado es correcto y lo
+    que se ve, no, que es la peor combinación posible. El veredicto por pieza convierte eso
+    en un dato consultable.
+
+    El criterio no es una opinión: sale del `p95` de `|ancho medido - tabla|` sobre 188
+    coronas etiquetadas por experto. Contar coronas «demasiado anchas» no vale — las de
+    experto lo fallan en el 77 %.
+    """
+    import numpy as np
+    from uos.derivados import meta_segmentacion
+
+    etq = np.array([11, 11, 12, 0], np.int16)
+    calidad = {11: {"mesiodistal_mm": 8.9, "table_mm": 8.5, "excess_mm": 0.4,
+                    "within_expert_range": True},
+               12: {"mesiodistal_mm": 13.1, "table_mm": 6.5, "excess_mm": 6.6,
+                    "within_expert_range": False}}
+    meta = meta_segmentacion(etq, asset_origen="asset.scene", modelo="m",
+                             version=None, calidad=calidad)
+    bloque = meta["per_tooth_boundary"]
+    assert bloque["teeth"]["11"]["within_expert_range"] is True
+    assert bloque["teeth"]["12"]["within_expert_range"] is False
+    assert "77 %" in bloque["note"]
+
+    # Y sin el dato el bloque NO aparece: ausente no es «todas mal».
+    assert "per_tooth_boundary" not in meta_segmentacion(
+        etq, asset_origen="asset.scene", modelo="m", version=None)
+
+
+# --- KHR_gaussian_splatting: la apariencia dentro del glTF -------------------- #
+def _campo_apariencia(n=64, con_sh1=True, con_region=True):
+    """Un PLY INRIA de juguete, con las convenciones REALES: logit, log y (w,x,y,z)."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    props = [("x", "f4"), ("y", "f4"), ("z", "f4"),
+             ("f_dc_0", "f4"), ("f_dc_1", "f4"), ("f_dc_2", "f4")]
+    if con_sh1:
+        props += [(f"f_rest_{k}", "f4") for k in range(9)]
+    props += [("opacity", "f4"), ("scale_0", "f4"), ("scale_1", "f4"), ("scale_2", "f4"),
+              ("rot_0", "f4"), ("rot_1", "f4"), ("rot_2", "f4"), ("rot_3", "f4")]
+    if con_region:
+        props += [("region_id", "i2")]
+    fila = np.zeros(n, dtype=np.dtype([(k, v) for k, v in props]))
+    for k, v in props:
+        fila[k] = (rng.integers(11, 28, n) if k == "region_id"
+                   else rng.normal(0, 1, n).astype(v))
+    cab = ["ply", "format binary_little_endian 1.0", f"element vertex {n}"]
+    tipo = {"f4": "float", "i2": "short"}
+    cab += [f"property {tipo[v]} {k}" for k, v in props]
+    cab += ["end_header", ""]
+    # ⚠️ **El esquema es el de VERDAD, no uno escrito aquí.** Dos exportaciones del caso
+    # real murieron porque estos tests inventaban la forma del descriptor: primero un
+    # `{"columns": [...]}` donde el emisor pasa la lista pelada, y después dicts con clave
+    # `name` donde `esquema_apariencia` devuelve objetos `ColumnaCampo` con `.nombre`. Los
+    # tres tests en verde las dos veces. Un esquema de juguete prueba el juguete.
+    from gaussian_engine.agente_apariencia import esquema_apariencia
+
+    return ("\n".join(cab).encode("ascii") + fila.tobytes(),
+            esquema_apariencia([k for k, _ in props]))
+
+
+def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_path):
+    """La capa 3DGS como primitiva `KHR_gaussian_splatting`, no como puntero a un `.ply`.
+
+    ⚠️ **Es la diferencia entre un formato abierto y uno nuestro.** Con el fallback
+    `extras.uos_gs_uri` que el borrador admite, un visor glTF cualquiera abre la escena,
+    encuentra un puntero a un fichero opaco y **no dibuja la apariencia**: sólo la lee quien
+    conozca nuestra convención. Con la extensión la dibuja cualquier implementación
+    conforme sin saber nada de UOS.
+
+    Lo que se comprueba aquí es el CONTRATO de la extensión, atributo a atributo, porque
+    inventárselo sería exactamente lo contrario de interoperar.
+    """
+    import json as _json
+
+    import numpy as np
+    from uos.agente import _splats_khr
+    from uos.escena import construye_glb
+
+    crudo, columnas = _campo_apariencia()
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+
+    pos, etq = _arcada_de_juguete()
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    largo = int.from_bytes(glb[12:16], "little")
+    doc = _json.loads(glb[20:20 + largo])
+
+    assert doc["extensionsUsed"] == ["KHR_gaussian_splatting"]
+    # Nunca en `required`: un lector que no la entienda tiene que poder ver la malla.
+    assert "extensionsRequired" not in doc
+
+    prim = doc["meshes"][1]["primitives"][0]
+    assert prim["mode"] == 0, "la extensión exige modo POINTS"
+    ext = prim["extensions"]["KHR_gaussian_splatting"]
+    assert ext["kernel"] == "ellipse"
+    assert ext["colorSpace"] == "srgb_rec709_display"
+
+    a = prim["attributes"]
+    for nombre, tipo in [
+        ("POSITION", "VEC3"),
+        ("KHR_gaussian_splatting:ROTATION", "VEC4"),
+        ("KHR_gaussian_splatting:SCALE", "VEC3"),
+        ("KHR_gaussian_splatting:OPACITY", "SCALAR"),
+        ("KHR_gaussian_splatting:SH_DEGREE_0_COEF_0", "VEC3"),
+    ]:
+        assert nombre in a, f"falta el atributo obligatorio {nombre}"
+        assert doc["accessors"][a[nombre]]["type"] == tipo
+
+    # Grado 1 entero o nada: la extensión exige que si va un grado superior estén todos.
+    assert all(f"KHR_gaussian_splatting:SH_DEGREE_1_COEF_{k}" in a for k in range(3))
+    # El FDI por gaussiana no es de la extensión: va como atributo de aplicación.
+    assert "_REGION_ID" in a
+
+    # Y la apariencia cuelga del nodo de la malla, que ES el marco canónico (§5.1).
+    assert doc["nodes"][0]["children"] == [1]
+    assert doc["nodes"][1]["mesh"] == 1
+
+
+def test_las_unidades_de_la_extension_NO_son_las_del_PLY(tmp_path):
+    """Opacidad lineal en [0,1], escala lineal no negativa y cuaternión en orden glTF.
+
+    ⚠️ **Y se le pasa la LISTA de columnas, que es lo que le pasa el emisor.** Estos tests
+    pasaban un `{"columns": [...]}` y el conversor lo pedía así, mientras
+    `esquema_apariencia` devuelve la lista pelada: los tres tests en verde y la exportación
+    del caso real muerta con un `AttributeError` que el gate resumía como «uos-export-agent
+    falló». Un test que llama distinto que el código de verdad no prueba el código de verdad.
+
+    ⚠️ **Son tres conversiones reales, no tres renombrados.** El PLY INRIA guarda la
+    opacidad en logit, las escalas en logaritmo y el cuaternión como `(w,x,y,z)`; la
+    extensión pide lineal, lineal y `(x,y,z,w)`. Copiar los arrays tal cual produce un
+    fichero que valida y se dibuja mal: opacidades fuera de rango, elipses del tamaño
+    equivocado y cada una girada. Es el peor tipo de fallo — no revienta.
+    """
+    import numpy as np
+    from uos.agente import _splats_khr
+
+    crudo, columnas = _campo_apariencia(n=32)
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+
+    assert gs.opacidad.min() >= 0.0 and gs.opacidad.max() <= 1.0
+    assert gs.escala.min() > 0.0, "la escala llega en logaritmo: hay que exponenciarla"
+    # Cuaterniones unitarios, como exige la extensión.
+    assert np.allclose(np.linalg.norm(gs.rotacion, axis=1), 1.0, atol=1e-5)
+
+    # El orden: el último componente de la extensión es el `w`, que en el PLY es `rot_0`.
+    import numpy as _np
+    fila = _np.frombuffer(
+        crudo, _np.dtype([(c.nombre, "<i2" if c.nombre == "region_id" else "<f4")
+                          for c in columnas]),
+        count=32, offset=crudo.index(b"end_header\n") + len(b"end_header\n"),
+    )
+    esperado = _np.stack([fila["rot_1"], fila["rot_2"], fila["rot_3"], fila["rot_0"]], 1)
+    esperado /= _np.linalg.norm(esperado, axis=1, keepdims=True)
+    assert _np.allclose(gs.rotacion, esperado, atol=1e-6)
+
+
+def test_sin_grado_1_la_apariencia_sigue_siendo_valida(tmp_path):
+    """El grado 1 es opcional. Sin él no se emite ningún `SH_DEGREE_1_*`, y eso es correcto.
+
+    ⚠️ Emitir un grado 1 a cero «por si acaso» no sería neutro: la extensión obliga a que
+    si va un grado superior estén todos los inferiores, y un lector que los encuentre
+    asumirá que hay dependencia de la vista donde no la hay.
+    """
+    import json as _json
+
+    import numpy as np
+    from uos.agente import _splats_khr
+    from uos.escena import construye_glb
+
+    crudo, columnas = _campo_apariencia(n=16, con_sh1=False, con_region=False)
+    ply = tmp_path / "appearance.ply"
+    ply.write_bytes(crudo)
+    gs = _splats_khr(ply, columnas)
+    assert gs.sh1 is None and gs.region_id is None
+
+    pos, etq = _arcada_de_juguete()
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    largo = int.from_bytes(glb[12:16], "little")
+    a = _json.loads(glb[20:20 + largo])["meshes"][1]["primitives"][0]["attributes"]
+    assert not any(k.startswith("KHR_gaussian_splatting:SH_DEGREE_1") for k in a)
+    assert "_REGION_ID" not in a

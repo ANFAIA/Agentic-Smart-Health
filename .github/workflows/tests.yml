@@ -39,8 +39,13 @@ jobs:
         with:
           python-version-file: pyproject.toml
 
+      # ⚠️ Con `--extra vision`, que trae opencv y scikit-image. Sin ellos los tests de
+      # `pose_foto` —la pose de camara y el descarte de una vista torcida— se SALTAN aqui y
+      # el badge sale verde sin haberlos ejecutado. Un test que solo corre en el portatil de
+      # quien lo escribio no es una puerta. NO se usa `appearance`: ese extra arrastra torch
+      # y gsplat, que la suite no ejecuta y son dos gigas de CUDA por run.
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra vision
 
       # `--cov` sin argumentos toma `source`, `omit` y `fail_under` de
       # pyproject.toml. Si la cobertura cae por debajo del umbral, pytest sale con

@@ -33,6 +33,23 @@ surco y los valores de Wheeler son medias de poblacion, asi que hace falta marge
 areas tienen que parecerse, y cuando una es el triple de la otra es que una de las dos se
 comio a un vecino o perdio la mitad. Esta prueba no necesita ninguna constante de
 poblacion: la referencia es el propio paciente.
+
+**3 · La frontera, ¿cae en el pliegue?** Las dos anteriores miran el TAMANO de cada pieza
+y las dos son ciegas a donde esta puesto el borde: una corona puede tener la diagonal
+correcta y la simetria correcta con la frontera corrida dos milimetros sobre la encia. Esta
+mira otra cosa — donde el diente sale de la encia hay un pliegue, y la frontera buena cae
+dentro de el.
+
+Se mide la concavidad media de los vertices que tocan encia dividida por la concavidad
+tipica de cualquier punto de la malla. El denominador la hace inmune a la escala del
+escaner y a la densidad del mallado, asi que la cifra se puede comparar entre casos.
+
+⚠️ **Y aqui el umbral SI tiene calibracion detras**, a diferencia de `TOLERANCIA`. Sobre 12
+maxilares de Teeth3DS+ con anotacion de experto la razon sale **+1,82**, con un rango de
+1,50 a 2,25 — el margen gingival es un pliegue y se mide. Una segmentacion que salga cerca
+de **cero** no tiene la frontera mal puesta: la tiene puesta donde la superficie no hace
+nada, o sea al azar respecto de la anatomia. Y eso es un diagnostico distinto de «se pasa
+de ancho», porque explica por que afinar el modelo no la mueve.
 """
 
 from __future__ import annotations
@@ -62,6 +79,13 @@ TOLERANCIA = 1.30
 # dos veces; por encima, una de las dos tiene material que no es suyo. 1,50 deja sitio a
 # la asimetria real de una boca con patologia sin dejar pasar un factor 2.
 TOLERANCIA_ESPEJO = 1.50
+
+# Calibrado, no declarado: 12 maxilares de Teeth3DS+ con anotacion de experto dan 1,82
+# (rango 1,50-2,25). El umbral se pone en 1,00 —bien por debajo del peor experto— para que
+# solo salte una frontera que de verdad no esta en el pliegue, no una anotacion algo floja.
+RAZON_CONCAVIDAD_MINIMA = 1.00
+# Por debajo de esto la razon es ruido: no hay bastante frontera diente/encia que medir.
+MINIMO_VERTICES_MARGEN = 50
 
 SEGMENTACION = "derived/seg_teeth.bin"
 ESCENA = "scene/scene.glb"
@@ -107,6 +131,24 @@ def lee_escena(glb: bytes) -> tuple[np.ndarray, np.ndarray]:
 # ⚠️ Comprobado que aqui NO cambia la conclusion —los brutos son 1,5-3 mm mayores y las
 # mismas piezas saltan—, lo que dice que lo que sobra es cuerpo y no motas.
 RECORTE_PCT = 1.0
+
+
+from analysis_agents.frontera import _aristas, concavidad  # noqa: E402
+
+
+def razon_de_concavidad(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> float | None:
+    """Cuanto mas concavo es el margen gingival que la malla entera. `None` si no lo hay.
+
+    ⚠️ El contacto interproximal —diente contra diente— queda FUERA a proposito: ahi no hay
+    margen gingival que medir, y meterlo mezclaria dos fronteras distintas en una cifra.
+    """
+    i, j = _aristas(tri)
+    marca = np.zeros(len(pos), dtype=bool)
+    marca[i[(etq[i] != 0) & (etq[j] == 0)]] = True
+    if int(marca.sum()) < MINIMO_VERTICES_MARGEN:
+        return None
+    c = concavidad(pos, tri)
+    return float(c[marca].mean() / max(float(np.abs(c).mean()), 1e-12))
 
 
 def _diagonal_propia(puntos: np.ndarray) -> float:
@@ -179,6 +221,7 @@ def mide(ruta: Path) -> dict:
 
     total_area = float(area.sum())
     con_fdi = float(area[(porcara > 0).all(axis=1)].sum())
+    razon_frontera = razon_de_concavidad(pos, tri, etq)
     return {
         "caso": ruta.stem,
         "piezas": piezas,
@@ -189,8 +232,13 @@ def mide(ruta: Path) -> dict:
         "cota_superior_correctas_pct": round(100 * (len(piezas) - len(malas)) / len(piezas), 1),
         "area_total_mm2": round(total_area, 0),
         "area_etiquetada_pct": round(100 * con_fdi / total_area, 1),
+        "razon_concavidad": None if razon_frontera is None else round(razon_frontera, 2),
+        "frontera_en_el_pliegue": (
+            None if razon_frontera is None else razon_frontera >= RAZON_CONCAVIDAD_MINIMA
+        ),
         "tolerancia": TOLERANCIA,
         "tolerancia_espejo": TOLERANCIA_ESPEJO,
+        "razon_concavidad_minima": RAZON_CONCAVIDAD_MINIMA,
     }
 
 
@@ -217,6 +265,19 @@ def main() -> int:
           f"({', '.join(str(x) for x in r['descartadas'])})")
     print(f"cota SUPERIOR de piezas correctas: {r['cota_superior_correctas_pct']} % "
           "— sin verdad de campo no se puede decir cuantas aciertan, solo cuantas fallan.")
+
+    rc = r["razon_concavidad"]
+    if rc is None:
+        print("\nfrontera diente/encia: sin margen que medir en esta escena.")
+    elif r["frontera_en_el_pliegue"]:
+        print(f"\nfrontera diente/encia: razon de concavidad {rc:.2f} "
+              f"(experto 1,82; minimo {RAZON_CONCAVIDAD_MINIMA:.2f}) — cae en el pliegue.")
+    else:
+        print(f"\nfrontera diente/encia: razon de concavidad {rc:.2f} contra 1,82 de "
+              "anotacion de experto. La frontera NO esta en el pliegue donde el diente sale "
+              "de la encia: esta puesta donde la superficie no hace nada. Las dos pruebas de "
+              "arriba son ciegas a esto — una corona puede tener la diagonal correcta con el "
+              "borde corrido milimetros sobre la encia.")
 
     if args.json:
         args.json.write_text(json.dumps(r, indent=2, ensure_ascii=False), encoding="utf-8")

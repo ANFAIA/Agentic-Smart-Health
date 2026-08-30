@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from uos.manifiesto import Asset, Manifiesto, Parte, digesto_de_partes
+from uos.manifiesto import UOS_VERSION, Asset, Manifiesto, Parte, digesto_de_partes
 
 MANIFIESTO = "manifest.json"
 
@@ -57,7 +57,11 @@ def escribe_uos(
     """
     mapa = dict(ficheros)
     dirs = dict(directorios or {})
-    declaradas = {a.uri for a in manifiesto.assets}
+    # ⚠️ Los assets EXTERNOS se declaran y no se aportan: el manifiesto lleva su identidad
+    # —`uri` logica, `sha256`, `bytes`— y el fichero vive fuera. Es el perfil ligero, y por
+    # eso quedan fuera de las dos comprobaciones de abajo: exigir su fichero convertiria en
+    # error justo lo que el perfil hace a proposito. Ver `Asset.external`.
+    declaradas = {a.uri for a in manifiesto.assets if not a.external}
     # Un asset puede ser un DIRECTORIO (una serie DICOM): su uri acaba en "/" y agrupa.
     sueltas = {u for u in declaradas if not u.endswith("/")}
     if faltan := {u for u in declaradas if u.endswith("/")} - set(dirs):
@@ -97,7 +101,14 @@ def escribe_uos(
 
 
 def lee_manifiesto(ruta: Path) -> Manifiesto:
-    """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada."""
+    """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada.
+
+    ⚠️ **Y comprobando la VERSION, que es lo primero que el spec pide mirar y no se
+    miraba.** El campo se escribia, se declaraba en el modelo y no lo leia nadie: un
+    contenedor de una version posterior se parseaba con el contrato de esta, y como todos
+    los modelos llevan `extra="forbid"`, un campo opcional nuevo —justo lo que una version
+    menor tiene permitido anadir— no daba un aviso, reventaba el parseo. Ver `uos.version`.
+    """
     with zipfile.ZipFile(ruta) as z:
         nombres = z.namelist()
         if not nombres or nombres[0] != MANIFIESTO:
@@ -105,19 +116,51 @@ def lee_manifiesto(ruta: Path) -> Manifiesto:
                 f"{ruta.name}: la primera entrada es {nombres[0] if nombres else 'ninguna'!r} "
                 f"y el spec exige {MANIFIESTO!r} — sin eso no hay identificacion positiva."
             )
-        return Manifiesto.model_validate_json(z.read(MANIFIESTO))
+        return lee_manifiesto_de(z.read(MANIFIESTO), nombre=ruta.name)[0]
+
+
+def lee_manifiesto_de(
+    crudo: bytes, *, nombre: str = "manifest.json"
+) -> tuple[Manifiesto, list[str]]:
+    """`(manifiesto, campos ignorados)` aplicando la rama de version que toque (§15)."""
+    import json
+
+    from uos.version import Lectura, como_leer, lee_permisivo
+
+    declarada = str(json.loads(crudo).get("uos_version", ""))
+    rama = como_leer(declarada)
+    if rama is Lectura.RECHAZO:
+        raise ValueError(
+            f"{nombre}: declara uos_version {declarada!r} y este lector implementa "
+            f"{UOS_VERSION!r}. Una version mayor no promete compatibilidad, y el riesgo no "
+            "son los campos que no conozco sino los que SI conozco y pueden haber cambiado "
+            "de significado: abrirlo seria adivinar."
+        )
+    if rama is Lectura.PERMISIVA:
+        m, ignorados = lee_permisivo(crudo)
+        return m, ignorados
+    return Manifiesto.model_validate_json(crudo), []
 
 
 def asset_de(
     ruta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
     media_type: str, **extra,
 ) -> Asset:
-    """Construye el sobre de un asset midiendo el fichero: hash y tamano reales."""
-    from uos.manifiesto import PRIORIDAD
+    """Construye el sobre de un asset midiendo el fichero: hash y tamano reales.
 
+    Si el asset es `external`, la `uri` que se pase se descarta y se nombra por su
+    **direccion de contenido**: un fichero que no viaja no tiene sitio dentro del
+    contenedor, y una ruta seria una promesa sobre un ZIP en el que no esta. Ver
+    `Asset._direccion_y_custodia`.
+    """
+    from uos.manifiesto import PRIORIDAD, direccion_de_contenido
+
+    h = sha256(ruta)
     return Asset(
-        id=id_, kind=kind, visit=visit, uri=uri, media_type=media_type,
-        sha256=sha256(ruta), bytes=ruta.stat().st_size, frame=frame,
+        id=id_, kind=kind, visit=visit,
+        uri=direccion_de_contenido(h) if extra.get("external") else uri,
+        media_type=media_type,
+        sha256=h, bytes=ruta.stat().st_size, frame=frame,
         load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
     )
 
@@ -151,14 +194,20 @@ def asset_de_directorio(
     proveedor los emitiera con identificador dentro, eso hay que cazarlo en la ingesta y no
     aqui, porque para entonces el DICOM ya lo lleva en sus tags.
     """
-    from uos.manifiesto import PRIORIDAD
+    from uos.manifiesto import PRIORIDAD, direccion_de_contenido
 
     partes = partes_de(carpeta)
     if not partes:
         raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
+    h = digesto_de_partes(partes)
+    # ⚠️ Externa, la serie sigue llevando sus `parts` con el hash de CADA corte. Es lo que
+    # permite que quien la custodie demuestre que no le falta ninguno — la garantia que se
+    # pierde es la custodia, no la trazabilidad.
     return Asset(
-        id=id_, kind=kind, visit=visit, uri=uri if uri.endswith("/") else uri + "/",
-        media_type=media_type, sha256=digesto_de_partes(partes),
+        id=id_, kind=kind, visit=visit,
+        uri=(direccion_de_contenido(h) if extra.get("external")
+             else (uri if uri.endswith("/") else uri + "/")),
+        media_type=media_type, sha256=h,
         bytes=sum(p.bytes for p in partes), frame=frame, parts=partes,
         load_priority=extra.pop("load_priority", PRIORIDAD[kind]), **extra,
     )

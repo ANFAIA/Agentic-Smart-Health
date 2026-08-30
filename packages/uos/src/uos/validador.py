@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from uos.contenedor import MANIFIESTO
-from uos.manifiesto import Clase, Manifiesto, digesto_de_partes
+from uos.contenedor import MANIFIESTO, lee_manifiesto_de
+from uos.manifiesto import UOS_VERSION, Clase, Manifiesto, digesto_de_partes
 from uos.procedencia import CADENA, FIRMAS, Cadena, revisa_cadena
 from uos.vistas import VISTAS, Vista
 
@@ -48,6 +48,13 @@ class Informe:
     # no hay historial que recorrer, y son cosas distintas.
     version: int = 0
     vistas: int = 0
+    # Cuantos originales adquiridos REFERENCIA el contenedor sin custodiarlos.
+    #
+    # ⚠️ Es un RECUENTO y no un aviso por asset, y la diferencia importa: que los
+    # originales no viajen es la definicion del formato, no una excepcion. Un aviso por
+    # cada uno saltaria en todos los assets de todos los contenedores siempre, y un aviso
+    # que nunca distingue nada deja de leerse — enterrando los que si dicen algo.
+    externos: int = 0
 
     @property
     def valido(self) -> bool:
@@ -74,7 +81,16 @@ def valida(ruta: Path) -> Informe:
                 break
         crudo = z.read(MANIFIESTO)
         _valida_esquema(crudo, inf)
-        m = Manifiesto.model_validate_json(crudo)
+        # ⚠️ La rama de version PRIMERO: si el contenedor declara una mayor superior esto
+        # eleva, y es lo correcto — no se valida lo que no se sabe interpretar (§15).
+        m, ignorados = lee_manifiesto_de(crudo, nombre=ruta.name)
+        if ignorados:
+            inf.avisos.append(
+                f"el contenedor declara uos_version {m.uos_version!r} y este validador "
+                f"implementa {UOS_VERSION!r}: se han IGNORADO {len(ignorados)} campo(s) que "
+                "no conoce, y por eso no puede emitir una version nueva de este caso: "
+                + ", ".join(ignorados)
+            )
         _valida_assets(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
@@ -124,7 +140,11 @@ def _valida_esquema(crudo: bytes, inf: Informe) -> None:
 def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
     """Cada asset existe y su hash cuadra. Verificar es la politica en ingesta (§8)."""
     dentro = set(z.namelist())
+    referenciados: list[str] = []
     for a in m.assets:
+        if a.external:
+            referenciados.append(a.id)
+            continue
         if a.uri.endswith("/"):
             _valida_serie(z, a, dentro, inf)
             continue
@@ -141,6 +161,19 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
             inf.errores.append(
                 f"asset {a.id}: declara {a.bytes} bytes y tiene {len(crudo)}"
             )
+
+    # ⚠️ **Una linea por CONTENEDOR, no una por asset.** Los originales adquiridos se
+    # referencian y no viajan: es el formato (ver `Asset.external`), asi que avisar de cada
+    # uno seria repetir la definicion tantas veces como assets tenga el caso. Lo que sigue
+    # mereciendo decirse una vez es que de estos el validador no puede comprobar NADA: su
+    # `sha256` acredita cual es el fichero, y quien lo custodie tendra que demostrarlo.
+    if referenciados:
+        inf.externos = len(referenciados)
+        inf.avisos.append(
+            f"el contenedor REFERENCIA {len(referenciados)} original(es) adquirido(s) que "
+            "no custodia, asi que su contenido no se verifica aqui: "
+            + ", ".join(referenciados)
+        )
 
 
 def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Informe) -> None:

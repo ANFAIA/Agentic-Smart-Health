@@ -82,30 +82,42 @@ Lo que falta no es afinar un umbral: es **el color**, que es la señal con la qu
 clínico ve dónde acaba el esmalte y que hoy no llega al modelo. Y está dentro del propio
 contenedor, en las fotos clínicas — medido en `docs/research/frontera-encia-desde-foto.md`.
 
-### 3.2 · El volumen se ve como polvo, y la causa no es el visor
+### 3.2 · El volumen se ve como puntos sueltos, y es un fallo de submuestreo
 
-Está medido y tiene una explicación exacta:
+Medido, y con una causa concreta que **no** es una limitación de fondo:
 
-- el `cbct-agent` fija la σ de cada gaussiana en **medio vóxel** — 0,075 mm — y son todas
-  iguales: **un solo valor distinto en 1.341.421 primitivas**;
-- el espaciado real entre vecinas en el campo exportado es **0,212 mm** de mediana;
-- luego **σ/espaciado = 0,35**, y en el centro de una celda el campo reconstruido cae
-  prácticamente a cero. Sondeado dentro del hueso más denso —150 vecinas en 1 mm—, el
-  campo va de 0,795 en el centro de una gaussiana a ~0 entre ellas.
+- el `cbct-agent` siembra σ = **medio vóxel en cada eje** — (0,075, 0,075, 0,225) mm sobre
+  un vóxel de 0,15 × 0,15 × 0,45. Eso es correcto;
+- pero el volumen trae ~**12 millones** de vóxeles de tejido duro y el tope son 1,5 M, así
+  que el agente submuestrea con `occupied[::step]`, `step = 9`, y quedan 1.341.421;
+- `[::9]` recorta sobre un array en **orden raster**, así que se come ocho de cada nueve
+  **a lo largo de un solo eje**. Medida la separación entre gaussianas consecutivas dentro
+  de una fila: **1,35 mm en el 73 % de los casos**;
+- luego **σ/separación = 0,056 en ese eje**: las gaussianas son dieciocho veces más
+  pequeñas que su propia separación. Sondeado dentro del hueso más denso, el campo va de
+  1,21 en el centro de una gaussiana a 0,016 entre ellas — **rizado del 99 %**.
 
-Es decir: **el campo no es un continuo, son 1,34 millones de puntos aislados**, y ninguna
-ganancia de visualización lo convierte en volumen. En el visor se compensa inflando el
-sprite al espaciado medido de la nube, y eso es un apaño declarado, no una solución.
+Es decir: el campo exportado no es una nube, son **planos densos separados 1,35 mm**. Y no
+es el precio de que el dato sea medido: **es que el submuestreo es anisótropo por
+construcción y σ no se reescala con él.**
 
-⚠️ **Y la causa de fondo no es un error, es una elección.** Media σ por vóxel es lo
-correcto para una **semilla** de 3DGS: el optimizador debe crecerlas y estirarlas. Aquí no
-hay optimizador **a propósito** — en cuanto un optimizador mueve las primitivas para que
-la imagen cuadre, dejan de ser medidas, y todo el proyecto se apoya en que `density` es
-atenuación medida y no un parámetro ajustado. Se eligió medido sobre bonito.
+Dos arreglos, los dos pequeños:
 
-Lo que hay que arreglar, entonces, **no es el dato: es el renderizador.** Un campo de
-densidad medido se dibuja con integración volumétrica y una función de transferencia —que
-es la misma pieza que falta para poder rellenar `value_range`—, no con sprites aditivos.
+1. **Diezmar en el espacio y no en el raster.** Quedarse con uno de cada dos vóxeles *en
+   cada eje* es el mismo 8:1 pero isótropo: 0,30 mm en los tres ejes en vez de 1,35 en uno.
+2. **Escalar σ con el factor de diezmado** (×`step`^⅓). Hoy no crece nada.
+
+Con las dos, σ/separación vuelve a ~0,5 y el campo se lee como volumen **sin dejar de ser
+una medida**.
+
+⚠️ **Y una consecuencia de conformidad, aparte del aspecto:** el campo que viaja en el
+contenedor **no es el volumen, es una submuestra de uno de cada nueve**. El agente lo sabe
+—baja su confianza a 0,9 por ello— pero el sidecar `.gs.json` **no lo declara**. Quien mida
+sobre ese campo está midiendo una submuestra sin que el fichero se lo diga.
+
+En el visor, mientras tanto, cada sprite se dibuja inflado hasta el espaciado medido de la
+nube. Es un apaño, y encima insuficiente: ese espaciado (0,212 mm) es la distancia al
+vecino de otra fila, no el hueco real de 1,35 mm.
 
 ### 3.3 · La raíz reconstruida es un bulto
 
@@ -142,11 +154,14 @@ El orden importa: los tres primeros desbloquean cosas que hoy no se pueden ni me
    cotas. Cambia más que otro entrenamiento sobre Teeth3DS+ — y eso está medido en
    `docs/research/segmentacion-diente-cbct.md`, donde el modelo mejor perdió en la tarea
    real.
-3. **Renderizador volumétrico en el visor.** Desbloquea §3.2 y §3.4, y es lo que convierte
-   el CBCT del contenedor en algo que un clínico mira en vez de un adorno.
-4. Anclar el margen a la curvatura cervical (§3.4).
-5. OCR para informes escaneados: es el único fallo de la cifra de fiabilidad (§1).
-6. Segunda visita real, para ejercitar `visits[]` de verdad y convertir el seguimiento
+3. **Arreglar el submuestreo del campo** (§3.2): diezmar en el espacio en vez de en el
+   raster, escalar σ con el factor, y declararlo en el `.gs.json`. Es pequeño y es la
+   causa real de que el campo se vea como puntos sueltos.
+4. **Renderizador volumétrico en el visor.** Desbloquea §3.4 y es lo que convierte el CBCT
+   del contenedor en algo que un clínico mira en vez de un adorno.
+5. Anclar el margen a la curvatura cervical (§3.4).
+6. OCR para informes escaneados: es el único fallo de la cifra de fiabilidad (§1).
+7. Segunda visita real, para ejercitar `visits[]` de verdad y convertir el seguimiento
    longitudinal en una resta.
 
 ---

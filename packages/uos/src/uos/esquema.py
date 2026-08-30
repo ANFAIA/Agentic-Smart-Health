@@ -30,9 +30,19 @@ from uos.manifiesto import UOS_VERSION, Manifiesto
 # sirve para validar un contenedor antiguo, que es justo cuando hace falta.
 RUTA = Path("schemas") / f"uos-manifest-{UOS_VERSION}.schema.json"
 
-# El identificador del esquema. Es una URI, no una URL que resuelva: mientras el spec no
-# se publique no hay dónde alojarlo, y poner una que devuelva 404 sería peor que ninguna.
-ID = f"https://histora.dev/schemas/uos-manifest-{UOS_VERSION}.schema.json"
+# El identificador del esquema, y **resuelve**. Antes apuntaba a `histora.dev`, un dominio
+# que nadie ha registrado: un `$id` no está obligado a descargarse —JSON Schema pide una URI,
+# no una URL— pero escribir `https://` le dice a quien lo lee que haga `curl`, y fallaba. El
+# esquema ya vivía en un repositorio público, así que la promesa se cumple sin comprar nada.
+#
+# ⚠️ Fijado a una ETIQUETA y no a `main`. Un identificador que devuelve contenidos distintos
+# según el día no identifica: si esto apuntara a la rama, el mismo `$id` describiría un
+# contrato u otro según cuándo se resolviera, que es justo lo que un `$id` existe para evitar.
+# La etiqueta se crea al publicar cada versión del formato.
+ID = (
+    "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/"
+    f"uos-spec-v{UOS_VERSION}/schemas/uos-manifest-{UOS_VERSION}.schema.json"
+)
 
 
 def esquema_del_manifiesto() -> dict[str, Any]:

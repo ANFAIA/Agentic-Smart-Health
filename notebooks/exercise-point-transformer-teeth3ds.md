@@ -479,3 +479,258 @@ entrada es una arcada **en pose canónica**, no una malla cualquiera. Sin eso, e
 diente no significa nada fuera del dataset con el que se midió. Implementado en
 [`scripts/segmentar_fdi.py`](../scripts/segmentar_fdi.py); el uso posterior de las etiquetas está
 en [`registro-por-diente-histora.md`](registro-por-diente-histora.md).
+
+## A7 · La FRONTERA — lo que ninguna métrica de aquí estaba midiendo
+
+Todo lo anterior mide **identificación**: ¿el código mayoritario de cada diente es el
+correcto? Nada mide **dónde acaba un diente y empieza el de al lado**. Y son cosas
+distintas: una etiqueta que se pasa dos milímetros al vecino no cambia una mayoría, así
+que puede convivir con 0,96 de FDI por diente sin que ningún número de esta ficha se
+mueva. Es exactamente lo que un clínico ve al encender una pieza en el visor y arrastra
+un trozo de la contigua.
+
+La medida que sí lo ve es el **ancho mesiodistal** de cada corona etiquetada contra la
+tabla anatómica (`export_agents.anatomia.anchos_de_corona`). Dos detalles del cálculo no
+son opcionales: se toma solo la **componente conexa mayor** de cada etiqueta —con todos
+sus vértices el 27 de un caso real «mide» 41 mm, porque se está midiendo hasta la mota
+más lejana— y el **rango del 1 al 99 %**, no el máximo.
+
+### Calibración: ¿cuánto marca sobre etiquetas de experto?
+
+Sobre 330 coronas anotadas de 25 maxilares de Teeth3DS+:
+
+| | exceso mediano | coronas > +1,5 mm |
+|---|---|---|
+| **verdad anotada** | **+0,28 mm** | **6 %** |
+
+O sea que el umbral de +1,5 mm deja fuera la variación anatómica normal. La medida no
+está sesgada.
+
+### El modelo, sobre el split de TEST (20 maxilares, 80/20 semilla 42)
+
+| decodificación | acierto/punto | FDI/diente | exceso mediano | coronas anchas |
+|---|---|---|---|---|
+| `argmax` por punto | 0.898 | 0.958 | +0,96 mm | **33 %** |
+| contigüidad `beta=2` | **0.908** | **0.962** | +0,92 mm | **33 %** |
+
+**Un tercio de las coronas tiene la frontera fuera de tolerancia con 0,958 de FDI por
+diente.** Cinco veces la tasa natural. Las dos métricas que esta ficha publica no lo ven.
+
+### La decodificación con contigüidad y qué separa
+
+`tooth_aggregation.suaviza_contiguidad` decodifica el mismo `logprob` con ICM sobre el
+grafo kNN, añadiendo el único hecho que el `argmax` por punto ignora: **un diente es un
+parche contiguo**. No reentrena nada.
+
+- **Quita las motas**: sobre un maxilar real de 112.067 vértices, componentes conexas por
+  pieza **119 → 30** e islas **6,8 % → 1,5 %**. En test, +1,0 punto de acierto por punto
+  y +0,4 de FDI por diente — no degrada nada, por eso es el defecto de `aggregate_teeth`.
+- **No mueve la frontera**: coronas anchas 33 % → 33 %, exceso mediano −0,04 mm. En el
+  caso propio, 9 de 15 antes y después con el exceso medio moviéndose una centésima.
+
+Y esa separación **es el resultado**. El término de contigüidad pesa como mucho `beta`,
+así que no puede con una diferencia de log-probabilidad mayor: donde el modelo se
+equivoca **con confianza** —y en el punto de contacto interproximal se equivoca con
+confianza— no hay nada que decodificar mejor. La frontera pide otro modelo, no otro
+decodificador.
+
+### Fuera de Teeth3DS+
+
+Sobre el maxilar de `histora` (otro escáner, otra pose, dentición con implantes) las
+coronas anchas suben de **33 % a 60 %** (9 de 14), con excesos de hasta +9,1 mm en el 27.
+Es la misma caída que A6 documenta para la pose: el número de test no se transfiere por
+decreto.
+
+## A8 · De qué se pasa la corona, y cuatro intentos de arreglarlo
+
+A7 midió que un tercio de las coronas queda fuera de tolerancia con 0,958 de FDI por
+diente. A8 va a por la causa y prueba los arreglos que no exigen reentrenar.
+
+### Lo que sobra es ENCÍA, no el diente vecino
+
+Sobre 12 maxilares de test con verdad anotada, contando los vértices que el modelo mete
+de más en una corona:
+
+| de dónde salen | vértices | |
+|---|---|---|
+| eran **encía** | 310.668 | **80,7 %** |
+| eran el **diente vecino** | 74.393 | 19,3 % |
+| *(el fallo contrario: corona dada por encía)* | *998* | — |
+
+**Un sesgo de 300 a 1.** No es confusión entre piezas contiguas: es la corona alargándose
+hacia apical sobre la encía, y de ahí ensanchando también en mesiodistal por la banda
+gingival. O sea que el ancho de A7 mide sobre todo la frontera **diente/encía** — la que
+este proyecto ya tenía medido que **no está en la forma sino en el color**.
+
+### La frontera anatómica SÍ es un valle, y nuestro escáner lo captura
+
+Concavidad por arista (`1 − cos` entre normales, solo donde el diedro es cóncavo), sobre
+10 maxilares con anotación de experto:
+
+| aristas | mediana | media |
+|---|---|---|
+| dentro de un diente | 0,0000 | 0,0060 |
+| **diente ↔ diente** | **0,1048** | **0,1519** — 25× |
+| diente ↔ encía | 0,0394 | 0,0575 |
+
+Y la señal no es propia del dataset: la malla de `histora` tiene la misma distribución
+(p99 0,133 frente a 0,127; 1,61 % de aristas por encima de 0,1 frente a 1,54 %). Con las
+etiquetas del MODELO, en cambio, las aristas «diente ↔ diente» salen a **0,75×** del
+interior de un diente — *menos* cóncavas. El modelo corta recto por superficie lisa.
+
+### Cuatro intentos, cuatro negativos
+
+| intento | punto | FDI/diente | coronas anchas |
+|---|---|---|---|
+| `argmax` (referencia) | 0.898 | 0.958 | 33 % |
+| contigüidad `beta=2` | 0.908 | 0.962 | 32 % |
+| **aristas pesadas por el valle** (λ=6, 12) | 0.909 | 0.957 | **32 %** |
+| **unario aplanado** (T=3, 10, 30) | 0.911 | 0.966 | **33–34 %** |
+| **checkpoint A3 boundary+centroid** | 0.709 | 0.820 | **57 %** |
+
+- **Pesar las aristas por concavidad no mueve la frontera.** ICM es local y el error es
+  regional: cuando el modelo se queda milímetros de la corona vecina, toda esa banda tiene
+  un unario equivocado y el valle más cercano está fuera del alcance de una actualización
+  por vecindad.
+- **No es sobreconfianza.** Aplanar el unario hasta T=30 no cambia nada.
+- **La *boundary loss* de A3 es peor en todo**, también en la frontera —57 % contra 33 %—.
+  A3 la declaró «sin efecto medible» porque la midió con `tooth_acc`, que es ciego a esto.
+- **El valle no es una barrera cerrada.** Cortando las aristas cóncavas y tomando
+  componentes conexas, a cualquier umbral entre 0,001 y 0,05 un solo parche se queda con
+  el **69–99,9 %** de los vértices y la pureza no pasa de **0,66**. Una partición
+  geométrica por umbral no separa los dientes: la corona sigue cosida a la encía por el
+  margen gingival, cuya concavidad es la mitad.
+
+### El color: real, en la dirección correcta, insuficiente
+
+Los cuatro negativos apuntan al mismo sitio —la frontera diente/encía, que está en el
+color— y desde el PnP hay color medido en el **68 %** de los vértices. Así que se probó.
+
+| comprobación | resultado |
+|---|---|
+| `a*` frente a las etiquetas, global | 0,85 σ |
+| ídem por pieza (por si el flash rompe un umbral único) | **0,61 σ** — peor |
+| ídem solo en vértices vistos de frente (cos > 0,85) | 0,70 σ |
+| cobertura de color medido en el margen gingival | 64,3 % (73,4 % lejos de él) |
+| **recolocar la frontera con la máscara y medir el ancho** | **+2,36 → +1,94 mm · anchas 9/14 → 9/14** |
+
+La señal **existe y no es ruido**: las coronas peores son las que más se estrechan
+(FDI 27 −4,3 mm, 17 −1,9, 26 −1,1) y 11 de 15 mejoran. Pero **no separa vértice a vértice**
+y no mete ni una pieza en tolerancia.
+
+⚠️ **Y por el camino se cayó el número en el que se apoyaba todo.** `frontera-encia-desde-foto.md`
+declaraba 3,4–4,3 σ para esta frontera; esas «dos clases» son las que produce **Otsu**, que
+elige el corte que **maximiza esa separación**. La cifra establece que el histograma de `a*`
+es bimodal, no que sus modos sean diente y encía. Corregido en la ficha.
+
+### Lo que queda en pie
+
+Ningún camino de los probados coloca la frontera. Y **la comprobación limpia sigue sin
+hacerse**, porque falta el dato para hacerla: Teeth3DS+ tiene etiquetas por vértice y no
+tiene color; nuestros casos tienen color y no tienen etiquetas. Mientras no se crucen, tanto
+los 3,4 σ como los 0,85 σ se miden contra una referencia que no es la anatomía.
+
+Cruzarlas es barato y es el siguiente paso: **renderizar color plausible sobre una malla de
+Teeth3DS+ con sus etiquetas**, o **anotar a mano el margen gingival de una sola pieza** de
+un caso propio. Cualquiera de las dos convierte esto en una pregunta decidible.
+
+## A9 · El árbitro que faltaba ya estaba en Teeth3DS+
+
+A8 cerró diciendo que la comprobación limpia no se podía hacer porque falta el dato:
+etiquetas y color no viven en el mismo sitio. Eso era cierto **para validar el color**, y
+se generalizó de más. Para validar una FRONTERA no hace falta cruzar dos datasets: hace
+falta una **segunda métrica calibrada sobre la misma anotación de experto**, independiente
+de la primera. Entonces cada propuesta se valida con la que NO usa.
+
+Las dos, medidas sobre los mismos 12 maxilares de Teeth3DS+:
+
+| métrica | experto | nuestro pipeline |
+|---|---|---|
+| **fracción de la malla etiquetada como diente** | 53,9 % (44,2–59,8) | **72,7 %** |
+| **razón de concavidad en el margen** | **+1,82** (1,50–2,25) | **−0,06** |
+| ancho mesiodistal contra tabla | 4 % de coronas anchas | 9 de 14 (64 %) |
+
+La razón de concavidad es la concavidad media de los vértices que tocan encía dividida por
+la concavidad típica de cualquier punto de la malla. El denominador la hace inmune a la
+escala del escáner y a la densidad del mallado. En anotación de experto sale **+1,8 con un
+rango de 0,7 sobre doce pacientes**: el margen gingival es un pliegue y se mide. En las
+nuestras sale **−0,06**: la frontera del modelo cae en un sitio donde la superficie no hace
+nada. No está mal colocada, está colocada al azar respecto de la anatomía.
+
+⚠️ **Antes de nada, una trampa de carga que invalidó la primera tanda entera.** Leer el STL
+con `vtkCleanPolyData` refunde vértices y devuelve **el mismo número** —112.067, igual que
+el fichero de etiquetas— **en otro orden**. Que los conteos coincidan no prueba nada. Lo
+que lo delata es la fracción de aristas cuyos dos extremos comparten etiqueta: **0,87** con
+el orden bueno, **0,38** con el reordenado, **0,13** si las etiquetas fuesen aleatorias. La
+malla tiene que venir del `MeshAgent`, que es el que produjo las etiquetas.
+
+### Tres propuestas, medidas cada una con la métrica que no optimiza
+
+| propuesta | fracción diente | razón concavidad | coronas anchas | exceso medio |
+|---|---|---|---|---|
+| `argmax` crudo (el del pipeline) | 70,2 % | −0,11 | 9/14 | +4,24 mm |
+| contigüidad ICM `beta=2` | 72,7 % | −0,06 | 9/14 | +4,27 mm |
+| **corte por ANCHO** | 20,0 % | **−0,37** | **0/14** | **+0,00 mm** |
+| **anillo más cóncavo** | 40,7 % | +0,02 | **4/13** | +3,62 mm |
+| **experto (n=12)** | **53,9 %** | **+1,82** | **4 %** | **+0,67 mm** |
+
+**El corte por ancho es la ley de Goodhart, medida.** Subir el corte por el eje oclusal
+hasta que cada corona cabe en su tabla mete a las 14 en tolerancia —el exceso baja a cero—
+y a la vez aleja la frontera del pliegue (−0,06 → **−0,37**) y deja el 20 % de la malla como
+diente, contra el 53,9 % del experto. Una frontera que satisface la restricción sin
+parecerse a la anatomía. Si el ancho se usa para proponer, el ancho ya no puede juzgar; el
+árbitro independiente es lo único que lo cazó.
+
+**El pliegue como barrera dura no cierra.** Umbral de concavidad + componentes conexas
+fuga por los huecos del pliegue: a cualquier umbral entre el percentil 60 y el 95, una
+pieza se traga la arcada (exceso +21 a +52 mm). Repite el negativo de A8 con otra
+implementación, y por el mismo motivo: el margen gingival es un pliegue **interrumpido**.
+
+### Por qué ningún decodificador lo arregla — ahora con el número
+
+A8 dijo «ICM es local y el error es regional». La medida exacta es más específica y cierra
+la familia entera:
+
+- Para bajar del 72,7 % al 53,9 % hay que voltear **21.068 vértices**.
+- El margen unario del vértice número 21.068 más débil es **1,99 nats**, y el **26,1 %** de
+  los vértices-diente están por debajo de 2. La banda que sobra **sí está al alcance** de
+  un término de vecindad con `beta=2`. No es sobreconfianza del modelo.
+- Y sin embargo, un ICM con el coste de corte **pegado al pliegue** —barato dentro de la
+  ranura, caro sobre superficie lisa, que es justo el término que le falta al Potts
+  isótropo— no mueve **nada** entre `beta=2` y `beta=16`: 72,7 %, 72,8 %, 72,7 %, 72,7 %.
+
+El motivo es que un prior de suavidad es **simétrico**, y los vértices que sobran se rodean
+unos a otros. Todos votan «diente», así que la vecindad **refuerza** el error en vez de
+corregirlo. Un prior de suavidad no corrige un sesgo coherente: lo consolida. Eso descarta
+de golpe cualquier arreglo del lado del decodificador —pesos por valle, temperatura,
+grafo—: los cuatro negativos de A8 y estos dos son el mismo negativo.
+
+### Lo único que mueve la frontera es el pliegue como EVIDENCIA
+
+Si la concavidad no puede entrar como coste de corte, tiene que entrar como geometría: para
+cada corona, se recorre la superficie desde su punto más oclusal hacia abajo —distancia
+geodésica, no un plano—, y cada nivel de esa distancia es un bucle cerrado alrededor de la
+pieza. La frontera propuesta es **el bucle más cóncavo**. Sale festoneado solo, que es como
+es un margen gingival, sin imponérselo.
+
+Arbitrado por el ancho, que no interviene en la propuesta: **coronas anchas 9/14 → 4/13**,
+la primera mejora real de esta cifra en todo el cuaderno. Pero se pasa de largo: deja el
+40,7 % de la malla como diente contra el 53,9 % del experto, y por pieza el resultado es
+**bimodal** — el 11 y el 26 conservan el 95–98 % de su núcleo (no encontró pliegue) mientras
+el 17 y el 27 conservan el 6–20 % (encontró otro). Su razón de concavidad, +0,02, sigue
+lejísimos de +1,82: acierta el cuello en unas piezas y algo que no es el cuello en otras.
+
+### Lo que queda en pie
+
+- **La frontera del modelo no es imprecisa, es arbitraria**: −0,06 contra +1,82. Decirlo
+  así es más útil que «se pasa 4 mm», porque explica por qué ningún ajuste fino la mueve.
+- **Del lado del decodificador está cerrado.** Seis intentos, y ahora el motivo medido: la
+  banda sobrante es alcanzable (26,1 % bajo 2 nats) pero autoconsistente. Hay que cambiar
+  lo que el modelo cree, no cómo se lee lo que cree.
+- **El pliegue es la evidencia buena y no está agotado.** El anillo geodésico es la versión
+  más tonta posible —un solo nivel por pieza, elegido por concavidad media— y ya arregla
+  cinco coronas. La versión que toca es un bucle mínimo sobre la superficie que no tenga
+  que ser un nivel de nada.
+- **Y el árbitro se queda.** Dos métricas calibradas sobre experto, cada una capaz de
+  vetar lo que la otra premia, es lo que convierte esto en una pregunta decidible. No hacía
+  falta un dataset nuevo.

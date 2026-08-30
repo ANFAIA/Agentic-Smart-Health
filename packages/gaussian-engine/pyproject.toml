@@ -19,6 +19,18 @@ dependencies = [
 # y lo dice claro si falta.
 [project.optional-dependencies]
 gpu = ["torch>=2.4"]
+appearance = [
+    "torch>=2.4",
+    "gsplat>=1.0",
+    "torchmetrics>=1.0",
+    "Pillow>=10.0",
+    # `pose_foto`: PnP (opencv) y watershed (scikit-image), para sacar el color MEDIDO de
+    # las fotos en vez de pintar dos tonos. Van en este extra y no en las dependencias
+    # base por el mismo criterio que torch: importar el paquete no puede arrastrarlos, y
+    # el modulo los importa dentro de las funciones.
+    "opencv-python-headless>=4.10",
+    "scikit-image>=0.24",
+]
 
 [tool.uv.sources]
 core-schemas = { workspace = true }

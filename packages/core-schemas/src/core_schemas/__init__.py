@@ -13,6 +13,7 @@ from core_schemas.models import (
     SCHEMA_VERSION,
     ClinicalAttributes,
     Color,
+    ColorCorona,
     ColumnaCampo,
     Derivation,
     FDICode,
@@ -33,6 +34,7 @@ from core_schemas.models import (
 __all__ = [
     "SCHEMA_VERSION",
     "ClinicalAttributes",
+    "ColorCorona",
     "ContratoEtapa",
     "Hallazgo",
     "Color",

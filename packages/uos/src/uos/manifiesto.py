@@ -6,10 +6,12 @@ Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede ent
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 UOS_VERSION = "0.2"
 
@@ -99,6 +101,15 @@ class Parte(BaseModel):
     bytes: int = Field(ge=0)
 
 
+#: Una uri que no es una ruta sino la identidad del fichero. Ver `Asset._direccion_y_custodia`.
+DIRECCION = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def direccion_de_contenido(sha256: str) -> str:
+    """`sha256:<hex>` — como se nombra un asset que no viaja dentro del contenedor."""
+    return f"sha256:{sha256}"
+
+
 class Asset(BaseModel):
     """El sobre comun a todo asset (§4.1).
 
@@ -130,6 +141,34 @@ class Asset(BaseModel):
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
     sidecar_uri: str | None = None
+    # ⚠️ **De que otros assets sale este. No hay § que lo defina, y hace falta.**
+    #
+    # `scene/scene.glb` es la malla del escaner reindexada a glTF: MISMA geometria,
+    # 220.085 triangulos, los mismos que el STL. Pero el manifiesto lo declaraba como un
+    # asset suelto de tipo `mesh_gs_scene` —sin sidecar y sin ningun enlace al `asset.ios`
+    # que se declara FUERA por su hash—, asi que quien recibiera el contenedor no tenia
+    # como saber que esa malla es una conversion del escaner y no una fuente independiente.
+    # El dato estaba, pero dentro del propio GLB (`extras.uos_source_asset`): habia que
+    # parsear dieciocho megas de glTF para enterarse de algo que el manifiesto puede decir
+    # en una linea.
+    #
+    # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
+    # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
+    derived_from: list[str] = Field(default_factory=list)
+    # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es lo que hace
+    # TODO original adquirido —DICOM, STL, fotos, informes—: se referencia por su direccion
+    # de contenido y se acredita por `sha256`. No es un perfil ni una variante; es el
+    # formato, y por eso el defecto de este campo es lo unico que sorprende: `False` porque
+    # describe el sobre, no una recomendacion.
+    #
+    # Lo que el contenedor afirma de un asset asi es «se que fichero es», no «lo tengo». La
+    # verificacion byte a byte que el §1.1 del borrador pide del DICOM adquirido no se puede
+    # dar por construccion, y no se finge: `parts` sigue viajando para que quien SI lo
+    # custodie pueda demostrar que no le falta un corte.
+    #
+    # El validador lo dice UNA vez por contenedor y no una por asset: si todos los
+    # originales son externos siempre, un aviso por cada uno no distingue nada.
+    external: bool = False
 
     @field_validator("uri")
     @classmethod
@@ -138,12 +177,57 @@ class Asset(BaseModel):
 
         No es purismo: un `..` en una ruta de ZIP es la travesia de directorios clasica, y
         un lector que la resuelva ingenuamente escribe fuera del destino.
+
+        La direccion de contenido (`sha256:<hex>`) se acepta aparte: no es una ruta, asi
+        que las reglas de ruta no se le aplican. Que solo pueda usarla un asset externo lo
+        comprueba `_direccion_y_custodia`.
         """
+        if DIRECCION.fullmatch(v):
+            return v
         if not v.isascii() or v.startswith("/") or ".." in v.split("/"):
             raise ValueError(
                 f"uri {v!r}: las rutas internas son relativas, ASCII y sin '..'"
             )
         return v
+
+    @model_validator(mode="after")
+    def _direccion_y_custodia(self) -> Asset:
+        """Un asset externo se nombra por su CONTENIDO; uno interno, por su sitio.
+
+        **Por que la uri de un externo es el hash.** Un asset que no viaja no tiene «sitio
+        dentro del contenedor», asi que una ruta seria una promesa sobre un ZIP en el que
+        no esta. Lo unico que sigue siendo cierto de el es **que fichero es**, y eso es
+        exactamente lo que dice una direccion de contenido. Es la misma convencion que el
+        `ArtifactStore` del proyecto usa desde el principio (`sha256:<hex>`), asi que un
+        resolvedor que ya tenga un almacen direccionado por contenido no necesita saber
+        nada de UOS para servirlo.
+
+        ⚠️ Y tiene una propiedad que una ruta no tiene: **no puede llevar dato de
+        paciente**. La ruta local de un caso clinico lleva el directorio del paciente; un
+        hash no lleva nada. Referenciar saca ficheros del contenedor, no identidades.
+
+        Se comprueba en los dos sentidos, y el segundo importa igual: una direccion de
+        contenido en un asset que SI viaja seria un asset imposible de localizar dentro del
+        ZIP.
+        """
+        es_direccion = bool(DIRECCION.fullmatch(self.uri))
+        if self.external and not es_direccion:
+            raise ValueError(
+                f"asset {self.id}: es externo y su uri {self.uri!r} es una ruta. Un asset "
+                "que no viaja se nombra por su contenido: `sha256:<hex>`."
+            )
+        if es_direccion:
+            if not self.external:
+                raise ValueError(
+                    f"asset {self.id}: su uri es una direccion de contenido pero el asset "
+                    "viaja dentro; entonces no habria forma de encontrarlo en el ZIP."
+                )
+            if self.uri.split(":", 1)[1] != self.sha256:
+                raise ValueError(
+                    f"asset {self.id}: la direccion de contenido y el campo `sha256` no "
+                    "son el mismo hash."
+                )
+        return self
 
 
 def digesto_de_partes(partes: list[Parte]) -> str:
@@ -199,10 +283,27 @@ class Registro(BaseModel):
     verified_by: str | None = None
     regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
 
+    #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
+    #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
+    AUTO: ClassVar[str] = "auto:"
+
     @property
     def provisional(self) -> bool:
-        """Automatico y sin verificar por una persona."""
-        return self.method == "auto_dl" and not self.verified_by
+        """Automatico y sin verificar por una persona.
+
+        ⚠️ **Mira QUIEN lo calculo, no COMO.** Antes exigia `method == "auto_dl"`, y la
+        consecuencia es que no cubria ni nuestro propio caso: la unica registracion que
+        emitimos declara `method: "icp_surface"` con `operator: "auto:geometric-fusion-
+        agent@0.2.0"` y `verified_by` vacio. Automatica, sin revisar, 0,666 mm de residuo
+        — y no disparaba la regla que existe para ella.
+
+        Una salvaguarda escrita contra el nombre de UN algoritmo deja de funcionar en
+        cuanto alguien usa otro, que es siempre. Lo que decide si una alineacion es
+        provisional es si la miro una persona; `method` describe la tecnica y es otro dato.
+        """
+        return bool(self.operator and self.operator.startswith(self.AUTO)) and not (
+            self.verified_by
+        )
 
 
 class Visita(BaseModel):
@@ -245,10 +346,11 @@ class RecursoFHIR(BaseModel):
 class Extension(BaseModel):
     """Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).
 
-    **Por que hace falta.** UOS se apoya en glTF, que resolvio esto hace anos con
-    `extensionsUsed` / `extensionsRequired`: un lector abre el fichero, ve que extensiones
-    trae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese
-    mecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde
+    **Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /
+    `extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre
+    el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.
+    UOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
+    sobre de asset tienen donde
     decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
 
     La consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,

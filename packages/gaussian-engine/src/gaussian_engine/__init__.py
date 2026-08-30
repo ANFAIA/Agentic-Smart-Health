@@ -1,4 +1,4 @@
-"""Ajuste del campo gaussiano: de semillas isótropas del tamaño del vóxel a elipsoides.
+"""Ajuste del campo gaussiano y reconstrucción de apariencia con 3DGS.
 
 **Qué llena este paquete.** `cbct-agent` siembra una gaussiana por vóxel de tejido duro y
 declara —honestamente— que no inventa anisotropía que el CBCT no midió: escribe la misma
@@ -28,6 +28,10 @@ visor.
 """
 
 from gaussian_engine.agente import PERFIL, ajusta_campo, esquema
+from gaussian_engine.agente_apariencia import (
+    PERFIL_APARIENCIA,
+    esquema_apariencia,
+)
 from gaussian_engine.ajuste import (
     COMPRESION_FONDO,
     COMPRESION_REGION,
@@ -39,9 +43,19 @@ from gaussian_engine.ajuste import (
     evalua,
     siembra_por_rejilla,
 )
+from gaussian_engine.apariencia import (
+    EntrenamientoApariencia,
+    entrena_apariencia,
+)
 
 __all__ = [
-    "COMPRESION_FONDO", "COMPRESION_REGION", "ITERACIONES", "PERFIL", "TASA", "Ajuste",
-    "ajusta", "ajusta_campo", "ajusta_por_region", "esquema", "evalua",
-    "siembra_por_rejilla",
+    "Ajuste",
+    "COMPRESION_FONDO", "COMPRESION_REGION",
+    "EntrenamientoApariencia",
+    "ITERACIONES", "PERFIL", "PERFIL_APARIENCIA",
+    "TASA",
+    "ajusta", "ajusta_campo", "ajusta_por_region",
+    "entrena_apariencia",
+    "esquema", "esquema_apariencia",
+    "evalua", "siembra_por_rejilla",
 ]

@@ -119,6 +119,13 @@ def ajusta_campo(
     for clave in ("origin", "hu_range"):
         if clave in campo:
             arrays[clave] = campo[clave]
+    # `paso` y `n_origen` viajan con el artefacto para que el `.uos` pueda declarar
+    # la submuestrea: un PLY con 100K gaussianas y paso (3,3,1) indica que el volumen
+    # original tenia ~2,7M vóxeles. Sin esto el consumidor no sabe si el campo es
+    # completo o una submuestra. Ver `_lee_submuestreo` en `uos/agente.py`.
+    for clave in ("paso", "n_origen"):
+        if clave in campo:
+            arrays[clave] = campo[clave]
 
     nuevo = snapshot.model_copy(update={
         "gaussian_field_ref": store.put(**arrays),

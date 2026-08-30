@@ -105,6 +105,32 @@ jurisdicción donde el módulo de IA no está habilitado no requiere reexportar 
 sugiera el picking por `extras`: metidas en la escena, quitar `derived/` dejaría de quitar
 la inferencia y la regla se rompería en silencio.
 
+## 1.4 · Dos perfiles: el completo y el ligero
+
+El mismo formato admite dos maneras de empaquetar un caso, y **cambian la garantía, no la
+forma**.
+
+| | qué lleva | qué afirma |
+|---|---|---|
+| **completo** | todo dentro, DICOM byte a byte | «el DICOM que sale es el que entró», y el validador lo comprueba |
+| **ligero** (`--sin-originales`) | campo gaussiano, escena, manifiesto | «sé el hash de lo que debería haber ahí» |
+
+En el ligero los originales siguen **declarados**: mismo `id`, misma `uri` lógica, mismo
+`sha256` y mismo tamaño, con `external: true`. Quien tenga el fichero puede probar que es
+el mismo; el contenedor ya no lo custodia.
+
+⚠️ **Y eso deja de cumplir el §1.1 del spec**, que exige que el DICOM adquirido viaje
+byte-idéntico por trazabilidad forense. Es una decisión de producto —los originales viven
+en otro sistema— y se toma fuera del formato. Lo que el formato hace es **no dejar que
+las dos cosas parezcan la misma**: el validador **avisa por cada asset externo**, y un
+contenedor ligero declara menos niveles de conformidad por construcción, porque los
+niveles salen de lo que de verdad hay dentro.
+
+⚠️ La `uri` de un asset externo sigue siendo la ruta **lógica** (`scene/scan.stl`), nunca
+dónde está el fichero en un disco. No es estilo: la ruta local de un caso clínico lleva el
+directorio del paciente, y meterla en el manifiesto sacaría justo lo que el pseudónimo
+existe para no sacar.
+
 ## 2 · Qué le aporta esto a un profesional, hoy
 
 **Un caso se entrega entero, y llega entero.** Escáner, CBCT, fotos, informe y la

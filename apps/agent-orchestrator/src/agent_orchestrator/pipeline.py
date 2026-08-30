@@ -230,6 +230,23 @@ class PipelineResult:
     latency_s: float = 0.0
     patient_pseudonym: str = ""
 
+    def __post_init__(self) -> None:
+        # ⚠️ **Los motivos se DEDUPLICAN aquí, en el único sitio por el que pasan todos.**
+        # Se acumulan en cinco puntos distintos (`fuse`, cada etapa, `exportar`), y cada
+        # uno concatena los del resultado anterior con los suyos: una etapa que vuelve a
+        # emitir un motivo que ya estaba lo repetía. En el caso real salían «FDI 21» y
+        # «FDI 24» dos veces cada uno.
+        #
+        # No es cosmético. Esta lista la lee UNA PERSONA en el gate, y un motivo repetido
+        # se lee como dos problemas: infla la percepción de gravedad y esconde los demás
+        # en el scroll. El ruido es como se desactiva un gate.
+        #
+        # Se conserva el ORDEN de primera aparición —no se ordena— porque el orden cuenta
+        # en qué etapa se detectó cada cosa. Y va en `__post_init__` y no en cada punto de
+        # acumulación porque `replace()` lo vuelve a ejecutar: un punto nuevo queda
+        # cubierto sin que nadie se acuerde.
+        self.hitl_reasons = list(dict.fromkeys(self.hitl_reasons))
+
     @property
     def hitl_required(self) -> bool:
         """¿Necesita revisión humana antes de persistirse?"""
@@ -632,7 +649,8 @@ class IngestionPipeline:
             detected = seg.detected or None
 
         if snapshot is not None and detected is not None:
-            out = self.semantic_fusion.fuse(snapshot, detected=detected)
+            out = self.semantic_fusion.fuse(snapshot, detected=detected,
+                                            arcada_aportada=arcada)
             salidas.append(out)
             motivos += self._stage_reasons(out)
             motivos += self._conservacion("fusion-semantica", snapshot, out.snapshot)
@@ -657,6 +675,9 @@ class IngestionPipeline:
         malla: Any | None = None,
         escena_gs: Any | None = None,
         imagenes: Any | None = None,
+        # Los PDF del caso, tal como llegaron. Van dentro incluso en el perfil ligero: un
+        # papel escaneado en la carpeta de una clinica no lo custodia ningun otro sistema.
+        informes: Any | None = None,
         # La serie DICOM, para que el `.uos` suba a UOS-Vol. Es OPCIONAL y por peso: son
         # cientos de megas que multiplican por diez el tamaño del contenedor, así que
         # llevarlos es una decisión de quien exporta y no un valor por defecto.
@@ -665,6 +686,23 @@ class IngestionPipeline:
         # de `derived/` (§5.5). Sin ellos el campo va a `null`, que es la verdad.
         modelo_segmentacion: Any | None = None,
         render: bool = True,
+        # El campo ajustado (gaussian-engine) y su informe de ajuste. Va APARTE en el
+        # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot. Ver
+        # `packages/uos/src/uos/agente.py`.
+        campo_ajustado: Any | None = None,
+        ajuste: Any | None = None,
+        # El descriptor del campo ajustado (dict plano, construido en `caso_completo.py`
+        # para no acoplar UOS a gaussian_engine). Se vuelta tal cual en el sidecar.
+        campo_ajustado_descriptor: dict | None = None,
+        # ⚠️ Esta firma es una lista EXPLICITA de argumentos que hay que acordarse de
+        # ampliar cada vez que el agente de UOS gana uno, y ya ha costado: una ejecucion
+        # entera —451 s de entrenamiento incluidos— murio en la ultima linea con
+        # `unexpected keyword argument 'sin_malla'`. Si vuelve a pasar, la salida es
+        # reenviar `**kwargs` al canal de UOS en vez de enumerarlos.
+        sin_malla: bool = False,
+        # Version declarada del segmentador. Sin dato va `None` y el sidecar dice `null`:
+        # el hash de los pesos es lo que identifica el checkpoint de verdad.
+        version_segmentador: str | None = None,
     ) -> PipelineResult:
         """Materializa el snapshot en `destino`: STL + PLY + render, con su error medido.
 
@@ -779,6 +817,7 @@ class IngestionPipeline:
                 malla=malla,
                 escena_gs=escena_gs,
                 imagenes=list(imagenes or []),
+                informes=list(informes or []),
                 # La serie DICOM entera, si el llamante la pide: sube el contenedor a
                 # UOS-Vol. Sin ella el `.uos` es UOS-Core y lo declara.
                 cbct=cbct,
@@ -792,6 +831,22 @@ class IngestionPipeline:
                 # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda
                 # lo oclusal, cuál es la derecha del paciente— para nombrar las vistas.
                 etiquetas_ios=etiquetas_ios,
+                # El campo ajustado (gaussian-engine) y su informe: van APARTE en el
+                # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot.
+                campo_ajustado=campo_ajustado,
+                ajuste=ajuste,
+                campo_ajustado_descriptor=campo_ajustado_descriptor,
+                # ⚠️ **`sin_originales` NO se reenvia, y por eso no esta aqui.** Lo
+                # estuvo, con su propio `= False` en esta firma, y ese valor por
+                # defecto duplicado le gano al `= True` del agente: el contenedor
+                # salio con el STL del escaner, las nueve fotos y los tres informes
+                # dentro, 216 MB, mientras el agente creia estar emitiendo el perfil
+                # sin originales. Que no viajen originales es una decision DEL
+                # FORMATO, y vive en un solo sitio —`uos.agente`—, que es donde se
+                # puede leer con su motivo al lado. Un defecto escrito dos veces
+                # vuelve a divergir.
+                sin_malla=sin_malla,
+                version_segmentador=version_segmentador,
             ),
         ]
         if render:

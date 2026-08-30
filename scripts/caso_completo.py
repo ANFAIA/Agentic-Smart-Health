@@ -44,6 +44,32 @@ from ingestion_agents import ArtifactStore  # noqa: E402
 FOTOS = ("*.jpg", "*.jpeg", "*.png")
 
 
+def _submuestreo_desde(store: ArtifactStore, snapshot: object, n_final: int) -> dict:
+    """Construye el dict de submuestreo desde el artefacto del campo semilla.
+
+    El `cbct-agent` guarda `paso` (array de 3 enteros en orden z,y,x) y `n_origen`
+    (total de vóxeles antes de submuestrear). Esta función los lee y los formatea
+    para el sidecar del `.uos`.
+    """
+    import numpy as np
+
+    if snapshot.gaussian_field_ref is None:
+        return {"paso_voxeles": [1, 1, 1], "de": n_final, "a": n_final}
+    try:
+        datos = store.load(snapshot.gaussian_field_ref)
+    except (KeyError, OSError, ValueError):
+        return {"paso_voxeles": [1, 1, 1], "de": n_final, "a": n_final}
+    if "paso" not in datos or "n_origen" not in datos:
+        return {"paso_voxeles": [1, 1, 1], "de": n_final, "a": n_final}
+    paso_arr = np.asarray(datos["paso"], dtype=int)
+    # `paso` viene en orden (z, y, x); lo pasamos a (x, y, z)
+    return {
+        "paso_voxeles": paso_arr[::-1].tolist(),
+        "de": int(datos["n_origen"]),
+        "a": n_final,
+    }
+
+
 def _texto_extraible(pdf: Path) -> int:
     """Caracteres que `pdftotext` saca del PDF, o 0 si no hay binario ni texto."""
     import subprocess
@@ -193,6 +219,73 @@ def linea(o) -> str:
             f"{(o.detail or '')[:70]}")
 
 
+def _con_color(snapshot, tonos):
+    """El snapshot con el color medido metido en sus observaciones por pieza.
+
+    Si una pieza ya tiene observación del informe, se le AÑADE el color en vez de crear
+    otra entrada: son dos afirmaciones sobre el mismo diente y partirlas obligaría a quien
+    lee a reunirlas. Si no la tiene, se crea una con lo único que se sabe de ella.
+    """
+    if snapshot is None or not tonos:
+        return snapshot
+    from core_schemas import (
+        ClinicalAttributes,
+        Derivation,
+        Modality,
+        Provenance,
+        RegionalObservation,
+    )
+
+    por_fdi = {t.fdi: t for t in tonos}
+    salida, vistos = [], set()
+    for obs in snapshot.regional:
+        tono = por_fdi.get(int(obs.region_id)) if str(obs.region_id).isdigit() else None
+        if tono is None:
+            salida.append(obs)
+            continue
+        vistos.add(tono.fdi)
+        salida.append(obs.model_copy(update={
+            "attributes": obs.attributes.model_copy(update={"color": _color(tono)})
+        }))
+    for fdi, tono in sorted(por_fdi.items()):
+        if fdi in vistos:
+            continue
+        salida.append(RegionalObservation(
+            region_id=str(fdi),
+            attributes=ClinicalAttributes(color=_color(tono)),
+            timestamp=snapshot.timestamp,
+            provenance=Provenance(
+                source_file=f"sha256:{tono.foto_sha256}",
+                modality=Modality.IMAGE,
+                agent="gaussian-engine/tono_foto",
+                confidence=1.0,
+                derivation=Derivation.DETERMINISTIC,
+            ),
+        ))
+    # ⚠️ `model_copy` y NO `dataclasses.replace`: `TwinSnapshot` es un modelo pydantic.
+    # `replace` sobre uno lanza «replace() should be called on dataclass instances», y aquí
+    # eso lo recogía el `except` de la apariencia, que lo anunciaba como un fallo de
+    # entrenamiento. El contenedor salía entero, con su PSNR y su cabecera, y sin color en
+    # `clinical/observations.json`: un fallo de contrato disfrazado de aviso.
+    return snapshot.model_copy(update={"regional": salida})
+
+
+def _color(tono):
+    from core_schemas import ColorCorona
+
+    return ColorCorona(
+        cervical=tuple(float(x) for x in tono.lab[0]),
+        medio=tuple(float(x) for x in tono.lab[1]),
+        incisal=tuple(float(x) for x in tono.lab[2]),
+        foto_sha256=tono.foto_sha256,
+        n_pixeles=int(tono.n_pixeles),
+        correccion_iluminacion=(
+            None if tono.correccion is None
+            else tuple(float(b) for b in tono.correccion)
+        ),
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -217,6 +310,13 @@ def main() -> int:
         help="Directorio con el escaner ya entrenado como 3DGS (lo produce "
              "scripts/entrena_gs_escaner.py). Anade dos capas de APARIENCIA al paquete "
              "del visor, llevadas al marco del twin. No sustituye a las capas medidas.",
+    )
+    ap.add_argument(
+        "--entrena-apariencia", action="store_true",
+        help="Entrena 3DGS contra fotos intraorales para obtener color REAL del paciente "
+             "(gsplat + Blender, necesita GPU). El campo resultante viaja como "
+             "`asset.apariencia` en el .uos con perfil 'ash-gs-apariencia/1.0'. "
+             "⚠️ REQUIERE `--gs-apariencia` y fotos en image_refs.",
     )
     ap.add_argument(
         "--ajusta-campo", action="store_true",
@@ -254,20 +354,51 @@ def main() -> int:
              "sencillamente no se ejecuta, que es lo que ha pasado hasta hoy.",
     )
     ap.add_argument(
-        "--con-volumen", action="store_true",
-        help="Mete la serie DICOM ENTERA en el .uos y sube su conformidad a UOS-Vol. "
-             "Va detrás de una bandera por PESO: la serie de un CBCT son cientos de "
-             "megas y multiplica por diez el tamaño del contenedor. Sin esto el .uos es "
-             "UOS-Core y lo declara, en vez de fingir que lleva el volumen.",
+        "--solo-gaussianas", action="store_true",
+        help="El contenedor lleva SOLO el campo gaussiano y el manifiesto: fuera también "
+             "la malla convertida `scene.glb`. Los originales (STL, DICOM, fotos, "
+             "informes) no viajan nunca, con esta bandera o sin ella: se declaran por su "
+             "dirección de contenido. ⚠️ Sin la malla, `derived/seg_teeth` tampoco viaja "
+             "—indexa sus vértices— así que el FDI tiene que ir por gaussiana en el "
+             "propio campo.",
     )
     ap.add_argument(
         "--fdi", type=Path, default=None,
         help="`region_id` por vertice del escaneo intraoral. Es la mitad que dice CUAL es "
              "cada diente: el modelo del CBCT es binario y no puede darla.",
     )
+    ap.add_argument(
+        "--lado-foto", action="append", default=[], metavar="FOTO=FDI",
+        help="De qué lado es una foto, como `nombre=FDI` de su PRIMERA corona (la de más "
+             "a la izquierda del encuadre). Repetible. ⚠️ Es el ÚNICO dato de aquí que no "
+             "sale de una medida, y no por falta de intentarlo: el arco es un espejo "
+             "exacto —la tabla de anchos leída al derecho y al revés es la misma lista— y "
+             "una foto intraoral puede estar tomada con espejo, así que ni la geometría "
+             "ni la imagen dicen de qué lado es. Sin esto no hay color por pieza y el "
+             "gate lo declara, en vez de jugarse el 16 contra el 26 a cara o cruz. "
+             "`nombre=no` declara que esa foto NO es una tira vestibular de esta arcada "
+             "—la contraria, una oclusal, un primer plano de una pieza— y entonces no "
+             "aporta color: darle un lado sería peor, repartiría códigos FDI entre las "
+             "cúspides de un solo diente.",
+    )
     args = ap.parse_args()
 
     caso = descubre(args.caso)
+    lado_fotos: dict[Path, int] = {}
+    for par in args.lado_foto:
+        nombre, _, codigo = par.partition("=")
+        elegidas = [f for f in caso.images if nombre in f.name]
+        # `no` declara que esa foto NO es una tira vestibular de esta arcada — la
+        # contraria, una oclusal, un primer plano de una pieza. Ver
+        # `gaussian_engine.tono_foto.NO_ES_TIRA`. Darle un lado sería PEOR que no dárselo:
+        # a un primer plano le repartiría códigos FDI entre las cúspides de un molar.
+        if codigo.strip().lower() == "no":
+            codigo = "0"
+        if len(elegidas) != 1 or not codigo.isdigit():
+            que = "no cuadra con ninguna foto" if not elegidas else (
+                "cuadra con varias fotos" if len(elegidas) > 1 else "el FDI no es un número")
+            raise SystemExit(f"--lado-foto {par!r}: {que}")
+        lado_fotos[elegidas[0]] = int(codigo)
     print("=" * 78)
     print(f"CASO: {caso.acquisition_id}")
     print("=" * 78)
@@ -294,8 +425,18 @@ def main() -> int:
         from analysis_agents import rellena_huecos_interiores as _huecos
         from ingestion_agents.mesh_agent import parse_stl as _stl
 
-        _V = _np.asarray(_stl(caso.mesh)["positions"], dtype=_np.float64)
+        _malla_ios = _stl(caso.mesh)
+        _V = _np.asarray(_malla_ios["positions"], dtype=_np.float64)
+        _Fc = _np.asarray(_malla_ios["faces"], dtype=_np.int64)
         _cruda = _np.load(args.fdi).astype(_np.int64)
+        # ⚠️ Comprobado ANTES de usarlo, y con el número delante. Pasar las etiquetas de
+        # otro paciente no da un resultado raro: da un `IndexError` doscientas líneas más
+        # abajo, dentro de un KD-tree, que no dice nada de lo que pasó. Las etiquetas
+        # indexan los vértices DEDUPLICADOS de esta malla y de ninguna otra.
+        if len(_cruda) != len(_V):
+            print(f"  ✗ `--fdi` trae {len(_cruda):,} etiquetas y esta malla tiene "
+                  f"{len(_V):,} vértices deduplicados: no son del mismo escaneo.")
+            return 1
         etq_ios = _rellena(_V, _cruda)
         cerrados = int((etq_ios > 0).sum()) - int((_cruda > 0).sum())
         if cerrados:
@@ -318,6 +459,13 @@ def main() -> int:
         if _movidos:
             print(f"  frontera entre piezas contiguas afilada: {_movidos:,} vértices "
                   f"reasignados a su vecino por mayoría")
+        # ⚠️ **El recorte al cuello NO se aplica, y es una decisión medida.** Mejora la
+        # frontera contra verdad de campo —0,891 → 0,906 de acuerdo con el experto sobre
+        # Teeth3DS+, 8 de 8 casos— y sobre este caso clínico se pasa: devuelve a la encía
+        # 9.942 vértices (12,3 % de lo etiquetado) y el resultado es visible, la encía
+        # bajando sobre las coronas. Una métrica que sube mientras el render empeora es una
+        # métrica que no está midiendo lo que importa. Queda en `analysis_agents.frontera`
+        # con sus tests, disponible y sin aplicar.
         # Y el simétrico de `rellena_etiquetas`: un vértice de diente rodeado de encía es
         # encía. Sin esto quedan motas color hueso salpicadas sobre el rosa del visor.
         etq_ios, _motitas = _motas(_V, etq_ios)
@@ -420,6 +568,12 @@ def main() -> int:
               f"{informe['vistas_retenidas']} vistas RETENIDAS")
         print("  → " + ("APORTA" if informe["aporta"] else "NO aporta sobre la semilla"))
 
+    # Referencia al campo ajustado y su informe de ajuste, para que el `.uos` lleve
+    # las DOS capas: la semilla medida (en `fus.snapshot`) y la ajustada (aquí).
+    campo_ajustado_ref = None
+    ajuste_info = None
+    descriptor_ajustado = None
+
     if args.ajusta_campo:
         print("\n--- 3b · AJUSTE DEL CAMPO (elipsoides contra la densidad medida) ---")
         # Complementario de `--refina-3dgs`, no alternativo: aquel optimiza contra los DRR
@@ -430,23 +584,181 @@ def main() -> int:
         # región a región, y entonces la etiqueta de cada elipsoide es exacta por
         # construcción en vez de heredada del vecino más cercano — que es lo que el visor
         # necesita para poder seleccionar una pieza sin mentir sobre cuál es.
+        #
+        # ⚠️ **El snapshot NO se sustituye.** `ajusta_campo` devuelve un snapshot nuevo
+        # apuntando al campo ajustado, pero `fus.snapshot` sigue apuntando a la SEMILLA
+        # medida — que es la que viaja en el twin y sobre la que se mide la
+        # reversibilidad. El campo ajustado es DERIVADO y va aparte en el `.uos`, como
+        # `asset.field_fit` con `measured: false`. Si sustituyéramos, el `.uos` llevaría
+        # el ajustado SIN la semilla, que es exactamente al revés de lo que el formato
+        # defiende. Ver `packages/uos/src/uos/agente.py`.
         from gaussian_engine import ajusta_campo
 
         antes = pipe.store.load(fus.snapshot.gaussian_field_ref)
-        snap, aj = ajusta_campo(fus.snapshot, pipe.store, compresion=args.compresion,
-                                compresion_region=args.compresion_dientes)
+        # Sin `region_id` (caso sin segmentación), `ajusta_campo` necesita
+        # `n_objetivo` para saber cuántas gaussianas pedir. El objetivo sale del
+        # tamaño del campo semilla dividido por la compresión.
+        n_obj = None
+        if "region_id" not in antes:
+            n_obj = max(1, int(len(antes["centers"]) / args.compresion))
+        snap_ajustado, aj = ajusta_campo(
+            fus.snapshot, pipe.store,
+            n_objetivo=n_obj,
+            compresion=args.compresion,
+            compresion_region=args.compresion_dientes,
+        )
         motivos_aj = revisa_conservacion(
             ContratoEtapa(nombre="ajuste-campo"),
-            antes, pipe.store.load(snap.gaussian_field_ref),
+            antes, pipe.store.load(snap_ajustado.gaussian_field_ref),
         )
-        fus = replace(fus, snapshot=snap, hitl_reasons=[*fus.hitl_reasons, *motivos_aj])
+        fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_aj])
+        campo_ajustado_ref = snap_ajustado.gaussian_field_ref
+        ajuste_info = aj
         print(f"  → {len(antes['centers']):,} → {len(aj.centers):,} gaussianas "
               f"(×{aj.compresion:.1f}) · error de reconstrucción {aj.rmse_hu:.1f} HU")
         peor = sorted(aj.rmse_hu_por_region.items(), key=lambda kv: -kv[1])[:3]
         if peor:
             print("  → peores regiones: " +
                   " · ".join(f"{'fondo' if c == 0 else c}: {e:.0f} HU" for c, e in peor))
-        print(f"  → perfil `{snap.perfil_campo}`: DERIVADO, la escala ya no es el vóxel")
+        print(f"  → perfil `{snap_ajustado.perfil_campo}`: DERIVADO, la escala ya no "
+              "es el vóxel · viaja como `asset.field_fit` en el `.uos`")
+        # El descriptor del campo ajustado se construye AQUÍ para no acoplar el paquete
+        # UOS a `gaussian_engine`. El UOS agent recibe un dict plano y lo vuelca tal cual.
+        from gaussian_engine import PERFIL, esquema
+
+        descriptor_ajustado = {
+            "role": "campo ajustado contra densidad medida",
+            "measured": False,
+            "note": (
+                "elipsoides optimizados contra la densidad del CBCT; la escala es un "
+                "ajuste, NO una medida del tejido"
+            ),
+            "profile": PERFIL,
+            "frame": "frame.ct_001",
+            "units": "mm",
+            "n_primitives": len(aj.centers),
+            "columns": [
+                {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
+                 "measured": c.medido, "derived_from": c.derivado_de,
+                 "meaning": c.significado, "vocabulary": c.vocabulario}
+                for c in esquema(aj.rmse_hu)
+            ],
+            "reconstruction_error_hu": aj.rmse_hu,
+            "compression": aj.compresion,
+            # La submuestrea es la misma que la semilla (el ajuste parte de los
+            # mismos vóxeles), pero el número final es el del campo comprimido.
+            "submuestreo": _submuestreo_desde(pipe.store, snap_ajustado, len(aj.centers)),
+        }
+
+    # ── Entrenamiento de apariencia (gsplat contra fotos) ───────────────────
+    # El `--entrena-apariencia` necesita GPU y bloquea el pipeline. Entrena un campo
+    # de gaussianas con color REAL del paciente optimizado contra renders de Blender.
+    # El resultado viaja como `asset.apariencia` en el `.uos` con perfil
+    # 'ash-gs-apariencia/1.0' y regulatory.layer=1, status="derived".
+    if args.entrena_apariencia:
+        if args.gs_apariencia is None:
+            print("  ⚠ --entrena-apariencia requiere --gs-apariencia")
+        elif fus.snapshot.surface_ref is None:
+            print("  ⚠ --entrena-apariencia requiere surface_ref (malla del mesh-agent)")
+        elif not fus.snapshot.image_refs:
+            print("  ⚠ --entrena-apariencia requiere image_refs (fotos intraorales)")
+        else:
+            print("\n--- 3b · ENTRENAMIENTO APARIENCIA (gsplat + Blender) ---")
+            tonos: list = []
+            motivos_color: list = []
+            try:
+                import numpy as np
+                import torch
+                from gaussian_engine.apariencia import (
+                    ITERACIONES,
+                    N_VISTAS,
+                    RESOLUCION,
+                    entrena_apariencia,
+                )
+                # Cargar la malla del almacén
+                mesh_data = pipe.store.load(fus.snapshot.surface_ref)
+                posiciones = np.asarray(mesh_data["positions"], dtype=np.float32)
+                caras = np.asarray(mesh_data["faces"], dtype=np.int32)
+
+                # Cargar las rutas de fotos (paso el directorio, no los pixeles)
+                dir_caso = args.caso.resolve()
+                fotos_paths = []
+                for ref in fus.snapshot.image_refs:
+                    try:
+                        foto_data = pipe.store.load(ref)
+                        if "path" in foto_data:
+                            fotos_paths.append(Path(str(foto_data["path"])))
+                    except (KeyError, OSError):
+                        pass
+                if not fotos_paths:
+                    # Fallback: buscar fotos en el directorio del caso
+                    for ext in ("*.jpg", "*.jpeg", "*.png", "*.heic"):
+                        fotos_paths.extend(sorted(dir_caso.glob(ext)))
+
+                if not fotos_paths:
+                    print("  ⚠ No se encontraron fotos intraorales para entrenar")
+                else:
+                    destino_ap = args.salida / "apariencia"
+                    params_ap, metricas = entrena_apariencia(
+                        posiciones, caras, fotos_paths,
+                        destino=destino_ap,
+                        n_vistas=N_VISTAS,
+                        resolucion=RESOLUCION,
+                        iteraciones=ITERACIONES,
+                        # Con esto cada gaussiana sale con su FDI: el visor puede
+                        # encender una pieza sin malla delante, que es lo que
+                        # necesita un contenedor de solo gaussianas.
+                        etiquetas=etq_ios,
+                        # El bit que ninguna medida da: de qué lado es cada foto. Ver
+                        # `--lado-foto` y `tono_foto.alinea_con_el_arco`.
+                        lado_fotos=lado_fotos,
+                        dispositivo="cuda" if torch.cuda.is_available() else "cpu",
+                        traza=True,
+                    )
+
+                    # Guardar el PLY INRIA en el almacén
+                    ply_ap = destino_ap / "apariencia.ply"
+                    if ply_ap.exists():
+                        # ⚠️ **Se guarda TODO lo que el entrenamiento devolvió, no una
+                        # lista escogida a mano.** Esa lista se quedó vieja dos veces: la
+                        # des-normalización de Blender y el `region_id` por gaussiana se
+                        # calcularon, se imprimieron en el log y no llegaron al almacén —
+                        # así que el PLY del contenedor, que se reescribe desde ahí, salió
+                        # sin ellos. Enumerar claves es acordarse; `**` es no tener que.
+                        ref_ap = pipe.store.put(
+                            **{k: np.asarray(v) for k, v in params_ap.items()}
+                        )
+                        # Actualizar el snapshot con la referencia
+                        fus = replace(fus, snapshot=fus.snapshot.model_copy(
+                            update={"apariencia_ref": ref_ap}
+                        ))
+                        print(f"  → apariencia: PSNR {metricas.psnr_db:.2f} dB, "
+                              f"SSIM {metricas.ssim:.3f}, "
+                              f"{metricas.n_gaussianas:,} gaussianas")
+                        print(f"  → perfil `{metricas.perfil}`: DERIVADO, color real "
+                              "· viaja como `asset.apariencia` en el `.uos`")
+                    tonos = list(metricas.tonos)
+                    motivos_color = list(metricas.motivos)
+            except Exception as e:
+                print(f"  ⚠ Error entrenando apariencia: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # ⚠️ **El color medido entra en el CONTRATO, no solo en los píxeles.**
+            # Una `RegionalObservation` por corona con soporte REGIONAL: eso es lo que hace
+            # que `clinical/observations.json` pueda responder «de qué color es el 26» sin
+            # abrir un PLY de 8 MB. `derivation` es `deterministic` porque es la mediana de
+            # unos píxeles concretos de una foto concreta: se recalcula exactamente igual.
+            #
+            # ⚠️ **Y va FUERA del `try`, que es media corrección del fallo.** Aquí dentro,
+            # un error de contrato salía por pantalla como «Error entrenando apariencia»
+            # —con el entrenamiento ya terminado y su PSNR impreso— y el contenedor se
+            # exportaba entero y mudo. Lo que el `except` puede tragarse es que el
+            # entrenamiento falle; que el color no llegue al snapshot, no.
+            fus = replace(fus, snapshot=_con_color(fus.snapshot, tonos))
+            # Y los motivos del color al gate: una foto que no se pudo lateralizar y una
+            # pieza que ninguna foto ve son exactamente lo que una persona tiene que mirar.
+            fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_color])
 
     print("\n--- 4 · EXPORTACIÓN ---")
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
@@ -455,24 +767,54 @@ def main() -> int:
     fin = pipe.exportar(
         fus, args.salida / "export",
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
+        sin_malla=args.solo_gaussianas,
         gs_apariencia=args.gs_apariencia,
         # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
         # y las fotos tal como entraron, con su sha256, para que quien lo reciba pueda
         # verificar que no los tocamos.
         malla=caso.mesh,
         escena_gs=(None if args.gs_apariencia is None
-                   else args.gs_apariencia / "escaner_3dgs-coronas.ply"),
+                   else args.gs_apariencia / "gs_escaner-coronas.ply"),
         imagenes=list(caso.images),
+        # Los PDF del caso viajan dentro, ilegibles incluidos: el `report-agent` extrae lo
+        # que puede y el documento queda para lo que no. Ver `_export`.
+        informes=list(caso.reports),
         # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
-        cbct=caso.cbct if args.con_volumen else None,
+        # ⚠️ La serie DICOM NO viaja: el formato no lleva originales, sólo su
+        # dirección de contenido. Ver `UOSExportAgent._export`.
+        cbct=None,
         # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
         modelo_segmentacion=args.modelo,
+        # El campo ajustado va APARTE en el `.uos`: el twin lleva la semilla medida
+        # (en `fus.snapshot.gaussian_field_ref`) y el ajustado como `asset.field_fit`.
+        campo_ajustado=campo_ajustado_ref,
+        ajuste=ajuste_info,
+        campo_ajustado_descriptor=descriptor_ajustado,
     )
     for e in fin.exports:
         print(f"  {e.agent.split('@')[0]:<24} {e.status.value:<8} "
               f"{'' if e.max_deviation_mm is None else f'{e.max_deviation_mm:.6f} mm'}"
               f"{'' if e.psnr_db is None else f'PSNR {e.psnr_db:.1f} dB'}")
     print(f"  → reversible: {'sí' if fin.reversible else 'NO'}")
+
+    # ── La malla mejorada: la arcada que entró, con el color que el campo mide ──
+    #
+    # ⚠️ **Se saca del `.uos` recién escrito y no de las variables que hay aquí.** Es la
+    # misma cadena que ejecutaría quien reciba el contenedor dentro de un año sin este
+    # repositorio: si el color no se puede leer del fichero entregado, el campo gaussiano
+    # no está aportando nada y la reversibilidad no cierra. Leerlo de `vcol`, que está a
+    # dos variables de distancia, sería más rápido y no demostraría eso.
+    contenedor = next(iter(sorted(args.salida.glob("export/*.uos"))), None)
+    if contenedor is not None:
+        import subprocess
+
+        hecho = subprocess.run(
+            [sys.executable, str(RAIZ / "scripts" / "malla_mejorada.py"),
+             "--uos", str(contenedor)],
+            capture_output=True, text=True,
+        )
+        print("\n--- 4b · MALLA MEJORADA (desde el `.uos`) ---")
+        print(hecho.stdout.rstrip() or f"  ⚠ {hecho.stderr.strip().splitlines()[-1:]}")
 
     print("\n--- 5 · GATE DE REVISIÓN HUMANA ---")
     if not fin.hitl_reasons:

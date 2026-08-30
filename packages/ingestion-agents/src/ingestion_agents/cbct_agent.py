@@ -358,12 +358,38 @@ class CBCTAgent(BaseIngestionAgent):
                     recorte = (int(occupied.shape[0]), int(dentro.sum()), hi - lo)
                     occupied = occupied[dentro]
 
-        # Submuestreo determinista si el volumen da más primitivas de las pedidas:
-        # paso uniforme (no aleatorio) para que la ingesta sea reproducible.
+        # Submuestreo determinista si el volumen da más primitivas de las pedidas.
+        #
+        # ⚠️ **Se diezma en la REJILLA, no en el array.** Antes era `occupied[::step]`, y
+        # `occupied` viene de `argwhere` en orden C: z lento, x rápido. Un paso uniforme
+        # sobre ese array se come `step-1` de cada `step` vóxeles **a lo largo de una sola
+        # fila**, así que la nube resultante son planos densos separados `step * sx`.
+        # Medido sobre un caso real con `step = 9`: **1,35 mm entre gaussianas consecutivas
+        # de una fila en el 73 % de los casos**, con σ de 0,075 mm en ese eje — dieciocho
+        # veces más pequeñas que su separación, o sea puntos aislados que no se tocan
+        # nunca. El campo dejaba de reconstruir nada entre primitiva y primitiva (rizado
+        # pico-valle del 99 % sondeado dentro del hueso más denso).
+        #
+        # El paso por eje se elige engordando siempre el eje cuyo espaciado resultante en
+        # MILÍMETROS es menor, así que la submuestra sale lo más isótropa que el vóxel
+        # permite. Con un vóxel de 0,15 × 0,15 × 0,45 y factor 9 sale (3, 3, 1): 0,45 mm en
+        # los tres ejes, en vez de 1,35 en uno y 0,15 en los otros dos.
         confidence = 1.0
+        n_origen = occupied.shape[0]
+        paso = np.ones(3, dtype=np.int64)          # en el orden de `occupied`: (z, y, x)
         if occupied.shape[0] > self.max_primitives:
-            step = int(np.ceil(occupied.shape[0] / self.max_primitives))
-            occupied = occupied[::step]
+            # `spacing` va en orden mundo (x, y, z); `occupied` en (z, y, x).
+            mm = np.asarray(spacing, dtype=np.float64)[::-1]
+            # ⚠️ El paso se busca contando los supervivientes DE VERDAD, no estimando
+            # `M / prod(paso)`: esa cuenta solo vale para una rejilla llena y el conjunto
+            # que llega aquí está umbralizado, así que la estimación se queda corta y el
+            # tope se pasa por poco — pasó, y por 16 primitivas.
+            while True:
+                se_queda = ((occupied % paso) == 0).all(axis=1)
+                if int(se_queda.sum()) <= self.max_primitives:
+                    break
+                paso[int(np.argmin(mm * paso))] += 1
+            occupied = occupied[se_queda]
             confidence = 0.9  # el campo es una submuestra, no el volumen completo
 
         # Una serie con cortes ausentes se ingiere, pero no se da por completa: la
@@ -394,10 +420,18 @@ class CBCTAgent(BaseIngestionAgent):
             (hu - self.hu_threshold) / (HU_SATURATION - self.hu_threshold), 0.0, 1.0
         ).astype(np.float32)
 
-        # Gaussianas isótropas del tamaño del vóxel (½ arista): la semilla no
-        # inventa anisotropía que el CBCT no midió; eso lo aprende el optimizador.
+        # Gaussianas del tamaño del vóxel (½ arista) **por eje**: la semilla no inventa
+        # anisotropía que el CBCT no midió, pero tampoco la ignora — un vóxel de
+        # 0,15 × 0,15 × 0,45 no es una esfera. La forma la afina después el optimizador.
+        #
+        # ⚠️ **Y escala con el diezmado.** Media arista del vóxel ORIGINAL sobre una
+        # rejilla diezmada deja σ muy por debajo de la separación real y el campo se ve
+        # como puntos sueltos: es el otro medio fallo del submuestreo de arriba. Lo que
+        # tiene que ser medio es la arista de la celda que de verdad hay entre gaussianas.
+        paso_mundo = paso[::-1].astype(np.float64)          # (z, y, x) → (x, y, z)
         scales = np.tile(
-            np.asarray(spacing, dtype=np.float32) * 0.5, (centers.shape[0], 1)
+            (np.asarray(spacing, dtype=np.float64) * paso_mundo * 0.5).astype(np.float32),
+            (centers.shape[0], 1),
         )
         # Cuaternión identidad (w, x, y, z) — sin rotación en la semilla.
         rotations = np.tile(
@@ -419,6 +453,13 @@ class CBCTAgent(BaseIngestionAgent):
                 # **autocontenido**, así que lo que hace reversible un blob viaja con él.
                 origin=origin,
                 hu_range=np.asarray([self.hu_threshold, HU_SATURATION], dtype=np.float64),
+                # ⚠️ El paso de submuestreo, en el orden de `occupied` (z, y, x).
+                # Se guarda para que el `.uos` pueda declarar qué le falta al campo:
+                # un PLY con 500K gaussianas y paso (3,3,1) indica que el volumen
+                # original tenía ~4,5M vóxeles. Sin esto, el consumidor no sabe si
+                # el campo es completo o una submuestra.
+                paso=paso.astype(np.int64),
+                n_origen=np.asarray(int(n_origen), dtype=np.int64),
             ),
             n_primitives=int(centers.shape[0]),
             detail=(

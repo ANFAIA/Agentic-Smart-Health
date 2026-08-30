@@ -59,6 +59,19 @@ ap.add_argument("--res", type=int, default=512)
 ap.add_argument("--samples", type=int, default=16)     # muestras EEVEE por píxel
 ap.add_argument("--elevations", type=int, default=3)   # anillos de la órbita
 ap.add_argument("--elev-max", type=float, default=60.0)  # ± grados del anillo más alto/bajo
+# ⚠️ **Vistas de CERCA, encuadrando una zona y no la arcada entera.** Medido sobre el caso
+# real: con 1.024 px encuadrando 65 mm de arcada salen 15,8 px/mm, o sea 126 px por corona
+# y 3,2 px por fisura. A tres pixeles el optimizador no tiene señal para densificar ahi —no
+# es que le falten iteraciones, es que en la imagen no hay nada que optimizar—. Estas
+# vistas acercan la camara a un punto de la superficie, asi que la misma resolucion cubre
+# menos milimetros y el detalle fino entra en el render.
+#
+# No sustituyen a la orbita: la orbita da la forma global y la coherencia entre piezas.
+# Van MEZCLADAS, que es el patron multiescala de cualquier 3DGS.
+ap.add_argument("--cerca", type=int, default=0,
+                help="vistas de cerca sobre la superficie, ademas de las de orbita")
+ap.add_argument("--cerca-radio", type=float, default=1.0,
+                help="distancia de la camara al punto, en unidades normalizadas")
 ap.add_argument("--fov-deg", type=float, default=40.0)
 # Luz rasante: grados que se separa la luz del eje de la cámara. Ver la nota junto al
 # montaje de las luces; 0 = frontal puro, que es plano.
@@ -67,6 +80,10 @@ ap.add_argument("--relleno", type=float, default=0.8)  # energía del relleno op
 ap.add_argument("--ambiente", type=float, default=0.4)  # fuerza del mundo
 # Gris plano: ignora el color de vértice y usa un neutro. Sirve para mirar RELIEVE en
 # vez de anatomía — sin tono que distraiga, todo el rango dinámico va a la forma.
+ap.add_argument("--sombreado", action="store_true",
+                help="Ilumina la malla con el montaje de luces en vez de renderizar el "
+                     "ALBEDO plano. Deja la apariencia bonita y el color inservible: ver "
+                     "el bloque de gestion de color mas abajo.")
 ap.add_argument("--gris", type=float, default=None,
                 help="Color base neutro (0-1). Si se da, ignora el color de vértice.")
 args = ap.parse_args(argv)
@@ -114,19 +131,46 @@ bpy.context.view_layer.update()
 mat = bpy.data.materials.new("scan")
 mat.use_nodes = True
 nt = mat.node_tree
+# ⚠️ **Por defecto se renderiza el ALBEDO, no la malla iluminada, y esa es la diferencia
+# entre que el gemelo guarde el color del paciente o el de nuestro plato de luces.**
+#
+# Medido: con el montaje de luces, recuperar el color medido desde las gaussianas costaba
+# **ΔE 28,5** — y ΔE > 3,5 lo ve cualquiera, una toma de color para restaurar quiere 1-2.
+# La mitad de ese error era el `view_transform` (abajo) y la otra mitad esto: el
+# Principled BSDF con un sol de energia 3.0 hornea la iluminacion dentro del color, asi
+# que las gaussianas no aprenden el diente, aprenden *ese diente bajo nuestra luz*.
+#
+# Con emision, el pixel renderizado ES el color del vertice: el 3DGS no tiene nada
+# dependiente de la vista que aprender y su termino DC queda siendo el albedo, que es lo
+# que `clinical/observations.json` declara al lado. Se pierde el relieve rasante — pero el
+# relieve es GEOMETRIA y vive en la malla y en el campo, no en el color.
+#
+# ⚠️ Y con emision **el montaje de luces deja de importar**, incluido el argumento de que
+# tienen que ir emparentadas a la camara: no hay luz que emparentar. Ese razonamiento sigue
+# siendo correcto para `--sombreado`, que es para lo que se conserva.
 bsdf = nt.nodes.get("Principled BSDF")
-if bsdf and "Roughness" in bsdf.inputs:
+if not args.sombreado:
+    salida = nt.nodes["Material Output"]
+    if bsdf is not None:
+        nt.nodes.remove(bsdf)
+    bsdf = nt.nodes.new("ShaderNodeEmission")
+    nt.links.new(bsdf.outputs["Emission"], salida.inputs["Surface"])
+elif bsdf and "Roughness" in bsdf.inputs:
     bsdf.inputs["Roughness"].default_value = 0.55
+# El enchufe del color se llama distinto en cada shader: `Base Color` en el Principled y
+# `Color` en el de emision. Se resuelve por presencia y no por bandera para que anadir otro
+# shader no obligue a tocar tres sitios.
+_entrada = "Base Color" if bsdf and "Base Color" in bsdf.inputs else "Color"
 if args.gris is not None and bsdf:
     g = args.gris
-    bsdf.inputs["Base Color"].default_value = (g, g, g, 1.0)
+    bsdf.inputs[_entrada].default_value = (g, g, g, 1.0)
 elif obj.data.color_attributes:
     obj.data.color_attributes.active_color_index = 0
     vc = nt.nodes.new("ShaderNodeVertexColor")
     vc.layer_name = obj.data.color_attributes[0].name
-    nt.links.new(vc.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(vc.outputs["Color"], bsdf.inputs[_entrada])
 elif bsdf:
-    bsdf.inputs["Base Color"].default_value = (0.85, 0.80, 0.72, 1.0)  # marfil
+    bsdf.inputs[_entrada].default_value = (0.85, 0.80, 0.72, 1.0)  # marfil
 obj.data.materials.clear()
 obj.data.materials.append(mat)
 
@@ -194,6 +238,28 @@ scene.render.resolution_y = args.res
 scene.render.film_transparent = True
 scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGBA"
+
+# --------------------------------------------------------------------------- #
+# Gestion de color: `Standard`, y es la mitad del error de color del gemelo
+# --------------------------------------------------------------------------- #
+# ⚠️ **Blender NO escribe lo que renderiza: le aplica un mapeo tonal antes de guardar.**
+# Por defecto es AgX (Filmic en 3.x), que es una curva cinematografica que oscurece y
+# desatura los medios tonos a proposito. Este script nunca lo fijaba, asi que heredaba el
+# de la version instalada.
+#
+# El efecto esta MEDIDO sobre el caso real, comparando el color que entra en la malla con
+# el que se recupera de las gaussianas entrenadas: razon de luminancia **0,55 uniforme**,
+# sin correlacion con la geometria (0,025 contra la concavidad, o sea que no era sombra),
+# y decodificar una gamma se llevaba la mitad del error de golpe — ΔE 28,5 a 16,4.
+#
+# `Standard` guarda el render codificado en sRGB y nada mas. Es lo unico que hace que el
+# PNG contra el que entrena gsplat sea el color que se midio en la foto, y no una version
+# revelada de el.
+scene.view_settings.view_transform = "Standard"
+if hasattr(scene.view_settings, "look"):
+    scene.view_settings.look = "None"
+scene.view_settings.exposure = 0.0
+scene.view_settings.gamma = 1.0
 if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
     scene.eevee.taa_render_samples = args.samples
 
@@ -231,6 +297,50 @@ for elev in elev_angles:
         scene.render.filepath = str(out / rel)
         bpy.ops.render.render(write_still=True)
 
+        frames.append({
+            "file_path": rel,
+            "transform_matrix": [list(row) for row in cam.matrix_world],
+        })
+        idx += 1
+
+# --------------------------------------------------------------------------- #
+# Vistas de cerca: la camara se acerca a puntos repartidos por la superficie
+# --------------------------------------------------------------------------- #
+# ⚠️ **Los puntos se eligen por muestreo del PUNTO MAS LEJANO, no al azar.** Al azar, con
+# la densidad de vertices de un escaneo, la mitad de las camaras acaba sobre los molares
+# —que tienen mas superficie— y los incisivos se quedan sin vistas de cerca. El muestreo
+# por lejania reparte por la geometria y no por el recuento de vertices.
+if args.cerca > 0:
+    verts = [obj.matrix_world @ v.co for v in obj.data.vertices]
+    total = len(verts)
+    paso = max(1, total // 4000)
+    cand = verts[::paso]
+    elegidos = [cand[0]]
+    dist = [(c - cand[0]).length for c in cand]
+    for _ in range(min(args.cerca, len(cand)) - 1):
+        k = max(range(len(cand)), key=lambda i: dist[i])
+        elegidos.append(cand[k])
+        for i, c in enumerate(cand):
+            d = (c - cand[k]).length
+            if d < dist[i]:
+                dist[i] = d
+
+    centro = mathutils.Vector((0.0, 0.0, 0.0))
+    for punto in elegidos:
+        # La camara se pone sobre la normal APROXIMADA —la direccion desde el centro de la
+        # arcada hacia el punto—, que para una superficie envolvente como una arcada es
+        # suficiente y no exige calcular normales por vertice aqui.
+        fuera = (punto - centro)
+        if fuera.length < 1e-6:
+            continue
+        fuera.normalize()
+        cam.location = punto + fuera * args.cerca_radio
+        look_at(cam, punto)
+        bpy.context.view_layer.update()
+
+        rel = f"images/r_{idx:05d}.png"
+        scene.render.filepath = str(out / rel)
+        bpy.ops.render.render(write_still=True)
         frames.append({
             "file_path": rel,
             "transform_matrix": [list(row) for row in cam.matrix_world],

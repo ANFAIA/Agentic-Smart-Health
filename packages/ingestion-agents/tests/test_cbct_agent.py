@@ -48,6 +48,7 @@ def test_ingesta_de_la_serie_sintetica(cbct_dir: Path, store: ArtifactStore) -> 
     arrays = store.load(outcome.artifact_ref or "")
     assert set(arrays) == {
         "centers", "scales", "rotations", "density", "origin", "hu_range",
+        "paso", "n_origen",
     }
     n = arrays["centers"].shape[0]
     assert (arrays["scales"].shape, arrays["rotations"].shape) == ((n, 3), (n, 4))
@@ -193,3 +194,98 @@ def test_sal_por_defecto_es_de_desarrollo() -> None:
     assert pseudonymize("PAC-001") == pseudonymize(
         "PAC-001", salt="dev-salt-no-usar-en-produccion"
     )
+
+
+def _salto_dentro_de_una_fila(centros: np.ndarray) -> float:
+    """Mediana del salto entre gaussianas consecutivas DE LA MISMA FILA, en mm.
+
+    ⚠️ Medirlo con `unique` por eje NO sirve, y se comprobó: colapsa todas las filas
+    juntas, así que un peine —filas densas muy separadas entre sí— sale igual que una
+    rejilla sana. El defecto vive **dentro** de una fila y hay que mirarlo ahí.
+    """
+    c = np.asarray(centros, dtype=np.float64)
+    fila = np.round(c[:, 1:], 4)                       # (y, z) fija
+    orden = np.lexsort((c[:, 0], fila[:, 1], fila[:, 0]))
+    q = c[orden]
+    f = fila[orden]
+    misma = (f[1:] == f[:-1]).all(axis=1)
+    d = np.diff(q[:, 0])[misma]
+    d = d[d > 1e-6]
+    return float(np.median(d)) if d.size else 0.0
+
+
+def test_el_submuestreo_no_deja_la_nube_en_PEINE(
+    cbct_dir: Path, store: ArtifactStore
+) -> None:
+    """El diezmado se hace en la rejilla, no sobre el array de `argwhere`.
+
+    ⚠️ Este es el test que faltaba. `occupied[::step]` recorre un array en orden C —z
+    lento, x rápido— así que se comía `step-1` de cada `step` vóxeles **a lo largo de una
+    sola fila**. Medido sobre un caso real con `step = 9`: 1,35 mm entre gaussianas
+    consecutivas de una fila frente a 0,15 en los otros ejes, con σ de 0,075. El campo
+    salía como puntos aislados que no llegaban a tocarse nunca, y nada fallaba: el tope se
+    respetaba, la ingesta era reproducible y el número de primitivas era el pedido.
+
+    El listón es la propia σ: si el salto dentro de una fila es mayor que **cuatro veces**
+    la σ de ese eje, las gaussianas vecinas ya no se solapan de forma apreciable
+    (a 2σ la contribución es 0,14) y el campo deja de reconstruir nada entre ellas.
+    """
+    salida = CBCTAgent(store, max_primitives=400).ingest(cbct_dir)
+    assert salida.artifact_ref is not None
+    campo = store.load(salida.artifact_ref)
+    salto = _salto_dentro_de_una_fila(campo["centers"])
+    sigma_x = float(np.asarray(campo["scales"])[0][0])
+    assert salto > 0.0, "no hay dos gaussianas en la misma fila: la nube está deshecha"
+    assert salto <= 4.0 * sigma_x, (
+        f"la nube está peinada: {salto:.3f} mm entre gaussianas de una misma fila con "
+        f"sigma {sigma_x:.3f} mm en ese eje — no llegan a tocarse"
+    )
+
+
+def test_sigma_crece_con_el_diezmado(cbct_dir: Path, store: ArtifactStore) -> None:
+    """Media arista de la celda QUE HAY, no de la del vóxel original.
+
+    La otra mitad del mismo fallo: con el campo diezmado, sembrar σ = medio vóxel deja las
+    gaussianas muy por debajo de su separación real y el campo no reconstruye nada entre
+    ellas. σ tiene que escalar con el paso.
+    """
+    entero = CBCTAgent(store, max_primitives=10**9).ingest(cbct_dir)
+    diezmado = CBCTAgent(store, max_primitives=400).ingest(cbct_dir)
+    assert entero.artifact_ref and diezmado.artifact_ref
+    s_entero = np.asarray(store.load(entero.artifact_ref)["scales"])[0]
+    s_diezmado = np.asarray(store.load(diezmado.artifact_ref)["scales"])[0]
+    assert (s_diezmado >= s_entero).all(), (s_entero, s_diezmado)
+    assert (s_diezmado > s_entero).any(), (
+        "el campo se diezmó y ninguna sigma creció: las gaussianas no se tocan"
+    )
+
+
+def test_el_artefacto_DECLARA_que_es_una_submuestra(
+    cbct_dir: Path, store: ArtifactStore
+) -> None:
+    """Un campo diezmado que no dice que lo está es una medida con menos resolución de la
+    que aparenta, y desde fuera es indistinguible de una completa.
+
+    ⚠️ El agente ya bajaba su `confidence` a 0,9 al submuestrear, pero eso vive en la
+    procedencia del snapshot y no llega al `.uos`. `paso` y `n_origen` viajan **con el
+    artefacto**, que es lo que hace que el sidecar del contenedor pueda declararlo.
+    """
+    diezmado = CBCTAgent(store, max_primitives=400).ingest(cbct_dir)
+    campo = store.load(diezmado.artifact_ref)
+    assert "paso" in campo and "n_origen" in campo
+    paso = np.asarray(campo["paso"])
+    assert paso.shape == (3,) and (paso >= 1).all()
+    assert int(paso.prod()) > 1, "se diezmó y el paso declarado es (1,1,1)"
+    assert int(campo["n_origen"]) > len(campo["centers"])
+
+
+def test_sin_diezmar_el_paso_declarado_es_UNO(
+    cbct_dir: Path, store: ArtifactStore
+) -> None:
+    """El contrario, para que el test de arriba pueda fallar: si `paso` fuera siempre > 1
+    los dos pasarían y ninguno probaría nada."""
+    entero = CBCTAgent(store, max_primitives=10**9).ingest(cbct_dir)
+    campo = store.load(entero.artifact_ref)
+    assert (np.asarray(campo["paso"]) == 1).all()
+    assert int(campo["n_origen"]) == len(campo["centers"])
+    assert entero.provenance is not None and entero.provenance.confidence >= 0.9

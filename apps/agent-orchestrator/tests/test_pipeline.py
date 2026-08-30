@@ -867,3 +867,135 @@ def test_el_esquema_SIGUE_al_campo_cuando_una_etapa_lo_cambia(
     assert region.medido is False, "no es una medida: la derivó un agente"
     assert region.derivado_de == "segmentation-agent"
 
+
+
+def test_el_orquestador_reenvia_TODO_lo_que_el_agente_de_UOS_acepta():
+    """La firma de `exportar` enumera argumentos a mano, y una lista a mano se queda vieja.
+
+    ⚠️ Costó una ejecución entera —451 s de entrenamiento incluidos— que murió en la última
+    línea con `unexpected keyword argument 'sin_malla'`: el agente había ganado el
+    parámetro y el orquestador no. Nada lo detectaba hasta que se ejecutaba el caso real
+    con esa bandera puesta.
+
+    Los que NO se reenvían están aquí uno a uno **y con su razón**. Añadir un parámetro al
+    agente sin reenviarlo, o sin justificarlo aquí, rompe este test — que es exactamente
+    cuando hay que enterarse.
+    """
+    import inspect
+
+    from agent_orchestrator.pipeline import IngestionPipeline
+    from uos.agente import UOSExportAgent
+
+    # Los calcula el propio orquestador o no tienen sentido desde fuera.
+    DELIBERADOS = {
+        "campo",         # ruta del PLY del campo: la produce el canal de campo
+        "compuesto",     # idem, el canal del compuesto
+        "motivos",       # los acumula el pipeline de la fusión
+        "previo",        # por defecto es el propio destino
+        "pseudonimo",    # sale del snapshot
+        "registrador",   # lo sabe la fusión geométrica
+        # ⚠️ **Éste no es «lo calcula el orquestador»: es una decisión del FORMATO.**
+        # Se reenviaba, con un `sin_originales: bool = False` propio en la firma de
+        # `exportar`, y ese defecto duplicado le ganó al `= True` del agente: el
+        # contenedor del caso clínico salió con el STL del escáner, nueve fotografías
+        # del paciente y tres informes dentro —216 MB— mientras todos los tests del
+        # agente seguían en verde. Que el `.uos` no lleve originales lo decide
+        # `uos.agente` y sólo él; el orquestador no tiene voz aquí, y por eso no
+        # aparece en su firma. Lo que sí hay es un test que mira los bytes del ZIP a
+        # la salida del orquestador: `test_e2e.py::test_el_uos_del_recorrido_no_lleva_
+        # NINGUN_original`, porque probar la pieza no prueba el montaje.
+        "sin_originales",
+    }
+    del_agente = set(inspect.signature(UOSExportAgent._export).parameters) - {
+        "self", "snapshot", "destination",
+    }
+    del_orquestador = set(inspect.signature(IngestionPipeline.exportar).parameters) - {
+        "self", "result", "destino",
+    }
+    sin_reenviar = del_agente - del_orquestador - DELIBERADOS
+    assert not sin_reenviar, (
+        f"el agente de UOS acepta {sorted(sin_reenviar)} y `exportar` no lo reenvía: "
+        "añádelo a la firma o justifícalo en DELIBERADOS"
+    )
+
+
+def test_lo_que_el_orquestador_reenvia_no_CONTRADICE_al_agente():
+    """Un parámetro reenviado con otro valor por defecto es peor que uno olvidado.
+
+    ⚠️ **Esto es lo que falló, y el test de reenvío no podía verlo.** `sin_originales`
+    estaba en las dos firmas y se reenviaba —aquel test en verde— pero el agente lo
+    declaraba `True` (el formato no lleva originales) y el orquestador `False`. Mientras
+    la CLI pasaba la bandera a mano no se notaba; en cuanto se quitó, el valor cayó al
+    defecto del orquestador y el contenedor del caso clínico salió con el STL del
+    escáner, nueve fotografías del paciente y tres informes dentro, 216 MB.
+
+    Un parámetro olvidado revienta con `TypeError` y se ve. Un defecto duplicado que
+    discrepa NO revienta: emite el fichero equivocado en silencio, y cada test de la
+    pieza sigue pasando. Por eso lo que se compara aquí son los VALORES, no los nombres.
+    """
+    import inspect
+
+    from agent_orchestrator.pipeline import IngestionPipeline
+    from uos.agente import UOSExportAgent
+
+    agente = inspect.signature(UOSExportAgent._export).parameters
+    orq = inspect.signature(IngestionPipeline.exportar).parameters
+
+    discrepan = {
+        n: (agente[n].default, orq[n].default)
+        for n in set(agente) & set(orq)
+        if agente[n].default is not inspect.Parameter.empty
+        and orq[n].default is not inspect.Parameter.empty
+        and agente[n].default != orq[n].default
+    }
+    assert not discrepan, (
+        "el orquestador reenvía un valor por defecto distinto al del agente, así que "
+        "el suyo gana y la decisión del agente no se aplica nunca: "
+        + ", ".join(
+            f"{n} (agente {a!r} / orquestador {o!r})"
+            for n, (a, o) in sorted(discrepan.items())
+        )
+    )
+
+
+def test_el_motivo_de_un_informe_ilegible_no_lleva_el_NOMBRE_del_fichero(
+    pipeline: IngestionPipeline, case_dir: Path, tmp_path: Path
+) -> None:
+    """⚠️ **Un nombre de fichero clínico es dato del paciente tan a menudo como no lo es.**
+
+    Este motivo acaba en `review.reasons` y de ahí dentro del `.uos`, que se declara
+    `pseudonymized`. Llevó primero la ruta entera —con el directorio del paciente— y luego
+    el nombre del fichero, que parecía suficiente hasta que en un caso real uno de los
+    informes se llamaba `APELLIDOS_NOMBRE_Informe_de_CBCT_...pdf`. No hay forma de saber
+    cuál de los dos casos toca, así que va el hash: identifica el fichero sin poder llevar
+    nada dentro. Es el mismo razonamiento por el que un asset externo se nombra
+    `sha256:<hex>` en lugar de con su ruta.
+    """
+    bueno = tmp_path / "bueno.txt"
+    bueno.write_text("Diente 16: pH 5.1\n", encoding="utf-8")
+    apellidos = "PEREZ GOMEZ"
+    ilegible = tmp_path / f"{apellidos}_MARIA_Informe_de_CBCT.pdf"
+    # Un PDF VALIDO y sin capa de texto, que es lo que sale de un escaner de sobremesa.
+    # Uno roto a mano no vale: falla antes, en el parser, y no llega a la rama que esto
+    # comprueba.
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=595, height=842)
+    with ilegible.open("wb") as fh:
+        w.write(fh)
+
+    case = CaseInput.from_case_dir(case_dir, patient_id="PAC-001")
+    case.reports = [bueno, ilegible]
+    result = pipeline.run(case)
+
+    # El motivo viaja por dos sitios: el  del agente y las razones del gate de
+    # revision humana, que es lo que acaba dentro del . Se miran los dos.
+    razones = getattr(getattr(result.export, "review", None), "reasons", []) or []
+    motivos = " ".join(
+        [str(o.detail or "") for o in result.report_outcomes] + [str(r) for r in razones]
+    )
+    assert "no contiene texto extraíble" in motivos, "el fallo se sigue declarando"
+    for trozo in (apellidos, "PEREZ", "GOMEZ", "MARIA"):
+        assert trozo not in motivos, f"«{trozo}» sale del contenedor dentro del motivo"
+    assert "sha256:" in motivos, "y se identifica por su hash, no por su nombre"

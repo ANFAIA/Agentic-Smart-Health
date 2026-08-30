@@ -257,7 +257,7 @@ def guarda(args, params, T: dict, centro: np.ndarray, torch) -> None:
     }
 
     for capa, m in (("coronas", fdi > 0), ("encia", fdi == 0)):
-        destino = args.salida / f"escaner_3dgs-{capa}.ply"
+        destino = args.salida / f"gs_escaner-{capa}.ply"
         cabecera = [
             "ply", "format binary_little_endian 1.0",
             "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida",

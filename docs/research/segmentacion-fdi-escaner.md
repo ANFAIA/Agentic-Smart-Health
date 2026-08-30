@@ -37,7 +37,7 @@ no puede demostrar que esté bien. Una corona del tamaño correcto con el nombre
 la pasa entera — hay un test que fija exactamente eso por escrito
 (`tests/test_mide_segmentacion.py::test_la_cota_es_SUPERIOR_no_una_nota`).
 
-Dos criterios:
+Tres criterios:
 
 1. **Tamaño contra el tipo.** La diagonal de la caja propia de la pieza —en sus ejes
    principales, recortando el 1 % de cada extremo para que una mota no mida por todos—
@@ -45,6 +45,20 @@ Dos criterios:
    vestibulolingual × altura clínica). Salta a partir de 1,30.
 2. **Simetría contralateral.** El 16 y el 26 son la misma pieza de la misma boca. Esta
    prueba no usa ninguna constante de población: la referencia es el propio paciente.
+3. **La frontera, ¿cae en el pliegue?** Las dos anteriores miran el **tamaño** de cada
+   pieza y las dos son ciegas a dónde está puesto el borde: una corona puede tener la
+   diagonal correcta y la simetría correcta con la frontera corrida dos milímetros sobre la
+   encía. Ésta mide la concavidad media de los vértices que tocan encía dividida por la
+   concavidad típica de cualquier punto de la malla — el denominador la hace inmune a la
+   escala del escáner y a la densidad del mallado.
+
+   ⚠️ **Y su umbral sí está calibrado**, a diferencia del 1,30 de arriba. Sobre 12 maxilares
+   de Teeth3DS+ con anotación de experto la razón sale **+1,82** (rango 1,50–2,25): el
+   margen gingival es un pliegue y se mide. Nuestras etiquetas dan **−0,06**, y eso no es
+   «la frontera está algo mal puesta» sino **está puesta donde la superficie no hace nada**.
+   Es un diagnóstico distinto y más útil, porque explica por qué afinar el decodificador no
+   la mueve (ver A9 en `notebooks/exercise-point-transformer-teeth3ds.md`). Devuelve `None`
+   —no cero— cuando la escena no trae frontera diente/encía que medir.
 
 ## 3 · El resultado, sobre un maxilar de 14 piezas
 

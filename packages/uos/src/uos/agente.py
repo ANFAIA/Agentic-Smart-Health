@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
+from export_agents.field import esquema_de_propiedades
 
 from uos.clinico import OBSERVACIONES, capa_clinica
 from uos.contenedor import (
@@ -99,6 +100,118 @@ _MEDIA = {
 }
 
 
+def _calidad_frontera(malla: Any, etq: Any) -> dict[int, dict] | None:
+    """Por pieza, si su recorte esta dentro de lo que hacen las etiquetas de experto.
+
+    Devuelve `None` si no se puede calcular, que es distinto de «todas mal»: el sidecar no
+    declara el bloque en vez de declararlo vacio.
+    """
+    try:
+        import numpy as _np
+        from analysis_agents.frontera import calidad_por_pieza
+
+        caras = _np.asarray(malla.get("faces"))
+        if caras is None or caras.size == 0:
+            return None
+        return calidad_por_pieza(_np.asarray(malla["positions"], float), caras, etq)
+    except Exception:
+        return None
+
+
+def _splats_khr(ruta_ply: Path, columnas: Any) -> Any:
+    """El PLY de apariencia leido y convertido a las convenciones de `KHR_gaussian_splatting`.
+
+    ⚠️ **Se lee el FICHERO recien escrito, no los arrays del almacen.** Es la misma fuente
+    que el `.ply` que viaja, asi que la primitiva del glTF y el PLY llevan exactamente los
+    mismos numeros. Reconstruirlo de `params` volveria a pasar por las correcciones de
+    normalizacion de Blender, y basta que una se aplique dos veces —o ninguna— para que la
+    nube salga 32 veces mas pequeña con el descriptor afirmando milimetros. Ya pasó.
+
+    ⚠️ **Y las unidades se PREGUNTAN al esquema, columna a columna.** La extension exige
+    opacidad lineal en `[0,1]` y escala lineal no negativa; nuestro PLY las guarda en logit
+    y en logaritmo. Cual es cual lo dice el descriptor (`unit: "logit"`, `unit: "log(mm)"`),
+    no una lista de nombres escrita aqui: la primera version de este tipo de conversion
+    transformaba `scale_0..2` porque «las escalas son tres» y reventaba en cuanto el
+    descriptor traia una sola.
+
+    ⚠️ `columnas` es la LISTA de columnas —lo que devuelve `esquema_apariencia`— y se acepta
+    tambien el descriptor entero que la contiene. Esta escrito pidiendo un `dict` con clave
+    `columns` y recibia la lista: el `AttributeError` resultante no lo cogia ningun `except`
+    de aqui y tumbaba la exportacion ENTERA, con el gate diciendo solo «uos-export-agent
+    fallo». Que reviente es correcto —un contenedor a medias seria peor— pero que reviente
+    por una forma de argumento no lo es.
+    """
+    import numpy as np
+
+    from uos.escena import SplatsKHR
+
+    crudo = ruta_ply.read_bytes()
+    fin = crudo.index(b"end_header\n") + len(b"end_header\n")
+    tipos = {"float": "<f4", "double": "<f8", "int": "<i4", "uint": "<u4",
+             "short": "<i2", "ushort": "<u2", "char": "<i1", "uchar": "<u1"}
+    n = 0
+    campos: list[tuple[str, str]] = []
+    for linea in crudo[:fin].decode("ascii", "replace").splitlines():
+        if linea.startswith("element vertex"):
+            n = int(linea.split()[-1])
+        elif linea.startswith("property "):
+            _, tipo, nom = linea.split()
+            campos.append((nom, tipos[tipo]))
+    tabla = np.frombuffer(crudo, np.dtype(campos), count=n, offset=fin)
+    col = {nom: np.asarray(tabla[nom], np.float64) for nom, _ in campos}
+    esquema = columnas.get("columns", []) if isinstance(columnas, dict) else (columnas or [])
+    for c in esquema:
+        # ⚠️ **La misma columna llega con dos nombres de campo segun de donde venga**, y
+        # asumir uno costo dos exportaciones muertas: `esquema_apariencia` devuelve objetos
+        # `ColumnaCampo` con atributos en castellano (`nombre`, `unidad`) y el sidecar que
+        # acaba en el `.uos` los serializa en ingles (`name`, `unit`). Son la misma
+        # informacion y este conversor tiene que poder leer las dos, porque las dos existen
+        # y las dos llegan aqui.
+        nom_col = c["name"] if isinstance(c, dict) else getattr(c, "nombre", None)
+        unidad = (c.get("unit") if isinstance(c, dict) else getattr(c, "unidad", "")) or ""
+        if nom_col not in col:
+            continue
+        # La convencion viaja en la UNIDAD y no en un campo aparte: `logit` para la
+        # opacidad, `log(mm)` para las escalas. Ver `esquema_apariencia`.
+        if unidad == "logit":
+            col[nom_col] = 1.0 / (1.0 + np.exp(-col[nom_col]))
+        elif unidad.startswith("log"):
+            col[nom_col] = np.exp(col[nom_col])
+
+    apila = lambda *ns: np.stack([col[x] for x in ns], 1)  # noqa: E731
+    # ⚠️ El cuaternion cambia de ORDEN, no de valor. El PLY INRIA lo guarda `(w,x,y,z)` y
+    # glTF lo quiere `(x,y,z,w)`. Escribirlo tal cual no revienta: coloca cada elipse
+    # girada, que es exactamente el tipo de fallo que nadie ve hasta que mira de cerca.
+    rot = apila("rot_1", "rot_2", "rot_3", "rot_0")
+    largo = np.linalg.norm(rot, axis=1, keepdims=True)
+    rot = np.divide(rot, largo, out=np.zeros_like(rot), where=largo > 0)
+
+    sh1 = None
+    if all(f"f_rest_{k}" in col for k in range(9)):
+        # Grado 1: tres coeficientes, cada uno RGB. El PLY los guarda por canal —los tres
+        # de rojo, los tres de verde, los tres de azul— y la extension los quiere por
+        # coeficiente, asi que hay que trasponer y no solo recortar.
+        crudo_sh1 = np.stack([col[f"f_rest_{k}"] for k in range(9)], 1).reshape(-1, 3, 3)
+        sh1 = np.transpose(crudo_sh1, (0, 2, 1))
+
+    return SplatsKHR(
+        posiciones=apila("x", "y", "z").astype(np.float32),
+        rotacion=rot.astype(np.float32),
+        escala=apila("scale_0", "scale_1", "scale_2").astype(np.float32),
+        opacidad=col["opacity"].astype(np.float32),
+        sh0=apila("f_dc_0", "f_dc_1", "f_dc_2").astype(np.float32),
+        sh1=None if sh1 is None else sh1.astype(np.float32),
+        region_id=(col["region_id"].astype(np.int16) if "region_id" in col else None),
+        # La oclusion y las normales viajan si el PLY las trae. Sin `ao` el visor dibuja la
+        # arcada sin sombreado; sin normales no pasa nada al dibujar —el relieve ya esta en
+        # el grado 1— pero se pierde el dato con el que se calculo.
+        ao=(col["ao"].astype(np.float32) if "ao" in col else None),
+        normales=(apila("nx", "ny", "nz").astype(np.float32)
+                  if all(k in col for k in ("nx", "ny", "nz")) else None),
+        nombre="apariencia real entrenada con gsplat",
+    )
+
+
 class UOSExportAgent(BaseExportAgent):
     """Empaqueta el twin como Unified Oral Scene.
 
@@ -126,14 +239,68 @@ class UOSExportAgent(BaseExportAgent):
         campo: Path | None = None,
         compuesto: Path | None = None,
         imagenes: list[Path] | None = None,
+        # ⚠️ **Los informes del caso, tal como llegaron.** Antes NO viajaba ninguno: el
+        # `report-agent` los leia, sacaba lo que podia y el PDF se quedaba fuera. Para un
+        # informe tabulado eso casi no se nota —la transcripcion lleva lo que decia—, pero
+        # para uno ESCANEADO se pierde entero: el gate dice «hay un PDF que nadie pudo
+        # leer» y el documento no esta en ninguna parte para que alguien lo lea.
+        #
+        # El caso que lo destapo: un pasaporte de implantes escaneado, con tres implantes
+        # (marca, referencia, lote, fecha y posicion FDI) que NO aparecen en ningun otro
+        # documento del caso. Era la unica constancia, y se caia — ni dentro ni declarado.
+        #
+        # Se declaran como todo original adquirido: por su `sha256`, y los custodia otro
+        # sistema. Lo que se arregla aqui no es que viajen —no viaja ninguno—, es que
+        # EXISTAN en el manifiesto.
+        informes: list[Path] | None = None,
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
         modelo_segmentacion: Path | None = None,
+        # Version declarada del segmentador. `None` -> el sidecar dice `null`.
+        version_segmentador: str | None = None,
         cbct: Path | None = None,
+        # ⚠️ **Perfil ligero: los originales se DECLARAN y no viajan.** El `.uos` sale con
+        # el campo gaussiano, la escena y el manifiesto; el STL del escaner y la serie
+        # DICOM quedan como assets `external`, con su `uri` logica y su `sha256`, y quien
+        # los custodia es otro sistema.
+        #
+        # Lo que cambia es la garantia, no la forma: con ellos dentro el contenedor afirma
+        # «el DICOM que sale es el que entro» y el validador lo comprueba; sin ellos afirma
+        # «se el hash de lo que deberia haber ahi». Sigue siendo auditable y ya NO cumple el
+        # ⚠️ **Ningun fichero original viaja dentro. Es el formato, no un perfil.**
+        # El encargo del proyecto es «regenerar ficheros STL e imagenes a partir del Digital
+        # Twin»: regenerar, no transportar. Un contenedor que lleva el escaner dentro no
+        # demuestra reversibilidad —demuestra que sabe copiar un fichero—, y ademas
+        # multiplica su peso por lo que ya esta representado en el gemelo.
+        #
+        # Lo que viaja de cada original es su DIRECCION DE CONTENIDO: `uri` pasa a ser
+        # `sha256:<hex>` y `external` a `true`. Quien reciba el contenedor puede comprobar
+        # que el fichero que le den es exactamente el que se ingirio, sin que el fichero
+        # tenga que estar dentro.
+        #
+        # ⚠️ **Perfil de solo gaussianas: fuera tambien la malla convertida.** `scene.glb`
+        # no es un original —es presentacion, el STL convertido a float32— pero sigue
+        # siendo una malla, y la decision de producto es que el contenedor lleve el campo
+        # gaussiano y el manifiesto.
+        #
+        # Tiene una consecuencia que hay que ver antes de activarlo: `derived/seg_teeth`
+        # indexa los VERTICES de esa malla. Sin ella, esa segmentacion no indexa nada, asi
+        # que tampoco viaja — el FDI tiene que ir entonces por gaussiana, en el propio
+        # campo. Por eso las dos cosas van juntas y no por separado.
+        sin_malla: bool = False,
         previo: Path | None = None,
         # Quien calculo la registracion, para el `operator` de §6. Lo sabe el orquestador
         # —tiene la salida de la fusion geometrica— y este agente no puede deducirlo.
         registrador: str | None = None,
+        # El campo ajustado (gaussian-engine) y su informe de ajuste. Va APARTE en el
+        # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot.
+        # `campo_ajustado` es un ref (hash/URI del almacén); `ajuste` es un dataclass
+        # `Ajuste` con `rmse_hu`, `rmse_hu_por_region`, `compresion`.
+        campo_ajustado: str | None = None,
+        ajuste: Any | None = None,
+        # El descriptor del campo ajustado (dict plano, construido fuera de este paquete
+        # para no acoplarlo a `gaussian_engine`). Se vuelca tal cual en el sidecar.
+        campo_ajustado_descriptor: dict | None = None,
     ) -> ExportOutput:
         if not pseudonimo:
             # ⚠️ **No se cae al `acquisition_id`**, y es deliberado: ese identificador sale
@@ -174,7 +341,6 @@ class UOSExportAgent(BaseExportAgent):
         # y `1574` es el numero de caso. Se nombra por su papel en la escena y la
         # trazabilidad la da el sha256, que es mas fuerte que un nombre.
         uri = f"scene/scan{malla.suffix.lower()}"
-        ficheros[uri] = malla
         # ⚠️ `document`, no `mesh_gs_scene`. Lo dice el §5.1: la escena es el `.glb`, y el
         # STL original «PUEDE incluirse como asset document para trazabilidad». Declararlo
         # escena haria que un visor viera dos escenas y no supiera cual montar.
@@ -182,6 +348,7 @@ class UOSExportAgent(BaseExportAgent):
             malla, uri, id_="asset.ios", kind=Clase.DOCUMENT, visit=visita.id,
             frame=FRAME_IOS, media_type=_MEDIA.get(malla.suffix.lower(), "model/stl"),
             acquisition=Adquisicion(time=snapshot.timestamp),
+            external=True,
         ))
         # ⚠️ **La ESCENA, ademas del STL.** El §3.1 dibuja `scene/scene.glb` como «STL
         # convertido» y el §1.1 dice que UOS no re-encodea datos fuente: las dos cosas solo
@@ -200,6 +367,17 @@ class UOSExportAgent(BaseExportAgent):
         # Las capas de gaussianas. Son tres cosas distintas con el mismo `kind`, asi que
         # cada una lleva su descriptor: el campo es densidad MEDIDA, el compuesto es medida
         # de dos modalidades, y la apariencia es reconstruccion contra renders.
+        #
+        # ⚠️ **`escena_gs` se salta cuando `apariencia_ref` está set.** En ese caso la
+        # capa de apariencia la gestiona el bloque `asset.apariencia` más abajo, con
+        # el esquema INRIA y el perfil correctos. Si no lo saltamos, el main loop crea
+        # `asset.gs` con el esquema de densidad (porque `_descriptor_gs` usa los defaults
+        # del snapshot) y el sidecar queda con `profile: ash-twin/1.0` en vez de
+        # `ash-gs-apariencia/1.0`.
+        _skip_escena_gs = (
+            snapshot.apariencia_ref is not None
+            and escena_gs is not None
+        )
         for ruta, id_, papel, medido, marco, nota in (
             (campo, "asset.field", "campo gaussiano del twin", True, FRAME_CBCT,
              "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
@@ -213,20 +391,50 @@ class UOSExportAgent(BaseExportAgent):
         ):
             if ruta is None or not ruta.exists():
                 continue
+            # Si hay `apariencia_ref`, el bloque `asset.apariencia` gestiona esta capa
+            # con el esquema INRIA correcto — no la procesamos aquí con los defaults.
+            if _skip_escena_gs and id_ == "asset.gs":
+                continue
             # El nombre dentro del contenedor describe QUE es, no de que variable sale.
             # `asset.gs` daria `scene/gs.ply`, que no dice nada a quien lo abra.
             corto = {"asset.gs": "appearance"}.get(id_, id_.split(".")[1])
             uri = f"scene/{corto}{ruta.suffix.lower()}"
             descriptor = f"scene/{corto}.gs.json"
             ficheros[uri] = ruta
+            # Para el campo semilla, incluir info de submuestreo en el sidecar si el
+            # artefacto la trae. Así el consumidor sabe cuántos vóxeles había antes.
+            submuestreo = None
+            if id_ == "asset.field" and self.store is not None:
+                submuestreo = self._lee_submuestreo(snapshot)
+            # ⚠️ **`n_primitives` sale del FICHERO, no del snapshot.** El snapshot lleva el
+            # numero del campo semilla, y el compuesto trae ademas las gaussianas del
+            # escaner: el sidecar declaraba 1.341.990 sobre un fichero de 1.454.057. Un
+            # descriptor describe lo que tiene delante o no describe nada.
+            _u, _n, _props = self._cabecera_ply(ruta)
+            # ⚠️ **El esquema tambien sale del fichero, no del snapshot.** `esquema_campo`
+            # describe el campo SEMILLA; el compuesto trae ademas `origen` —de que
+            # modalidad viene cada gaussiana—, que viajaba en los bytes y no en el
+            # descriptor. Un lector ajeno no podia separar el CBCT del escaner dentro de un
+            # fichero cuyo unico motivo de existir es mezclar los dos. Es el mismo fallo
+            # que aqui ya se arreglo para `n_primitives`, en la lista de columnas.
+            _esq = esquema_de_propiedades(_props) if _props else None
             extras_escena[descriptor] = json_de(self._descriptor_gs(
                 snapshot, papel=papel, medido=medido, marco=marco, nota=nota,
+                submuestreo=submuestreo,
+                esquema_override=_esq,
+                n_primitives_override=_n,
+                unidades_override=_u,
             ))
             assets.append(asset_de(
                 ruta, uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
                 frame=marco, media_type="application/octet-stream",
                 # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
                 load_priority=25, sidecar_uri=descriptor,
+                # La capa de apariencia es DERIVADA (entrenada contra renders) y va en
+                # `scene/` con `layer=1`, no en `derived/` (que es Layer 3, inferencia
+                # clínica). El campo semilla y el compuesto son `raw` por defecto.
+                **({"regulatory": Regulatorio(layer=1, status="derived")}
+                   if id_ == "asset.gs" else {}),
             ))
             nodos_gs.append(NodoGS(
                 uri=uri, nombre=papel,
@@ -235,6 +443,137 @@ class UOSExportAgent(BaseExportAgent):
                 matriz_fila=(al_canonico if marco == FRAME_CBCT else None),
                 extras={"uos_descriptor_uri": descriptor, "uos_measured": medido},
             ))
+
+        # ── Campo ajustado (gaussian-engine) ──────────────────────────────────
+        # El ajuste optimiza el campo semilla contra la densidad medida. El resultado
+        # viaja APARTE en el `.uos` como `asset.field_fit`, sin sustituir la semilla.
+        # Razón: el twin reversible lleva la semilla (que es dato medido); el ajustado
+        # es DERIVADO (optimización numérica, no una medición nueva) y va en `scene/`
+        # con `regulatory.layer=1, status="derived"` — no en `derived/`, que es Layer 3
+        # (inferencia clínica con modelo entrenado).
+        #
+        # `campo_ajustado` es un ref (hash/URI del almacén); `campo_ajustado_descriptor`
+        # es un dict plano construido en `caso_completo.py` con `gaussian_engine.esquema`
+        # y `gaussian_engine.PERFIL` — este paquete no importa `gaussian_engine`.
+        if (campo_ajustado is not None and campo_ajustado_descriptor is not None
+                and self.store is not None):
+            try:
+                datos_aj = self.store.load(campo_ajustado)
+                uri_fit = "scene/field_fit.ply"
+                ficheros[uri_fit] = self._escribe_ply(
+                    destination / uri_fit, datos_aj,
+                )
+                descriptor_fit = "scene/field_fit.gs.json"
+                extras_escena[descriptor_fit] = json_de(campo_ajustado_descriptor)
+                assets.append(asset_de(
+                    destination / uri_fit, uri_fit,
+                    id_="asset.field_fit",
+                    kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                    frame=FRAME_CBCT, media_type="application/octet-stream",
+                    load_priority=25, sidecar_uri=descriptor_fit,
+                ))
+                nodos_gs.append(NodoGS(
+                    uri=uri_fit,
+                    nombre="campo ajustado contra densidad medida",
+                    matriz_fila=al_canonico,
+                    extras={
+                        "uos_descriptor_uri": descriptor_fit,
+                        "uos_measured": False,
+                    },
+                ))
+            except (KeyError, OSError, ValueError) as e:
+                aviso_derivados.append(
+                    f"campo ajustado no incluido en el `.uos`: {e}"
+                )
+
+        # ── Apariencia entrenada (gsplat contra fotos) ─────────────────────
+        # El PLY INRIA con color real del paciente, entrenado contra renders de
+        # Blender. Viaja como `asset.apariencia` con `layer=1, status="derived"`.
+        # El esquema de columnas es INRIA (f_dc_*, opacity, scale en log), NO
+        # el del campo de densidad — por eso pasamos `esquema_override`.
+        #
+        # ⚠️ **Los arrays en el almacén** (`means`, `quats`, `opacities`, `colors`)
+        # no coinciden con las claves de `_escribe_ply` (`centers`, `rotations`,
+        # `density`). Usamos `escribe_inria` que conoce el formato INRIA de
+        # primera mano — el mismo que escribe el PLY en el pipeline.
+        splats_khr = None
+        descriptor_ap: str | None = None
+        if (snapshot.apariencia_ref is not None and self.store is not None):
+            try:
+                from gaussian_engine.agente_apariencia import esquema_apariencia
+                from gaussian_engine.apariencia import (
+                    escribe_inria as _escribe_inria,
+                )
+                datos_ap = self.store.load(snapshot.apariencia_ref)
+                # ⚠️ **El PLY se escribe y NO viaja: es un paso intermedio.** La capa de
+                # apariencia va dentro de `scene.glb` como primitiva
+                # `KHR_gaussian_splatting`, y llevarla ademas como `.ply` suelto eran 12,5
+                # MB duplicando un dato que ya esta ahi — con el riesgo clasico de dos
+                # copias: que diverjan y nadie sepa cual manda.
+                #
+                # Se sigue escribiendo porque es de donde salen los numeros: `escribe_inria`
+                # aplica las correcciones de normalizacion de Blender (`scan_scale`,
+                # `scan_offset`) y reconstruirlas aparte seria tenerlas en dos sitios. El
+                # fichero se queda en `destination` para inspeccion y no se declara como
+                # asset.
+                uri_ap = "scene/appearance.ply"
+                destino_ap = destination / uri_ap
+                destino_ap.parent.mkdir(parents=True, exist_ok=True)
+                _escribe_inria(
+                    destino_ap, datos_ap,
+                    n_vistas=datos_ap.get("n_vistas", 0),
+                    iteraciones=datos_ap.get("iteraciones", 0),
+                )
+                _u_ap, _n_ap, _props_ap = self._cabecera_ply(destino_ap)
+                # ⚠️ El esquema se deriva de las propiedades QUE TRAE EL PLY recien
+                # escrito, no de una lista fija. `escribe_inria` emite `region_id` solo
+                # cuando hay segmentacion, y la lista fija no lo declaraba nunca: el
+                # codigo FDI viajaba en los bytes y no en el sidecar.
+                esq_ap = esquema_apariencia(_props_ap)
+                descriptor_ap = "scene/appearance.gs.json"
+                extras_escena[descriptor_ap] = json_de(self._descriptor_gs(
+                    snapshot,
+                    papel="apariencia real entrenada con gsplat",
+                    medido=False,
+                    marco=FRAME_IOS,
+                    # ⚠️ **La nota se LEE del PLY, no se escribe aqui.** Este literal
+                    # describia el color como «un degradado de DOS tonos interpolado por
+                    # altura z» mucho despues de que el color pasara a medirse corona a
+                    # corona: la cabecera del fichero decia una cosa y su propio sidecar
+                    # otra, y el panel del visor mostraba la vieja. Es el mismo fallo que
+                    # ya se arreglo dos veces aqui —las unidades y el esquema— y la misma
+                    # cura: quien describe, pregunta al fichero.
+                    nota=self._nota_color_ply(destino_ap),
+                    esquema_override=esq_ap,
+                    perfil_override="ash-gs-apariencia/1.0",
+                    # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
+                    # el numero de gaussianas escritas no es el de la semilla que se le dio.
+                    n_primitives_override=(_n_ap or len(datos_ap["means"])),
+                    unidades_override=_u_ap,
+                ))
+                # ⚠️ **No hay `asset.apariencia` ni `NodoGS`: la capa ES la primitiva.**
+                # Habia las dos cosas —un `.ply` de 12,5 MB declarado como asset y un nodo
+                # con `extras.uos_gs_uri` apuntandolo— porque era el fallback que el
+                # borrador admite mientras `KHR_gaussian_splatting` no este ratificada. Con
+                # la primitiva dentro, mantenerlos seria llevar el mismo dato dos veces y
+                # dejar que diverjan sin que nadie sepa cual manda.
+                #
+                # Lo que SI se conserva es el descriptor: sigue siendo donde se declara que
+                # `region_id` es inferencia y no medida, que `f_dc` es color medido por
+                # pieza y que `ao` es visualizacion. La extension no tiene donde decir nada
+                # de eso, asi que cuelga de `asset.scene` como su `sidecar_uri`.
+                try:
+                    splats_khr = _splats_khr(destino_ap, esq_ap)
+                except (KeyError, ValueError) as e:
+                    splats_khr = None
+                    aviso_derivados.append(
+                        f"la apariencia NO viaja: no se pudo construir la primitiva "
+                        f"`KHR_gaussian_splatting` desde el campo entrenado: {e}"
+                    )
+            except (KeyError, OSError, ValueError) as e:
+                aviso_derivados.append(
+                    f"apariencia no incluida en el `.uos`: {e}"
+                )
 
         # La ESCENA, con la malla y los nodos GS colgando de ella.
         malla_ingerida = self._malla_ingerida(snapshot)
@@ -262,6 +601,7 @@ class UOSExportAgent(BaseExportAgent):
                 malla_ingerida.get("normals"), nombre="scan",
                 generador=f"{self.name}@{self.version}",
                 nodos_gs=nodos_gs,
+                splats=splats_khr,
                 # ⚠️ El FDI por vertice parte la malla en un primitive por diente con
                 # `extras.uos_fdi` (§5.1). Sin eso, el picking semantico del §11.3 —que
                 # esta definido sobre ese campo— no funciona en un visor ajeno, por mucho
@@ -271,30 +611,59 @@ class UOSExportAgent(BaseExportAgent):
                     "uos_frame": FRAME_IOS,
                     "uos_units": "mm",
                     "uos_source_asset": "asset.ios",
+                    # ⚠️ Decia «el asset reversible es asset.ios, byte-identico al
+                    # fichero del escaner». Cierto como identidad —ese hash ES el fichero
+                    # del escaner— pero se escribio cuando el STL viajaba dentro, y ahora
+                    # se lee como si el contenedor lo custodiara. No lo custodia: lo
+                    # nombra. Y la reversibilidad no es devolverlo, es regenerar la malla
+                    # desde esta escena (extension `ash_reversible`).
                     "uos_note": (
-                        "presentacion: float32 desde float64. El asset reversible es "
-                        "asset.ios, byte-identico al fichero del escaner"
+                        "presentacion: float32 desde float64. El original es asset.ios, "
+                        "referenciado por su direccion de contenido y no incluido aqui; "
+                        "la malla se regenera desde esta escena"
                     ),
                 },
             )
-            extras_escena["scene/scene.glb"] = glb
-            assets.append(asset_de_bytes(
-                glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
-                visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
-                load_priority=10,
-            ))
+            if not sin_malla:
+                extras_escena["scene/scene.glb"] = glb
+                assets.append(asset_de_bytes(
+                    glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
+                    visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
+                    load_priority=10,
+                    # El descriptor de las columnas de la capa 3DGS que va DENTRO de este
+                    # glTF. `KHR_gaussian_splatting` transporta gaussianas; no tiene donde
+                    # decir que `region_id` es inferencia con vocabulario ISO-3950 ni que
+                    # `f_dc` es color medido corona a corona. Eso lo dice el sidecar, y sin
+                    # el unas etiquetas de modelo se leerian como medidas.
+                    sidecar_uri=(descriptor_ap if splats_khr is not None else None),
+                    # De donde sale esta malla, DICHO EN EL MANIFIESTO. Es el escaner
+                    # reindexado a glTF —misma geometria, mismos 220.085 triangulos—, y sin
+                    # esta linea la unica forma de saberlo era parsear el GLB entero.
+                    derived_from=["asset.ios"],
+                ))
 
             # `derived/` — la segmentacion, Layer 3 y desmontable (§5.5).
-            if etiquetas_ios is not None:
+            # ⚠️ Solo si la escena viaja: estas etiquetas indexan sus vertices por posicion,
+            # asi que sin ella serian una lista de codigos que no indexa nada. Un derivado
+            # que no se puede cruzar con nada es peor que no llevarlo.
+            if etiquetas_ios is not None and not sin_malla:
                 etq = np.asarray(etiquetas_ios)
                 if len(etq) == len(malla_ingerida["positions"]):
                     crudo = codifica_etiquetas(etq)
                     meta = meta_segmentacion(
                         etq, asset_origen="asset.scene",
                         modelo="ash-seg-teeth",
-                        version=str(getattr(self, "version", "0")),
+                        # ⚠️ La version del SEGMENTADOR, no la de este agente. Aqui se
+                        # escribia `self.version` —la del exportador— en el unico campo
+                        # que existe para saber que modelo produjo la inferencia. Es el
+                        # mismo fallo de atribucion que el `operator` de la registracion.
+                        # Sin dato se deja `null`: §5.5 admite no saberlo, no admite
+                        # inventarlo. El hash de los pesos sigue siendo lo que identifica
+                        # el checkpoint de verdad.
+                        version=version_segmentador,
                         pesos_sha256=(None if modelo_segmentacion is None
                                       else sha256_de_fichero(modelo_segmentacion)),
+                        calidad=_calidad_frontera(malla_ingerida, etq),
                     )
                     extras_escena[SEGMENTACION] = crudo
                     extras_escena[SEGMENTACION_META] = json_de(meta)
@@ -317,9 +686,14 @@ class UOSExportAgent(BaseExportAgent):
             # ⚠️ El nombre del fichero NO viaja: los de un proveedor llevan identificadores
             # del paciente. Se renumera y la trazabilidad la da el sha256.
             uri = f"images/img_{i:03d}{foto.suffix.lower()}"
-            ficheros[uri] = foto
+            # ⚠️ **Las fotos son originales, igual que el STL y el DICOM.** Estuvieron
+            # atadas a `sin_malla` —el perfil de solo gaussianas— en vez de a la regla de
+            # los originales, y un contenedor que decia no llevarlos llevaba 18 MB de
+            # fotografias del paciente dentro. Es el mismo criterio para las tres cosas: lo
+            # que viaja es la direccion de contenido, no el fichero.
             assets.append(asset_de(
                 foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
+                external=True,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
                 # §5.3. Lo unico que se puede afirmar de estas: son fotos intraorales.
@@ -329,7 +703,39 @@ class UOSExportAgent(BaseExportAgent):
                 projection=Proyeccion(type="intraoral_photo"),
             ))
 
+        for i, doc in enumerate(informes or []):
+            if not doc.exists():
+                continue
+            # ⚠️ El nombre NO viaja: los de una clinica llevan apellidos del paciente.
+            # Se renumera, igual que las fotos.
+            uri = f"clinical/documents/doc_{i:03d}{doc.suffix.lower()}"
+            # ⚠️ Obedecen la MISMA regla que el STL y las fotos. Un informe no es un caso
+            # aparte: ningun original adquirido viaja, y una excepcion para los PDF haria
+            # que la regla significara una cosa distinta segun el asset. Se declaran por su
+            # direccion de contenido —`sha256:<hex>`— igual que el resto, y es el mismo
+            # hash con el que el gate nombra el que nadie pudo leer.
+            assets.append(asset_de(
+                doc, uri, id_=f"asset.doc_{i:03d}", kind=Clase.DOCUMENT, visit=visita.id,
+                external=True,
+                frame=FRAME_IOS,
+                media_type=_MEDIA.get(doc.suffix.lower(), "application/pdf"),
+                # §5.1 Layer 1: es el registro que firmo una persona, no salida de un
+                # modelo. La TRANSCRIPCION de lo que dice vive aparte, en
+                # `clinical/observations.json`, y declara su propia `derivation`.
+                regulatory=Regulatorio(layer=1),
+            ))
+
         # La capa clinica: lo que el informe dice de cada pieza, las medidas que no caben
+        # ⚠️ La version anterior se lee AQUI y no donde se usa, porque si su cadena esta
+        # rota el aviso tiene que entrar en `motivos` ANTES de que la capa clinica los
+        # congele. Un aviso de procedencia que no llega al gate de revision es un aviso que
+        # nadie lee.
+        _prev_sha, _prev_cadena, _aviso_cadena = lee_version_previa(
+            previo or destination.with_suffix(".uos")
+        )
+        if _aviso_cadena:
+            motivos = [*(motivos or []), _aviso_cadena]
+
         # en una pieza, y los motivos del gate. Ver `clinico.py` — es EXTENSION nuestra.
         clinico = capa_clinica(snapshot, list(motivos or []))
         if clinico["teeth"] or clinico["measurements"]:
@@ -378,13 +784,16 @@ class UOSExportAgent(BaseExportAgent):
             uri = "volume/ct_001/"
             sidecar_uri = SIDECAR.format(id="ct_001")
             sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
-            directorios[uri] = cbct
+            # ⚠️ El sidecar del volumen SI viaja, y es lo que hace utilizable un volumen
+            # referenciado: dice dimensiones, espaciado y orientacion sin parsear DICOM
+            # (§5.2). Sin el, el contenedor no podria ni situar el volumen que referencia.
             extras[sidecar_uri] = json_de(sidecar)
             assets.append(asset_de_directorio(
                 cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
                 frame=FRAME_CBCT, media_type="application/dicom",
                 acquisition=Adquisicion(time=snapshot.timestamp),
                 sidecar_uri=sidecar_uri,
+                external=True,
             ))
 
         fhir = self._fhir(assets)
@@ -402,7 +811,7 @@ class UOSExportAgent(BaseExportAgent):
         # La version anterior del caso, si la hay: de ella salen `prev_manifest_sha256` y
         # la cadena que este contenedor continua. Por defecto es el propio destino, que
         # es lo que hace que reexportar encima produzca una version N+1 y no un borrado.
-        previo_sha, cadena_previa = lee_version_previa(previo or salida)
+        previo_sha, cadena_previa = _prev_sha, _prev_cadena
         manifiesto = Manifiesto(
             uos_version=UOS_VERSION,
             case_id=f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, snapshot.acquisition_id)}",
@@ -481,6 +890,65 @@ class UOSExportAgent(BaseExportAgent):
                 f"{FRAME_IOS}"
             ),
         )
+
+    def _escribe_ply(self, destino: Path, datos: dict) -> Path:
+        """PLY binario little-endian desde los arrays de un campo gaussiano.
+
+        Misma estructura que ``field.escribe_ply``, pero aqui no podemos importar
+        ``export_agents`` (seria una dependencia cruzada entre paquetes). Los arrays
+        llegan como ``centers`` (N,3), ``scales`` (N,3), ``rotations`` (N,4) y
+        ``density`` (N,), y se mapean a las propiedades PLY ``x/y/z``, ``scale_*``,
+        ``rot_*`` y ``density``.
+        """
+        import numpy as np
+
+        _MAPEO = {
+            "centers": ("x", "y", "z"),
+            "scales": ("scale_0", "scale_1", "scale_2"),
+            "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
+            "density": ("density",),
+            "region_id": ("region_id",),
+            "origen": ("origen",),
+        }
+        _TIPOS_PLY = {
+            "x": ("double", np.float64), "y": ("double", np.float64),
+            "z": ("double", np.float64),
+            "scale_0": ("float", np.float32), "scale_1": ("float", np.float32),
+            "scale_2": ("float", np.float32),
+            "rot_0": ("float", np.float32), "rot_1": ("float", np.float32),
+            "rot_2": ("float", np.float32), "rot_3": ("float", np.float32),
+            "density": ("float", np.float32),
+            "region_id": ("short", np.int16),
+            "origen": ("short", np.int16),
+        }
+
+        cols = []
+        for arr_key, ply_names in _MAPEO.items():
+            if arr_key in datos:
+                arr = np.asarray(datos[arr_key])
+                if arr.ndim == 2:
+                    for i, pn in enumerate(ply_names):
+                        cols.append((pn, arr[:, i]))
+                else:
+                    cols.append((ply_names[0], arr))
+
+        n = len(cols[0][1]) if cols else 0
+        cabecera = ["ply", "format binary_little_endian 1.0",
+                     f"element vertex {n}"]
+        cabecera += [f"property {_TIPOS_PLY[nombre][0]} {nombre}"
+                     for nombre, _ in cols]
+        cabecera.append("end_header")
+
+        dtype = np.dtype([(nombre, _TIPOS_PLY[nombre][1]) for nombre, _ in cols])
+        filas = np.empty(n, dtype=dtype)
+        for nombre, arr in cols:
+            filas[nombre] = arr
+
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with destino.open("wb") as fh:
+            fh.write(("\n".join(cabecera) + "\n").encode("ascii"))
+            fh.write(filas.tobytes())
+        return destino
 
     def _registros(self, snapshot: TwinSnapshot, operador: str | None) -> list[Registro]:
         """La relacion CBCT ↔ escaner, INVERTIDA al canonico y declarada.
@@ -597,9 +1065,118 @@ class UOSExportAgent(BaseExportAgent):
             return None
         return malla if "positions" in malla and "faces" in malla else None
 
+    def _lee_submuestreo(self, snapshot: TwinSnapshot) -> dict | None:
+        """Lee `paso` y `n_origen` del artefacto del campo semilla, si existen.
+
+        El `cbct-agent` guarda el paso de submuestreo (el array de 3 enteros que
+        indica cada cuántos vóxeles se quedó uno) y el número de vóxeles originales.
+        Esto permite al consumidor del `.uos` saber cuántos vóxeles había antes: un
+        PLY con 500K gaussianas y paso (3,3,1) indica ~4,5M vóxeles originales.
+        """
+        if snapshot.gaussian_field_ref is None or self.store is None:
+            return None
+        try:
+            datos = self.store.load(snapshot.gaussian_field_ref)
+        except (KeyError, OSError, ValueError):
+            return None
+        if "paso" not in datos or "n_origen" not in datos:
+            return None
+        import numpy as np
+
+        paso_arr = np.asarray(datos["paso"], dtype=int)
+        n_origen = int(datos["n_origen"])
+        n_final = int(datos["centers"].shape[0])
+        # `paso` viene en orden (z, y, x) del `occupied`; lo pasamos a (x, y, z)
+        # para que el consumidor lo entienda sin conocer la interna del agente.
+        paso_xyz = paso_arr[::-1].tolist()
+        return {
+            "paso_voxeles": paso_xyz,
+            "de": n_origen,
+            "a": n_final,
+        }
+
+    @staticmethod
+    def _nota_color_ply(ruta: Path) -> str:
+        """Lo que el PLY dice de su propio color, para que el sidecar no lo repita a mano.
+
+        Se toman los `comment` desde el que abre `f_dc_*` hasta el ultimo seguido: son los
+        que `gaussian_engine.apariencia._comentarios_color` escribe describiendo de donde
+        salio el color y cuanto de el es medido. Si el fichero no los trae se dice eso, en
+        vez de afirmar nada sobre un color que no se ha podido leer.
+        """
+        try:
+            with ruta.open("rb") as f:
+                crudo = f.read(65536)
+        except OSError:
+            return "el PLY de apariencia no se ha podido leer para describir su color"
+        fin = crudo.find(b"end_header")
+        lineas = crudo[: fin if fin >= 0 else len(crudo)].decode("ascii", "replace")
+        recogiendo, partes = False, []
+        for linea in lineas.splitlines():
+            if not linea.startswith("comment "):
+                continue
+            cuerpo = linea[len("comment "):].strip()
+            if cuerpo.startswith("f_dc_"):
+                recogiendo = True
+            elif recogiendo and cuerpo.startswith(("opacity", "scale", "rot ", "unidades",
+                                                   "entrenado", "region_id", "nx,ny,nz",
+                                                   "f_rest_")):
+                break
+            if recogiendo:
+                partes.append(cuerpo)
+        if not partes:
+            return "el PLY de apariencia no declara de donde sale su color"
+        return " ".join(partes)
+
+    @staticmethod
+    def _cabecera_ply(ruta: Path) -> tuple[str | None, int | None, list[str]]:
+        """`(unidades, n_primitivas, propiedades)` leidas DEL FICHERO.
+
+        ⚠️ **El descriptor describe el fichero, asi que pregunta al fichero.** Antes
+        afirmaba `units: "mm"` con un literal y `n_primitives` con el numero del snapshot;
+        el PLY de apariencia estaba en el espacio normalizado de Blender y tenia 118.041
+        gaussianas, y el sidecar decia milimetros y 1.341.990. Las dos mentiras eran
+        invisibles porque nada las contrastaba con el fichero que describian.
+
+        ⚠️ **Las propiedades tambien salen del fichero.** El esquema de la apariencia se
+        enumeraba a mano en `esquema_apariencia()`; el escritor paso a emitir `region_id` y
+        la lista no se entero, asi que el dato viajaba en el PLY **sin declararse en el
+        sidecar** — invisible para cualquier lector que no sea el nuestro.
+
+        Se lee solo la cabecera —ASCII, hasta `end_header`— y por eso no importa que el
+        PLY pese ochenta megas. Y devuelve `None` en vez de un valor por defecto cuando el
+        fichero no lo declara: ese es justo el caso en el que suponer volvio a fallar.
+        """
+        try:
+            with ruta.open("rb") as f:
+                crudo = f.read(65536)
+        except OSError:
+            return None, None, []
+        fin = crudo.find(b"end_header")
+        texto = crudo[: fin if fin >= 0 else len(crudo)].decode("ascii", "replace")
+        unidades = n = None
+        propiedades: list[str] = []
+        for linea in texto.splitlines():
+            if linea.startswith("comment unidades "):
+                unidades = linea.split(maxsplit=2)[2].strip()
+            elif linea.startswith("element vertex "):
+                try:
+                    n = int(linea.split()[2])
+                except (IndexError, ValueError):
+                    n = None
+            elif linea.startswith("property ") and not linea.startswith("property list"):
+                partes = linea.split()
+                if len(partes) == 3:
+                    propiedades.append(partes[2])
+        return unidades, n, propiedades
+
     def _descriptor_gs(
         self, snapshot: TwinSnapshot, *, papel: str, medido: bool, marco: str,
-        nota: str,
+        nota: str, submuestreo: dict | None = None,
+        esquema_override: list | None = None,
+        perfil_override: str | None = None,
+        n_primitives_override: int | None = None,
+        unidades_override: str | None = None,
     ) -> dict[str, Any]:
         """El sidecar de un asset de gaussianas: que es y con que semantica.
 
@@ -609,22 +1186,39 @@ class UOSExportAgent(BaseExportAgent):
         milimetros lineales. Un visor estandar abriendo esto no fallaria — exponenciaria
         nuestros milimetros y renderizaria basura con muy buen aspecto. Por eso las
         columnas se declaran en vez de suponerse.
+
+        ⚠️ **Overrides para la capa de apariencia.** La capa `asset.gs` tiene un esquema
+        de columnas DISTINTO al campo de densidad (INRIA: `f_dc_*`, `opacity` en logit,
+        `scale_*` en log). Los overrides permiten al UOS usar el esquema correcto sin
+        cambiar el snapshot (que sigue apuntando al campo de densidad).
         """
-        return {
+        esquema = esquema_override if esquema_override is not None else snapshot.esquema_campo
+        perfil = perfil_override if perfil_override is not None else snapshot.perfil_campo
+        n_prim = (n_primitives_override
+                  if n_primitives_override is not None
+                  else snapshot.n_primitives)
+        resultado: dict[str, Any] = {
             "role": papel,
             "measured": medido,
             "note": nota,
-            "profile": snapshot.perfil_campo,
+            "profile": perfil,
             "frame": marco,
-            "units": "mm",
-            "n_primitives": snapshot.n_primitives,
+            # ⚠️ `mm` es el defecto del formato, no una afirmacion sobre este fichero: los
+            # campos de densidad se escriben aqui mismo y en milimetros por construccion.
+            # Un asset escrito por otro paquete —la apariencia— pasa lo que su fichero
+            # DECLARA, y si no declara nada eso se ve en el sidecar. Ver `_cabecera_ply`.
+            "units": unidades_override or "mm",
+            "n_primitives": n_prim,
             "columns": [
                 {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
                  "measured": c.medido, "derived_from": c.derivado_de,
                  "meaning": c.significado, "vocabulary": c.vocabulario}
-                for c in snapshot.esquema_campo
+                for c in esquema
             ],
         }
+        if submuestreo is not None:
+            resultado["submuestreo"] = submuestreo
+        return resultado
 
     def _extensiones(self, assets: list) -> dict[str, Extension]:
         """Lo que este emisor anade al borrador, dicho en voz alta.
@@ -654,6 +1248,34 @@ class UOSExportAgent(BaseExportAgent):
                     "reconstruida y el esquema de sus columnas. El borrador trata el 3DGS "
                     "como apariencia en marco de reconstruccion; aqui hay campos ajustados "
                     "a la densidad del CBCT, en el marco del paciente y con error en HU"
+                ),
+            )
+        # ⚠️ **La reversibilidad existe y el contenedor no la declaraba.** De este `.uos`
+        # sale una malla de arcada con color por vertice, codigo FDI y la marca de que
+        # vertices llevan color MEDIDO — sin tocar el escaner original, que viaja fuera.
+        # Eso es lo que el proyecto entiende por reversible: regenerar, no transportar. Y
+        # sin embargo no habia nada en el manifiesto que lo dijera: quien recibiera el
+        # fichero sin conocer nuestro script no tenia forma de saber que se puede hacer,
+        # con que assets ni que columnas saldrian. Un formato abierto cuya propiedad
+        # principal solo conoce el emisor no es abierto.
+        #
+        # No se mete la malla mejorada DENTRO a proposito: ya esta ahi, repartida entre la
+        # geometria de `asset.scene` y el color de `asset.apariencia`. Llevarla ademas
+        # serian 19 MB para duplicar una geometria que el contenedor sabe reconstruir, y
+        # dos verdades sobre la misma superficie que pueden divergir.
+        if "asset.scene" in ids:
+            fuera["ash_reversible"] = Extension(
+                name="ash_reversible", version="1.0",
+                schema_id="ash-reversible/1.0",
+                description=(
+                    "de `asset.scene` se regenera una malla de arcada con color por "
+                    "vertice, codigo FDI y una columna `medido` que dice que vertices "
+                    "llevan color del paciente y cuales el degradado de respaldo. La "
+                    "geometria y el FDI salen de sus primitivas de malla "
+                    "(`extras.uos_fdi`); el color, de su primitiva "
+                    "`KHR_gaussian_splatting`, tomandolo de las gaussianas que cubren cada "
+                    "vertice dentro de 3 sigmas y ponderandolo por alfa. La malla no "
+                    "viaja: se reconstruye"
                 ),
             )
         return fuera

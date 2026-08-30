@@ -11,13 +11,21 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from uos import Asset, Frame, Manifiesto, Sujeto, Visita, escribe_uos, valida
 from uos.contenedor import MANIFIESTO
 from uos.manifiesto import Clase, EstadoPHI, Procedencia
-from uos.procedencia import CADENA, FIRMAS, Cadena, encadena, lee_version_previa
+from uos.procedencia import (
+    CADENA,
+    FIRMAS,
+    Cadena,
+    Eslabon,
+    encadena,
+    lee_version_previa,
+)
 
 CASO = "urn:uuid:0"
 
@@ -50,7 +58,8 @@ def malla(tmp_path) -> Path:
 
 def _escribe(destino: Path, malla: Path, previo: Path | None = None) -> Path:
     """Una version del caso, encadenada a la anterior si se da."""
-    previo_sha, cadena_previa = lee_version_previa(previo) if previo else (None, None)
+    previo_sha, cadena_previa, _ = (lee_version_previa(previo) if previo
+                                    else (None, None, None))
     m = _manifiesto(
         [_asset(malla)],
         provenance=Procedencia(prev_manifest_sha256=previo_sha, chain=CADENA),
@@ -126,7 +135,7 @@ def test_la_cadena_crece_sin_perder_eslabones(tmp_path, malla):
 def test_un_case_id_distinto_EMPIEZA_cadena_en_vez_de_mezclarse(tmp_path, malla):
     """Dos casos distintos no son la misma historia aunque se exporten al mismo sitio."""
     v1 = _escribe(tmp_path / "v1.uos", malla)
-    _, cadena_previa = lee_version_previa(v1)
+    _, cadena_previa, _ = lee_version_previa(v1)
 
     otra = encadena(
         case_id="urn:uuid:otro", manifiesto_json="{}", previo_sha256=None,
@@ -241,7 +250,7 @@ def test_un_uos_previo_ilegible_empieza_cadena_en_vez_de_reventar(tmp_path, mall
     roto = tmp_path / "roto.uos"
     roto.write_bytes(b"esto no es un zip")
 
-    assert lee_version_previa(roto) == (None, None)
+    assert lee_version_previa(roto) == (None, None, None)
 
     v = _escribe(tmp_path / "v1.uos", malla, previo=roto)
     with zipfile.ZipFile(v) as z:
@@ -266,3 +275,92 @@ def _stl_binario(triangulos: int = 4) -> bytes:
         v = rng.normal(0, 10, (3, 3)).astype("<f4")
         crudo += np.zeros(3, dtype="<f4").tobytes() + v.tobytes() + b"\x00\x00"
     return crudo
+
+
+def test_una_cadena_ROTA_no_se_continua_y_se_dice(tmp_path):
+    """Una cadena cuyo último eslabón no cuadra con su manifiesto no se encadena encima.
+
+    ⚠️ El caso real: cuatro versiones donde el eslabón 3 declaraba `38f0a225…` y su
+    manifiesto hasheaba `0ec380e4…`. La exportación siguiente construía un `prev` correcto
+    —el hash real— que no cuadraba con lo declarado, el validador la rechazaba entera, y el
+    caso quedaba **inexportable para siempre** por una corrupción heredada.
+
+    Repararla en silencio sería peor: una cadena de procedencia que se auto-repara no sirve
+    para nada. Lo correcto es no reclamar una continuidad que no existe, empezar cadena
+    nueva y decir por qué.
+    """
+    import json
+    import zipfile
+
+    v1 = tmp_path / "caso.uos"
+    manifiesto = json.dumps({"uos_version": "0.2"})
+    cadena = Cadena(case_id="urn:uuid:0", links=[Eslabon(
+        version=1,
+        manifest_sha256="a" * 64,          # NO es el hash de `manifiesto`
+        prev_manifest_sha256=None,
+        created=datetime.now(UTC),
+        generator={"name": "t", "version": "0"},
+        assets=1,
+    )])
+    with zipfile.ZipFile(v1, "w") as z:
+        z.writestr("manifest.json", manifiesto)
+        z.writestr(CADENA, cadena.model_dump_json())
+
+    sha, prev, aviso = lee_version_previa(v1)
+    assert (sha, prev) == (None, None), "no puede reclamar continuidad con una cadena rota"
+    assert aviso and "ROTA" in aviso and "cadena nueva" in aviso
+
+
+def test_una_cadena_SANA_si_se_continua(tmp_path):
+    """El contrario, para que el de arriba pueda fallar."""
+    import hashlib
+    import json
+    import zipfile
+
+    v1 = tmp_path / "caso.uos"
+    manifiesto = json.dumps({"uos_version": "0.2"})
+    real = hashlib.sha256(manifiesto.encode("utf-8")).hexdigest()
+    cadena = Cadena(case_id="urn:uuid:0", links=[Eslabon(
+        version=1, manifest_sha256=real, prev_manifest_sha256=None,
+        created=datetime.now(UTC), generator={"name": "t", "version": "0"}, assets=1,
+    )])
+    with zipfile.ZipFile(v1, "w") as z:
+        z.writestr("manifest.json", manifiesto)
+        z.writestr(CADENA, cadena.model_dump_json())
+
+    sha, prev, aviso = lee_version_previa(v1)
+    assert sha == real and prev is not None and aviso is None
+
+
+def test_una_rotura_EN_MEDIO_de_la_cadena_tambien_corta_la_continuidad(tmp_path):
+    """No basta con mirar el último eslabón: una cadena vale lo que su eslabón más débil.
+
+    ⚠️ Este es el caso que mi primer arreglo dejó pasar, y por eso está escrito aparte. Tras
+    una exportación fallida el **último** eslabón cuadraba con su manifiesto —lo había
+    escrito bien— y la rotura estaba entre la v3 y la v4. La comprobación superficial lo
+    daba por bueno, se encadenaba encima, y el validador seguía rechazando el contenedor
+    entero: el caso quedaba igual de inexportable, pero ahora en silencio.
+    """
+    import zipfile
+
+    manifiesto = json.dumps({"uos_version": "0.2"})
+    real = hashlib.sha256(manifiesto.encode("utf-8")).hexdigest()
+    ahora = datetime.now(UTC)
+    gen = {"name": "t", "version": "0"}
+    cadena = Cadena(case_id="urn:uuid:0", links=[
+        Eslabon(version=1, manifest_sha256="1" * 64, prev_manifest_sha256=None,
+                created=ahora, generator=gen, assets=1),
+        # ⚠️ la rotura: apunta a "9"*64 y el eslabón 1 declara "1"*64
+        Eslabon(version=2, manifest_sha256=real, prev_manifest_sha256="9" * 64,
+                created=ahora, generator=gen, assets=1),
+    ])
+    v = tmp_path / "caso.uos"
+    with zipfile.ZipFile(v, "w") as z:
+        z.writestr("manifest.json", manifiesto)
+        z.writestr(CADENA, cadena.model_dump_json())
+
+    sha, prev, aviso = lee_version_previa(v)
+    # El último eslabón SÍ cuadra con el manifiesto, que es lo que engañaba antes.
+    assert cadena.links[-1].manifest_sha256 == real
+    assert (sha, prev) == (None, None), "una rotura interna también corta la continuidad"
+    assert aviso and "ROTA" in aviso

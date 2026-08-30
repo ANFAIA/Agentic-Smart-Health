@@ -249,3 +249,26 @@ def test_un_diente_normal_que_no_se_encuentra_sigue_siendo_desacuerdo():
     salida = SemanticFusionAgent().fuse(_snap([obs]), detected={"27": 0.9})
 
     assert any("26" in m and "no lo encontró" in m for m in salida.hitl_reasons)
+
+
+def test_una_arcada_sin_escaner_no_se_declara_como_posible_fallo() -> None:
+    """⚠️ **El emisor sabía la respuesta y la escondía detrás de un «puede ser».**
+
+    El mensaje decía «puede ser que no se aportara escaneo de esa arcada o que la
+    segmentación fallara en ella» — una disyuntiva que el orquestador ya puede resolver:
+    recibe qué arcada trae el escáner (`fuse(..., arcada=...)`). Sobre un caso real eran
+    quince observaciones del informe declaradas como posible fallo de segmentación cuando
+    lo que pasaba es que de esa arcada no hay escaneo: no hay nada que arreglar ahí.
+    """
+    from fusion_agents.semantic import _falta_la_arcada
+
+    sin = {"mandibular": ["31", "32", "46"]}
+
+    sabiendo = _falta_la_arcada(sin, "maxilar")[0]
+    assert "no es un fallo de la segmentación" in sabiendo
+    assert "puede ser" not in sabiendo.lower()
+    assert "maxilar" in sabiendo
+
+    # Sin el dato se mantiene la disyuntiva, que sigue siendo lo honesto.
+    a_ciegas = _falta_la_arcada(sin, None)[0]
+    assert "Puede ser" in a_ciegas

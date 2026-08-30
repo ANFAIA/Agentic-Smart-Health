@@ -104,6 +104,18 @@
           ],
           "default": null,
           "title": "Sidecar Uri"
+        },
+        "derived_from": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Derived From",
+          "type": "array"
+        },
+        "external": {
+          "default": false,
+          "title": "External",
+          "type": "boolean"
         }
       },
       "required": [
@@ -145,7 +157,7 @@
     },
     "Extension": {
       "additionalProperties": false,
-      "description": "Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).\n\n**Por que hace falta.** UOS se apoya en glTF, que resolvio esto hace anos con\n`extensionsUsed` / `extensionsRequired`: un lector abre el fichero, ve que extensiones\ntrae, y sabe si puede leerlo entero, en parte o nada. UOS v0.2 **no hereda ese\nmecanismo a nivel de contenedor**: ni el manifiesto ni el sobre de asset tienen donde\ndecir «esto es una extension, se llama asi, y si no la entiendes ignorala».\n\nLa consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,\nlos descriptores de gaussianas medidas— viven en directorios propios y **un lector\najeno las ignora sin enterarse de que las ignora**. Eso convierte un formato abierto en\nuno que solo el emisor lee entero, que es justo lo que UOS existe para evitar.\n\n⚠️ La distincion entre `used` y `required` es el corazon del mecanismo, no burocracia:\n`required` dice «sin entender esto NO abras el fichero». Una extension que solo anade\ninformacion va en `used` y nunca en `required` — si estuviera, un visor conforme se\nnegaria a abrir un caso que podria enseniar perfectamente.",
+      "description": "Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).\n\n**Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /\n`extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre\nel fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.\nUOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el\nsobre de asset tienen donde\ndecir «esto es una extension, se llama asi, y si no la entiendes ignorala».\n\nLa consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,\nlos descriptores de gaussianas medidas— viven en directorios propios y **un lector\najeno las ignora sin enterarse de que las ignora**. Eso convierte un formato abierto en\nuno que solo el emisor lee entero, que es justo lo que UOS existe para evitar.\n\n⚠️ La distincion entre `used` y `required` es el corazon del mecanismo, no burocracia:\n`required` dice «sin entender esto NO abras el fichero». Una extension que solo anade\ninformacion va en `used` y nunca en `required` — si estuviera, un visor conforme se\nnegaria a abrir un caso que podria enseniar perfectamente.",
       "properties": {
         "name": {
           "title": "Name",
@@ -616,5 +628,5 @@
   "title": "UOS manifest v0.2",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://histora.dev/schemas/uos-manifest-0.2.schema.json"
+  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json"
 }

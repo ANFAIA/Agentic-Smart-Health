@@ -32,6 +32,28 @@ from core_schemas import TwinSnapshot
 OBSERVACIONES = "clinical/observations.json"
 
 
+def _nota_color(color) -> str:
+    """La nota del color, DERIVADA de la medida y no escrita a mano.
+
+    ⚠️ **Una nota fija se queda mintiendo en cuanto cambia el metodo.** La que habia aqui
+    advertia de que «el flash cayendo hacia el fondo de la boca entra en el numero» — y
+    seguia diciendolo despues de que el emisor empezara a descontar esa caida con la encia
+    del propio paciente como referencia. Quien leyera el contenedor descartaria por
+    artefacto una diferencia entre piezas que ya era real. La nota se compone de
+    `correccion_iluminacion`, que es lo unico que sabe si se corrigio o no.
+    """
+    base = "color medido por pieza; NO es un tono de guia certificado"
+    if color.correccion_iluminacion is None:
+        return (base + "; SIN corregir la caida del flash: este valor lleva dentro lo "
+                "lejos que le llego la luz a esta pieza y no es comparable con el de "
+                "las demas")
+    b = color.correccion_iluminacion
+    return (base + "; caida del flash descontada con la encia del propio paciente como "
+            f"referencia (pendiente {b[0]:.2f}/{b[1]:.2f}/{b[2]:.2f} por canal), asi que "
+            "las piezas SI son comparables entre si; el nivel absoluto no, porque la "
+            "foto no lleva referencia gris")
+
+
 def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
     """Las observaciones por pieza, las medidas no regionales y el gate.
 
@@ -60,6 +82,30 @@ def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
         if a.n_conductos is not None:
             d["n_canals"] = a.n_conductos
         d["findings"] += [h.value for h in a.hallazgos]
+        # ⚠️ **El color va aqui y no solo en las gaussianas.** El campo lo lleva como
+        # pixeles, que basta para pintar y no para preguntar «de que color es el 26» sin
+        # abrir un PLY de 8 MB. Aqui es un dato con su soporte —cuantos pixeles— y su
+        # origen —que foto, por `sha256`, porque el nombre del fichero lleva datos del
+        # paciente—.
+        if a.color is not None:
+            d["color"] = {
+                "space": "CIELAB",
+                "cervical": list(a.color.cervical),
+                "middle": list(a.color.medio),
+                "incisal": list(a.color.incisal),
+                "from_photo": f"sha256:{a.color.foto_sha256}",
+                "n_pixels": a.color.n_pixeles,
+                "measured": True,
+                "note": _nota_color(a.color),
+            }
+            # ⚠️ **Ausente NO es cero.** Una pieza sin corregir lleva dentro lo lejos que
+            # le llego el flash y no es comparable con una corregida; un `0.0` por defecto
+            # diria «se corrigio y no hizo falta», que es otra cosa. Por eso el campo solo
+            # aparece cuando existe. La nota lo dice con palabras y este campo con numeros:
+            # quien lea el fichero no deberia tener que interpretar una frase para saber si
+            # puede poner dos tonos uno al lado del otro.
+            if a.color.correccion_iluminacion is not None:
+                d["color"]["illumination_slope"] = list(a.color.correccion_iluminacion)
 
     return {
         "schema": "ash-clinical/1.0",
