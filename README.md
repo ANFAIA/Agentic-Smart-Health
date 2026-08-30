@@ -434,6 +434,14 @@ Technical documentation aimed at developers and contributors stays in this READM
 
 ---
 
+## Institutions & Support
+
+- **[ANFAIA](https://github.com/ANFAIA)** — Artificial Intelligence Non-Profit Research Association driving open-source AI solutions for global health.
+
+- **HISTORA** — the dental startup this work was carried out with.
+
+---
+
 ## License
 
 [Apache License 2.0](LICENSE)
