@@ -193,6 +193,7 @@ agentic-smart-health/          ← workspace root
 ├── schemas/                   ← JSON Schema publicado del manifiesto UOS, por versión (§12)
 ├── docs/                      ← documentación (ver nota más abajo)
 ├── notebooks/                 ← experimentación y exploración (01–07)
+├── experiments/               ← bancos de prueba fuera del pipeline (CBCT→Blender→3DGS, capas por HU)
 ├── tests/                     ← suite de pruebas global
 ├── scripts/                   ← utilidades: render Blender, auditor de PRs, fetch de datasets
 └── .github/

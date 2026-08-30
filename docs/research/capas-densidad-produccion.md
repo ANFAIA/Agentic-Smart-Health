@@ -11,7 +11,8 @@ Se portó el entrenador volumétrico del experimento a producción:
   **gsplat**, σ en **log**, y la **calibración global de σ** que el doc principal marca como
   el salto 19→43 dB. Sustituyó un splat ortográfico hecho a mano que no reproducía la
   calidad del experimento.
-- `packages/gaussian-engine/bandas.py`: `siembra_por_banda`, partición por tramos de HU.
+- un módulo `bandas` en `gaussian-engine` (`siembra_por_banda`, partición por tramos
+  de HU), que el revert eliminó y por eso ya no se cita por su ruta.
 - `--capas-hu` en `caso_completo.py`: siembra N campos, entrena cada uno contra la DRR de
   **su** tramo y los emite como capas externas del `.uos` (spec v0.2 §"External Gaussian
   layers").
