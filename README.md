@@ -193,7 +193,7 @@ agentic-smart-health/          ← workspace root
 │   └── research-agent/        ← knowledge base del agente de investigación
 ├── schemas/                   ← JSON Schema publicado del manifiesto UOS, por versión (§12)
 ├── docs/                      ← documentación (ver nota más abajo)
-├── notebooks/                 ← experimentación y exploración (01–07)
+├── notebooks/                 ← experimentación y exploración (01–09)
 ├── experiments/               ← bancos de prueba fuera del pipeline (CBCT→Blender→3DGS, capas por HU)
 ├── tests/                     ← suite de pruebas global
 ├── scripts/                   ← utilidades: render Blender, auditor de PRs, fetch de datasets
@@ -540,6 +540,7 @@ emitidos.
 >
 > - `docs/architecture/` — decisiones de diseño, diagramas de arquitectura y ADRs (Architecture Decision Records).
 > - `docs/research/` — referencias bibliográficas, notas de investigación sobre Gaussian Splatting, estándares DICOM/STL, interoperabilidad clínica y normativa aplicable (RGPD, HIPAA).
+> - `docs/spec/` — la especificación normativa del formato `.uos` y el white paper del proyecto, en LaTeX.
 
 La documentación técnica orientada a desarrolladores y contribuidores se mantendrá en este README y en los `pyproject.toml` de cada componente.
 
@@ -549,6 +550,7 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 |---|---|
 | [`docs/cierre-mvp.md`](docs/cierre-mvp.md) | qué está medido, qué no está resuelto y qué queda para después |
 | [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex) | la especificación del formato: qué lleva un `.uos`, cómo se lee, cómo se amplía |
+| [`docs/spec/uos-white-paper.tex`](docs/spec/uos-white-paper.tex) | por qué hace falta un formato nuevo, qué hipótesis se probaron y con qué resultados |
 | [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | por qué la segmentación FDI no está resuelta, con la medida |
 | [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
 | [`docs/research/color-por-pieza-desde-foto.md`](docs/research/color-por-pieza-desde-foto.md) | el tono de cada corona, y cómo se descuenta la caída del flash sin invertirla |
