@@ -179,3 +179,39 @@ cuatro cifras del brief medidas, tres de las cuatro cumplidas, y la cuarta falla
 caso y por una razón nombrada.
 
 Lo que no se lleva: un producto validado clínicamente. Nunca se prometió, y no lo hay.
+
+---
+
+## Hitos del proyecto
+
+| Semana | Hito | |
+|---|---|---|
+| 2 | Revisión de arquitectura multiagente y esquema de atributos clínicos del Digital Twin | ✅ |
+| 4 | Demo PoC: agentes de ingesta + primera versión del Digital Twin con datos sintéticos | ✅ |
+| 6 | Sistema integrado: agentes de fusión y exportación, regeneración STL desde el Digital Twin | ✅ |
+| 8 | MVP testado, validación preliminar con la organización partner, documentación técnica final | 🟡 |
+
+🟡 **La semana 8 va a medias, y la mitad que falta es la que no depende del código.** El MVP
+está testado y la documentación técnica cerrada (este documento);
+lo que no ha ocurrido es la **validación con la organización partner**, que necesita que
+alguien de fuera abra un `.uos` que no hayamos escrito nosotros.
+
+---
+
+## Métricas de éxito
+
+Las cuatro del brief, **medidas** con [`scripts/metricas.py`](../scripts/metricas.py) y no
+prometidas. Tres cumplen; la cuarta no, y se declara:
+
+| Compromiso | Objetivo | Medido | |
+|---|---|---|---|
+| Latencia de ingesta de un conjunto completo (STL + CBCT + informe) | < 60 s <!--const:LATENCY_BUDGET_S--> | **12,7 s** | cumple |
+| Fidelidad de la malla regenerada desde el Digital Twin | < 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM--> | **4,59 × 10⁻⁶ mm** | cumple |
+| Cobertura de pruebas automatizadas | > 80 % | **95,1 %** | cumple |
+| Fiabilidad de los agentes de ingesta | > 95 % | **93,8 %** (N = 16) | **no cumple** |
+
+⚠️ **El fallo de fiabilidad es un informe escaneado sin capa de texto**: el agente no
+extrae nada y se declara `FAILED`, que es el comportamiento correcto. Con N = 16 casos
+reales un solo fallo son 6,2 puntos. Se publica así en vez de subir el N con casos
+sintéticos hasta que el porcentaje quede bien. Por separado, el `mesh-agent` sobre **120
+mallas** de Teeth3DS+ da **100 %**: las dos cifras van con su N al lado a propósito.

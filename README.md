@@ -29,134 +29,100 @@ agente concreto (hoy solo `research-agent`), y no todos lo necesitan.
 > 📐 **Mapa completo de las 6 capas y el recorrido del dato** (pensado para quien
 > llega nuevo): [`docs/architecture/multi-agent-pipeline.md` §0](docs/architecture/multi-agent-pipeline.md#0-vista-de-conjunto-para-quien-llega-nuevo).
 
+## Quickstart
+
+### Requisitos previos
+
+- Python ≥ 3.13
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado en el sistema
+
+### Instalación
+
+Clona el repositorio e instala todas las dependencias del workspace con un único comando:
+
+```bash
+git clone https://github.com/anfaia/agentic-smart-health.git
+cd agentic-smart-health
+make install
+```
+
+Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas y externas) y crea el entorno virtual en `.venv/`.
+
+### Comandos disponibles
+
+<!-- generado: make — no editar a mano -->
+| Comando | Ejecuta |
+|---|---|
+| `make install` | `uv sync` |
+| `make hooks` | `git config core.hooksPath .githooks` |
+| `make test` | `uv run pytest` |
+| `make lint` | `uv run ruff check` |
+| `make docs` | `uv run python scripts/docs_sync.py --write` |
+<!-- /generado: make -->
+
+`make install` activa además los **hooks de git** del repositorio
+(`git config core.hooksPath .githooks`), y el de `pre-commit` hace dos cosas:
+
+- **Detiene el commit** si `data_guard.py` encuentra un dato ajeno en el stage
+  (un PDF, una malla, un binario grande). Es el único sitio donde eso sale barato:
+  una vez commiteado, sacarlo obliga a reescribir la historia.
+- **Regenera los bloques generados** de la documentación —tablas de variables,
+  scripts, comandos y registro de agentes— y los **añade al mismo commit**, para
+  que la documentación viaje siempre con el cambio que la afecta. Solo toca lo que
+  hay entre marcas: la prosa nunca.
+
+Si alguna vez estorba, `git commit --no-verify` se lo salta, y el CI seguirá
+avisando en la PR.
+
+### Activar el entorno (opcional)
+
+Si necesitas trabajar directamente en el entorno virtual:
+
+```bash
+source .venv/bin/activate
+```
+
+O bien, usa el prefijo `uv run` para ejecutar cualquier comando dentro del entorno sin activarlo:
+
+```bash
+uv run python -c "import core_schemas; print('workspace OK')"
+```
+
+---
+
 ## Estado actual — MVP cerrado (semana 8)
 
 La **ingesta, la fusión, la segmentación y los cuatro canales de exportación están
 construidos y probados**, y el recorrido completo entrada → twin → fichero tiene prueba de
-integración.
+integración. El entregable es un contenedor **`.uos`**: un caso clínico real cierra en 12
+entradas y 18 assets, conformidad UOS-Core + UOS-Vol, 0 errores. Lo adquirido no viaja
+dentro —se declara por su dirección de contenido, con hash por corte para los 397 del
+CBCT— y el [visor de referencia](https://github.com/lgarbayo/uos-viewer) lo abre en el
+navegador sin subir nada.
 
-> 📋 **El inventario honesto del cierre** —qué está medido, qué no está resuelto y en qué
-> orden atacarlo— está en [`docs/cierre-mvp.md`](docs/cierre-mvp.md). Lo que sigue es lo
-> que funciona; lo que no, está allí con su medida.
+Lo que está **medido**, cada número releyendo lo que se produjo en vez de prometerlo:
+
+| Qué | Medida | Sobre |
+|---|---|---|
+| Reversibilidad de la malla | **3,8 × 10⁻⁶ mm** de desviación máxima, contra un presupuesto de **0,1 mm** | escaneo real, 110.804 vértices | <!--const:REVERSIBILITY_BUDGET_MM-->
+| Registro CBCT ↔ intraoral | **0,452 mm** sobre la población solapada | paciente real |
+| Render desde el campo | **PSNR 102 dB · SSIM 0,99999999**, reproducible byte a byte | ciclo twin → PLY → render |
+| Arcada imprimible | **0,372 mm (p95) · sesgo −0,02 mm** — *esto no es reversibilidad*: mide el reconstructor de raíces contra la corona escaneada | única banda con dos medidas del mismo tejido |
 
 **Contrato de datos** — `core-schemas` (Pydantic v2, esquema **`1.6.0`**). El <!--const:SCHEMA_VERSION-->
-`TwinSnapshot` es el documento común: `gaussian_field_ref` (campo 3DGS),
-`surface_ref` (malla), `image_refs` (fotos, lista), `regional` (observaciones por
-diente FDI) y `provenance` por valor (trazabilidad raw→contrato).
+`TwinSnapshot` es el documento común, con `provenance` por valor. Los agentes de ingesta
+son deterministas y *fail-loud*: nunca lanzan, devuelven estado y confianza, y hay un
+**gate de human-in-the-loop** por umbral (0,7). El orquestador respeta un <!--const:DEFAULT_HITL_THRESHOLD-->
+presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
 
-**Agentes de ingesta** — `packages/ingestion-agents`: **4 modalidades**, una por
-soporte, deterministas y *fail-loud* (nunca lanzan una excepción; devuelven estado +
-confianza y dejan la basura en cuarentena):
+**Todavía no**: color **per-píxel** —la señal está medida, falta la pose de cámara— y el
+`pathology-agent`. `3dgs-engine` es un placeholder: la reconstrucción vive en los
+notebooks con `gsplat`.
 
-| Agente | Entrada | Produce |
-|---|---|---|
-| `mesh-agent` | STL / OBJ (escáner intraoral) | superficie + normales |
-| `cbct-agent` | DICOM (CBCT) | volumen → campo de gaussianas |
-| `report-agent` | PDF / TXT (informe clínico) | pH por diente FDI (reglas o LLM) |
-| `image-agent` | JPG / PNG / HEIC (foto) | píxeles RGB **sin EXIF** |
-
-Diseño transversal: **Provenance** por valor, **ArtifactStore** direccionado por
-contenido (SHA-256), **gate de human-in-the-loop** por umbral de confianza (0,7) y <!--const:DEFAULT_HITL_THRESHOLD-->
-**anonimización** (EXIF fuera, seudonimización HMAC — ver
-[`docs/architecture/anonymization-strategy.md`](docs/architecture/anonymization-strategy.md)).
-
-**Orquestador** — `agent-orchestrator` dispara los agentes en paralelo, ensambla el
-`TwinSnapshot`, aplica el gate HITL y respeta el presupuesto de <60 s. <!--const:LATENCY_BUDGET_S-->
-
-**Reconstrucción 3DGS** (en notebooks, ver más abajo): malla real → **Blender**
-(vistas con pose exacta, sin COLMAP) → **gsplat** → campo de gaussianas evaluable en
-vistas retenidas, servido en un **visor web** ([`dental-3dgs-viewer`](https://github.com/lgarbayo/dental-3dgs-viewer),
-repo aparte) con dos casos reales — Teeth3DS+ (con color por armónicos) y Bite2Text
-(color de esmalte/encía **muestreado de las fotos** con el `image-agent`).
-
-Lo que el contrato promete de **todos** los agentes por igual —los tres caminos
-(`OK`/`MISSING`/`FAILED`), no lanzar nunca, emitir `Provenance`, ser reproducible y
-no copiar dato clínico a la cuarentena— lo verifica una **suite de conformidad**
-([`test_conformidad.py`](packages/ingestion-agents/tests/test_conformidad.py))
-parametrizada sobre los cuatro agentes. Un agente nuevo entra en esa lista y queda
-sometido a las nueve reglas sin escribir un test.
-
-Y frente al caso que *sale bien* de `synthetic.py` hay un catálogo de **casos
-límite** ([`edge_cases.py`](packages/ingestion-agents/src/ingestion_agents/edge_cases.py)):
-cabecera DICOM truncada, resonancia etiquetada como CBCT, espaciado cero o negativo,
-`NaN` en la malla, PNG a medias, rutas con unicode, enlaces rotos. Cada caso declara
-**qué debe pasar y por qué**, porque no todos deben fallar: un pH imposible se
-descarta línea a línea y la ingesta sigue siendo válida. Encontró cuatro defectos
-reales el día que se escribió.
-
-**Cobertura**: la suite completa en verde, verificada en cada push y cada PR por
-el workflow [`tests`](.github/workflows/tests.yml) — el badge de arriba lo publica
-esa ejecución. El CI **falla si la cobertura de agentes y pipeline baja del 80 %**,
-que es el criterio de éxito del proyecto; el umbral vive en `pyproject.toml`, así
-que `uv run pytest --cov` mide en local exactamente lo mismo. Aquí no se escribe
-ningún número a mano: los recuentos manuales envejecen solos.
-
-> **Lo que el CI no verifica, dicho antes de que haga falta preguntarlo.** El runner no
-> tiene GPU. Eso **no** deja partes del pipeline sin probar: **ningún módulo de
-> `packages/` ni de `apps/` importa `torch` al importarse**, a propósito — los modelos
-> entran por los `Protocol` `Segmenter` y `Registrar`, así que lo que se ejecuta en
-> producción es numpy y se prueba entero. La única excepción es
-> [`gaussian_engine.ajuste`](packages/gaussian-engine/src/gaussian_engine/ajuste.py), que
-> importa `torch` **dentro de la función** que ajusta elipsoides y con un mensaje que dice
-> qué extra falta: así el paquete se instala y se prueba sin CUDA. Lo que queda fuera son
-> los **siete scripts de investigación** que sí lo necesitan
-> ([`entrenar_3dgs.py`](scripts/entrenar_3dgs.py),
-> [`refina_3dgs.py`](scripts/refina_3dgs.py),
-> [`segmentar_fdi.py`](scripts/segmentar_fdi.py),
-> [`entrena_diente_cbct.py`](scripts/entrena_diente_cbct.py),
-> [`entrena_gs_escaner.py`](scripts/entrena_gs_escaner.py),
-> [`composicion_cbct_ios.py`](scripts/composicion_cbct_ios.py),
-> [`ablacion_recetas.py`](scripts/ablacion_recetas.py)) y los notebooks: se ejecutan a
-> mano en una máquina con GPU y su producto es una **medida**, no un servicio. Cuando un
-> número de esta página sale de ahí, la sección lo dice y enlaza el script que lo produjo.
-
-**Fusión y segmentación** — `fusion-agents` (registro geométrico + anclaje semántico
-al FDI, ADR 004) y `analysis-agents` (`segmentation-agent`: `region_id` por gaussiana
-y el mapa `FDI → confianza` que consume la fusión semántica). El registro
-CBCT↔intraoral está **medido sobre un paciente real**
-([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)): 0,452 mm sobre la
-población solapada, con la etapa gruesa que el ADR dejaba pendiente ya implementada.
-
-**Exportación reversible** — `export-agents`, **y todos miden lo que producen
-releyéndolo** en vez de prometerlo:
-
-| Agente | Materializa | Error medido |
-|---|---|---|
-| `export-agent` | `surface_ref` → **STL binario** | **3,8·10⁻⁶ mm** de desviación máxima sobre un escaneo real de Teeth3DS+ (110.804 vértices, arcada de 86 mm) en 0,07 s — la que impone el `float32` del formato, cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** del brief | <!--const:REVERSIBILITY_BUDGET_MM-->
-| `field-export-agent` | `gaussian_field_ref` → **PLY binario** | **0,0 mm** exactos sobre el CBCT de un paciente real (498.407 primitivas, 27,9 MB en 0,06 s): las posiciones van en `double` para que la verificación mida *bugs* de formato y no el redondeo |
-| `render-export-agent` | `gaussian_field_ref` → **PNG multivista** | **PSNR 102 dB · SSIM 0,99999999** en el ciclo twin → PLY → render, reproducible byte a byte |
-| `composite-mesh-export-agent` | escáner + CBCT → **arcada imprimible + un STL por diente** | **0,372 mm (p95) · sesgo −0,02 mm** — y este número **no es reversibilidad**: mide el reconstructor de raíces contra la corona escaneada, que es la única banda donde hay dos medidas del mismo tejido. Por eso este canal queda fuera de la comprobación de reversibilidad |
-
-El STL sale en el sistema del escáner o en el del twin; el PLY, centrado o en mm reales
-del CBCT. Y un snapshot parcial lo declara en `hitl_reasons` **y dentro del propio
-fichero**.
-
-⚠️ **La distinción que separa las tres primeras filas de la última.** Los canales
-reversibles re-materializan lo que entró: su desviación responde «¿sale lo que metí?» y el
-presupuesto de 0,1 mm del brief va sobre eso. El último escribe geometría que **no entró**
-—la raíz, que ninguna otra medida cubre— y su número responde a otra pregunta con la misma
-unidad. Medirlas en el mismo cajón ponía el recorrido entero en rojo por 0,37 mm de una
-superficie que nadie había medido antes, mientras los canales que sí prometen
-reversibilidad daban 0,000000 mm.
-
-**El contenedor `.uos` y su visor** — el entregable, y lo que el resto alimenta. Un caso
-clínico real cierra en **12 entradas · 18 assets, 13 externos · conformidad UOS-Core +
-UOS-Vol · 0 errores · 18 vistas**. Lo adquirido no viaja dentro: la serie CBCT se declara
-por su dirección de contenido con **hash por corte** para sus 397 cortes —hay tests que lo
-comprueban quitando un corte, colando uno de más y alterando uno—. El
-[visor de referencia](https://github.com/lgarbayo/uos-viewer) (repo aparte) lo abre en el
-navegador **por rangos y sin subir nada**: malla, capa clínica por pieza, vistas guardadas
-y las capas del campo gaussiano. Qué lleva dentro y a quién le sirve:
-[`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
-
-**Todavía no**: color **per-píxel** y `pathology-agent`. Sobre el color, la pregunta se ha
-estrechado y conviene el matiz: la **señal está medida** —un umbral sobre `a*` separa
-diente de encía con 3,4–4,3 σ en las cuatro fotos de arcada que el contenedor ya lleva
-([`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md))—
-y lo que falta es la **pose de cámara**, que hoy va a `projection: null` con el campo ya
-definido en el esquema. Sigue pendiente del ADR de motor de render **de dónde sale el
-color** de un campo de densidad: un CBCT no mide color y el PLY no se lo inventa. El paquete `3dgs-engine` es hoy un
-placeholder: la reconstrucción vive en los notebooks + `gsplat`.
+> 📋 **El inventario honesto del cierre** —qué está medido, qué no está resuelto, en qué
+> orden atacarlo, los hitos y las métricas de éxito— está en
+> [`docs/cierre-mvp.md`](docs/cierre-mvp.md), junto con lo que el CI **no** puede
+> verificar por no tener GPU.
 
 ---
 
@@ -281,126 +247,95 @@ No depende de `core-schemas`; mantiene sus propios modelos internos para RAG.
 
 ## Paquetes compartidos (`packages/`)
 
+Una frase por paquete; la ficha completa de cada agente está en [`AGENTS.md`](AGENTS.md).
+
 ### `core-schemas`
 
-Biblioteca de **esquemas Pydantic v2** compartidos por todas las aplicaciones del workspace. Define los modelos de datos canónicos del sistema: el `TwinSnapshot`, la `Provenance`, las observaciones regionales por diente FDI y los contratos entre agentes. Actúa como **fuente única de verdad** de los tipos de datos del proyecto (esquema versionado, hoy `1.6.0`). <!--const:SCHEMA_VERSION-->
+**Fuente única de verdad** de los tipos: esquemas Pydantic v2 compartidos por todo el
+workspace —`TwinSnapshot`, `Provenance`, observaciones por diente FDI— versionados, hoy
+`1.6.0`. <!--const:SCHEMA_VERSION-->
 
 ### `ingestion-agents`
 
-**Capa de ingesta** del pipeline: 4 agentes (`mesh` · `cbct` · `report` · `image`), uno por modalidad/soporte, que traducen los ficheros crudos al contrato. Cada agente es **determinista y fail-loud** (nunca lanza; devuelve estado + confianza y aísla en cuarentena), adjunta **Provenance** por valor y guarda los artefactos pesados (mallas, volúmenes, píxeles) en un **ArtifactStore direccionado por contenido** (SHA-256). El `image-agent` descarta el **EXIF** por construcción (privacidad). Guía para añadir o modificar un agente: skill `add-ingestion-agent`; ficha completa en [`AGENTS.md`](AGENTS.md).
+Los **4 agentes de ingesta** (`mesh` · `cbct` · `report` · `image`), uno por modalidad.
+Deterministas y *fail-loud*, con `Provenance` por valor, `ArtifactStore` direccionado por
+contenido y EXIF descartado por construcción. Para añadir uno: skill `add-ingestion-agent`.
 
 ### `export-agents`
 
-**Capa de exportación** (fase 6): la única familia que escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de entrada. Cuatro canales, y **todos miden lo que producen releyéndolo**, no estimándolo: `export-agent` → **STL** desde `surface_ref` (desviación máxima y Chamfer), `field-export-agent` → **PLY** desde `gaussian_field_ref`, `render-export-agent` → **PNG multivista** con PSNR/SSIM del ciclo, y `composite-mesh-export-agent` → **arcada imprimible cerrada en sólido + un STL por diente**, cuyo número mide otra cosa y por eso queda fuera de la comprobación de reversibilidad (ver «Estado actual»). Es de **solo lectura sobre el gemelo**: no muta el snapshot y su `Protocol` de almacén ni siquiera declara `put`.
-
-Dos decisiones que se ven raras hasta que se leen: el PLY del campo **no es un `.ply` de 3D Gaussian Splatting** y el render **no rasteriza splats**. `density` es atenuación radiológica, no opacidad, y un CBCT no mide color — así que el fichero declara las propiedades que existen y el render compone por **Beer-Lambert**, que además es independiente del orden de las primitivas y por eso reproducible byte a byte. Fichas completas en [`AGENTS.md`](AGENTS.md).
+La única familia que **escribe** ficheros de salida: STL, PLY, PNG multivista y arcada
+imprimible. Todos **miden lo que producen releyéndolo**. Dos cosas que sorprenden: el PLY
+del campo no es un `.ply` de 3DGS y el render no rasteriza splats —`density` es atenuación
+radiológica, no opacidad, así que se compone por Beer-Lambert, que además es independiente
+del orden y por eso reproducible byte a byte.
 
 ### `uos`
 
-**El contenedor y su manifiesto** — el entregable del proyecto. Un `.uos` es un ZIP **sin comprimir** (STORE, `manifest.json` primero) que lleva un caso dental entero **con las relaciones entre sus partes declaradas**: los ficheros nativos intactos y verificables por hash, los marcos de coordenadas y las registraciones que los unen, las vistas guardadas, la capa clínica colgada de códigos FDI, la procedencia encadenada y el estado PHI. Módulos por responsabilidad: `contenedor` · `manifiesto` · `escena` · `volumen` · `vistas` · `clinico` · `derivados` · `procedencia` · `validador` · `esquema`.
-
-La regla que lo sostiene: **lo medido y lo inferido no se mezclan**. Todo lo que sale de un modelo vive solo bajo `derived/` con `regulatory.layer: 3` y su sidecar, y **un `.uos` sin `derived/` sigue siendo válido y completo**. Esquema publicado en [`schemas/`](schemas/); qué lleva y a quién le sirve, en [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
+**El contenedor y su manifiesto**, el entregable del proyecto: un ZIP sin comprimir con el
+caso entero y **las relaciones entre sus partes declaradas**. La regla que lo sostiene es
+que **lo medido y lo inferido no se mezclan**: la inferencia vive solo bajo `derived/`, y
+un `.uos` sin `derived/` sigue siendo válido y completo. Esquema en [`schemas/`](schemas/),
+formato en [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
 
 ### `fusion-agents`
 
-**Capa de fusión** (ADR 004): `GeometricFusionAgent` registra escáner↔escáner y CBCT↔intraoral por ICP —declarando siempre su `rms_error_mm` y si alguien lo ha verificado— y `SemanticFusionAgent` ancla los hallazgos del informe a códigos FDI, marcando el **conflicto** cuando informe y geometría discrepan. Incluye `marco` (el marco anatómico medido, no supuesto) y `preparacion` (qué dos nubes se registran, elegido por código y no a mano).
+**Fusión** (ADR 004): registro geométrico por ICP, declarando siempre su `rms_error_mm` y
+si alguien lo ha verificado, y anclaje de los hallazgos del informe a códigos FDI, con el
+**conflicto** marcado cuando informe y geometría discrepan.
 
 ### `analysis-agents`
 
-**Capa de análisis anatómico**: el `segmentation-agent` produce `region_id` por gaussiana y el mapa `FDI → confianza` que consume la fusión semántica, y `dental` limpia las etiquetas por vértice del escáner con una prohibición explícita — **no mover el margen gingival**, que es una frontera clínica. ⚠️ Su calidad está medida y es el hueco principal del MVP: ver [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md).
+**Análisis anatómico**: `region_id` por gaussiana y el mapa `FDI → confianza`. ⚠️ Su
+calidad está medida y es el hueco principal del MVP
+([`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md)).
 
 ### `gaussian-engine`
 
-**Ajuste del campo**: de semillas isótropas del tamaño del vóxel a elipsoides medidos. Es el único paquete que toca `torch`, y lo importa **dentro de la función**, para que se instale y se pruebe sin CUDA.
+**Ajuste del campo**: de semillas isótropas del tamaño del vóxel a elipsoides medidos. El
+único paquete que toca `torch`, y lo importa dentro de la función para instalarse sin CUDA.
 
 ### `tooth-aggregation`
 
-**Agregación punto → diente** (instancias + FDI) para el `segmentation-agent`. Escrito **sin depender de `torch`** a propósito: el *forward* del modelo es cosa de quien llama, así que la agregación se instala y se testea en el workspace normal.
+**Agregación punto → diente** (instancias + FDI). Sin depender de `torch` a propósito: el
+*forward* es cosa de quien llama.
 
 ### `3dgs-engine`
 
-**Placeholder.** Reservado para el motor de renderizado/procesamiento 3D Gaussian Splatting como paquete reutilizable. Hoy la reconstrucción 3DGS **no** vive aquí, sino en los [notebooks](notebooks/) (`gsplat` + Blender) y en el visor web. Se promoverá a paquete cuando la receta se estabilice y deje de ser experimental.
+**Placeholder.** La reconstrucción 3DGS vive hoy en los [notebooks](notebooks/) con
+`gsplat` y Blender. Se promoverá a paquete cuando la receta deje de ser experimental.
 
 ---
 
 ## Notebooks — pruebas de concepto (spikes)
 
-El directorio [`notebooks/`](notebooks/) contiene **spikes de validación técnica**
-(no el sistema final ni resultados clínicos): pruebas manuales que de-arriesgan las
-decisiones de arquitectura antes de convertir cada eslabón en agente. Corren sobre
-dos datasets reales: **Teeth3DS+** (01–06, escáneres intraorales etiquetados,
-CC-BY) y **Bite2Text** (07, escáner + fotos + informes, CC-BY-SA). Ambos gitignored.
+Nueve **spikes de validación técnica** (no el sistema final ni resultados clínicos) que
+de-arriesgan las decisiones de arquitectura antes de convertir cada eslabón en agente.
+Corren sobre datasets reales gitignored: **Teeth3DS+** (01–06) y **Bite2Text** (07). El
+`07` es el que integra los agentes de ingesta en el flujo de reconstrucción, con color de
+las fotos y holdout de 31,5 dB.
 
-| Notebook | Qué valida | Dataset | GPU |
-|---|---|---|---|
-| `01` | Malla → *splatting clásico* (VTK, baseline) → contrato · caracterización del dataset | Teeth3DS+ | No |
-| `02` | Visor 3D interactivo de escritorio (VTK), sobre cualquier caso | Teeth3DS+ | No |
-| `03` | Vistas sintéticas + poses de cámara (input del 3DGS, sin COLMAP) | Teeth3DS+ | No |
-| `04` | **3DGS moderno entrenado** (`gsplat`) evaluado en vistas retenidas → contrato | Teeth3DS+ | Sí |
-| `05` | Vistas sintéticas **densas** (528/caso) — rejilla más fina que `03` | Teeth3DS+ | No |
-| `06` | 3DGS **denso** con la receta de referencia (SSIM + densificación/poda, armónicos g2) | Teeth3DS+ | Sí |
-| `07` | **Escáner real → Blender (EEVEE) → 3DGS**, con **color de las fotos** (`image-agent`) y pérdida SSIM · 1600 vistas · holdout 31,5 dB | Bite2Text | Sí |
+Qué valida cada uno, alcance y cómo ejecutarlos:
+[`notebooks/README.md`](notebooks/README.md).
 
-Detalle, alcance y cómo ejecutarlos: [`notebooks/README.md`](notebooks/README.md).
-El notebook `07` es el que integra los **agentes de ingesta** (`mesh` + `report` +
-`image`) en el flujo de reconstrucción. **No** cubierto todavía: fusión multimodal
-real (CBCT + STL + foto en un mismo twin), **color per-píxel** (registro foto↔malla)
-y los agentes de **análisis**.
 
-## Revisión de código y CI (`ai-code-reviewer`)
+## Revisión de código y CI
 
-Cada Pull Request pasa por un **agente guardián de revisión estática** ejecutado en GitHub Actions. No usa LLM: combina linters estándar con un auditor de arquitectura propio, y revisa **únicamente los archivos Python que toca el PR** (enfocado en el diff). Publica anotaciones inline sobre las líneas afectadas y un comentario-resumen en el PR.
+Cada Pull Request pasa por un **agente guardián de revisión estática**
+([`ai-code-review.yml`](.github/workflows/ai-code-review.yml)). No usa LLM: combina Ruff y
+MyPy con un auditor de arquitectura propio, y revisa **solo los ficheros Python que toca
+el PR**. Publica anotaciones inline y un comentario-resumen. Las violaciones de
+arquitectura y la cobertura por debajo del 80 % bloquean el merge.
 
-**Qué comprueba:**
+Además, [`docs_sync.py`](scripts/docs_sync.py) comprueba que esta documentación no se
+separe del código —rutas citadas, registro de agentes, constantes, el árbol de aquí
+abajo— y un hook de pre-commit aborta el commit si intenta versionar datos clínicos.
 
-| Chequeo | Herramienta | ¿Bloquea el merge? |
-|---|---|---|
-| Estilo y formato | `ruff` | No — informativo (anotaciones inline) |
-| Tipos | `mypy` | No — informativo (anotaciones inline) |
-| **Arquitectura** | `scripts/audit_pr.py` | **Sí** — hace fallar el check |
-| **Coherencia documental** | `scripts/docs_sync.py` | **Sí** — hace fallar el check |
-| **Datos y licencias** | `scripts/data_guard.py` | **Sí** — hace fallar el check |
+**Vigilancia de literatura** — el único trabajo programado
+([`literature-watch.yml`](.github/workflows/literature-watch.yml)): cada lunes busca en
+arXiv lo publicado esa semana, lee la licencia del OAI-PMH (no la supone) y abre una PR
+proponiendo entradas nuevas para el manifiesto. **No mergea.** Ningún PDF se escribe en el
+runner: se descargan a memoria para calcular `sha256` y se liberan ahí mismo.
 
-**Reglas de arquitectura (bloqueantes):**
-
-- **Pydantic v2 estricto** en `packages/core-schemas`: prohíbe el shim `pydantic.v1` y los idiomas de v1 (`@validator`, `@root_validator`, `class Config`, `BaseSettings`).
-- **Sin dependencias cruzadas entre `apps/`**: un app no puede importar el paquete de otro; el código compartido debe vivir en `packages/` (p. ej. `core-schemas`).
-
-**Componentes:**
-
-- `.github/workflows/ai-code-review.yml` — orquesta los chequeos, publica comentarios y decide el gate de merge.
-- `scripts/audit_pr.py` — auditor de arquitectura (AST, solo librería estándar).
-
-Dos de esos chequeos **bloquean el merge** y el resto solo comenta, por un motivo
-concreto: son los que producen daño que no se arregla con otro commit. La deriva
-documental (`docs_sync.py`) se convierte en verdad publicada en cuanto se mergea, y
-un dato ajeno (`data_guard.py`) entra en la historia de git y solo sale
-reescribiéndola — que es lo que costó la issue 45.
-
-### Vigilancia de literatura (`literature watch`)
-
-El único trabajo **programado** del repositorio: cada lunes,
-[`scripts/watch_literature.py`](scripts/watch_literature.py) busca en arXiv lo
-publicado esa semana, descarta lo que ya está en el manifiesto, **lee la licencia del
-OAI-PMH de arXiv** (no la supone) y abre una PR proponiendo las entradas nuevas.
-
-Siete consultas en dos ámbitos, con **puerta distinta cada uno**: las cuatro
-dentales (3DGS, segmentación CBCT, escaneo intraoral, gemelo digital) exigen un
-término del dominio en título o resumen; las tres de estándares (DICOM, FHIR/HL7,
-interoperabilidad en imagen médica) lo exigen **en el título**. La distinción está
-medida, no supuesta: un artículo de interoperabilidad clínica casi nunca dice
-«tooth», y uno que solo menciona DICOM de pasada no va sobre DICOM. El cupo de cada
-PR se reparte por turnos entre consultas, para que las de mayor volumen no dejen la
-propuesta sin un solo artículo dental.
-
-Reparto de trabajo deliberado: la máquina hace lo repetitivo y verificable —qué hay
-nuevo, bajo qué licencia—, y la persona que revisa la PR decide lo único que exige
-criterio: si el artículo aporta algo al proyecto. **El agente no mergea nunca.**
-
-Ningún PDF llega a escribirse: se descargan a memoria para calcular `sha256` y
-`bytes`, y se liberan ahí mismo. Lo que se propone commitear son diez líneas de
-YAML por artículo. Los ficheros se materializan después, en local, con
-`uv run python scripts/fetch_knowledge_base.py`.
 
 Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 
@@ -438,67 +373,6 @@ Utilidades del repositorio (esta tabla la genera `docs_sync.py`):
 <!-- /generado: scripts -->
 
 Las herramientas de desarrollo se instalan con `uv sync --group dev` (grupo `dev`: `ruff`, `mypy`). Ficha completa del agente en [`AGENTS.md`](AGENTS.md).
-
----
-
-## Quickstart
-
-### Requisitos previos
-
-- Python ≥ 3.13
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado en el sistema
-
-### Instalación
-
-Clona el repositorio e instala todas las dependencias del workspace con un único comando:
-
-```bash
-git clone https://github.com/anfaia/agentic-smart-health.git
-cd agentic-smart-health
-make install
-```
-
-Esto ejecuta `uv sync`, que resuelve y bloquea todas las dependencias (internas y externas) y crea el entorno virtual en `.venv/`.
-
-### Comandos disponibles
-
-<!-- generado: make — no editar a mano -->
-| Comando | Ejecuta |
-|---|---|
-| `make install` | `uv sync` |
-| `make hooks` | `git config core.hooksPath .githooks` |
-| `make test` | `uv run pytest` |
-| `make lint` | `uv run ruff check` |
-| `make docs` | `uv run python scripts/docs_sync.py --write` |
-<!-- /generado: make -->
-
-`make install` activa además los **hooks de git** del repositorio
-(`git config core.hooksPath .githooks`), y el de `pre-commit` hace dos cosas:
-
-- **Detiene el commit** si `data_guard.py` encuentra un dato ajeno en el stage
-  (un PDF, una malla, un binario grande). Es el único sitio donde eso sale barato:
-  una vez commiteado, sacarlo obliga a reescribir la historia.
-- **Regenera los bloques generados** de la documentación —tablas de variables,
-  scripts, comandos y registro de agentes— y los **añade al mismo commit**, para
-  que la documentación viaje siempre con el cambio que la afecta. Solo toca lo que
-  hay entre marcas: la prosa nunca.
-
-Si alguna vez estorba, `git commit --no-verify` se lo salta, y el CI seguirá
-avisando en la PR.
-
-### Activar el entorno (opcional)
-
-Si necesitas trabajar directamente en el entorno virtual:
-
-```bash
-source .venv/bin/activate
-```
-
-O bien, usa el prefijo `uv run` para ejecutar cualquier comando dentro del entorno sin activarlo:
-
-```bash
-uv run python -c "import core_schemas; print('workspace OK')"
-```
 
 ---
 
@@ -555,42 +429,6 @@ La documentación técnica orientada a desarrolladores y contribuidores se mante
 | [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | dónde sí está la frontera diente-encía, y qué falta para usarla |
 | [`docs/research/color-por-pieza-desde-foto.md`](docs/research/color-por-pieza-desde-foto.md) | el tono de cada corona, y cómo se descuenta la caída del flash sin invertirla |
 | [`docs/research/segmentacion-diente-cbct.md`](docs/research/segmentacion-diente-cbct.md) | hasta dónde llega un clasificador sobre el CBCT, y dónde deja de llegar |
-
----
-
-## Hitos del proyecto
-
-| Semana | Hito | |
-|---|---|---|
-| 2 | Revisión de arquitectura multiagente y esquema de atributos clínicos del Digital Twin | ✅ |
-| 4 | Demo PoC: agentes de ingesta + primera versión del Digital Twin con datos sintéticos | ✅ |
-| 6 | Sistema integrado: agentes de fusión y exportación, regeneración STL desde el Digital Twin | ✅ |
-| 8 | MVP testado, validación preliminar con la organización partner, documentación técnica final | 🟡 |
-
-🟡 **La semana 8 va a medias, y la mitad que falta es la que no depende del código.** El MVP
-está testado y la documentación técnica cerrada ([`docs/cierre-mvp.md`](docs/cierre-mvp.md));
-lo que no ha ocurrido es la **validación con la organización partner**, que necesita que
-alguien de fuera abra un `.uos` que no hayamos escrito nosotros.
-
----
-
-## Métricas de éxito
-
-Las cuatro del brief, **medidas** con [`scripts/metricas.py`](scripts/metricas.py) y no
-prometidas. Tres cumplen; la cuarta no, y se declara:
-
-| Compromiso | Objetivo | Medido | |
-|---|---|---|---|
-| Latencia de ingesta de un conjunto completo (STL + CBCT + informe) | < 60 s <!--const:LATENCY_BUDGET_S--> | **12,7 s** | cumple |
-| Fidelidad de la malla regenerada desde el Digital Twin | < 0,1 mm <!--const:REVERSIBILITY_BUDGET_MM--> | **4,59 × 10⁻⁶ mm** | cumple |
-| Cobertura de pruebas automatizadas | > 80 % | **95,1 %** | cumple |
-| Fiabilidad de los agentes de ingesta | > 95 % | **93,8 %** (N = 16) | **no cumple** |
-
-⚠️ **El fallo de fiabilidad es un informe escaneado sin capa de texto**: el agente no
-extrae nada y se declara `FAILED`, que es el comportamiento correcto. Con N = 16 casos
-reales un solo fallo son 6,2 puntos. Se publica así en vez de subir el N con casos
-sintéticos hasta que el porcentaje quede bien. Por separado, el `mesh-agent` sobre **120
-mallas** de Teeth3DS+ da **100 %**: las dos cifras van con su N al lado a propósito.
 
 ---
 
