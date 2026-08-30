@@ -201,8 +201,9 @@ Decisiones que salen de esto:
 ~/.venvs/dental-gpu/bin/python scripts/entrena_diente_cbct.py \
     --datos ~/anfaia/toothfairy2 --frac-diente 0.25 --pasos 16000
 
-# el listón que hay que batir: el umbral de HU contra verdad anotada (F1 0,530)
-uv run python scripts/umbral_vs_verdad.py --datos ~/anfaia/toothfairy2
+# el listón que hay que batir —el umbral de HU contra verdad anotada, F1 0,530—
+# se midió con un script que ya no vive en el repositorio: dependía del banco
+# de ToothFairy2, cuya licencia no permite que nada suyo viaje aquí.
 
 # la comparación de §3: mismo comando, cambiando solo --modelo
 ~/.venvs/dental-gpu/bin/python scripts/composicion_cbct_ios.py \

@@ -4,7 +4,7 @@
     ~/.venvs/dental-gpu/bin/python scripts/entrena_diente_cbct.py --datos ~/anfaia/toothfairy2
 
 **Qué problema resuelve, y por qué hace falta un modelo.** Está medido en
-[`umbral_vs_verdad.py`](umbral_vs_verdad.py) que **ningún umbral de HU separa diente de
+una medida previa —hoy fuera del repositorio— que **ningún umbral de HU separa diente de
 hueso**: el mejor compromiso posible da F1 0,530 (recall 52,6 %, precisión 53,3 %),
 porque las dos clases **comparten rango de intensidad** — el p95 del hueso (1716 HU) cae
 por encima de la mediana del diente (1735). La información que los distingue no está en
@@ -40,7 +40,8 @@ import torch.nn.functional as F
 # Clases del mapa de 6 del espejo de ToothFairy2 (ver `tf_pipeline/bands.py`).
 CLASES_DIENTE = (2, 3, 4, 5)
 
-# El listón medido con `umbral_vs_verdad.py` sobre F_001. No se toca sin re-medirlo.
+# El listón medido por umbral de HU contra verdad anotada sobre F_001. No se toca
+# sin re-medirlo, y el script que lo midió ya no vive aqui (licencia del banco).
 F1_UMBRAL = 0.530
 
 PARCHE = 96
@@ -190,7 +191,7 @@ def evalua_volumen(modelo, casos: list[Caso], dev) -> dict:
     que el modelo gana cuando puede estar perdiendo.
 
     Aquí se recorre el caso con una ventana deslizante sin solape y se acumulan los
-    conteos sobre todos los vóxeles, exactamente como hace `umbral_vs_verdad.py`.
+    conteos sobre todos los vóxeles, igual que la medida del umbral de HU.
     """
     modelo.eval()
     tp = fp = fn = 0
