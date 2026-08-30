@@ -490,7 +490,9 @@ def comprobaciones_del_codigo(ruta: str) -> list[str]:
     return []
 
 
-_ENCABEZADO_COMPROBACIONES = re.compile(r"^\|\s*Comprobación\s*\|")
+# `AGENTS.md` esta en ingles y este repositorio en castellano: la tabla puede
+# encabezarse de las dos formas, y lo que importa son los identificadores.
+_ENCABEZADO_COMPROBACIONES = re.compile(r"^\|\s*(?:Comprobación|Check)\s*\|")
 
 
 def comprobaciones_de_la_ficha(ficha: str) -> set[str]:
@@ -544,7 +546,7 @@ def revisar_comprobaciones(ficheros: set[str], texto: str) -> list[str]:
             problemas.append(
                 f"`{script}` declara {len(registradas)} comprobaciones en `COMPROBACIONES` "
                 "y su ficha no las enumera. Hace falta una tabla con la columna "
-                "«Comprobación» y el identificador de cada una entre comillas."
+                "«Comprobación» (o «Check») y el identificador de cada una entre comillas."
             )
             continue
         for falta in sorted(set(registradas) - documentadas):

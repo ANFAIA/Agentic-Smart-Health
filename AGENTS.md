@@ -1,25 +1,25 @@
-# AGENTS.md — Registro Central de Agentes
+# AGENTS.md — Central Agent Registry
 
-Este documento es la fuente única de verdad para todos los agentes del sistema **Agentic Smart Health**. Cada agente autónomo o semi-autónomo del sistema multiagente debe registrarse aquí con su rol, herramientas MCP disponibles y reglas de delegación.
+This document is the single source of truth for every agent in the **Agentic Smart Health** system. Every autonomous or semi-autonomous agent of the multi-agent system must be registered here with its role, available MCP tools and delegation rules.
 
-Actualiza este archivo siempre que añadas, modifiques o retires un agente. Las decisiones de diseño que afecten a la arquitectura de agentes deben registrarse también en `docs/architecture/`.
-
----
-
-## Principios de diseño de agentes
-
-- **Responsabilidad única**: cada agente tiene un rol delimitado y no replica la lógica de otro.
-- **Contratos de datos**: los agentes se comunican exclusivamente a través de los esquemas definidos en `packages/core-schemas`.
-- **Human-in-the-loop**: las decisiones clínicamente sensibles requieren supervisión humana explícita antes de ejecutarse. Esto debe indicarse en las reglas de delegación del agente correspondiente.
-- **Trazabilidad**: todo agente debe registrar qué dato ingirió, qué transformación aplicó y qué output generó.
-- **Soberanía del dato**: ningún agente puede retener, reenviar ni persistir datos clínicos fuera del almacenamiento autorizado definido en la arquitectura.
+Update this file whenever you add, modify or retire an agent. Design decisions affecting the agent architecture must also be recorded in `docs/architecture/`.
 
 ---
 
-## Registro de agentes
+## Agent design principles
 
-Resumen generado desde el código — las fichas de abajo, no: inputs, outputs y
-herramientas son prosa y se escriben a mano.
+- **Single responsibility**: each agent has a bounded role and does not replicate another agent's logic.
+- **Data contracts**: agents communicate exclusively through the schemas defined in `packages/core-schemas`.
+- **Human-in-the-loop**: clinically sensitive decisions require explicit human supervision before they execute. This must be stated in the corresponding agent's delegation rules.
+- **Traceability**: every agent must record what data it ingested, what transformation it applied and what output it produced.
+- **Data sovereignty**: no agent may retain, forward or persist clinical data outside the authorised storage defined in the architecture.
+
+---
+
+## Agent registry
+
+Summary generated from the code — the cards below are not: inputs, outputs and
+tools are prose and are written by hand.
 
 <!-- generado: agentes — no editar a mano -->
 | Agente | Implementado en |
@@ -41,1467 +41,1483 @@ herramientas son prosa y se escriben a mano.
 <!-- /generado: agentes -->
 
 
-### `research-agent` — Agente de investigación
+### `research-agent` — Research agent
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Nombre** | `research-agent` |
-| **Versión** | `0.1.0` |
-| **Ubicación** | `apps/research-agent/` (`src/main.py` · `src/main_local.py`) |
-| **Estado** | `active` |
-| **Fase del pipeline** | Ingesta y síntesis de conocimiento (no toca datos clínicos del paciente) |
-| **Cerebro (LLM)** | Claude (`claude-opus-4-8` por defecto) vía Tool Runner del SDK de Anthropic. Variante local sin coste con Ollama (`main_local.py`, bucle ReAct manual). |
+| **Name** | `research-agent` |
+| **Version** | `0.1.0` |
+| **Location** | `apps/research-agent/` (`src/main.py` · `src/main_local.py`) |
+| **Status** | `active` |
+| **Pipeline phase** | Knowledge ingestion and synthesis (does not touch patient clinical data) |
+| **Brain (LLM)** | Claude (`claude-opus-4-8` by default) via the Anthropic SDK's Tool Runner. Free local variant with Ollama (`main_local.py`, hand-written ReAct loop). |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Agente conversacional (CLI) que **descubre, ingiere, indexa y sintetiza**
-> literatura científica sobre 3D Gaussian Splatting, el estándar DICOM y
-> normativas clínicas. Recupera papers de fuentes académicas abiertas, los
-> vuelca en una base vectorial local (RAG) y produce reportes Markdown
-> estructurados (abstract + explicación completa) en `docs_output/`. Actúa en la
-> fase de **ingesta de conocimiento**: alimenta al proyecto con contexto
-> bibliográfico; **no procesa datos clínicos de pacientes**.
+> A conversational (CLI) agent that **discovers, ingests, indexes and synthesises**
+> scientific literature on 3D Gaussian Splatting, the DICOM standard and clinical
+> regulation. It retrieves papers from open academic sources, loads them into a
+> local vector store (RAG) and produces structured Markdown reports (abstract +
+> full explanation) in `docs_output/`. It operates in the **knowledge ingestion**
+> phase: it feeds the project bibliographic context; it **does not process patient
+> clinical data**.
 
-**Herramientas a las que tiene acceso** (tool calling nativo `@beta_tool`, **no** MCP)
+**Tools it has access to** (native `@beta_tool` tool calling, **not** MCP)
 
-| Herramienta | Backend | Permisos | Notas |
+| Tool | Backend | Permissions | Notes |
 |---|---|---|---|
-| `read_directory` | Filesystem (`data/research-agent/knowledge_base/`) | read | Lista los documentos disponibles en el corpus. |
-| `read_file` | Filesystem (`knowledge_base/`) | read | Lee un PDF/MD/TXT completo (truncado a 100k chars). Sandbox anti *path traversal*. |
-| `ingest_corpus` | RAG — Qdrant on-disk + `fastembed` | write (índice) | Trocea (chunk 1000/overlap 150), vectoriza e indexa todo el corpus. Idempotente. |
-| `search_corpus` | RAG — Qdrant | read | Búsqueda semántica (coseno, `top_k=5`) multi-documento. |
-| `search_references` | HTTP — Semantic Scholar → arXiv (fallback) | read (red) | Descubre papers externos; sin API key. |
-| `download_reference` | HTTP + Filesystem (`knowledge_base/`) | write (fichero) | Descarga un PDF (solo http(s), valida `%PDF`, máx. 50 MB) y lo auto-indexa. |
-| `write_summary` | Filesystem (`docs_output/`) | write | Persiste el reporte final; valida estructura (abstract + explicación más extensa). Fuerza `.md` y nombre base. |
+| `read_directory` | Filesystem (`data/research-agent/knowledge_base/`) | read | Lists the documents available in the corpus. |
+| `read_file` | Filesystem (`knowledge_base/`) | read | Reads a full PDF/MD/TXT (truncated to 100k chars). Sandboxed against *path traversal*. |
+| `ingest_corpus` | RAG — on-disk Qdrant + `fastembed` | write (index) | Chunks (1000 with 150 overlap), embeds and indexes the whole corpus. Idempotent. |
+| `search_corpus` | RAG — Qdrant | read | Semantic search (cosine, `top_k=5`) across documents. |
+| `search_references` | HTTP — Semantic Scholar → arXiv (fallback) | read (network) | Discovers external papers; no API key. |
+| `download_reference` | HTTP + Filesystem (`knowledge_base/`) | write (file) | Downloads a PDF (http(s) only, validates `%PDF`, max 50 MB) and auto-indexes it. |
+| `write_summary` | Filesystem (`docs_output/`) | write | Persists the final report; validates its structure (abstract + longer explanation). Forces `.md` and a base filename. |
 
-> **Fronteras de seguridad:** lectura confinada a `knowledge_base/`, escritura
-> confinada a `docs_output/`; `../` y symlinks que escapen se bloquean antes de
-> tocar disco. Modelo por defecto vía `ANTHROPIC_API_KEY` (`.env`); la variante
-> Ollama no envía documentos fuera de la máquina.
+> **Security boundaries:** reads confined to `knowledge_base/`, writes confined to
+> `docs_output/`; `../` and escaping symlinks are blocked before touching disk. The
+> default model goes through `ANTHROPIC_API_KEY` (`.env`); the Ollama variant sends
+> no document off the machine.
 
-**Inputs esperados**
+**Expected inputs**
 
 ```
-Consulta en lenguaje natural del usuario (CLI interactivo), p. ej.:
-  "Busca literatura reciente sobre 3DGS en imagen dental y resúmela."
-Corpus de partida (opcional): ficheros .pdf/.md/.txt en
+A natural-language query from the user (interactive CLI), e.g.:
+  "Find recent literature on 3DGS in dental imaging and summarise it."
+Starting corpus (optional): .pdf/.md/.txt files under
   data/research-agent/knowledge_base/
-  Los PDF NO estan versionados (licencia de terceros): se materializan con
-  `uv run python scripts/fetch_knowledge_base.py` a partir de manifest.yaml
+  The PDFs are NOT versioned (third-party licences): they are materialised with
+  `uv run python scripts/fetch_knowledge_base.py` from manifest.yaml
 ```
 
-**Outputs generados**
+**Generated outputs**
 
 ```
-- Reporte Markdown en apps/research-agent/docs_output/resumen_<tema>.md
-  Estructura: # Título · > Fuente · ## Abstract · ## Explicación completa
-              · ## Puntos clave (opcional)
-- Efecto lateral: base vectorial Qdrant persistida en
-  data/research-agent/.qdrant_data/ (colección "papers")
-- Respuestas conversacionales citando la fuente (nombre de documento)
+- Markdown report at apps/research-agent/docs_output/resumen_<topic>.md
+  Structure: # Title · > Source · ## Abstract · ## Full explanation
+             · ## Key points (optional)
+- Side effect: Qdrant vector store persisted at
+  data/research-agent/.qdrant_data/ (collection "papers")
+- Conversational answers citing the source (document name)
 ```
 
-**Reglas de delegación**
+**Delegation rules**
 
-- Flujo autónomo de descubrimiento: `search_references` → `download_reference`
-  (auto-indexa) → `search_corpus`/`read_file` → `write_summary`.
-- **No requiere aprobación humana**: opera sobre literatura pública y su propio
-  sandbox de ficheros; no accede a datos clínicos ni a almacenamiento autorizado
-  del paciente.
-- No puede delegar en otros agentes del sistema (no hay integración con el
-  orquestador todavía); es un agente autocontenido de un solo turno interactivo.
-- Política de fallo: las tools **nunca** lanzan al llamador — devuelven el error
-  como texto (`ERROR: …`) para que el modelo reaccione/reintente. Semantic
-  Scholar cae automáticamente a arXiv ante cualquier fallo (incl. 429).
-- Concurrencia: Qdrant on-disk bloquea el directorio para un solo proceso; para
-  concurrencia real se migraría a Qdrant en servidor sin cambiar la interfaz.
+- Autonomous discovery flow: `search_references` → `download_reference`
+  (auto-indexes) → `search_corpus`/`read_file` → `write_summary`.
+- **Requires no human approval**: it operates on public literature and its own file
+  sandbox; it accesses neither clinical data nor authorised patient storage.
+- It cannot delegate to other agents in the system (there is no orchestrator
+  integration yet); it is a self-contained, single-turn interactive agent.
+- Failure policy: tools **never** raise to the caller — they return the error as
+  text (`ERROR: …`) so the model can react or retry. Semantic Scholar falls back to
+  arXiv automatically on any failure (including 429).
+- Concurrency: on-disk Qdrant locks the directory to a single process; real
+  concurrency would mean migrating to server-side Qdrant without changing the interface.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-07-14 | 0.1.0 | Registro inicial: RAG local (Qdrant + fastembed), tools de filesystem, descubrimiento externo (Semantic Scholar/arXiv) y generación de reportes. Variantes Claude y Ollama. |
+| 2026-07-14 | 0.1.0 | Initial registration: local RAG (Qdrant + fastembed), filesystem tools, external discovery (Semantic Scholar/arXiv) and report generation. Claude and Ollama variants. |
 
 ---
 
-### `ai-code-reviewer` — Agente guardián de CI/CD
+### `ai-code-reviewer` — CI/CD guardian agent
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Nombre** | `ai-code-reviewer` |
-| **Tipo** | Agente guardián dev-time (no forma parte del sistema en producción) |
-| **Ubicación** | `.github/workflows/ai-code-review.yml` + `scripts/audit_pr.py` |
-| **Estado** | `active` |
-| **Tecnología** | Revisión **estática, sin LLM**: Ruff + MyPy + auditor de arquitectura propio |
+| **Name** | `ai-code-reviewer` |
+| **Type** | Dev-time guardian agent (not part of the production system) |
+| **Location** | `.github/workflows/ai-code-review.yml` + `scripts/audit_pr.py` |
+| **Status** | `active` |
+| **Technology** | **Static review, no LLM**: Ruff + MyPy + a bespoke architecture auditor |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Audita automáticamente cada Pull Request antes del merge para garantizar calidad
-> de código, tipado y cumplimiento de la arquitectura hexagonal del monorepo.
-> Se dispara en los eventos `pull_request` (`opened`, `synchronize`, `reopened`) y
-> revisa **únicamente los archivos Python que toca el PR** (enfocado en el diff).
+> Automatically audits every Pull Request before merge to guarantee code quality,
+> typing and compliance with the monorepo's hexagonal architecture.
+> It fires on `pull_request` events (`opened`, `synchronize`, `reopened`) and
+> reviews **only the Python files the PR touches** (focused on the diff).
 
-**Chequeos que ejecuta**
+**Checks it runs**
 
-| Chequeo | Herramienta | ¿Bloquea el merge? | Cómo reporta |
+| Check | Tool | Blocks the merge? | How it reports |
 |---|---|---|---|
-| **Estilo / lint** | `ruff check` | **Sí** | Anotaciones inline nativas de GitHub |
-| **Tipos** | `mypy` (solo `*/src/`) | **Sí** | Anotaciones inline (`::error`/`::warning`) |
-| **Arquitectura** | `scripts/audit_pr.py` | **Sí** | Comentario de revisión en la línea afectada + resumen |
+| **Style / lint** | `ruff check` | **Yes** | GitHub's native inline annotations |
+| **Types** | `mypy` (only `*/src/`) | **Yes** | Inline annotations (`::error`/`::warning`) |
+| **Architecture** | `scripts/audit_pr.py` | **Yes** | Review comment on the affected line + summary |
 
-> **`ruff format` no se comprueba**, y es una decisión, no un olvido. El formato de este
-> repositorio es deliberado —tuplas agrupadas por significado, comentarios alineados con
-> el dato que explican— y `ruff format` lo deshace: 46 de 87 ficheros cambiarían, y
-> `_PROPIEDADES` pasaría de tres líneas agrupadas (posición · escala · rotación) a once
-> sueltas. Un check permanentemente rojo que nadie puede arreglar enseña a ignorar los
-> checks. Lo mecanizable del formato —longitud de línea, orden de imports— ya lo cubre
-> `ruff check`.
+> **`ruff format` is not checked**, and that is a decision, not an oversight. This
+> repository's formatting is deliberate — tuples grouped by meaning, comments aligned with
+> the data they explain — and `ruff format` undoes it: 46 of 87 files would change, and
+> `_PROPIEDADES` would go from three grouped lines (position · scale · rotation) to eleven
+> loose ones. A permanently red check nobody can fix teaches people to ignore checks.
+> Whatever is mechanisable about formatting — line length, import order — is already
+> covered by `ruff check`.
 
-> **MyPy mira solo los `src/`**, que es el código que se ejecuta en producción y que hoy
-> está limpio. Lo que queda fuera, medido antes de decidirlo: `scripts/` (17 errores;
-> exploratorio, carga módulos por `importlib` y vive de arrays sin tipar), los tests (49;
-> casi todos un `TwinSnapshot | None` que el propio test ya afirma que no es None, y cuya
-> puerta es pytest), y `packages/3dgs-engine/`, cuyo guion no es un identificador válido
-> de Python y hace abortar a MyPy antes de mirar nada. Meter cualquiera de los tres
-> cerraría la puerta en rojo desde el primer día, que es la forma más rápida de que una
-> puerta acabe desactivada.
+> **MyPy only looks at `src/`**, which is the code that runs in production and is clean
+> today. What stays out, measured before deciding: `scripts/` (17 errors; exploratory,
+> loads modules through `importlib` and lives on untyped arrays), the tests (49; almost
+> all of them a `TwinSnapshot | None` the test itself already asserts is not None, and
+> whose gate is pytest), and `packages/3dgs-engine/`, whose hyphen is not a valid Python
+> identifier and makes MyPy abort before looking at anything. Adding any of the three
+> would leave the gate red from day one, which is the fastest way for a gate to end up
+> disabled.
 
-**Reglas de arquitectura auditadas** (regla → violación que detecta)
+**Architecture rules audited** (rule → the violation it detects)
 
-1. **Pydantic v2 estricto en `packages/core-schemas`**: prohíbe el shim `pydantic.v1`,
-   los decoradores/estilos de v1 (`@validator`, `@root_validator`, `class Config`) y
-   `BaseSettings` (movido a `pydantic-settings`).
-2. **Sin dependencias cruzadas en `apps/`**: un componente de `apps/` no puede importar
-   el paquete de otro app. El código compartido debe vivir en `packages/`
-   (p. ej. `core-schemas`) y comunicarse mediante sus contratos de datos.
+1. **Strict Pydantic v2 in `packages/core-schemas`**: forbids the `pydantic.v1` shim,
+   v1 decorators and styles (`@validator`, `@root_validator`, `class Config`) and
+   `BaseSettings` (moved to `pydantic-settings`).
+2. **No cross dependencies inside `apps/`**: a component under `apps/` cannot import
+   another app's package. Shared code must live in `packages/`
+   (e.g. `core-schemas`) and communicate through its data contracts.
 
-**Permisos (GitHub Actions token)**
+**Permissions (GitHub Actions token)**
 
-| Permiso | Nivel | Motivo |
+| Permission | Level | Reason |
 |---|---|---|
-| `contents` | `read` | Hacer checkout del código del PR |
-| `pull-requests` | `write` | Publicar comentarios inline y el resumen de la revisión |
-| `checks` | `write` | Marcar el check como fallido cuando hay violaciones de arquitectura |
+| `contents` | `read` | Check out the PR's code |
+| `pull-requests` | `write` | Publish inline comments and the review summary |
+| `checks` | `write` | Mark the check as failed when there are architecture violations |
 
-> El agente **no** tiene permiso de escritura sobre el código (`contents: read`): no
-> puede aplicar cambios ni hacer merge; solo comenta y aprueba/bloquea el check. Usa el
-> `GITHUB_TOKEN` efímero del workflow, sin secretos externos ni acceso a datos clínicos.
+> The agent has **no** write permission over the code (`contents: read`): it cannot
+> apply changes or merge; it only comments and passes/blocks the check. It uses the
+> workflow's ephemeral `GITHUB_TOKEN`, with no external secrets and no access to
+> clinical data.
 
-**Política de fallo**
+**Failure policy**
 
-- Violación de arquitectura → el check falla (`core.setFailed`) y bloquea el merge.
-- Errores de Ruff/MyPy → el paso falla y bloquea el merge, además de anotar la línea.
-- **Cada puerta da su veredicto aunque otra se cierre**: los pasos posteriores llevan
-  `!cancelled()`, así que un error de estilo no deja al PR sin pasar por el guardián de
-  datos. El job falla igual; lo que no se pierde es el diagnóstico completo.
-- El resumen publica el resultado **real** de cada puerta (`limpio` / `bloquea` / `no
-  aplica`), no un «ejecutado» que decía lo mismo con el linter limpio y con veinte errores.
-- Cualquier archivo no parseable se omite en el auditor (lo cazan Ruff/MyPy).
+- Architecture violation → the check fails (`core.setFailed`) and blocks the merge.
+- Ruff/MyPy errors → the step fails and blocks the merge, besides annotating the line.
+- **Every gate gives its verdict even when another one closes**: later steps carry
+  `!cancelled()`, so a style error does not leave the PR unseen by the data guardian.
+  The job fails all the same; what is not lost is the full diagnosis.
+- The summary publishes each gate's **real** result (`clean` / `blocks` / `not
+  applicable`), not an "executed" that said the same thing with a clean linter and with
+  twenty errors.
+- Any unparseable file is skipped by the auditor (Ruff/MyPy catch those).
 
-**Versiones clavadas.** `ruff` y `mypy` van con `==` en `pyproject.toml`, no con `>=`.
-Un linter que se actualiza solo estrena reglas sobre código que nadie ha tocado y pone
-el CI rojo por un `uv sync` en una rama que no cambió nada — pasó con `ruff>=0.9`, que
-acabó instalando la 0.15. Subir de versión es un commit deliberado que arregla lo que la
-versión nueva encuentre.
+**Pinned versions.** `ruff` and `mypy` are pinned with `==` in `pyproject.toml`, not
+`>=`. A linter that updates itself premieres new rules on code nobody has touched and
+turns CI red because of a `uv sync` on a branch that changed nothing — which happened
+with `ruff>=0.9`, ending up installing 0.15. Bumping a version is a deliberate commit
+that fixes whatever the new version finds.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-07-14 | 0.1.0 | Registro inicial del agente guardián de CI |
-| 2026-08-17 | 0.1.0 | Ruff y MyPy pasan de informativos a **puerta de merge**; versiones clavadas; `ruff format` retirado; `scripts/` fuera de MyPy; las puertas posteriores ya no se saltan cuando una falla. Deuda saldada para poder cerrarlas: 27 errores de Ruff y 9 de MyPy. |
+| 2026-07-14 | 0.1.0 | Initial registration of the CI guardian agent |
+| 2026-08-17 | 0.1.0 | Ruff and MyPy go from informative to a **merge gate**; versions pinned; `ruff format` withdrawn; `scripts/` out of MyPy; later gates no longer skipped when one fails. Debt paid off to be able to close them: 27 Ruff errors and 9 MyPy errors. |
 
 ---
 
-### `data-guardian` — Guardián de datos y licencias
+### `data-guardian` — Data and licence guardian
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Nombre** | `data-guardian` |
-| **Versión** | `0.1.0` |
-| **Ubicación** | [`scripts/data_guard.py`](scripts/data_guard.py) |
-| **Estado** | `active` |
-| **Disparo** | Hook `pre-commit` (**bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
-| **Tecnología** | Código tipado, **sin LLM** |
+| **Name** | `data-guardian` |
+| **Version** | `0.1.0` |
+| **Location** | [`scripts/data_guard.py`](scripts/data_guard.py) |
+| **Status** | `active` |
+| **Trigger** | `pre-commit` hook (**blocks**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Technology** | Typed code, **no LLM** |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Impide que un dato ajeno —de terceros, de licencia incompatible o clínico— entre en
-> la historia de git. Es el único guardián que **detiene el commit**, y la asimetría es
-> deliberada: un fichero que ya está en la historia no se quita sin reescribirla.
-> Ocurrió (issue 45: 156 MiB de PDF, `filter-repo` y `force-push`). Aquí es más barato
-> que en ningún otro sitio.
+> Stops third-party, incompatibly licensed or clinical data from entering git history.
+> It is the only guardian that **halts the commit**, and the asymmetry is deliberate: a
+> file already in history cannot be removed without rewriting it. That happened
+> (issue 45: 156 MiB of PDF, `filter-repo` and a `force-push`). Here it is cheaper than
+> anywhere else.
 
-**Qué comprueba** (todas nacidas de un fallo real)
+**What it checks** (every one born from a real failure)
 
-| Comprobación | Qué caza |
+| Check | What it catches |
 |---|---|
-| `extensiones` | `.pdf`, mallas (`.ply/.stl/.obj/.glb/.gltf`), volúmenes (`.dcm/.nii/.nrrd`…), pesos de ML |
-| `tamano` | cualquier fichero versionado por encima de 5 MiB |
-| `ignore` | pregunta a `git check-ignore` por **rutas sonda**: verifica el comportamiento, no el texto del `.gitignore`, así sobrevive a que alguien las reordene y detecta que las ha borrado |
-| `manifiesto` | que las entradas de `manifest.yaml` estén completas y parseen |
-| `procedencia` | un notebook versionado con imágenes embebidas debe citar su ficha de dataset |
-| `fichas` | que cada dataset usado tenga la suya |
+| `extensiones` | `.pdf`, meshes (`.ply/.stl/.obj/.glb/.gltf`), volumes (`.dcm/.nii/.nrrd`…), ML weights |
+| `tamano` | any versioned file above 5 MiB |
+| `ignore` | asks `git check-ignore` about **probe paths**: it verifies behaviour, not the text of `.gitignore`, so it survives someone reordering them and detects that they were deleted |
+| `manifiesto` | that the entries in `manifest.yaml` are complete and parse |
+| `procedencia` | a versioned notebook with embedded images must cite its dataset card |
+| `fichas` | that every dataset used has one |
 
-> Los identificadores no son decorativos: salen del registro `COMPROBACIONES` del
-> script, y el `docs-guardian` compara esta tabla con él. Añadir una comprobación y no
-> documentarla aquí —o quitarla y dejarla anunciada— falla en el CI.
+> The identifiers are not decorative: they come from the script's `COMPROBACIONES`
+> registry, and the `docs-guardian` compares this table against it. Adding a check and
+> not documenting it here — or removing one and leaving it announced — fails in CI.
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **Bloquea, no avisa**: sale con código ≠ 0 y el commit no ocurre. Para saltárselo hay
-  que escribir `--no-verify` a mano, que deja rastro de intención.
-- No decide sobre licencias dudosas: veta por extensión y tamaño, que son criterios
-  mecánicos. El juicio sobre si una licencia permite redistribuir es humano.
+- **It blocks, it does not warn**: it exits non-zero and the commit does not happen. To
+  skip it you have to type `--no-verify` by hand, which leaves a trace of intent.
+- It does not adjudicate doubtful licences: it vetoes by extension and size, which are
+  mechanical criteria. Judging whether a licence permits redistribution is human work.
 
-> ⚠️ **Punto ciego conocido (2026-08-09, sin cerrar y AHORA MÁS ANCHO).** Veta `.stl`,
-> `.ply` y `.obj`, pero un `.html` con esa misma geometría embebida en base64 le pasa por
-> delante: la única barrera es el límite de tamaño, que no es el criterio correcto. Se
-> detectó al construir un visor con geometría real de paciente. El repositorio es público.
+> ⚠️ **Known blind spot (2026-08-09, still open and NOW WIDER).** It vetoes `.stl`,
+> `.ply` and `.obj`, but an `.html` with that same geometry embedded as base64 walks
+> straight past: the only barrier is the size limit, which is not the right criterion.
+> It was found while building a viewer with real patient geometry. The repository is
+> public.
 >
-> Subir el límite de 2 a 5 MiB el 2026-08-18 **ensancha este hueco**: un visor de 4 MiB
-> que antes se paraba, ahora pasa. Mitigado a medias porque `notebooks/visores/` está
-> ignorado, pero eso protege una ruta concreta, no el patrón. Cerrarlo de verdad pide
-> mirar **dentro** del HTML —buscar bloques base64 con firma de malla— y es trabajo
-> pendiente.
+> Raising the limit from 2 to 5 MiB on 2026-08-18 **widens this gap**: a 4 MiB viewer
+> that used to be stopped now passes. Half-mitigated because `notebooks/visores/` is
+> ignored, but that protects one specific path, not the pattern. Really closing it means
+> looking **inside** the HTML — hunting base64 blocks with a mesh signature — and that is
+> outstanding work.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-05 | 0.1.0 | Registro inicial: seis comprobaciones, rutas sonda para las reglas de ignore, enganche en el hook y en los dos workflows. |
-| 2026-08-11 | 0.1.1 | Sin cambio de comportamiento: las comprobaciones pasan a declararse en un registro con identificador estable, y esta ficha a reproducirlo. |
+| 2026-08-05 | 0.1.0 | Initial registration: six checks, probe paths for the ignore rules, wired into the hook and both workflows. |
+| 2026-08-11 | 0.1.1 | No behavioural change: the checks are now declared in a registry with stable identifiers, and this card reproduces it. |
 
 ---
 
-### `docs-guardian` — Guardián de coherencia documentación ↔ código
+### `docs-guardian` — Documentation ↔ code coherence guardian
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Nombre** | `docs-guardian` |
-| **Versión** | `0.6.0` |
-| **Ubicación** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
-| **Estado** | `active` |
-| **Disparo** | Hook `pre-commit` (**no bloquea**) · `ai-code-review.yml` · `literature-watch.yml` |
-| **Tecnología** | Código tipado + `ast`, **sin LLM** |
+| **Name** | `docs-guardian` |
+| **Version** | `0.6.0` |
+| **Location** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
+| **Status** | `active` |
+| **Trigger** | `pre-commit` hook (**does not block**) · `ai-code-review.yml` · `literature-watch.yml` |
+| **Technology** | Typed code + `ast`, **no LLM** |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> La documentación se desincroniza en silencio: nadie recibe un error rojo por escribir
-> un número que dejó de ser cierto. Este agente lo convierte en un fallo visible.
-> Casos reales de este repositorio: un recuento de tests que decía 166 cuando eran 265,
-> un `.env.example` con cinco variables que no leía nadie, y el árbol del README
-> anunciando un notebook ya eliminado.
+> Documentation drifts silently: nobody gets a red error for writing a number that
+> stopped being true. This agent turns that into a visible failure.
+> Real cases from this repository: a test count that said 166 when it was 265, a
+> `.env.example` with five variables nobody read, and the README tree announcing a
+> notebook that had already been deleted.
 
-**Comprueba, no redacta** — es su regla de diseño y su frontera
+**It checks, it does not write** — that is its design rule and its boundary
 
-> Solo **genera** lo que es copia mecánica de una fuente de verdad (las tablas entre
-> marcas `<!-- generado: … -->`). Todo lo demás lo **verifica**. Un agente que
-> "arreglase" la documentación por su cuenta haría que el documento se adapte al código
-> **incluso cuando el que está mal es el código**: el 166 se habría convertido en 265
-> sin que nadie se enterase de que llevaba meses mintiendo.
+> It only **generates** what is a mechanical copy of a source of truth (the tables
+> between `<!-- generado: … -->` markers). Everything else it **verifies**. An agent
+> that "fixed" the documentation on its own would make the document adapt to the code
+> **even when it is the code that is wrong**: the 166 would have become 265 without
+> anyone finding out it had been lying for months.
 
-| Comprobación | Qué caza |
+| Check | What it catches |
 |---|---|
-| `env` | variables leídas por el código ↔ `.env.example` ↔ README |
-| `rutas` | ficheros citados en la documentación ↔ ficheros versionados |
-| `agentes` | atributo `name` de las clases ↔ registro de `AGENTS.md` |
-| `versiones` | atributo `version` de la clase ↔ la fila **Versión** de su ficha |
-| `guardianes` | scripts que ejecutan los workflows o los hooks ↔ ficha en `AGENTS.md` |
-| `comprobaciones` | el registro `COMPROBACIONES` de cada guardián ↔ la tabla de su ficha (esta misma) |
-| `constantes` | un número o una cadena escritos en la prosa ↔ el valor de la constante de la que salen |
-| `inventario` y `arbol` | que lo que existe esté citado, no solo que lo citado exista |
-| `vacios` | un componente con ficha en el README ↔ que tenga código, o que la ficha lo declare placeholder |
-| `bloques` | que las tablas generadas coincidan con el código |
+| `env` | variables read by the code ↔ `.env.example` ↔ README |
+| `rutas` | files cited in the documentation ↔ versioned files |
+| `agentes` | the classes' `name` attribute ↔ the `AGENTS.md` registry |
+| `versiones` | the class's `version` attribute ↔ the **Version** row of its card |
+| `guardianes` | scripts run by the workflows or the hooks ↔ a card in `AGENTS.md` |
+| `comprobaciones` | each guardian's `COMPROBACIONES` registry ↔ the table on its card (this one) |
+| `constantes` | a number or string written in the prose ↔ the value of the constant it comes from |
+| `inventario` and `arbol` | that what exists is cited, not merely that what is cited exists |
+| `vacios` | a component with a README card ↔ that it has code, or that the card declares it a placeholder |
+| `bloques` | that the generated tables match the code |
 
-> **Por qué los guardianes no se versionan.** Se planteó darles `__version__` y
-> comparar, como se hace con las clases `*Agent`. No se hizo, y por tres motivos. El
-> `version` de un agente **se usa**: viaja en `qualified` dentro de `provenance`, así
-> que una fusión guardada dice con qué fórmula se calculó. En un script no lo leería
-> nadie, y la comprobación quedaría comparando dos constantes que nadie tiene motivo
-> para tocar: verde permanente, peor que no comprobar. Además obligaría a cada
-> guardián a tener ficha propia con fila de versión, cuando `audit_pr.py` vive
-> —correctamente— dentro de la del `ai-code-reviewer`. Y SemVer sin nadie que importe
-> el módulo no significa nada. Lo que sí cambia y le importa a quien lo lea es **qué
-> comprueba**, y eso es lo que se compara.
+> **Why the guardians are not versioned.** Giving them a `__version__` and comparing it,
+> as is done with the `*Agent` classes, was considered. It was not done, for three
+> reasons. An agent's `version` **is used**: it travels in `qualified` inside
+> `provenance`, so a saved fusion says which formula computed it. In a script nobody
+> would read it, and the check would end up comparing two constants nobody has any
+> reason to touch: permanently green, worse than not checking. It would also force every
+> guardian to have its own card with a version row, when `audit_pr.py` lives —
+> correctly — inside the `ai-code-reviewer`'s. And SemVer with nobody importing the
+> module means nothing. What does change, and what matters to a reader, is **what it
+> checks**, and that is what gets compared.
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **No bloquea el commit.** Un hook que impide trabajar por un problema de
-  documentación acaba desinstalado; si falla, avisa y el CI lo dice en la PR.
-- **Fuente de verdad = `git ls-files`**, no el disco: si no, un fichero ignorado que
-  existe en local haría pasar en tu máquina algo que en CI falla.
+- **It does not block the commit.** A hook that stops you working over a documentation
+  problem ends up uninstalled; if it fails, it warns, and CI says so on the PR.
+- **Source of truth = `git ls-files`**, not the disk: otherwise an ignored file that
+  exists locally would make something pass on your machine that fails in CI.
 
-**Cómo se ata un número a su constante.** `constantes` no adivina: hace falta un
-marcador, en un comentario HTML que no se ve al renderizar.
+**How a number is tied to its constant.** `constantes` does not guess: it needs a
+marker, in an HTML comment invisible when rendered.
 
 ```markdown
-...cuatro órdenes de magnitud bajo el presupuesto de **0,1 mm** <!--const:REVERSIBILITY_BUDGET_MM-->
+...four orders of magnitude below the budget of **0.1 mm** <!--const:REVERSIBILITY_BUDGET_MM-->
 ```
 
-A partir de ahí, si alguien cambia `REVERSIBILITY_BUDGET_MM` en el código y no toca esta
-frase, el CI lo dice con el fichero y la línea. Hoy hay 13 números marcados.
+From then on, if someone changes `REVERSIBILITY_BUDGET_MM` in the code and does not touch
+this sentence, CI says so with the file and the line. There are 13 marked numbers today.
 
-> **Por qué un marcador y no buscar el nombre de la constante en el texto.** Porque la
-> prosa peligrosa **no la nombra**: dice «ε = 0,5 mm» o «< 0,1 mm» a secas. De los 25
-> sitios del repositorio donde hay un número que sale del código, solo 3 citaban la
-> constante — una comprobación por nombre habría vigilado el 12 % y dado la sensación de
-> cubrirlo todo. El marcador invierte la carga: quien escribe el número declara de dónde
-> sale, una vez, y el CI lo vigila para siempre.
+> **Why a marker rather than searching the text for the constant's name.** Because the
+> dangerous prose **does not name it**: it says "ε = 0.5 mm" or just "< 0.1 mm". Of the
+> 25 places in the repository where a number comes from the code, only 3 cited the
+> constant — a name-based check would have watched 12% while giving the impression of
+> covering everything. The marker inverts the burden: whoever writes the number declares
+> where it comes from, once, and CI watches it forever.
 
-> ⚠️ **Lo que sigue sin cubrir.** Una afirmación en prosa **sin número** que se vuelve
-> falsa. La ficha de fusión decía «la etapa gruesa queda pendiente» mucho después de que
-> dejara de estarlo, y eso no hay constante que lo respalde. La otra mitad de aquel caso
-> —«ε = 0,5 mm»— sí está cubierta desde la 0.4.0.
+> ⚠️ **What is still uncovered.** A prose claim **with no number** that becomes false.
+> The fusion card said "the coarse stage is still pending" long after it stopped being
+> so, and no constant backs that up. The other half of that same case — "ε = 0.5 mm" —
+> has been covered since 0.4.0.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-04 | 0.1.0 | Registro inicial: env, rutas, agentes, inventario, árbol y bloques generados. |
-| 2026-08-10 | 0.2.0 | Comprobación de **versiones** (la ficha declara la que declara la clase) y de **guardianes** (un script que corre solo necesita ficha) — esta misma. |
-| 2026-08-11 | 0.3.0 | Comprobación de **comprobaciones**: el registro `COMPROBACIONES` de cada guardián contra la tabla de su ficha. |
-| 2026-08-17 | 0.4.0 | Comprobación de **constantes**: los números citados en la documentación contra el valor real en el código, atados con un marcador `<!--const:NOMBRE-->`. Era la extensión que esta misma ficha declaraba pendiente. |
-| 2026-08-18 | 0.5.0 | `constantes` admite **cadenas**, no solo números. Lo pidió `SCHEMA_VERSION`: el README anunciaba el esquema `1.2.0` con el contrato ya en `1.3.0`, y la comprobación pasaba en verde porque «1.2.0» no es un número. |
-| 2026-08-24 | 0.6.0 | `versiones` busca la ficha por su **titular** y no por una mención cualquiera. La de `export-agent` nombra a `render-export-agent` en su tabla de canales y es anterior, así que la comprobación validaba contra la versión del vecino: invisible mientras todos declararan `0.1.0`. De paso, el campo **Versión** de esta ficha, que se había quedado en `0.3.0` con el historial ya en `0.5.0`. |
+| 2026-08-04 | 0.1.0 | Initial registration: env, paths, agents, inventory, tree and generated blocks. |
+| 2026-08-10 | 0.2.0 | **Version** check (the card declares what the class declares) and **guardian** check (a script that runs by itself needs a card) — this one. |
+| 2026-08-11 | 0.3.0 | **Check-of-checks**: each guardian's `COMPROBACIONES` registry against the table on its card. |
+| 2026-08-17 | 0.4.0 | **Constants** check: numbers cited in the documentation against the real value in the code, tied together with a `<!--const:NAME-->` marker. It was the extension this very card declared pending. |
+| 2026-08-18 | 0.5.0 | `constantes` accepts **strings**, not only numbers. `SCHEMA_VERSION` asked for it: the README announced schema `1.2.0` while the contract was already at `1.3.0`, and the check stayed green because "1.2.0" is not a number. |
+| 2026-08-24 | 0.6.0 | `versiones` finds the card by its **subject** rather than by any mention. The `export-agent` card names `render-export-agent` in its channel table and comes earlier, so the check was validating against the neighbour's version: invisible as long as everyone declared `0.1.0`. Along the way, the **Version** field of this card, which had stayed at `0.3.0` with the history already at `0.5.0`. |
 
 ---
 
-### `literature-watcher` — Vigilante de literatura científica
+### `literature-watcher` — Scientific literature watcher
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Nombre** | `literature-watcher` |
-| **Versión** | `0.2.0` |
-| **Ubicación** | [`scripts/watch_literature.py`](scripts/watch_literature.py) + [`.github/workflows/literature-watch.yml`](.github/workflows/literature-watch.yml) |
-| **Estado** | `active` |
-| **Disparo** | `cron` lunes 06:00 UTC · `workflow_dispatch` |
-| **Tecnología** | Código tipado contra la API y el OAI-PMH de arXiv, **sin LLM** |
+| **Name** | `literature-watcher` |
+| **Version** | `0.2.0` |
+| **Location** | [`scripts/watch_literature.py`](scripts/watch_literature.py) + [`.github/workflows/literature-watch.yml`](.github/workflows/literature-watch.yml) |
+| **Status** | `active` |
+| **Trigger** | `cron` Mondays 06:00 UTC · `workflow_dispatch` |
+| **Technology** | Typed code against arXiv's API and OAI-PMH, **no LLM** |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> El `research-agent` ya sabe buscar literatura, pero es un REPL: solo descubre
-> mientras alguien está sentado delante. Este agente hace la parte que se repite —mirar
-> qué ha salido, descartar lo ya inventariado y averiguar bajo qué licencia se
-> publicó— y deja el juicio *(¿es relevante?)* donde debe estar: en una persona
-> revisando una PR.
+> The `research-agent` already knows how to search literature, but it is a REPL: it only
+> discovers while somebody is sitting in front of it. This agent does the repetitive
+> part — look at what came out, discard what is already inventoried, and find out under
+> which licence it was published — and leaves the judgement *(is it relevant?)* where it
+> belongs: with a person reviewing a PR.
 
-**Qué hace, y sus fronteras**
+**What it does, and its boundaries**
 
-- **Siete consultas** con puerta temática por consulta: cuatro dentales (3DGS, CBCT +
-  segmentación, escáner intraoral, gemelo digital) y tres de estándares (DICOM,
-  FHIR/HL7, interoperabilidad) — estas últimas filtradas **solo por título**, porque
-  con el resumen se colaban falsos positivos.
-- **Cupo por turnos**, no «los N más nuevos»: las consultas de estándares dan mucho más
-  volumen, y ordenar por fecha dejaba PRs sin un solo artículo dental.
-- **Ningún PDF toca el disco ni el repositorio.** Se descarga a memoria para calcular
-  `sha256` y tamaño, y se libera. Descargar no es redistribuir.
-- **La licencia se verifica en origen** (OAI-PMH, `verb=GetRecord`), no se supone. Una
-  licencia adivinada por el título es peor que ninguna, porque parece un dato.
+- **Seven queries** with a per-query topical gate: four dental (3DGS, CBCT +
+  segmentation, intraoral scanner, digital twin) and three on standards (DICOM,
+  FHIR/HL7, interoperability) — the latter filtered **by title only**, because including
+  the abstract let false positives through.
+- **A quota per round**, not "the N newest": the standards queries produce far more
+  volume, and sorting by date left PRs without a single dental paper.
+- **No PDF touches the disk or the repository.** It is downloaded into memory to compute
+  `sha256` and size, then released. Downloading is not redistributing.
+- **The licence is verified at the source** (OAI-PMH, `verb=GetRecord`), not assumed. A
+  licence guessed from the title is worse than none, because it looks like data.
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **No mergea.** Su salida es una rama y una PR; la decisión es humana, y esa PR pasa
-  por los mismos guardianes que cualquier otra.
-- **«No hay nada» y «no contestó nadie» son desenlaces distintos**, con código de
-  salida distinto (`0` y `2`). Un vigilante que existe para que nadie tenga que
-  acordarse de mirar no puede avisar de que está roto callándose.
-- Reintenta solo lo transitorio (429, 5xx, cortes de red): un 400 por consulta mal
-  formada no se cura esperando, y darle tres pasadas solo retrasa el diagnóstico.
-- Si la organización prohíbe que Actions abra PRs, **no falla**: deja la rama subida y
-  el cuerpo de la PR en el resumen del run, listo para pegar.
+- **It does not merge.** Its output is a branch and a PR; the decision is human, and that
+  PR goes through the same guardians as any other.
+- **"There is nothing" and "nobody answered" are different outcomes**, with different
+  exit codes (`0` and `2`). A watcher that exists so nobody has to remember to look
+  cannot report being broken by staying quiet.
+- It retries only what is transient (429, 5xx, network drops): a 400 from a malformed
+  query does not heal by waiting, and giving it three passes only delays the diagnosis.
+- If the organisation forbids Actions from opening PRs, it **does not fail**: it leaves
+  the branch pushed and the PR body in the run summary, ready to paste.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-05 | 0.1.0 | Registro inicial: consultas con puerta temática, verificación de licencia en origen, cupo por turnos y apertura de PR. |
-| 2026-08-10 | 0.2.0 | Primer disparo real del cron. Reintentos con espera creciente, distinción entre «sin novedades» y «ninguna consulta respondió», declaración de fallos parciales en la PR, y tolerancia a que la organización bloquee la PR automática. |
+| 2026-08-05 | 0.1.0 | Initial registration: queries with a topical gate, licence verification at the source, per-round quota and PR opening. |
+| 2026-08-10 | 0.2.0 | First real cron firing. Retries with growing backoff, a distinction between "no news" and "no query answered", declaration of partial failures in the PR, and tolerance for the organisation blocking the automatic PR. |
 
 ---
 
-### Agentes de ingesta — `mesh-agent` · `cbct-agent` · `report-agent`
+### Ingestion agents — `mesh-agent` · `cbct-agent` · `report-agent`
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/ingestion-agents/` (`mesh_agent.py` · `cbct_agent.py` · `report_agent.py`) |
-| **Versión** | `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 1 · Ingesta (frontera raw → contrato) |
-| **Contrato común** | `IngestionOutput` + `BaseIngestionAgent` en `ingestion_agents/base.py` |
-| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline`) |
+| **Location** | `packages/ingestion-agents/` (`mesh_agent.py` · `cbct_agent.py` · `report_agent.py`) |
+| **Version** | `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 1 · Ingestion (the raw → contract boundary) |
+| **Common contract** | `IngestionOutput` + `BaseIngestionAgent` in `ingestion_agents/base.py` |
+| **Orchestrator** | `apps/agent-orchestrator` (`IngestionPipeline`) |
 
-> **Por qué viven en `packages/` y no en `apps/<modalidad>-agent/`:** el
-> orquestador (un `app`) tiene que importarlos, y el `ai-code-reviewer` prohíbe
-> las dependencias cruzadas entre `apps/`. La regla del monorepo obliga a que el
-> código compartido esté en `packages/` — es la rama «o `packages/` si lo
-> comparten varios» de la skill `add-ingestion-agent`.
+> **Why they live in `packages/` and not in `apps/<modality>-agent/`:** the
+> orchestrator (an `app`) has to import them, and the `ai-code-reviewer` forbids
+> cross dependencies between `apps/`. The monorepo rule forces shared code into
+> `packages/` — it is the "or `packages/` if several share it" branch of the
+> `add-ingestion-agent` skill.
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Traducen **un** fichero clínico crudo a un fragmento del contrato de
-> `core-schemas`, declarando su `Provenance`. Regla: **1 modalidad = 1 soporte =
-> 1 agente**. Son los **únicos** componentes que tocan ficheros crudos: a partir
-> del `TwinSnapshot` nadie vuelve al original.
+> They translate **one** raw clinical file into a fragment of the `core-schemas`
+> contract, declaring its `Provenance`. The rule: **1 modality = 1 support = 1
+> agent**. They are the **only** components that touch raw files: from the
+> `TwinSnapshot` onwards nobody goes back to the original.
 
-| Agente | Entrada | `Modality` | `Support` | Produce | Cerebro |
+| Agent | Input | `Modality` | `Support` | Produces | Brain |
 |---|---|---|---|---|---|
-| `mesh-agent` | OBJ / STL intraoral | `mesh` | superficial | `surface_ref` (posiciones float64 + caras + normales + color) | determinista |
-| `cbct-agent` | directorio de serie DICOM | `cbct` | volumétrico | `gaussian_field_ref` (campo σ semilla) | determinista |
-| `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH, anatomía radicular y hallazgos por FDI) + `list[Medida]` | determinista (`rules`) · LLM opcional (`llm`), **mismos campos** |
-| `image-agent` (PoC) | foto JPG / PNG / HEIC | `image` | superficial | `artifact_ref` (píxeles RGB, **sin EXIF**) | determinista |
+| `mesh-agent` | intraoral OBJ / STL | `mesh` | surface | `surface_ref` (float64 positions + faces + normals + colour) | deterministic |
+| `cbct-agent` | DICOM series directory | `cbct` | volumetric | `gaussian_field_ref` (seed σ field) | deterministic |
+| `report-agent` | PDF / TXT / MD | `report` | regional | `list[RegionalObservation]` (pH, root anatomy and findings per FDI) + `list[Medida]` | deterministic (`rules`) · optional LLM (`llm`), **same fields** |
+| `image-agent` (PoC) | JPG / PNG / HEIC photo | `image` | surface | `artifact_ref` (RGB pixels, **no EXIF**) | deterministic |
 
-**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+**Tools and permissions** (typed code, **no** MCP and no tool calling)
 
-| Recurso | Permisos | Notas |
+| Resource | Permissions | Notes |
 |---|---|---|
-| Fichero crudo de la modalidad | read | Única lectura de datos crudos del sistema. |
-| `ArtifactStore` (`data/interim/artifacts/`) | write | Blobs pesados por hash SHA-256 del contenido; nunca embebidos en Pydantic. |
-| Directorio de cuarentena | write | Solo ruta + traceback del fallo; **nunca** el contenido clínico. |
-| API de Anthropic | red (solo `report-agent` con `backend="llm"`, **desactivado por defecto**) | Requiere `ANTHROPIC_API_KEY`; sin ella el agente falla declarando, no lanza. |
+| The modality's raw file | read | The system's only read of raw data. |
+| `ArtifactStore` (`data/interim/artifacts/`) | write | Heavy blobs by SHA-256 content hash; never embedded in Pydantic. |
+| Quarantine directory | write | Only the path and the failure traceback; **never** clinical content. |
+| Anthropic API | network (only `report-agent` with `backend="llm"`, **off by default**) | Requires `ANTHROPIC_API_KEY`; without it the agent fails by declaring, it does not raise. |
 
-**Outputs generados**
+**Generated outputs**
 
 ```
 IngestionOutput
-  ├─ ingestion : ModalityIngestion (ok/missing/failed) — SIEMPRE presente
+  ├─ ingestion : ModalityIngestion (ok/missing/failed) — ALWAYS present
   ├─ provenance: Provenance (source_file, modality, agent, confidence)
   ├─ artifact_ref / n_primitives   (mesh, cbct)
   ├─ regional  : list[RegionalObservation]  (report)
   └─ latency_s, quarantine_ref
 ```
 
-**Reglas de delegación**
+**Delegation rules**
 
-- No se delegan entre sí ni deciden nada: producen fragmentos de contrato. El
-  `agent-orchestrator` los dispara **en paralelo** (las tres modalidades son
-  independientes) y ensambla el `TwinSnapshot`.
-- **Fail-loud, nunca fail-fast**: un fichero corrupto devuelve
-  `status=FAILED` + `detail`; jamás propaga la excepción. Un fallo de una
-  modalidad no puede llevarse por delante las otras dos.
-- **Human-in-the-loop**: el agente **no** decide qué se persiste. Emite
-  `Provenance.confidence` y el orquestador aplica el umbral
-  (`DEFAULT_HITL_THRESHOLD = 0.7`); por debajo, el snapshot requiere revisión
-  humana antes de persistirse.
-- **Soberanía del dato**: el `cbct-agent` seudonimiza el `PatientID` del DICOM
-  (HMAC-SHA256 con sal de `ASH_PSEUDONYM_SALT`); ningún identificador directo
-  llega al contrato.
+- They do not delegate to each other and decide nothing: they produce contract
+  fragments. The `agent-orchestrator` fires them **in parallel** (the three
+  modalities are independent) and assembles the `TwinSnapshot`.
+- **Fail-loud, never fail-fast**: a corrupt file returns `status=FAILED` +
+  `detail`; it never propagates the exception. One modality failing cannot take the
+  other two down with it.
+- **Human-in-the-loop**: the agent does **not** decide what gets persisted. It emits
+  `Provenance.confidence` and the orchestrator applies the threshold
+  (`DEFAULT_HITL_THRESHOLD = 0.7`); below it, the snapshot needs human review before
+  being persisted.
+- **Data sovereignty**: the `cbct-agent` pseudonymises the DICOM `PatientID`
+  (HMAC-SHA256 with a salt from `ASH_PSEUDONYM_SALT`); no direct identifier reaches
+  the contract.
 
-**Reglas específicas por modalidad**
+**Per-modality rules**
 
-- 🔒 `mesh-agent` — **guardarraíl de reversibilidad**: conserva la superficie de
-  origen sin pérdida (posiciones `float64` + topología completa), no una nube
-  remuestreada. Round-trip con error **cero** (test
-  `test_round_trip_de_superficie_sin_perdida`). Acepta **OBJ** (color por vértice,
-  Teeth3DS+) y **STL** (siempre pelado → `color=None`, Bite2Text); el gris uniforme
-  del OBJ de Teeth3DS+ es un *placeholder* del exportador y también se trata como
-  **ausencia** de color.
-- `cbct-agent` — **envuelve** la reconstrucción tipo RGS, no reimplementa su
-  algoritmo residual. Produce la semilla isótropa (σ normalizado, cuaternión
-  identidad) que un optimizador refinaría.
-- `report-agent` — valida cada valor contra la **ontología clínica mínima**
-  (`ingestion_agents/ontology.py`) antes de escribirlo en el contrato.
+- 🔒 `mesh-agent` — **reversibility guardrail**: it preserves the source surface
+  losslessly (`float64` positions + full topology), not a resampled cloud. Round trip
+  with **zero** error (test `test_round_trip_de_superficie_sin_perdida`). It accepts
+  **OBJ** (per-vertex colour, Teeth3DS+) and **STL** (always bare → `color=None`,
+  Bite2Text); the uniform grey of the Teeth3DS+ OBJ is an exporter *placeholder* and is
+  likewise treated as **absence** of colour.
+- `cbct-agent` — it **wraps** the RGS-style reconstruction, it does not reimplement its
+  residual algorithm. It produces the isotropic seed (normalised σ, identity
+  quaternion) that an optimiser would refine.
+- `report-agent` — it validates every value against the **minimal clinical ontology**
+  (`ingestion_agents/ontology.py`) before writing it into the contract.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-07-22 | 0.1.0 | Registro inicial: los tres agentes de ingesta pasan de `planned` a `active`. Contrato común `IngestionOutput`, almacén por contenido, cuarentena, seudonimización, ontología mínima, generador de casos sintéticos y orquestación de la fase 1. |
+| 2026-07-22 | 0.1.0 | Initial registration: the three ingestion agents go from `planned` to `active`. Common `IngestionOutput` contract, content-addressed store, quarantine, pseudonymisation, minimal ontology, synthetic case generator and phase 1 orchestration. |
 
 ---
 
-### Agentes de fusión — `geometric-fusion-agent` · `semantic-fusion-agent`
+### Fusion agents — `geometric-fusion-agent` · `semantic-fusion-agent`
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
-| **Versión** | `geometric-fusion-agent` **0.2.0** · `semantic-fusion-agent` `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 2 · Fusión geométrica **y** 4 · Fusión semántica (separadas por la segmentación) |
-| **Contrato común** | `FusionOutput` + `BaseFusionAgent` en `fusion_agents/base.py` |
-| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`) |
-| **Decisiones** | [ADR 004 — Fusión](docs/architecture/004-fusion.md) |
+| **Location** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
+| **Version** | `geometric-fusion-agent` **0.2.0** · `semantic-fusion-agent` `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 2 · Geometric fusion **and** 4 · Semantic fusion (separated by segmentation) |
+| **Common contract** | `FusionOutput` + `BaseFusionAgent` in `fusion_agents/base.py` |
+| **Orchestrator** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`) |
+| **Decisions** | [ADR 004 — Fusion](docs/architecture/004-fusion.md) |
 
-> **Por qué son dos agentes y no uno:** entre ambos corre la **segmentación**, así
-> que uno solo tendría que invocarse dos veces con banderas y guardar estado entre
-> llamadas. Además tienen material y criterio de aceptación distintos: la semántica
-> se valida contra el informe, la geométrica contra pares CBCT+IOS.
+> **Why they are two agents and not one:** **segmentation** runs between them, so a
+> single agent would have to be invoked twice with flags and keep state across calls.
+> They also have different material and different acceptance criteria: the semantic one
+> is validated against the report, the geometric one against CBCT+IOS pairs.
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Enriquecen un `TwinSnapshot` **ya ensamblado**: no tocan ficheros crudos ni
-> vuelven al original. La geométrica alinea dos medidas del mismo objeto físico y
-> deja constancia **invertible** de la transformación; la semántica cuelga las
-> observaciones del diente correcto y **marca lo que no cuadra** en vez de decidir.
+> They enrich an **already assembled** `TwinSnapshot`: they touch no raw files and never
+> go back to the original. The geometric one aligns two measurements of the same physical
+> object and leaves an **invertible** record of the transform; the semantic one hangs
+> observations off the correct tooth and **flags what does not add up** rather than
+> deciding.
 
-| Agente | Entrada | Qué produce | No hace | Cerebro |
+| Agent | Input | What it produces | What it does not do | Brain |
 |---|---|---|---|---|
-| `geometric-fusion-agent` | `TwinSnapshot` + dos nubes `(N,3)` en mm | `Provenance.transform` (`RigidTransform` invertible) + confianza del residuo + **color por gaussiana** desde la malla | no lee ni escribe `region_id`; no usa las fotos (error no-rígido) | determinista |
-| `semantic-fusion-agent` | `TwinSnapshot` + `detected: FDI → confianza` | `RegionalObservation` ancladas con la confianza propagada | no toca geometría ni transforma nada | determinista |
+| `geometric-fusion-agent` | `TwinSnapshot` + two `(N,3)` clouds in mm | `Provenance.transform` (invertible `RigidTransform`) + confidence from the residual + **per-Gaussian colour** from the mesh | does not read or write `region_id`; does not use the photos (non-rigid error) | deterministic |
+| `semantic-fusion-agent` | `TwinSnapshot` + `detected: FDI → confidence` | `RegionalObservation`s anchored with the propagated confidence | touches no geometry and transforms nothing | deterministic |
 
-**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+**Tools and permissions** (typed code, **no** MCP and no tool calling)
 
-| Recurso | Permisos | Notas |
+| Resource | Permissions | Notes |
 |---|---|---|
-| `TwinSnapshot` (en memoria) | read | **Nunca** vuelven al fichero crudo: la ingesta es la única frontera con el dato original. |
-| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** el contenido clínico (ni el pH). |
+| `TwinSnapshot` (in memory) | read | They **never** go back to the raw file: ingestion is the only boundary with original data. |
+| Quarantine directory | write | Only `acquisition_id` + traceback; **never** clinical content (not even the pH). |
 
-> No usan `ArtifactStore`: `detected` se pasa **explícitamente** en vez de leer el
-> campo gaussiano del almacén. Son ~14 códigos FDI — cargar millones de primitivas
-> para obtenerlos sería absurdo, y así los agentes son testeables sin almacén ni GPU.
+> They do not use the `ArtifactStore`: `detected` is passed **explicitly** rather than
+> reading the Gaussian field from the store. These are ~14 FDI codes — loading millions
+> of primitives to obtain them would be absurd, and this way the agents are testable
+> without a store and without a GPU.
 
-**Outputs generados**
+**Generated outputs**
 
 ```
 FusionOutput
-  ├─ status      : ModalityStatus (ok/missing/failed) — SIEMPRE presente
-  ├─ snapshot    : TwinSnapshot | None  — NUEVO, nunca el de entrada mutado
-  ├─ hitl_reasons: list[str]            — vacío = no hace falta revisión
+  ├─ status      : ModalityStatus (ok/missing/failed) — ALWAYS present
+  ├─ snapshot    : TwinSnapshot | None  — NEW, never the input mutated
+  ├─ hitl_reasons: list[str]            — empty = no review needed
   └─ latency_s, quarantine_ref, detail
 ```
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **Fail-loud, nunca fail-fast**: el fallo se devuelve como `status=FAILED` +
-  `detail`; jamás propaga la excepción. El orquestador conserva el snapshot de la
-  ingesta — que la fusión falle no destruye lo que la ingesta sí consiguió.
-- **Human-in-the-loop**: el agente **no** decide qué se persiste. Emite
-  `hitl_reasons` y el orquestador aplica el umbral (`DEFAULT_HITL_THRESHOLD = 0.7`).
-- **Nunca mutan** el snapshot de entrada y **conservan el `acquisition_id`**: es la
-  identidad de visita, y es lo que hace que reejecutar la fusión **reemplace** en vez
-  de inflar el historial del paciente con visitas que no ocurrieron
+- **Fail-loud, never fail-fast**: the failure is returned as `status=FAILED` +
+  `detail`; it never propagates the exception. The orchestrator keeps the ingestion
+  snapshot — fusion failing does not destroy what ingestion did achieve.
+- **Human-in-the-loop**: the agent does **not** decide what gets persisted. It emits
+  `hitl_reasons` and the orchestrator applies the threshold (`DEFAULT_HITL_THRESHOLD = 0.7`).
+- **They never mutate** the input snapshot and **preserve the `acquisition_id`**: that is
+  the visit's identity, and it is what makes re-running fusion **replace** rather than
+  inflate the patient's history with visits that never happened
   (`insert_snapshot`, ADR 004 §2.5).
 
-**Reglas específicas por etapa**
+**Per-stage rules**
 
-- 🔒 `geometric-fusion-agent` — **guardarraíl de reversibilidad**: la transformación
-  se guarda como `RigidTransform` (cuaternión + traslación), **no** como matriz 4×4.
-  Una 4×4 puede codificar escala y cizalla; si un ICP devolviera una escala espuria,
-  la reversibilidad se rompería en silencio. Esta forma la hace *imposible de
-  expresar*, y un validador rechaza el cuaternión no unitario.
-- ⚠️ `geometric-fusion-agent` — **la confianza sale del residuo de la población
-  solapada**, no del de la nube completa: `clamp(1 − rms_solapado/ε, 0, 1)`. Medido
-  sobre un paciente real con CBCT y escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)):
-  **4,98 mm** sobre la nube entera frente a **0,452 mm** sobre los puntos que sí tienen
-  contrapartida, para el mismo registro. El primero no mide el registro, mide qué
-  fracción del escaneo es paladar. Y por debajo de `min_overlap` (20 %) la confianza
-  es **0**: con cuatro puntos emparejados siempre hay una pose que los acerca.
-- ⚠️ `geometric-fusion-agent` — **ε es por par de modalidades**, no una constante.
-  `clamp(1 − rms/ε) ≥ 0,7` equivale a `rms ≤ 0,3·ε`, o sea 0,15 mm con ε = 0,5 — por <!--const:DEFAULT_HITL_THRESHOLD--> <!--const:DEFAULT_EPSILON_MM-->
-  debajo del suelo físico de un CBCT de vóxel 0,30 mm y PSF 425 µm, así que con ese
-  valor la fusión intraoral↔CBCT **no podría pasar el gate nunca**. ε se lee como *el
-  error a partir del cual el resultado deja de servir*: **0,5 mm** para una malla <!--const:DEFAULT_EPSILON_MM-->
-  derivada del propio volumen, **1,5 mm** (`EPSILON_IOS_CBCT_MM`) para intraoral↔CBCT.
-  Ninguno de los dos es la métrica de 0,1 mm del brief: esa mide reversibilidad de <!--const:REVERSIBILITY_BUDGET_MM-->
-  *una* malla, estas el alineamiento entre *dos* modalidades.
-- `geometric-fusion-agent` — el algoritmo vive tras un `Protocol` (`Registrar`), con
-  dos implementaciones: `icp` (etapa **fina**, con recorte opcional de atípicos) e
-  `icp_global` (etapa **gruesa**, barrido de SO(3)). La gruesa cierra el hueco que el
-  ADR 004 dejaba para RANSAC-FPFH, por fuerza bruta y sin arrastrar Open3D. Sin ella
-  el ICP fino **no revienta**: converge a un mínimo local de ~0,43 mm —una cifra que
-  parece un buen registro— con una pose equivocada. Es un fallo que hay que ir a
-  buscar. **Recortar y buscar se pelean**: un recorte agresivo hace que una pose mala
-  puntúe bien, así que se criba flojo y se refina fuerte.
+- 🔒 `geometric-fusion-agent` — **reversibility guardrail**: the transform is stored as a
+  `RigidTransform` (quaternion + translation), **not** as a 4×4 matrix. A 4×4 can encode
+  scale and shear; if an ICP returned a spurious scale, reversibility would break
+  silently. This form makes that *impossible to express*, and a validator rejects a
+  non-unit quaternion.
+- ⚠️ `geometric-fusion-agent` — **confidence comes from the residual of the overlapping
+  population**, not of the whole cloud: `clamp(1 − rms_overlap/ε, 0, 1)`. Measured on a
+  real patient with CBCT and scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)):
+  **4.98 mm** over the entire cloud against **0.452 mm** over the points that do have a
+  counterpart, for the same registration. The first does not measure the registration, it
+  measures what fraction of the scan is palate. And below `min_overlap` (20%) the
+  confidence is **0**: with four matched points there is always a pose that brings them
+  together.
+- ⚠️ `geometric-fusion-agent` — **ε is per modality pair**, not a constant.
+  `clamp(1 − rms/ε) ≥ 0.7` is equivalent to `rms ≤ 0.3·ε`, i.e. 0.15 mm with ε = 0.5 — <!--const:DEFAULT_HITL_THRESHOLD--> <!--const:DEFAULT_EPSILON_MM-->
+  below the physical floor of a CBCT with 0.30 mm voxels and a 425 µm PSF, so with that
+  value intraoral↔CBCT fusion **could never pass the gate**. ε reads as *the error beyond
+  which the result stops being useful*: **0.5 mm** for a mesh derived from the volume <!--const:DEFAULT_EPSILON_MM-->
+  itself, **1.5 mm** (`EPSILON_IOS_CBCT_MM`) for intraoral↔CBCT. Neither is the brief's
+  0.1 mm metric: that one measures the reversibility of *one* mesh, these measure <!--const:REVERSIBILITY_BUDGET_MM-->
+  alignment between *two* modalities.
+- `geometric-fusion-agent` — the algorithm lives behind a `Protocol` (`Registrar`), with
+  two implementations: `icp` (the **fine** stage, with optional outlier trimming) and
+  `icp_global` (the **coarse** stage, an SO(3) sweep). The coarse stage closes the hole
+  ADR 004 left for RANSAC-FPFH, by brute force and without dragging in Open3D. Without
+  it the fine ICP **does not blow up**: it converges to a local minimum of ~0.43 mm — a
+  figure that looks like a good registration — with the wrong pose. It is a failure you
+  have to go looking for. **Trimming and searching fight each other**: aggressive
+  trimming makes a bad pose score well, so we sieve loosely and refine hard.
 - `geometric-fusion-agent` —
-  **Transfiere el color desde la malla** (ADR 004 §2.8): cada gaussiana dentro de la
-  banda ε toma el de su vértice más cercano. Las **fotos quedan fuera** — el notebook 07
-  midió que el error foto↔malla es **no-rígido** (ICP estancado en IoU ≈ 0,55), así que
-  no es el mismo problema que el registro rígido. Con malla pelada o gris *placeholder*
-  el resultado es **ausencia de color**, que es respuesta válida y no un bug.
-- `semantic-fusion-agent` — la confianza es el **eslabón más débil**,
-  `min(confianza_observación, confianza_FDI)`: anclar un pH a un diente no puede ser
-  más fiable que saber qué diente es.
-- ⚠️ `semantic-fusion-agent` — **ante un conflicto FDI no elige ganador**. Si el
-  informe referencia un diente que la segmentación no encontró, conserva el FDI *del
-  informe* (fuente clínica), pone la confianza a **0.0** y con eso cae al gate y va a
-  revisión humana. El motivo está **medido**: el error dominante del modelo es el
-  desplazamiento al diente vecino ([experimento Point
-  Transformer](notebooks/exercise-point-transformer-teeth3ds.md)), así que ahí es la
-  parte menos fiable — pero el informe tampoco es infalible. Resolverlo en silencio
-  sería el fallo que el [ADR 003](docs/architecture/003-verification-fault-tolerance.md)
-  señala como el peor: silencioso e irreversible, sobre un dato clínico.
-- `semantic-fusion-agent` — la `Provenance` de cada observación **conserva la del
-  informe** (`source_file`, `modality`, `agent`); solo se reescribe `confidence`. El
-  valor sigue viniendo del PDF. Quién fusionó consta en la `Provenance` del snapshot.
+  **It transfers colour from the mesh** (ADR 004 §2.8): each Gaussian within the ε band
+  takes the colour of its nearest vertex. The **photos stay out** — notebook 07 measured
+  that the photo↔mesh error is **non-rigid** (ICP stalled at IoU ≈ 0.55), so it is not the
+  same problem as rigid registration. With a bare mesh or a grey *placeholder* the result
+  is **absence of colour**, which is a valid answer and not a bug.
+- `semantic-fusion-agent` — confidence is the **weakest link**,
+  `min(observation_confidence, FDI_confidence)`: anchoring a pH to a tooth cannot be more
+  reliable than knowing which tooth it is.
+- ⚠️ `semantic-fusion-agent` — **on an FDI conflict it picks no winner**. If the report
+  references a tooth that segmentation did not find, it keeps the FDI *from the report*
+  (the clinical source), sets confidence to **0.0**, and with that it falls to the gate
+  and goes to human review. The reason is **measured**: the model's dominant error is a
+  shift to the neighbouring tooth ([Point Transformer
+  experiment](notebooks/exercise-point-transformer-teeth3ds.md)), so that is the least
+  reliable part — but the report is not infallible either. Resolving it silently would be
+  the failure [ADR 003](docs/architecture/003-verification-fault-tolerance.md) singles out
+  as the worst: silent and irreversible, on clinical data.
+- `semantic-fusion-agent` — each observation's `Provenance` **keeps the report's**
+  (`source_file`, `modality`, `agent`); only `confidence` is rewritten. The value still
+  comes from the PDF. Who performed the fusion is recorded in the snapshot's `Provenance`.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-04 | 0.1.0 | Registro inicial. ADR 004; `RigidTransform` en `core-schemas` (contrato 1.3.0); fusión semántica completa; fusión geométrica con ICP multiescala (falta la etapa gruesa); inserción idempotente en la serie temporal; enganche en el orquestador. |
-| 2026-08-10 | 0.2.0 (geométrica) | Medido el registro contra un paciente real con CBCT + escáner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). La confianza pasa a salir de la **población solapada**, ε pasa a ser **por par de modalidades** (0,5 mm derivada de volumen · 1,5 mm intraoral↔CBCT), se añade la puerta por **solapamiento mínimo**, y se implementa la **etapa gruesa** (`icp_global`) que el ADR 004 dejaba pendiente. Aditivo: un registrador que no mide solapamiento se comporta igual que antes. |
+| 2026-08-04 | 0.1.0 | Initial registration. ADR 004; `RigidTransform` in `core-schemas` (contract 1.3.0); complete semantic fusion; geometric fusion with multiscale ICP (coarse stage missing); idempotent insertion into the time series; wired into the orchestrator. |
+| 2026-08-10 | 0.2.0 (geometric) | Registration measured against a real patient with CBCT + scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). Confidence now comes from the **overlapping population**, ε becomes **per modality pair** (0.5 mm volume-derived · 1.5 mm intraoral↔CBCT), a **minimum overlap** gate is added, and the **coarse stage** (`icp_global`) ADR 004 left pending is implemented. Additive: a registrar that does not measure overlap behaves exactly as before. |
 
 ---
 
-### `segmentation-agent` — Agente de segmentación anatómica
+### `segmentation-agent` — Anatomical segmentation agent
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/analysis-agents/` (`segmentation.py` · `base.py`) |
-| **Versión** | `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 3 · Análisis · segmentación (**entre** las dos etapas de fusión) |
-| **Contrato común** | `AnalysisOutput` + `BaseAnalysisAgent` en `analysis_agents/base.py` |
-| **Orquestador** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`, etapa 2 de 3) |
-| **Agregación punto → diente** | `packages/tooth-aggregation` |
+| **Location** | `packages/analysis-agents/` (`segmentation.py` · `base.py`) |
+| **Version** | `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 3 · Analysis · segmentation (**between** the two fusion stages) |
+| **Common contract** | `AnalysisOutput` + `BaseAnalysisAgent` in `analysis_agents/base.py` |
+| **Orchestrator** | `apps/agent-orchestrator` (`IngestionPipeline.fuse()`, stage 2 of 3) |
+| **Point → tooth aggregation** | `packages/tooth-aggregation` |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Pone **nombre de diente** a cada gaussiana. Es el **ancla semántica** del
-> pipeline: sin `region_id`, la fusión semántica no tiene contra qué validar el
-> diente que cita el informe, y la capa regional (pH y demás) queda colgando de un
-> código que nadie ha confirmado que exista en esa boca.
+> It puts a **tooth name** on every Gaussian. It is the pipeline's **semantic
+> anchor**: without `region_id`, semantic fusion has nothing to validate the tooth the
+> report cites against, and the regional layer (pH and the rest) hangs off a code
+> nobody has confirmed exists in that mouth.
 
-| Entrada | Qué produce | No hace | Cerebro |
+| Input | What it produces | What it does not do | Brain |
 |---|---|---|---|
-| `TwinSnapshot` + el campo gaussiano que referencia | `region_id` (FDI) por gaussiana en un artefacto **nuevo** + `detected: FDI → confianza` + motivos de revisión | no corrige el informe ni al revés (eso lo declara la fusión semántica); no entrena ni ejecuta el modelo | modelo de segmentación de nubes de puntos, **inyectado** |
+| `TwinSnapshot` + the Gaussian field it references | `region_id` (FDI) per Gaussian in a **new** artifact + `detected: FDI → confidence` + review reasons | it does not correct the report or vice versa (semantic fusion declares that); it neither trains nor runs the model | a point-cloud segmentation model, **injected** |
 
-**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+**Tools and permissions** (typed code, **no** MCP and no tool calling)
 
-| Recurso | Permisos | Notas |
+| Resource | Permissions | Notes |
 |---|---|---|
-| `TwinSnapshot` (en memoria) | read | Nunca vuelve al fichero crudo: la ingesta es la única frontera con el dato original. |
-| Almacén de artefactos | read + write | Vía el `Protocol` `GaussianStore`, **no** vía `ArtifactStore`: el almacén es un *seam* que se sustituirá por `3dgs-engine`. |
-| Modelo de segmentación | call | Vía el `Protocol` `Segmenter`. **Sin valor por defecto**: un modelo de juguete por omisión produciría etiquetas anatómicas inventadas con toda la pinta de ser buenas. |
-| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** coordenadas ni contenido clínico. |
+| `TwinSnapshot` (in memory) | read | Never goes back to the raw file: ingestion is the only boundary with original data. |
+| Artifact store | read + write | Through the `GaussianStore` `Protocol`, **not** through `ArtifactStore`: the store is a *seam* that `3dgs-engine` will replace. |
+| Segmentation model | call | Through the `Segmenter` `Protocol`. **No default**: a toy model by omission would produce invented anatomical labels that look entirely convincing. |
+| Quarantine directory | write | Only `acquisition_id` + traceback; **never** coordinates or clinical content. |
 
-**Outputs generados**
+**Generated outputs**
 
 ```
 SegmentationOutput
-  ├─ status              : ModalityStatus (ok/missing/failed) — SIEMPRE presente
-  ├─ snapshot            : TwinSnapshot | None  — NUEVO, con gaussian_field_ref etiquetado
-  ├─ detected            : {FDI: confianza}     — entrada exacta del semantic-fusion-agent
+  ├─ status              : ModalityStatus (ok/missing/failed) — ALWAYS present
+  ├─ snapshot            : TwinSnapshot | None  — NEW, with a labelled gaussian_field_ref
+  ├─ detected            : {FDI: confidence}    — the semantic-fusion-agent's exact input
   ├─ n_teeth             : int
-  ├─ unassigned_fraction : float                — fragmentación descartada por tamaño
-  ├─ hitl_reasons        : list[str]            — vacío = no hace falta revisión
+  ├─ unassigned_fraction : float                — fragmentation discarded by size
+  ├─ hitl_reasons        : list[str]            — empty = no review needed
   └─ latency_s, quarantine_ref, detail
 ```
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **Fail-loud, nunca fail-fast**: el fallo se devuelve como `status=FAILED` +
-  `detail`. Si la segmentación falla, el orquestador **no ancla** el informe contra
-  un ancla que no existe: la fusión semántica sencillamente no corre.
-- **Human-in-the-loop**: `detected` pasado a mano al orquestador **manda sobre el
-  modelo** y la etapa ni se ejecuta. Es por donde entran las etiquetas revisadas por
-  un clínico; sin esa puerta, el gate de revisión no serviría de nada.
-- **Nunca muta** el snapshot de entrada y **conserva el `acquisition_id`**.
+- **Fail-loud, never fail-fast**: the failure is returned as `status=FAILED` +
+  `detail`. If segmentation fails, the orchestrator **does not anchor** the report
+  against an anchor that does not exist: semantic fusion simply does not run.
+- **Human-in-the-loop**: a `detected` passed to the orchestrator by hand **overrides
+  the model** and the stage does not even execute. That is how clinician-reviewed
+  labels get in; without that door, the review gate would be pointless.
+- **It never mutates** the input snapshot and **preserves the `acquisition_id`**.
 
-**Reglas específicas**
+**Specific rules**
 
-- 🔒 **La etiqueta es aditiva.** El artefacto nuevo lleva los mismos
-  `centers`/`scales`/`rotations`/`density` **byte a byte** más un array `region_id`
-  (`0` = sin asignar). El blob anterior sigue en el almacén, así que segmentar no
-  puede degradar la geometría ni romper la reversibilidad. Como el almacén
-  direcciona por contenido, volver a segmentar el mismo campo con el mismo modelo
-  devuelve **la misma referencia**.
-- ⚠️ **Se comprueba que el modelo devuelve log-probabilidades, no logits.** Un logit
-  tiene la misma forma y el mismo `argmax`: las etiquetas saldrían bien y las
-  **confianzas** serían falsas, sin que nada chille. Es el mismo modo de fallo caro
-  que la modalidad DICOM en el `cbct-agent`, y se cierra igual — verificando la
-  premisa (`∑ⱼ exp(logprob) = 1`) en vez de confiar en ella.
-- **La confianza de un diente es la media geométrica de la probabilidad por punto**
-  (`exp` de la log-probabilidad media de la instancia), en `[0, 1]` y comparable con
-  el umbral de HITL y con el resto del pipeline.
-- **La métrica honesta es el acierto por DIENTE, no por punto** — está medido que el
-  acierto por punto *subestima* la identificación por diente ([experimento Point
-  Transformer](notebooks/exercise-point-transformer-teeth3ds.md)).
-- **`enforce_unique` viene desactivado a propósito.** Imponer «un FDI por arcada»
-  sobre instancias fragmentadas *inventa* errores: la restricción presupone «una
-  instancia = un diente», y con fragmentos esa premisa es falsa (medido).
-- **Cuatro cosas van a revisión humana** en vez de resolverse solas: confianza bajo
-  el umbral, el mismo FDI en dos instancias, una clase sin código FDI en el mapeo, y
-  más de un 10% de los puntos de diente descartados por fragmentación — que la
-  agregación se los coma **en silencio** es el riesgo, no que se los coma.
-- ⚠️ **Una isla de encía dentro de una corona es un hueco, y se cierra por CONECTIVIDAD.**
-  El relleno por vecindario se para donde el hueco es mayor que el vecindario, y en el
-  visor eso es lo que más se ve: el color va por vértice y se interpola, así que un vértice
-  mal puesto mancha los seis triángulos que lo tocan. La encía de una arcada es **una sola
-  región conectada**, margen incluido; cualquier otra componente está rodeada de diente y
-  eso no es anatomía. El primer intento fue por distancia a «encía de verdad» definida como
-  estar rodeado de encía, y **es circular**: un hueco grande tiene su interior rodeado de sí
-  mismo y pasa por encía buena. Sobre datos reales colaba — la peor clase de fallo.
-- ⚠️ **Y el simétrico: un vértice de diente rodeado de encía es encía.** `rellena_etiquetas`
-  sólo iba en un sentido —daba etiqueta a lo que no la tenía y nunca se la quitaba a lo que
-  la tenía mal—, así que tras el pipeline entero quedaban **692 vértices de diente flotando
-  en la encía**. `quita_motas` los limpia con el mismo umbral 0,85, precisamente para no
-  mover el margen: un vértice del margen tiene vecinos de las dos clases y no llega. Y
-  `rellena_etiquetas` pasa a **iterar**, porque cerrar un hueco deja al descubierto el
-  siguiente: los huecos van 3.299 → 1.519 → 1.198 → 1.096 → 1.051 y convergen.
-- ⚠️ **La frontera entre dientes CONTIGUOS sale difuminada, y se afila aparte.** El
-  contacto interproximal es superficie continua en la malla, así que el modelo no tiene
-  ahí ningún borde geométrico al que agarrarse. Medido sobre un caso clínico: el **7,0 %
-  del área del escaneo** (308 mm²) estaba en caras cuyos vértices pertenecían a dos
-  dientes distintos, y los pares eran todos vecinos —(26,27), (15,16), (21,22), (11,21)—.
-  Se ve al encender una pieza en el visor: se enciende también un trozo de la de al lado.
-  `analysis_agents.afina_fronteras` vota por mayoría entre vecinos y lo baja a **92 mm²**
-  reasignando 3.624 vértices. **No toca el margen corona/encía** —12,8 % del área— porque
-  ésa sí es una frontera clínica y difuminarla borraría lo que un periodoncista viene a
-  mirar.
-- ⚠️ **Las etiquetas del escáner son SEMILLAS, así que una isla mal etiquetada allí se
-  convierte aquí en un diente entero.** Medido sobre un caso real: el segmentador del
-  escáner puso el código de un tercer molar a 275 vértices pegados a la cara distal del
-  vecino —mediana 0,85 mm— y ese código creció hacia la raíz y aterrizó sobre la
-  tuberosidad del maxilar. El caso pasó a tener 15 dientes en vez de 14, y el fantasma
-  viajaba al visor, a las vistas y a la capa clínica. `analysis_agents.absorbe_islas` lo
-  mata antes de sembrar, y **deja acta de cada absorción**: un tercer molar parcialmente
-  erupcionado se parece mucho a una isla, así que la decisión sale al gate y no a un log.
+- 🔒 **The label is additive.** The new artifact carries the same
+  `centers`/`scales`/`rotations`/`density` **byte for byte** plus a `region_id` array
+  (`0` = unassigned). The previous blob stays in the store, so segmenting cannot degrade
+  the geometry or break reversibility. Because the store is content-addressed,
+  re-segmenting the same field with the same model returns **the same reference**.
+- ⚠️ **It is verified that the model returns log-probabilities, not logits.** A logit has
+  the same shape and the same `argmax`: the labels would come out fine and the
+  **confidences** would be false, with nothing screaming. It is the same expensive failure
+  mode as the DICOM modality in the `cbct-agent`, and it is closed the same way — by
+  verifying the premise (`∑ⱼ exp(logprob) = 1`) instead of trusting it.
+- **A tooth's confidence is the geometric mean of the per-point probability**
+  (`exp` of the instance's mean log-probability), in `[0, 1]` and comparable with the
+  HITL threshold and with the rest of the pipeline.
+- **The honest metric is per-TOOTH accuracy, not per point** — it is measured that
+  per-point accuracy *underestimates* per-tooth identification ([Point Transformer
+  experiment](notebooks/exercise-point-transformer-teeth3ds.md)).
+- **`enforce_unique` ships disabled on purpose.** Imposing "one FDI per arch" over
+  fragmented instances *invents* errors: the constraint presupposes "one instance = one
+  tooth", and with fragments that premise is false (measured).
+- **Four things go to human review** rather than resolving themselves: confidence below
+  the threshold, the same FDI on two instances, a class with no FDI code in the mapping,
+  and more than 10% of the tooth points discarded through fragmentation — the risk is
+  that aggregation eats them **silently**, not that it eats them.
+- ⚠️ **A gum island inside a crown is a hole, and it is closed by CONNECTIVITY.**
+  Neighbourhood filling stops where the hole is larger than the neighbourhood, and in the
+  viewer that is what shows most: colour is per vertex and gets interpolated, so one
+  misplaced vertex stains the six triangles that touch it. An arch's gum is **a single
+  connected region**, margin included; any other component is surrounded by tooth and that
+  is not anatomy. The first attempt went by distance to "real gum" defined as being
+  surrounded by gum, and **it is circular**: a large hole has its interior surrounded by
+  itself and passes as good gum. On real data it slipped through — the worst kind of
+  failure.
+- ⚠️ **And the symmetric case: a tooth vertex surrounded by gum is gum.**
+  `rellena_etiquetas` only went one way — it gave a label to what had none and never took
+  one away from what had it wrong — so after the whole pipeline **692 tooth vertices were
+  left floating in the gum**. `quita_motas` cleans them with the same 0.85 threshold,
+  precisely so as not to move the margin: a margin vertex has neighbours of both classes
+  and never reaches it. And `rellena_etiquetas` now **iterates**, because closing one hole
+  exposes the next: holes go 3,299 → 1,519 → 1,198 → 1,096 → 1,051 and converge.
+- ⚠️ **The boundary between ADJACENT teeth comes out blurred, and is sharpened
+  separately.** Interproximal contact is a continuous surface in the mesh, so the model
+  has no geometric edge there to hold on to. Measured on a clinical case: **7.0% of the
+  scan's area** (308 mm²) sat on faces whose vertices belonged to two different teeth, and
+  the pairs were all neighbours — (26,27), (15,16), (21,22), (11,21). You see it when
+  highlighting a tooth in the viewer: a piece of the one next door lights up too.
+  `analysis_agents.afina_fronteras` votes by majority among neighbours and brings it down
+  to **92 mm²**, reassigning 3,624 vertices. **It does not touch the crown/gum margin** —
+  12.8% of the area — because that one is a clinical boundary and blurring it would erase
+  what a periodontist comes to look at.
+- ⚠️ **The scanner's labels are SEEDS, so a mislabelled island there becomes a whole
+  tooth here.** Measured on a real case: the scanner's segmenter put a third molar's code
+  on 275 vertices stuck to the distal face of its neighbour — median 0.85 mm — and that
+  code grew towards the root and landed on the maxillary tuberosity. The case went from 14
+  teeth to 15, and the ghost travelled to the viewer, the views and the clinical layer.
+  `analysis_agents.absorbe_islas` kills it before seeding, and **leaves a record of every
+  absorption**: a partially erupted third molar looks a lot like an island, so the
+  decision goes to the gate and not to a log.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-25 | 0.1.0 | `quita_motas` y el relleno iterativo: las motas de diente en la encía bajan de 692 a 311 y los huecos de encía en corona de 3.299 a 1.048. Sin cambio de contrato. |
-| 2026-08-25 | 0.1.0 | `afina_fronteras`: la frontera entre piezas contiguas deja de estar difuminada (308 → 92 mm² de área con dos dientes en la misma cara). Y se retira el recorte apical por eje de pieza: medido, el eje sacado del CBCT sale a 60° del real porque la nube arrastra hueso. Sin cambio de contrato. |
-| 2026-08-24 | 0.1.0 | `absorbe_islas`: las piezas diminutas metidas dentro de otra dejan de sembrar un diente fantasma en el CBCT. Sin cambio de contrato. |
-| 2026-08-06 | 0.1.0 | Registro inicial. Paquete `analysis-agents` con su contrato base; agregación punto → diente sobre `tooth-aggregation`; `region_id` persistido como artefacto aditivo; enganche en `IngestionPipeline.fuse()` entre las dos etapas de fusión. |
+| 2026-08-25 | 0.1.0 | `quita_motas` and iterative filling: tooth specks in the gum drop from 692 to 311 and gum holes in crowns from 3,299 to 1,048. No contract change. |
+| 2026-08-25 | 0.1.0 | `afina_fronteras`: the boundary between adjacent teeth is no longer blurred (308 → 92 mm² of area with two teeth on the same face). And the per-tooth apical trim is withdrawn: measured, the axis taken from the CBCT comes out 60° off the real one because the cloud drags bone along. No contract change. |
+| 2026-08-24 | 0.1.0 | `absorbe_islas`: tiny teeth embedded inside another stop seeding a ghost tooth in the CBCT. No contract change. |
+| 2026-08-06 | 0.1.0 | Initial registration. `analysis-agents` package with its base contract; point → tooth aggregation over `tooth-aggregation`; `region_id` persisted as an additive artifact; wired into `IngestionPipeline.fuse()` between the two fusion stages. |
 
 ---
 
-### Agentes de análisis (stubs `planned`)
+### Analysis agents (`planned` stubs)
 
-Agentes del pipeline clínico **aún no implementados**. Se registran aquí como
-*stubs* de diseño (roles y contratos previstos) para cerrar la Tarea 3 de la issue
-de arquitectura multiagente. Su diseño de alto nivel vive en
+Clinical pipeline agents **not yet implemented**. They are registered here as design
+*stubs* (intended roles and contracts) to close Task 3 of the multi-agent architecture
+issue. Their high-level design lives in
 [`docs/architecture/multi-agent-pipeline.md`](docs/architecture/multi-agent-pipeline.md).
-Todos **consumen y enriquecen** un `TwinSnapshot` a través de `packages/core-schemas`
-—nunca vuelven al fichero crudo— y dejan su propia `Provenance`.
+All of them **consume and enrich** a `TwinSnapshot` through `packages/core-schemas` —
+they never go back to the raw file — and leave their own `Provenance`.
 
-| Agente | Estado | Fase | Rol previsto | Entrada → salida | Human-in-the-loop |
+| Agent | Status | Phase | Intended role | Input → output | Human-in-the-loop |
 |---|---|---|---|---|---|
-| `pathology-agent` | `planned` | Análisis · hallazgos clínicos | Señalar posibles patologías (densidad σ, color, geometría) como **hallazgos candidatos para revisión clínica**. | `TwinSnapshot` → `RegionalObservation` con hallazgos candidatos (no diagnóstico) | **Sí** — clínicamente sensible |
-| `clinical-poc-agent` | `planned` (PoC) | Análisis · prueba de concepto | Métrica visual básica: inflamación por color de encía y espacio encía-diente. | `TwinSnapshot` → reporte de texto (log) | Sí |
+| `pathology-agent` | `planned` | Analysis · clinical findings | Flag possible pathology (σ density, colour, geometry) as **candidate findings for clinical review**. | `TwinSnapshot` → `RegionalObservation` with candidate findings (not a diagnosis) | **Yes** — clinically sensitive |
+| `clinical-poc-agent` | `planned` (PoC) | Analysis · proof of concept | A basic visual metric: inflammation from gum colour and the gum-tooth gap. | `TwinSnapshot` → text report (log) | Yes |
 
-> **Frontera de diseño:** estos stubs **no** tienen tools MCP, permisos ni reglas de
-> delegación definitivos todavía; se detallarán al implementarlos, cada uno con su
-> ficha completa (como `research-agent`) y, si toca, su ADR. Registrarlos ahora fija
-> su **rol y contrato**, no su implementación.
+> **Design boundary:** these stubs have **no** MCP tools, permissions or final
+> delegation rules yet; those will be detailed on implementation, each with its full
+> card (like `research-agent`) and, where appropriate, its ADR. Registering them now
+> fixes their **role and contract**, not their implementation.
 
-> **Marco clínico y regulatorio (importante).** Los agentes de análisis con
-> Human-in-the-loop (`pathology-agent`, `clinical-poc-agent`, y cualquier medida
-> clínicamente sensible como el **fenotipo periodontal** encía↔hueso) producen
-> **hallazgos y medidas candidatos para revisión del clínico**, con `Provenance`
-> trazable — **no emiten diagnóstico** ni sustituyen la decisión clínica. Es un
-> **uso investigacional / demostrador**, y mantenerlo así deja el sistema **fuera**
-> de la categoría de producto sanitario (*Medical Device* / SaMD). En el momento en
-> que una salida se declare "diagnóstico" o el clínico se apoye en ella para tratar,
-> entra en el terreno regulado (UE **MDR** / **FDA**) — fuera del alcance de esta fase.
+> **Clinical and regulatory framing (important).** The human-in-the-loop analysis agents
+> (`pathology-agent`, `clinical-poc-agent`, and any clinically sensitive measurement such
+> as the gum↔bone **periodontal phenotype**) produce **candidate findings and
+> measurements for clinician review**, with traceable `Provenance` — they **do not issue
+> a diagnosis** and do not replace clinical judgement. This is **investigational /
+> demonstrator use**, and keeping it that way leaves the system **outside** the medical
+> device (SaMD) category. The moment an output is declared "diagnostic" or a clinician
+> relies on it to treat, it enters regulated territory (EU **MDR** / **FDA**) — outside
+> the scope of this phase.
 
-**Agentes de ingesta:** `cbct-agent`, `mesh-agent` y `report-agent` ya están
-`active` — ficha completa en la [sección anterior](#agentes-de-ingesta--mesh-agent--cbct-agent--report-agent).
-El `image-agent` (foto 2D) es la **4ª modalidad del `IngestionPipeline`**: ingiere
-JPG/PNG/HEIC, **descarta el EXIF** (privacidad) y guarda los píxeles como artefacto.
-Es la única modalidad **0..N** (una adquisición trae varias fotos, 5 en Bite2Text),
-así que el orquestador ingiere cada foto y el `TwinSnapshot` las recoge en
-**`image_refs: list[str]`** (apariencia pre-fusión, como el `surface_ref`). No
-reconstruye 3D de una foto —eso es fusión— pero deja la apariencia lista y trazable.
-Detalle del contrato de ingesta en el
-[pipeline multiagente](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
+**Ingestion agents:** `cbct-agent`, `mesh-agent` and `report-agent` are already
+`active` — full card in the [previous section](#ingestion-agents--mesh-agent--cbct-agent--report-agent).
+The `image-agent` (2D photo) is the **`IngestionPipeline`'s 4th modality**: it ingests
+JPG/PNG/HEIC, **discards the EXIF** (privacy) and stores the pixels as an artifact.
+It is the only **0..N** modality (one acquisition brings several photos, 5 in Bite2Text),
+so the orchestrator ingests each photo and the `TwinSnapshot` collects them in
+**`image_refs: list[str]`** (pre-fusion appearance, like `surface_ref`). It does not
+reconstruct 3D from a photo — that is fusion — but it leaves the appearance ready and
+traceable. Ingestion contract detail in the
+[multi-agent pipeline](docs/architecture/multi-agent-pipeline.md#2-tarea-1--contratos-de-ingesta).
 
 ---
 
-### `export-agent` — Agente de exportación (regeneración de la malla)
+### `export-agent` — Export agent (mesh regeneration)
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`stl.py` · `base.py`) |
-| **Versión** | `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` en `export_agents/base.py` |
-| **Orquestador** | `IngestionPipeline.exportar(result, destino)` dispara los tres canales |
-| **Decisiones** | [Pipeline §5](docs/architecture/multi-agent-pipeline.md#5-tarea-4--formato-y-pipeline-de-exportación) · [ADR 001](docs/architecture/001-digital-twin-core-schemas.md) (refs *fail-loud*) · [ADR 004 §2.2](docs/architecture/004-fusion.md) (`transform` invertible) |
+| **Location** | `packages/export-agents/` (`stl.py` · `base.py`) |
+| **Version** | `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` in `export_agents/base.py` |
+| **Orchestrator** | `IngestionPipeline.exportar(result, destino)` fires the three channels |
+| **Decisions** | [Pipeline §5](docs/architecture/multi-agent-pipeline.md#5-tarea-4--formato-y-pipeline-de-exportación) · [ADR 001](docs/architecture/001-digital-twin-core-schemas.md) (*fail-loud* refs) · [ADR 004 §2.2](docs/architecture/004-fusion.md) (invertible `transform`) |
 
-> **Por qué es una cuarta familia y no una función suelta.** Es la **única** que
-> escribe ficheros de salida, igual que la ingesta es la única que lee ficheros de
-> entrada. Y su salida no encaja en las otras: `FusionOutput` y `AnalysisOutput`
-> devuelven un `TwinSnapshot` enriquecido, y un exportador **no enriquece nada** —
-> devuelve un fichero y la medida de cuánto se parece a lo que entró.
+> **Why it is a fourth family and not a loose function.** It is the **only** one that
+> writes output files, just as ingestion is the only one that reads input files. And its
+> output does not fit the others: `FusionOutput` and `AnalysisOutput` return an enriched
+> `TwinSnapshot`, and an exporter **enriches nothing** — it returns a file and a
+> measurement of how closely it resembles what went in.
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Cierra el círculo de la **reversibilidad**: la ingesta convirtió la malla del
-> escáner en contrato y este agente la devuelve a un fichero, con el **error de
-> reconstrucción medido** en vez de prometido. Es la fase que convierte la métrica
-> del brief («error de malla < 0,1 mm») en algo que se comprueba en cada ejecución.
+> It closes the **reversibility** loop: ingestion turned the scanner's mesh into a
+> contract and this agent returns it to a file, with the **reconstruction error
+> measured** rather than promised. It is the phase that turns the brief's metric ("mesh
+> error < 0.1 mm") into something checked on every run.
 
-| Agente | Entrada | Qué produce | No hace | Cerebro |
+| Agent | Input | What it produces | What it does not do | Brain |
 |---|---|---|---|---|
-| `export-agent` | `TwinSnapshot` + ruta de salida | **STL binario** desde `surface_ref` + `max_deviation_mm` y `mean_deviation_mm` medidas releyendo el fichero | no malla el campo gaussiano; no modifica el twin; no escribe en el almacén | determinista |
-| `field-export-agent` | `TwinSnapshot` + ruta de salida | **PLY binario** desde `gaussian_field_ref`, en el marco del twin o en mm del CBCT | no inventa color ni opacidad; no convierte a formato de splat de INRIA | determinista |
-| `render-export-agent` | `TwinSnapshot` + directorio | **PNG multivista** por Beer-Lambert + `psnr_db` / `ssim` del ciclo | no rasteriza splats; no reproduce las fotos intraorales | determinista |
+| `export-agent` | `TwinSnapshot` + output path | **Binary STL** from `surface_ref` + `max_deviation_mm` and `mean_deviation_mm` measured by re-reading the file | does not mesh the Gaussian field; does not modify the twin; does not write to the store | deterministic |
+| `field-export-agent` | `TwinSnapshot` + output path | **Binary PLY** from `gaussian_field_ref`, in the twin's frame or in CBCT millimetres | does not invent colour or opacity; does not convert to INRIA's splat format | deterministic |
+| `render-export-agent` | `TwinSnapshot` + directory | **Multi-view PNG** by Beer-Lambert + the cycle's `psnr_db` / `ssim` | does not rasterise splats; does not reproduce the intraoral photographs | deterministic |
 
-> El **canal de metadatos** (el `TwinSnapshot` a JSON) no tiene agente a propósito:
-> es `model_dump()` de Pydantic. Envolver una llamada de una línea en un contrato de
-> fallos que no puede fallar sería ceremonia, no diseño.
+> The **metadata channel** (the `TwinSnapshot` to JSON) deliberately has no agent: it is
+> Pydantic's `model_dump()`. Wrapping a one-line call in a failure contract that cannot
+> fail would be ceremony, not design.
 
-**Herramientas y permisos** (código tipado, **no** MCP ni tool calling)
+**Tools and permissions** (typed code, **no** MCP and no tool calling)
 
-| Recurso | Permisos | Notas |
+| Resource | Permissions | Notes |
 |---|---|---|
-| `TwinSnapshot` (en memoria) | read | Nunca vuelve al fichero crudo. |
-| Almacén de artefactos | **read** | Vía el `Protocol` `SurfaceStore`, que **solo declara `load`**: que un exportador no escriba en el almacén no es una promesa en prosa, es algo que el tipo no permite expresar. |
-| Fichero de salida (STL) | write | Escritura **atómica** (temporal + `replace`): un STL a medio escribir no debe quedar donde alguien lo confunda con el bueno. |
-| Directorio de cuarentena | write | Solo `acquisition_id` + traceback; **nunca** geometría ni contenido clínico. |
+| `TwinSnapshot` (in memory) | read | Never goes back to the raw file. |
+| Artifact store | **read** | Through the `SurfaceStore` `Protocol`, which **only declares `load`**: an exporter not writing to the store is not a promise in prose, it is something the type does not let you express. |
+| Output file (STL) | write | **Atomic** write (temporary + `replace`): a half-written STL must not be left where someone could mistake it for the good one. |
+| Quarantine directory | write | Only `acquisition_id` + traceback; **never** geometry or clinical content. |
 
-**Outputs generados**
+**Generated outputs**
 
 ```
 ExportOutput
-  ├─ status          : ModalityStatus (ok/missing/failed) — SIEMPRE presente
-  ├─ path            : Path | None      — fichero escrito
+  ├─ status          : ModalityStatus (ok/missing/failed) — ALWAYS present
+  ├─ path            : Path | None      — the file written
   ├─ format · frame  : 'stl' · 'source' | 'twin'
   ├─ n_vertices · n_faces
-  ├─ max_deviation_mm: float | None     — MEDIDA, releyendo el fichero (métrica del brief)
-  ├─ hitl_reasons    : list[str]        — vacío = no hace falta revisión
+  ├─ max_deviation_mm: float | None     — MEASURED, by re-reading the file (the brief's metric)
+  ├─ hitl_reasons    : list[str]        — empty = no review needed
   └─ latency_s, quarantine_ref, detail
 ```
 
-**Reglas de delegación**
+**Delegation rules**
 
-- **Fail-loud, nunca fail-fast**: igual que las otras tres familias, no lanza. Una
-  referencia colgante, una cara fuera de rango o un destino imposible se devuelven
-  como `status=FAILED` + `detail` y van a cuarentena.
-- **Human-in-the-loop**: el agente **no** decide si el fichero se entrega. Emite
-  `hitl_reasons` (`DEFAULT_HITL_THRESHOLD = 0.7`) y quien llama decide.
-- **Solo lectura sobre el gemelo**: no muta el snapshot ni reescribe artefactos. Si
-  un export pudiera reescribir el blob que exporta, la copia fiel de la superficie
-  —el guardarraíl del `mesh-agent`— dejaría de ser fiel al primer round-trip.
+- **Fail-loud, never fail-fast**: like the other three families, it does not raise. A
+  dangling reference, an out-of-range face or an impossible destination come back as
+  `status=FAILED` + `detail` and go to quarantine.
+- **Human-in-the-loop**: the agent does **not** decide whether the file is delivered. It
+  emits `hitl_reasons` (`DEFAULT_HITL_THRESHOLD = 0.7`) and the caller decides.
+- **Read-only over the twin**: it does not mutate the snapshot or rewrite artifacts. If an
+  export could rewrite the blob it exports, the faithful copy of the surface — the
+  `mesh-agent`'s guardrail — would stop being faithful at the first round trip.
 
-**Reglas específicas**
+**Specific rules**
 
-- 🔒 **La geometría sale de `surface_ref`, nunca del campo gaussiano.** El
-  `mesh-agent` guarda la superficie de origen tal cual (`float64` + topología
-  completa) para que exista una copia fiel; el único error del round-trip es el que
-  impone el **formato** (`float32`). Medido sobre un escaneo real de Teeth3DS+
-  (110.804 vértices, arcada de 86 mm): **3,8·10⁻⁶ mm**, cuatro órdenes de magnitud
-  bajo el presupuesto, con la exportación en 0,07 s. Sacar la malla del volumen por *marching
-  cubes* sería **otra cosa**: está medido
-  ([`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py)) que la
-  isosuperficie solo está bien definida donde el gradiente es fuerte —esmalte, 364
-  HU/vóxel— y que sobre hueso trabecular el área **no existe** como magnitud. Un
-  snapshot sin malla se declara `MISSING`; no se «rescata» interpolando.
-- ⚠️ **La desviación se mide releyendo el fichero, no estimando.** Una estimación
-  del error de `float32` sobrevive intacta a un bug de endianness o de orden de
-  vértices; una relectura, no. Y sin medida `within_budget` es `False`: un
-  exportador que no verifica no puede afirmar que cumple los 0,1 mm.
-- **Dos sistemas de referencia, explícitos.** `frame="source"` (por defecto) escribe
-  la malla como entró —es el que mide la reversibilidad—; `frame="twin"` aplica la
-  `RigidTransform` que registró la fusión geométrica para superponer con el CBCT.
-  Pedir `twin` sobre un snapshot que nunca pasó por fusión **falla declarando**: la
-  alternativa sería entregar la malla en el sistema del escáner haciéndola pasar por
-  la del CBCT.
-- **Un snapshot parcial no llega callado a exportación** (ADR 001). El exportador es
-  el último punto donde eso se puede decir, y lo dice dos veces: en `hitl_reasons` y
-  **dentro del propio fichero**, estampando `PARCIAL` en la cabecera de 80 bytes del
-  STL junto al `acquisition_id`. Es trazabilidad que sobrevive a que alguien copie el
-  fichero fuera del sistema, donde ya no hay `Provenance` que consultar.
-- **Lo que el formato no puede llevar se declara, no se finge.** El STL es «pelado»:
-  sin color por vértice, sin normales por vértice y sin topología compartida. El
-  `color_superficie` del twin no cabe en el fichero y sigue vivo en `surface_ref`.
+- 🔒 **Geometry comes from `surface_ref`, never from the Gaussian field.** The
+  `mesh-agent` stores the source surface as-is (`float64` + full topology) so that a
+  faithful copy exists; the round trip's only error is the one the **format** imposes
+  (`float32`). Measured on a real Teeth3DS+ scan (110,804 vertices, an 86 mm arch):
+  **3.8·10⁻⁶ mm**, four orders of magnitude below the budget, with the export taking
+  0.07 s. Getting the mesh out of the volume by *marching cubes* would be **a different
+  thing**: it is measured
+  ([`scripts/resolucion_modalidades.py`](scripts/resolucion_modalidades.py)) that the
+  isosurface is only well defined where the gradient is strong — enamel, 364 HU/voxel —
+  and that over trabecular bone the area **does not exist** as a magnitude. A snapshot
+  with no mesh declares itself `MISSING`; it is not "rescued" by interpolating.
+- ⚠️ **The deviation is measured by re-reading the file, not by estimating.** An estimate
+  of the `float32` error survives an endianness or vertex-order bug intact; a re-read does
+  not. And with no measurement `within_budget` is `False`: an exporter that does not
+  verify cannot claim it meets the 0.1 mm.
+- **Two reference frames, made explicit.** `frame="source"` (the default) writes the mesh
+  as it came in — that is the one that measures reversibility; `frame="twin"` applies the
+  `RigidTransform` recorded by geometric fusion to superimpose it on the CBCT. Asking for
+  `twin` on a snapshot that never went through fusion **fails by declaring**: the
+  alternative would be handing over the mesh in the scanner's frame while passing it off
+  as the CBCT's.
+- **A partial snapshot does not reach export quietly** (ADR 001). The exporter is the last
+  point where that can be said, and it says it twice: in `hitl_reasons` and **inside the
+  file itself**, stamping `PARCIAL` into the STL's 80-byte header alongside the
+  `acquisition_id`. That is traceability which survives someone copying the file out of
+  the system, where there is no longer any `Provenance` to consult.
+- **What the format cannot carry is declared, not faked.** The STL is "bare": no
+  per-vertex colour, no per-vertex normals and no shared topology. The twin's
+  `color_superficie` does not fit in the file and stays alive in `surface_ref`.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-13 | 0.1.0 | Registro inicial. Paquete `export-agents` con su contrato base (`ExportOutput` · `BaseExportAgent` · `SurfaceStore`), regeneración de la malla a STL binario desde `surface_ref`, verificación por relectura contra el presupuesto de 0,1 mm, exportación en el sistema del escáner o en el del twin, y declaración de snapshot parcial en la cabecera del fichero. |
-| 2026-08-17 | 0.1.0 | `mean_deviation_mm` junto al máximo: es el **Chamfer** del round-trip, calculado sobre la correspondencia conocida (vértice *i* releído contra vértice *i*) y no por vecino más próximo, que esconderría una permutación. Y la desviación pasa a ser **distancia euclídea por vértice** en vez de error máximo por coordenada: un desplazamiento diagonal de 1 mm son √3 ≈ 1,73 mm, y medir por coordenada lo reportaba como 1,0. |
+| 2026-08-13 | 0.1.0 | Initial registration. `export-agents` package with its base contract (`ExportOutput` · `BaseExportAgent` · `SurfaceStore`), mesh regeneration to binary STL from `surface_ref`, verification by re-reading against the 0.1 mm budget, export in the scanner's frame or the twin's, and declaration of a partial snapshot in the file header. |
+| 2026-08-17 | 0.1.0 | `mean_deviation_mm` alongside the maximum: it is the round trip's **Chamfer**, computed over the known correspondence (vertex *i* re-read against vertex *i*) and not by nearest neighbour, which would hide a permutation. And the deviation becomes a **per-vertex Euclidean distance** instead of a maximum per-coordinate error: a 1 mm diagonal displacement is √3 ≈ 1.73 mm, and measuring per coordinate reported it as 1.0. |
 
 ---
 
-### `field-export-agent` — Exportación del campo gaussiano
+### `field-export-agent` — Gaussian field export
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`field.py` · `base.py`) |
-| **Versión** | `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(result, destino)` |
+| **Location** | `packages/export-agents/` (`field.py` · `base.py`) |
+| **Version** | `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(result, destino)` |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Materializa lo que el escáner **no puede ver**: el interior que sembró el CBCT.
-> El canal de malla devuelve la superficie medida; éste devuelve el volumen.
+> It materialises what the scanner **cannot see**: the interior the CBCT seeded.
+> The mesh channel returns the measured surface; this one returns the volume.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **El PLY no es un `.ply` de 3D Gaussian Splatting, y es deliberado.** La
-  convención de INRIA guarda `opacity` y armónicos esféricos `f_dc_*` — color y
-  transparencia. Este campo tiene `density` (σₙ, atenuación Beer-Lambert) y un CBCT
-  **no mide color**. Ponerle esa cabecera lo haría abrible en cualquier visor de
-  splats, que pintaría un color inventado sobre una magnitud física: peor que no
-  abrirlo. De qué color se pinta un campo de densidad es decisión de producto y sigue
-  pendiente del ADR de motor de render.
-- 🔒 **`origin` y `hu_range` viajan en el artefacto, no en `Provenance`.** El
-  `cbct-agent` centra el campo (`centers -= mundo.mean(0)`) y normaliza la densidad a
-  `[0, 1]`. Hasta 2026-08-17 el desplazamiento **se descartaba**, y eso hacía el campo
-  irreversible: depende del dato, así que ninguna versión del agente lo recomputa. No
-  se metió en `Provenance` porque `transform` ya significa el alineamiento de la
-  fusión geométrica (ADR 004) y reutilizarlo colisionaría, y porque el esquema declara
-  el snapshot **autocontenido**: lo que hace reversible un blob viaja con él.
-- **Pedir `frame="cbct"` sobre un artefacto sin `origin` falla declarando** y dice que
-  hay que reingerir. Entregarlo centrado haciéndolo pasar por coordenadas del CBCT
-  desplazaría todo lo que se midiese encima, y con buen aspecto.
-- **Las posiciones se escriben en `double`, no en `float32`.** Así
-  `max_deviation_mm` sale **exactamente 0** y la verificación mide *bugs* —endianness,
-  orden de propiedades, un stride mal calculado— en vez del redondeo del formato, que
-  taparía uno pequeño. Un splat convencional usa float32; aquí interesa la medida.
-- **Los dos marcos salen del dato, no de quien llama.** A diferencia de `frame="twin"`
-  en el canal de malla —que aplica `Provenance.transform`, escrita registrando contra
-  lo que el llamante pase como `target`, y el pipeline no fija ese marco—, aquí ambos
-  se definen con arrays del propio artefacto. Cerrar ese hueco es del protocolo entre
-  agentes, no de un exportador.
-- **`region_id` se escribe si el campo viene segmentado, y solo entonces.** Es la
-  etiqueta FDI por gaussiana que produce el `segmentation-agent`, o sea lo único que el
-  pipeline sabe de anatomía; tirarla al exportar dejaba el PLY con la geometría bien y
-  **mudo sobre el contenido**, obligando a resegmentar algo ya calculado. No se escribe
-  una columna de ceros cuando falta: en el convenio del agente `0` significa «sin
-  asignar», que es una afirmación distinta de «nadie lo ha segmentado todavía».
+- ⚠️ **The PLY is not a 3D Gaussian Splatting `.ply`, and that is deliberate.** INRIA's
+  convention stores `opacity` and spherical harmonics `f_dc_*` — colour and transparency.
+  This field has `density` (σₙ, Beer-Lambert attenuation) and a CBCT **does not measure
+  colour**. Giving it that header would make it openable in any splat viewer, which would
+  paint an invented colour over a physical magnitude: worse than not opening it. What
+  colour a density field is painted in is a product decision and remains pending the
+  render-engine ADR.
+- 🔒 **`origin` and `hu_range` travel in the artifact, not in `Provenance`.** The
+  `cbct-agent` centres the field (`centers -= mundo.mean(0)`) and normalises density to
+  `[0, 1]`. Until 2026-08-17 the offset **was discarded**, which made the field
+  irreversible: it depends on the data, so no version of the agent recomputes it. It was
+  not put into `Provenance` because `transform` already means geometric fusion's alignment
+  (ADR 004) and reusing it would collide, and because the schema declares the snapshot
+  **self-contained**: what makes a blob reversible travels with it.
+- **Asking for `frame="cbct"` on an artifact with no `origin` fails by declaring** and
+  says a re-ingestion is needed. Handing it over centred while passing it off as CBCT
+  coordinates would displace everything measured on top of it, and look fine doing it.
+- **Positions are written in `double`, not `float32`.** That way `max_deviation_mm` comes
+  out **exactly 0** and the verification measures *bugs* — endianness, property order, a
+  miscomputed stride — rather than the format's rounding, which would hide a small one. A
+  conventional splat uses float32; here the measurement is what matters.
+- **Both frames come from the data, not from the caller.** Unlike `frame="twin"` in the
+  mesh channel — which applies `Provenance.transform`, written by registering against
+  whatever the caller passes as `target`, with the pipeline not fixing that frame — here
+  both are defined by arrays in the artifact itself. Closing that hole belongs to the
+  inter-agent protocol, not to an exporter.
+- **`region_id` is written if the field comes segmented, and only then.** It is the
+  per-Gaussian FDI label the `segmentation-agent` produces, i.e. the only thing the
+  pipeline knows about anatomy; dropping it on export left the PLY with correct geometry
+  and **mute about its content**, forcing a re-segmentation of something already computed.
+  A column of zeros is not written when it is missing: in the agent's convention `0` means
+  "unassigned", which is a different claim from "nobody has segmented it yet".
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-17 | 0.1.0 | Registro inicial. Sale de `planned`: PLY binario con las propiedades que el campo **tiene**, dos marcos (`twin` centrado / `cbct` en mm reales), reversibilidad medida por relectura y `densidad_a_hu` para deshacer la normalización. Requirió que el `cbct-agent` empezase a guardar `origin` y `hu_range`. |
-| 2026-08-17 | 0.1.0 | `region_id` (propiedad opcional `short`) viaja al PLY cuando el campo está segmentado. Lo destapó atar la segmentación al recorrido extremo a extremo: las dos etapas pasaban sus tests por separado y la etiqueta se perdía justo entre ellas. |
+| 2026-08-17 | 0.1.0 | Initial registration. Out of `planned`: binary PLY with the properties the field **has**, two frames (`twin` centred / `cbct` in real millimetres), reversibility measured by re-reading, and `densidad_a_hu` to undo the normalisation. It required the `cbct-agent` to start storing `origin` and `hu_range`. |
+| 2026-08-17 | 0.1.0 | `region_id` (optional `short` property) travels to the PLY when the field is segmented. It surfaced when segmentation was tied into the end-to-end run: both stages passed their tests separately and the label was lost exactly between them. |
 
 ---
 
-### `render-export-agent` — Render multivista del campo
+### `render-export-agent` — Multi-view render of the field
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`render.py` · `base.py`) |
-| **Versión** | `0.1.1` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(result, destino)`; `render=False` lo salta |
+| **Location** | `packages/export-agents/` (`render.py` · `base.py`) |
+| **Version** | `0.1.1` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(result, destino)`; `render=False` skips it |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Convierte el campo en algo que una persona puede **mirar y aprobar**. Es el canal
-> que hace revisable el interior del gemelo, y el que cierra la métrica del brief para
-> lo que no son milímetros.
+> It turns the field into something a person can **look at and approve**. It is the
+> channel that makes the twin's interior reviewable, and the one that closes the brief's
+> metric for what is not measured in millimetres.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **No son las fotos intraorales.** Son renders del gemelo. De las originales solo
-  se guardaron muestras de apariencia (`image_refs`), así que no hay contra qué
-  compararlas y no se finge que la haya: lo medido es el ciclo *twin → fichero →
-  render*, con `psnr_db` y `ssim`.
-- **No rasteriza splats: compone por Beer-Lambert.** Un rasterizador de 3DGS mezcla
-  color con `alpha blending`, que depende del orden. `density` **no es opacidad**, y la
-  integral que le corresponde, `I = exp(−∫σ ds)`, es aditiva en la profundidad óptica y
-  por tanto **independiente del orden**. Eso no es eficiencia: hace el render
-  determinista sin ordenar por profundidad, y lo vuelve una radiografía sintética en
-  vez de una foto inventada.
-- ⚠️ **Se deposita masa, no amplitud.** Evaluar τ en el centro del píxel —lo evidente—
-  produce aliasing, no imagen: con `s = 0,15 mm` y píxeles de ~0,7 mm el centro cae a
-  más de 4σ de casi todas las gaussianas. Y recortar σ a medio píxel para taparlo infla
-  la amplitud: medido sobre `histora`, τ máximo pasaba de 34 a 256 px a **226** a
-  128 px, o sea la imagen dependía del tamaño del detector. Se deposita la masa con un
-  perfil normalizado y se divide por el área del píxel; hay test de regresión.
-- **Las vistas se nombran por ángulo, nunca por anatomía** (`az090_el+00`). El
-  significado anatómico de un eje depende de cómo el equipo escriba el DICOM, y en este
-  proyecto suponerlo en vez de leerlo salió mal tres veces sobre el mismo paciente. Un
-  nombre como `az090_el+00` no puede mentir; `oclusal` sí.
-- ⚠️ **El marco del PLY se LEE de su cabecera, no se deduce de los datos.** El
-  verificador recentraba restando el centroide de la nube, lo cual era exacto *mientras*
-  `origin` fuese la media —el `cbct-agent` la escribe así—. El `gaussian-engine` ajusta
-  elipsoides a la densidad y **mueve** el centroide: medido, `[0,04, −1,84, 3,97]` mm.
-  Aquella resta inocua se volvió una traslación de 4,4 mm sobre una escena de 87 mm y el
-  ciclo cayó a **14,3 dB** frente a un presupuesto de 40, en silencio y con las imágenes de
-  buen aspecto. Ahora se lee `comment frame twin|cbct` de la cabecera, que el exportador ya
-  escribía y no leía nadie; un PLY que no declara su marco es un **error**, no un caso por
-  defecto. Es la misma regla que la de los nombres de vista: lo que el fichero dice no se
-  supone.
-- **El encuadre es común a todas las vistas.** Si cada imagen eligiese el suyo, dos
-  renders del mismo campo no serían comparables píxel a píxel y el SSIM mediría el
-  encuadre; además una vista podría recortar lo que otra muestra.
-- **Se devuelven PSNR y SSIM, no uno.** Miden cosas distintas: el PSNR promedia el
-  error por píxel y se deja engañar por un desplazamiento global de brillo, el SSIM
-  compara estructura local. Medido sobre una imagen suave, un sesgo de 10 niveles y
-  ruido de la misma energía dan PSNR casi igual y SSIM de 0,99 frente a 0,57.
+- ⚠️ **These are not the intraoral photographs.** They are renders of the twin. Only
+  appearance samples of the originals were kept (`image_refs`), so there is nothing to
+  compare them against and we do not pretend there is: what is measured is the *twin →
+  file → render* cycle, with `psnr_db` and `ssim`.
+- **It does not rasterise splats: it composites by Beer-Lambert.** A 3DGS rasteriser
+  mixes colour with `alpha blending`, which depends on order. `density` **is not
+  opacity**, and its corresponding integral, `I = exp(−∫σ ds)`, is additive in optical
+  depth and therefore **order-independent**. That is not about efficiency: it makes the
+  render deterministic without depth sorting, and turns it into a synthetic radiograph
+  rather than an invented photograph.
+- ⚠️ **Mass is deposited, not amplitude.** Evaluating τ at the pixel centre — the obvious
+  approach — produces aliasing, not an image: with `s = 0.15 mm` and ~0.7 mm pixels the
+  centre falls more than 4σ from almost every Gaussian. And clamping σ to half a pixel to
+  cover that inflates the amplitude: measured on `histora`, peak τ went from 34 at 256 px
+  to **226** at 128 px, i.e. the image depended on detector size. Mass is deposited with a
+  normalised profile and divided by the pixel area; there is a regression test.
+- **Views are named by angle, never by anatomy** (`az090_el+00`). An axis's anatomical
+  meaning depends on how the scanner writes the DICOM, and in this project assuming it
+  rather than reading it went wrong three times on the same patient. A name like
+  `az090_el+00` cannot lie; `occlusal` can.
+- ⚠️ **The PLY's frame is READ from its header, not inferred from the data.** The verifier
+  re-centred by subtracting the cloud's centroid, which was exact *while* `origin` was the
+  mean — the `cbct-agent` writes it that way. The `gaussian-engine` fits ellipsoids to the
+  density and **moves** the centroid: measured, `[0.04, −1.84, 3.97]` mm. That harmless
+  subtraction became a 4.4 mm translation over an 87 mm scene and the cycle fell to
+  **14.3 dB** against a budget of 40, silently and with good-looking images. Now
+  `comment frame twin|cbct` is read from the header, which the exporter already wrote and
+  nobody read; a PLY that does not declare its frame is an **error**, not a default case.
+  It is the same rule as the view names: what the file says is not assumed.
+- **The framing is common to every view.** If each image picked its own, two renders of
+  the same field would not be comparable pixel by pixel and SSIM would be measuring the
+  framing; besides, one view could crop what another shows.
+- **Both PSNR and SSIM are returned, not one.** They measure different things: PSNR
+  averages per-pixel error and is fooled by a global brightness shift, SSIM compares local
+  structure. Measured on a smooth image, a 10-level bias and noise of the same energy give
+  almost identical PSNR and SSIM of 0.99 versus 0.57.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-17 | 0.1.0 | Registro inicial. Render multivista por Beer-Lambert, reproducible byte a byte, con PSNR/SSIM del ciclo contra el PLY exportado y presupuestos `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0,99`. | <!--const:RENDER_PSNR_BUDGET_DB--> <!--const:RENDER_SSIM_BUDGET-->
-| 2026-08-24 | 0.1.1 | El verificador **lee** el marco de la cabecera del PLY en vez de recentrar por el centroide. La deducción era exacta solo mientras `origin` fuese la media; con el campo ajustado el ciclo caía a 14,3 dB. Verificado sobre el caso real: de 14,3 dB a **exacto**. |
+| 2026-08-17 | 0.1.0 | Initial registration. Multi-view Beer-Lambert render, byte-for-byte reproducible, with the cycle's PSNR/SSIM against the exported PLY and budgets `RENDER_PSNR_BUDGET_DB = 40` / `RENDER_SSIM_BUDGET = 0.99`. | <!--const:RENDER_PSNR_BUDGET_DB--> <!--const:RENDER_SSIM_BUDGET-->
+| 2026-08-24 | 0.1.1 | The verifier **reads** the frame from the PLY header instead of re-centring by the centroid. The inference was only exact while `origin` was the mean; with the fitted field the cycle fell to 14.3 dB. Verified on the real case: from 14.3 dB to **exact**. |
 
 ---
 
-### `composite-export-agent` — Dientes del CBCT + encía del escáner
+### `composite-export-agent` — CBCT teeth + scanner gum
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`compuesto.py` · `base.py`) |
-| **Versión** | `0.1.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(...)`; sin escáner o sin registro sale solo el campo y se dice |
+| **Location** | `packages/export-agents/` (`compuesto.py` · `base.py`) |
+| **Version** | `0.1.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(...)`; with no scanner or no registration only the field comes out, and it says so |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> El modelo que persigue el proyecto: cada modalidad aporta lo único que sabe medir y
-> ninguna vale sola. El **CBCT** ve por debajo del margen gingival —es lo único que da la
-> raíz— pero su superficie de tejido blando es ruido a 0,30 mm de vóxel; el **escáner
-> intraoral** mide la encía con decenas de micras y no ve nada bajo el margen. Por separado
-> son un diente sin encía y una encía con dientes truncados.
+> The model the project is after: each modality contributes the one thing it knows how to
+> measure and none is worth anything alone. The **CBCT** sees below the gingival margin —
+> it is the only thing that gives the root — but its soft-tissue surface is noise at
+> 0.30 mm voxels; the **intraoral scanner** measures gum to tens of microns and sees
+> nothing below the margin. Separately they are a tooth with no gum and a gum with
+> truncated teeth.
 
-**Por qué hace falta y no bastaba con lo que había.** El PLY del `field-export-agent` ya
-llevaba los dientes con su `region_id`, así que parecía hecho. No lo estaba: **la encía
-nunca se escribía**. El script que decía producirlo contaba los vértices de encía, los
-anunciaba en un comentario del propio fichero —`compuesto dientes-CBCT + encia-IOS`— y
-luego emitía `element vertex 498407`, exactamente el tamaño del campo del CBCT y ni un
-punto más. El comentario era verdad sobre la intención y mentira sobre el contenido.
+**Why it is needed and why what existed was not enough.** The `field-export-agent`'s PLY
+already carried the teeth with their `region_id`, so it looked done. It was not: **the gum
+was never written**. The script that claimed to produce it counted the gum vertices,
+announced them in a comment inside the file itself — `compuesto dientes-CBCT + encia-IOS` —
+and then emitted `element vertex 498407`, exactly the size of the CBCT field and not one
+point more. The comment was true about the intention and false about the content.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **La encía entra con `density = 0.0`, y es una declaración, no un valor.** Un vértice
-  del escáner no trae atenuación radiológica: el IOS mide forma, no densidad. Ponerle una
-  σ plausible lo haría indistinguible de una gaussiana medida en el CBCT, y cualquiera que
-  después proyectara el campo estaría integrando un número que nadie midió.
-- ⚠️ **Cada gaussiana declara su `origen`** (`0` = CBCT, densidad medida; `1` = IOS, forma
-  medida). Un compuesto que no distingue sus dos mitades miente por omisión, y es lo que
-  permite al canal del visor separarlas en capas.
-- **La escala de la encía sale del espaciado real de la malla**, no de una constante: un
-  escáner intraoral tiene resolución muy distinta a la del CBCT, y usar la σ del volumen
-  daría una encía o pixelada o hinchada. Se mide como la distancia mediana al vecino más
-  próximo, que es la σ natural de esa nube.
-- **Se relee lo que se acaba de escribir**, como los otros canales, y aquí con más motivo:
-  el compuesto mezcla dos fuentes con marcos distintos, así que un error de encaje entre
-  ellas es justo lo que un número de round-trip caza y una inspección visual no.
+- ⚠️ **The gum enters with `density = 0.0`, and that is a declaration, not a value.** A
+  scanner vertex carries no radiological attenuation: the IOS measures shape, not density.
+  Giving it a plausible σ would make it indistinguishable from a Gaussian measured in the
+  CBCT, and anyone later projecting the field would be integrating a number nobody
+  measured.
+- ⚠️ **Every Gaussian declares its `origen`** (`0` = CBCT, measured density; `1` = IOS,
+  measured shape). A composite that does not distinguish its two halves lies by omission,
+  and this is what lets the viewer channel split them into layers.
+- **The gum's scale comes from the mesh's real spacing**, not from a constant: an
+  intraoral scanner has a very different resolution from the CBCT, and using the volume's
+  σ would give a gum that is either pixelated or bloated. It is measured as the median
+  nearest-neighbour distance, which is that cloud's natural σ.
+- **What was just written gets re-read**, like the other channels, and here with more
+  reason: the composite mixes two sources with different frames, so a fit error between
+  them is exactly what a round-trip number catches and a visual inspection does not.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-18 | 0.1.0 | Registro inicial. Compuesto CBCT + IOS en un PLY, con `origen` por gaussiana, `density = 0` declarada para la encía y su σ medida del espaciado de la malla. |
+| 2026-08-18 | 0.1.0 | Initial registration. CBCT + IOS composite in one PLY, with `origen` per Gaussian, `density = 0` declared for the gum and its σ measured from the mesh's spacing. |
 
 ---
 
-### `composite-mesh-export-agent` — La arcada imprimible y un diente por fichero
+### `composite-mesh-export-agent` — The printable arch and one tooth per file
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`malla_compuesta.py` · `solido.py` · `anatomia.py` · `compuesto.py` · `stl.py` · `base.py`) |
-| **Versión** | `0.3.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(..., etiquetas_ios=...)`; sin escáner, sin registro o sin segmentación sale `MISSING` y se dice cuál falta |
+| **Location** | `packages/export-agents/` (`malla_compuesta.py` · `solido.py` · `anatomia.py` · `compuesto.py` · `stl.py` · `base.py`) |
+| **Version** | `0.3.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(..., etiquetas_ios=...)`; with no scanner, no registration or no segmentation it returns `MISSING` and says which one is absent |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Es el exportador que justifica el gemelo, y por eso conviene decir primero lo que **no**
-> es. Los demás canales devuelven lo que entró: el `export-agent` reconstruye el STL desde
-> `surface_ref` con error de formato, y eso demuestra que el contenedor es **honesto**, no
-> que el twin sirva para algo. Un clínico que sólo quiera imprimir la arcada que escaneó
-> ya tiene su fichero. Lo que no tiene, y ninguna máquina le da, es **un diente con su
-> raíz**.
+> This is the exporter that justifies the twin, which is why it is worth saying first what
+> it is **not**. The other channels return what came in: the `export-agent` reconstructs
+> the STL from `surface_ref` with format-level error, and that proves the container is
+> **honest**, not that the twin is useful. A clinician who only wants to print the arch
+> they scanned already has their file. What they do not have, and no machine gives them,
+> is **a tooth with its root**.
 
-**Dos salidas, y la diferencia entre ellas es una decisión clínica, no técnica.** La
-**arcada** sale como la midió el escáner, **sin raíces y cerrada en sólido con base
-plana**: un modelo de estudio o una guía asientan sobre una base, y quince raíces colgando
-lo impiden. Cada **pieza** va en su propio fichero con corona medida + raíz reconstruida,
-que sí se imprime —planificar una extracción compleja, un canino incluido, un modelo
-docente— y apoya sobre la corona.
+**Two outputs, and the difference between them is a clinical decision, not a technical
+one.** The **arch** comes out as the scanner measured it, **without roots and closed as a
+solid with a flat base**: a study model or a guide sits on a base, and fifteen dangling
+roots prevent that. Each **tooth** goes in its own file with a measured crown and a
+reconstructed root, which does get printed — planning a complex extraction, an impacted
+canine, a teaching model — and rests on the crown.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **La arcada se CIERRA, porque un escaneo intraoral es una cáscara** — mide la
-  superficie que la cámara ve, sin interior y sin fondo. Se ve bien en pantalla (ya nos
-  mordió una vez: el paladar salía como un agujero negro por pintar sólo la cara frontal)
-  y no se imprime, porque un laminador necesita saber qué es dentro. Ver `solido`.
-- ⚠️ **La base es perpendicular al eje OCLUSAL —hacia dónde muerde la pieza— y va al
-  extremo contrario.** No al Z del fichero, que es el que tenía la máquina y no significa
-  nada; y sobre todo **no al eje superior**: en un maxilar son opuestos, y confundirlos no
-  da un modelo torcido sino uno al revés. Medido: con el superior el plano caía en −9,82
-  mm cuando las coronas llegaban a −7,82, así que la falda bajaba por delante de los
-  dientes y los envolvía en una caja — 21,7 cm³ de volumen contra los 11,9 correctos. El
-  eje se mide de los códigos FDI del propio escaneo, y **sin ellos se entrega la cáscara
-  declarándolo** en vez de inventarse una vertical.
-- ⚠️ **Un cuerpo sin ESMALTE no es un diente, por mucho que lo parezca.** El pipeline
-  llegó a exportar una pieza «28» sobre un caso real con tamaño de diente (19,4 mm), forma
-  de diente y la misma separación del vecino que dos molares contiguos: era la tuberosidad
-  del maxilar. Lo que la delata es la densidad — los catorce dientes reales daban p95 =
-  1,000 exacto y el intruso 0,747, a un pelo del 0,710 del hueso sin etiquetar. Se
-  comprueba **antes** de reconstruir: reconstruir primero produciría un STL con nombre de
-  diente hecho de mandíbula.
-- **Se declara, no se recorta, cuando una raíz es más larga de lo que su tipo admite.**
-  Recortar convertiría el ápice en supuesto y medir longitud radicular encima sería medir
-  lo que se ha supuesto. El aviso va agrupado en una línea y no en doce: el ruido es como
-  se desactiva un gate.
-- ⚠️ **Una pieza impresa no lleva cabecera, y ningún fichero lo arregla.** Todo lo que este
-  agente declara sobre el reconstructor desaparece en cuanto el objeto sale de la
-  impresora: quien lo tiene en la mano ve una raíz sin saber que es inferida. Por eso lo
-  reconstruido va SÓLO en los ficheros por pieza, que alguien pide a propósito, y nunca en
-  lo que se imprime por defecto.
-- ⚠️ **No es marching cubes, y no por gusto.** El campo del twin es una nube de gaussianas
-  con covarianza, no un volumen de vóxeles: mallar por isosuperficie exigiría rasterizarlo
-  a una rejilla primero, o sea tirar la representación. Y está medido en
-  `scripts/resolucion_modalidades.py` que sobre hueso trabecular el área de la
-  isosuperficie **no existe como magnitud**.
-- ⚠️ **Por pieza, nunca en bloque.** Una reconstrucción global uniría dientes vecinos por
-  donde sus alfa-complejos se tocan y saldría una barra de dientes fundidos.
-- ⚠️ **La corona sale del ESCÁNER**, recortando su malla por el `region_id` que el escaneo
-  trae por vértice. Donde ambas modalidades ven la misma superficie manda la que la mide a
-  decenas de micras, no la de 0,4 mm de vóxel — misma regla que el `viewer-export-agent`.
-  Sin `etiquetas_ios` la pieza sale con la raíz sola y **se declara**, en vez de rellenar
-  con la corona del CBCT.
-- ⚠️ **Lo que declara como `max_deviation_mm` es el error del RECONSTRUCTOR, no el del
-  formato.** El `float32` del STL da ~1e-5 mm, que parecería excelente y no diría nada de
-  la mitad del fichero que puede estar mal. Se mide el mismo método **en la banda de
-  corona**, donde el escáner es referencia, y se extrapola a la raíz **declarándolo como
-  hipótesis**: nada más mide raíces.
-- ⚠️ **Este canal NO cuenta para `PipelineResult.reversible`**, por lo contrario que el
-  visor. Los demás re-materializan lo que entró y su desviación mide el viaje de ida y
-  vuelta; éste escribe geometría que no entró, así que su número responde a otra pregunta.
-  Juntarlos ponía el recorrido en rojo por 0,37 mm de una superficie que nadie había medido
-  mientras los canales que sí prometen reversibilidad daban 0,000000 mm.
-- ⚠️ **El sesgo se declara aparte del p95 y con signo**, y el signo NO sale de las normales
-  de la malla: una normal apunta hacia donde diga el bobinado de sus caras, que es
-  convención del fichero y no anatomía. Sale de la dirección radial del propio diente.
-- **Los cuerpos no se sueldan.** Coser corona y raíz exigiría decidir dónde acaba una y
-  empieza la otra, que es lo que este agente no sabe contestar.
-- **Sobre datos sintéticos sale `MISSING`, y es correcto:** `synthetic.write_case` genera
-  malla y campo describiendo la misma superficie, o sea una boca sin nada bajo la encía.
+- ⚠️ **The arch is CLOSED, because an intraoral scan is a shell** — it measures the
+  surface the camera sees, with no interior and no floor. It looks fine on screen (it bit
+  us once already: the palate came out as a black hole because only the front face was
+  painted) and it does not print, because a slicer needs to know what is inside. See
+  `solido`.
+- ⚠️ **The base is perpendicular to the OCCLUSAL axis — the direction the tooth bites in —
+  and goes to the opposite end.** Not to the file's Z, which is whatever the machine had
+  and means nothing; and above all **not to the superior axis**: in a maxilla they are
+  opposites, and confusing them gives you not a tilted model but an inverted one. Measured:
+  with the superior axis the plane fell at −9.82 mm when the crowns reached −7.82, so the
+  skirt came down in front of the teeth and wrapped them in a box — 21.7 cm³ of volume
+  against the correct 11.9. The axis is measured from the scan's own FDI codes, and
+  **without them the shell is delivered with a declaration** rather than inventing a
+  vertical.
+- ⚠️ **A body with no ENAMEL is not a tooth, however much it looks like one.** The
+  pipeline once exported a "28" on a real case with a tooth's size (19.4 mm), a tooth's
+  shape and the same separation from its neighbour as two adjacent molars: it was the
+  maxillary tuberosity. What gives it away is density — the fourteen real teeth gave
+  p95 = 1.000 exactly and the intruder 0.747, a hair above the 0.710 of unlabelled bone.
+  It is checked **before** reconstructing: reconstructing first would produce an STL with
+  a tooth's name made of jaw.
+- **It declares rather than trims when a root is longer than its type admits.** Trimming
+  would turn the apex into an assumption, and measuring root length on top of it would be
+  measuring what was assumed. The warning is grouped into one line rather than twelve:
+  noise is how a gate gets disabled.
+- ⚠️ **A printed tooth carries no header, and no file fixes that.** Everything this agent
+  declares about the reconstructor disappears the moment the object leaves the printer:
+  whoever holds it sees a root without knowing it is inferred. That is why reconstructed
+  geometry goes ONLY into the per-tooth files, which somebody asks for deliberately, and
+  never into what gets printed by default.
+- ⚠️ **It is not marching cubes, and not out of preference.** The twin's field is a cloud
+  of Gaussians with covariance, not a voxel volume: meshing by isosurface would require
+  rasterising it to a grid first, i.e. throwing the representation away. And it is measured
+  in `scripts/resolucion_modalidades.py` that over trabecular bone the isosurface's area
+  **does not exist as a magnitude**.
+- ⚠️ **Per tooth, never in bulk.** A global reconstruction would join neighbouring teeth
+  where their alpha complexes touch and out would come a bar of fused teeth.
+- ⚠️ **The crown comes from the SCANNER**, by cropping its mesh with the `region_id` the
+  scan carries per vertex. Where both modalities see the same surface, the one that
+  measures it to tens of microns wins, not the one with 0.4 mm voxels — the same rule as
+  the `viewer-export-agent`. Without `etiquetas_ios` the tooth comes out with the root
+  alone and **that is declared**, rather than filling in with the CBCT's crown.
+- ⚠️ **What it declares as `max_deviation_mm` is the RECONSTRUCTOR's error, not the
+  format's.** The STL's `float32` gives ~1e-5 mm, which would look excellent and would say
+  nothing about the half of the file that may be wrong. The same method is measured **in
+  the crown band**, where the scanner is the reference, and extrapolated to the root
+  **declaring it as a hypothesis**: nothing else measures roots.
+- ⚠️ **This channel does NOT count towards `PipelineResult.reversible`**, unlike the
+  viewer. The others re-materialise what came in and their deviation measures the round
+  trip; this one writes geometry that never came in, so its number answers a different
+  question. Putting them together turned the run red over 0.37 mm of a surface nobody had
+  measured before, while the channels that do promise reversibility gave 0.000000 mm.
+- ⚠️ **Bias is declared separately from p95 and with a sign**, and the sign does NOT come
+  from the mesh's normals: a normal points wherever its faces' winding says, which is a
+  file convention and not anatomy. It comes from the tooth's own radial direction.
+- **The bodies are not welded.** Stitching crown and root would require deciding where one
+  ends and the other begins, which is exactly what this agent cannot answer.
+- **On synthetic data it returns `MISSING`, and that is correct:** `synthetic.write_case`
+  generates a mesh and a field describing the same surface, i.e. a mouth with nothing under
+  the gum.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-24 | 0.3.0 | La arcada se cierra en sólido con base plana perpendicular al eje **oclusal** (con el superior salía del revés). Guardarraíl de esmalte: un cuerpo sin corona de esmalte no se exporta como diente. Y se declara cuando una raíz reconstruida es más larga de lo que su tipo admite. |
-| 2026-08-24 | 0.2.0 | La arcada pasa a salir SIN raíces —es lo que se imprime y una pieza impresa no lleva procedencia— y lo reconstruido se muda a un STL por pieza con su corona medida del escáner. |
-| 2026-08-24 | 0.1.0 | Registro inicial. STL del compuesto por complejo alfa por pieza, con el error del reconstructor medido en la banda de corona y el sesgo declarado con signo. |
+| 2026-08-24 | 0.3.0 | The arch is closed as a solid with a flat base perpendicular to the **occlusal** axis (with the superior axis it came out inverted). Enamel guardrail: a body with no enamel crown is not exported as a tooth. And it is declared when a reconstructed root is longer than its type admits. |
+| 2026-08-24 | 0.2.0 | The arch now comes out WITHOUT roots — it is what gets printed and a printed tooth carries no provenance — and the reconstructed geometry moves to one STL per tooth with its crown measured from the scanner. |
+| 2026-08-24 | 0.1.0 | Initial registration. STL of the composite by alpha complex per tooth, with the reconstructor's error measured in the crown band and the bias declared with a sign. |
 
 ---
 
-### `viewer-export-agent` — El paquete que abre `dental-3dgs-viewer`
+### `viewer-export-agent` — The package `dental-3dgs-viewer` opens
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/export-agents/` (`visor.py` · `anatomia.py` · `base.py`) |
-| **Versión** | `0.3.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(...)`; recibe los motivos del gate y las etiquetas del escáner |
+| **Location** | `packages/export-agents/` (`visor.py` · `anatomia.py` · `base.py`) |
+| **Version** | `0.3.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(...)`; receives the gate's reasons and the scanner's labels |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Emite lo que un visor de splats necesita para enseñar el caso: **N ficheros PLY en perfil
-> INRIA**, uno por capa conmutable, y un **sidecar JSON** con la capa clínica —dientes,
-> hallazgos, medidas no regionales, motivos del gate—, el `region_id` por gaussiana y el
-> encuadre medido.
+> It emits what a splat viewer needs to show the case: **N PLY files in the INRIA
+> profile**, one per switchable layer, and a **JSON sidecar** with the clinical layer —
+> teeth, findings, non-regional measurements, gate reasons — the per-Gaussian `region_id`
+> and the measured framing.
 
-**Por qué no un visor propio.** Se escribió uno, con WebGL a pelo, y se retiró: dibujaba
-`gl.POINTS` redondos de tamaño uniforme, que no es splatting sino una nube de puntos con
-buena presentación. `dental-3dgs-viewer` ya rasteriza splats de verdad, tiene panel de
-capas, cotas sobre el modelo y encuadre por caso.
+**Why not our own viewer.** One was written, in raw WebGL, and withdrawn: it drew round
+`gl.POINTS` of uniform size, which is not splatting but a point cloud with good
+presentation. `dental-3dgs-viewer` already rasterises real splats, has a layer panel,
+dimensions over the model and per-case framing.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **El PLY del visor NO es el twin, y esa línea no se puede borrar.** Para que un
-  rasterizador lo abra hay que darle tres cosas que el CBCT no midió:
+- ⚠️ **The viewer's PLY is NOT the twin, and that line cannot be erased.** For a
+  rasteriser to open it you have to give it three things the CBCT did not measure:
 
-  | propiedad INRIA | de dónde sale | ¿es dato? |
+  | INRIA property | where it comes from | is it data? |
   |---|---|---|
-  | `opacity` | `alfa = 1 − exp(−g·sigma)`, luego logit | **no**: ganancia de visualización |
-  | `f_dc_*` | falso color por código FDI | **no**: un CBCT no mide color |
-  | `scale_*` | `log(sigma_mm)` | sí, la misma medida en otra escala |
+  | `opacity` | `alfa = 1 − exp(−g·sigma)`, then logit | **no**: a visualisation gain |
+  | `f_dc_*` | false colour by FDI code | **no**: a CBCT does not measure colour |
+  | `scale_*` | `log(sigma_mm)` | yes, the same measurement on another scale |
 
-  Las dos primeras van **declaradas en la cabecera del propio fichero** y el sidecar repite
-  la función de transferencia. El twin reversible sigue siendo el PLY de
-  `field-export-agent`, con `density` sin cota y escalas en mm; éste es para mirar.
-- ⚠️ **Las coronas salen del ESCÁNER, no del CBCT.** El escáner ya trae los dientes
-  separados y con código FDI, con decenas de micras y sin huecos; el campo del CBCT cubre
-  el 51 % del volumen de cada pieza y de forma desigual. Enseñar el compuesto del CBCT como
-  si fuera «el diente» presenta como completo algo que no lo está. Lo que el CBCT sí aporta
-  y el escáner no puede es la **raíz**, que va en su propia capa y declarada como parcial.
-- ⚠️ **El eje de ÓRBITA se mide, no se escribe a mano.** El visor gira alrededor de su
-  `cameraUp`, y eso era un eje del mundo puesto a ojo en su `config.ts` — `[0, 0, 1]`.
-  Cuando el eje oclusal de la arcada no coincide con él, arrastrar el ratón no da la vuelta
-  a la arcada: **la vuelca**, y no hay forma de llegar a la cara vestibular de una pieza. El
-  sidecar lleva ahora un bloque `encuadre` con el eje oclusal deducido de las etiquetas FDI
-  (ver `export_agents/anatomia.py`), y el `fov_grados` con el que se calculó la distancia,
-  porque con otro campo no encuadra. **Se mide sobre los vértices del escáner y solo
-  ellos**: en el compuesto, `fdi == 0` incluye la encía *y* el hueso y el cráneo del CBCT, y
-  meter aquello podría invertir el signo del eje oclusal. Sin etiquetas no se inventa nada y
-  el gate lo dice.
-- **El tamaño y la opacidad de los splats salen del régimen 3DGS medido**, no de lo que se
-  vea bien: σ inflada hasta ~2,5 veces el espaciado que queda tras decimar —sin eso los
-  splats no se tocan y la superficie sale agujereada— y α por encima del umbral de descarte
-  del visor (`5/255 = 0,0196`), que estaba tirando el 46 % de los splats de raíz y fondo.
-- **Un color por pieza, estable entre casos.** El tono sale del código FDI multiplicado por
-  el ángulo áureo, así que la misma pieza sale del mismo color en cualquier caso y en
-  cualquier visita, sin una tabla que mantener.
-- **El nombre del paciente no viaja**, ni en el PLY ni en el sidecar: a los motivos del gate
-  se les quita la ruta y queda el hash, que identifica el fichero sin identificar a nadie.
-- **El paquete NO es reversible y lo declara.** Está decimado a propósito, su opacidad y su
-  color son interpretación. Los ficheros reversibles son el STL y el PLY del twin, con su
-  desviación medida.
+  The first two are **declared in the file's own header** and the sidecar repeats the
+  transfer function. The reversible twin is still the `field-export-agent`'s PLY, with
+  uncapped `density` and scales in millimetres; this one is for looking at.
+- ⚠️ **Crowns come from the SCANNER, not from the CBCT.** The scanner already brings the
+  teeth separated and with an FDI code, at tens of microns and with no holes; the CBCT's
+  field covers 51% of each tooth's volume, and unevenly. Showing the CBCT composite as if
+  it were "the tooth" presents as complete something that is not. What the CBCT does
+  contribute and the scanner cannot is the **root**, which goes in its own layer and is
+  declared partial.
+- ⚠️ **The ORBIT axis is measured, not written by hand.** The viewer rotates around its
+  `cameraUp`, and that was a world axis eyeballed in its `config.ts` — `[0, 0, 1]`. When
+  the arch's occlusal axis does not coincide with it, dragging the mouse does not turn the
+  arch around: **it tips it over**, and there is no way to reach a tooth's buccal face. The
+  sidecar now carries an `encuadre` block with the occlusal axis derived from the FDI
+  labels (see `export_agents/anatomia.py`), and the `fov_grados` the distance was computed
+  with, because with a different field of view it does not frame. **It is measured over the
+  scanner's vertices and only those**: in the composite, `fdi == 0` includes the gum *and*
+  the CBCT's bone and skull, and letting that in could invert the sign of the occlusal
+  axis. With no labels nothing is invented and the gate says so.
+- **Splat size and opacity come from the measured 3DGS regime**, not from what looks good:
+  σ inflated to ~2.5 times the spacing left after decimation — without that the splats do
+  not touch and the surface comes out full of holes — and α above the viewer's discard
+  threshold (`5/255 = 0.0196`), which was throwing away 46% of the root and background
+  splats.
+- **One colour per tooth, stable across cases.** The hue comes from the FDI code multiplied
+  by the golden angle, so the same tooth comes out the same colour in any case and any
+  visit, with no table to maintain.
+- **The patient's name does not travel**, neither in the PLY nor in the sidecar: the gate
+  reasons have their path stripped and the hash remains, which identifies the file without
+  identifying anyone.
+- **The package is NOT reversible and declares it.** It is decimated on purpose, and its
+  opacity and colour are interpretation. The reversible files are the twin's STL and PLY,
+  with their measured deviation.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-21 | 0.2.0 | Registro inicial del canal: capas conmutables por procedencia y anatomía, PLY en perfil INRIA derivado del campo, y sidecar con la capa clínica y el `region_id` por gaussiana. |
-| 2026-08-24 | 0.3.0 | Tamaño y opacidad de los splats ajustados al **régimen 3DGS medido** —la α anterior se apoyaba en el umbral de descarte del visor y tiraba el 46 % de raíz y fondo—, color por pieza estable entre casos, y bloque `encuadre` con el eje de órbita anatómico. |
+| 2026-08-21 | 0.2.0 | Initial registration of the channel: layers switchable by provenance and anatomy, INRIA-profile PLY derived from the field, and a sidecar with the clinical layer and the per-Gaussian `region_id`. |
+| 2026-08-24 | 0.3.0 | Splat size and opacity tuned to the **measured 3DGS regime** — the previous α leaned on the viewer's discard threshold and threw away 46% of root and background — per-tooth colour stable across cases, and an `encuadre` block with the anatomical orbit axis. |
 
 ---
 
-### `uos-export-agent` — El caso entero como escena UOS
+### `uos-export-agent` — The whole case as a UOS scene
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| **Ubicación** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Versión** | `0.4.0` |
-| **Estado** | `active` |
-| **Fase del pipeline** | 6 · Exportación (frontera contrato → fichero) |
-| **Contrato común** | `ExportOutput` + `BaseExportAgent` |
-| **Orquestador** | `IngestionPipeline.exportar(...)`; sin seudónimo declara `FAILED`, sin malla `MISSING` |
+| **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
+| **Version** | `0.4.0` |
+| **Status** | `active` |
+| **Pipeline phase** | 6 · Export (the contract → file boundary) |
+| **Common contract** | `ExportOutput` + `BaseExportAgent` |
+| **Orchestrator** | `IngestionPipeline.exportar(...)`; with no pseudonym it declares `FAILED`, with no mesh `MISSING` |
 
-**Rol / Propósito**
+**Role / Purpose**
 
-> Los otros cinco canales materializan **una** cosa —la malla, el campo, el compuesto, el
-> paquete del visor, el render—. Este empaqueta el caso entero con sus relaciones
-> declaradas: qué asset viene de qué visita, en qué marco vive cada uno y con qué
-> transformada se alinean. Es la diferencia entre entregar ficheros y entregar una escena.
+> The other five channels materialise **one** thing — the mesh, the field, the composite,
+> the viewer package, the render. This one packages the whole case with its relations
+> declared: which asset comes from which visit, which frame each one lives in and with what
+> transform they align. It is the difference between delivering files and delivering a
+> scene.
 
-Implementa los niveles **UOS-Core** y **UOS-Vol** del borrador de spec *Unified Oral
-Scene* v0.2: un ZIP
-**sin comprimir** cuya primera entrada física es `manifest.json`, que **referencia los
-formatos nativos intactos** en vez de transcodificarlos. Ningún formato existente hace eso
-—DICOM no modela gaussianas ni se transmite bien en web, glTF no modela volúmenes ni
-metadatos clínicos, OpenUSD es ajeno al ecosistema clínico—, y por eso el contenedor es
-propio y el validador puede correr sobre un fichero que escribió otro.
+It implements the **UOS-Core** and **UOS-Vol** levels of the *Unified Oral Scene* v0.2 draft
+spec: an **uncompressed** ZIP whose first physical entry is `manifest.json`, and which
+**references intact native formats** rather than transcoding them. No existing format does
+that — DICOM does not model Gaussians and does not transmit well over the web, glTF models
+neither volumes nor clinical metadata, OpenUSD is foreign to the clinical ecosystem — and
+that is why the container is our own and the validator can run over a file somebody else
+wrote.
 
-**Reglas específicas**
+**Specific rules**
 
-- ⚠️ **Referencia, no transcodifica.** Los ficheros entran tal cual y su `sha256` va en el
-  manifiesto: lo que sale es byte-idéntico a lo que entró. La desviación cero que reporta
-  está **medida** —se relee el contenedor y se recomputa el hash de cada asset—, no
-  afirmada. Sobre el caso real: malla de 11.004.334 bytes dentro y fuera.
-- ⚠️ **Sin seudónimo se declara `FAILED`, y NO se cae al `acquisition_id`.** Ese
-  identificador sale del nombre del directorio del caso, que en un sistema real lleva el
-  nombre del paciente o su número de historia. Un seudónimo por defecto que resulta ser el
-  dato identificable es peor que no tener ninguno, porque `phi_state` diría
-  `pseudonymized` mintiendo.
-- ⚠️ **Ningún nombre de fichero del proveedor viaja dentro.** Los de verdad llevan
-  identificadores —la malla de este caso se llamaba `1574 UpperJawScan.stl` y `1574` es el
-  número de caso—. Dentro todo se nombra por su papel: `scene/scan.stl`,
-  `scene/appearance.ply`, `images/img_000.jpg`. La trazabilidad la da el `sha256`, que es
-  más fuerte que un nombre y no identifica a nadie.
-- **El marco canónico es el ESCÁNER, no el CBCT**, y eso invierte lo que hace el pipeline.
-  Aquí se trabaja centrado en el CBCT porque es donde vive el campo gaussiano; UOS pone el
-  escáner de hub porque es la geometría de referencia de un caso dental —micras frente a
-  vóxeles de 0,3 mm—. La inversión se hace en el borde y **se declara** como
-  `reg.ct_to_ios`, con su matriz, su método y su error, en vez de reescribir geometría. Es
-  coherente con que la fusión anote en lugar de transformar.
-- **Los ejes anatómicos de las vistas se MIDEN, no se suponen.** Es la misma regla que rige
-  el eje ápico-coronal del CBCT, que se lee del `ImagePositionPatient`. Una malla de
-  escáner no trae cabecera que lo diga, así que cada dirección sale de las etiquetas FDI:
-  *oclusal* de la encía hacia las coronas, *derecha* del centroide de los cuadrantes 2 y 3
-  al de los cuadrantes 1 y 4, *anterior* de los molares a los incisivos. **Sin etiquetas no
-  hay vistas y se dice**: bautizar los ejes principales de la nube produce nombres
-  plausibles y a veces invertidos, y una vista que se llama «vestibular derecha» y enseña
-  la izquierda es peor que no tenerla. Es el mismo motivo por el que el
-  `render-export-agent` nombra las suyas por ángulo.
-- **Solo tienen vista propia las piezas ANOTADAS.** Una por diente etiquetado serían
-  dieciséis entradas equivalentes; lo que hace útil un deep-link es que apunte a donde
-  alguien miró. Las piezas que el informe cita y el escáner no trae se agrupan en **un**
-  aviso, no en uno por diente: el gate ya lleva uno que lo explica entero, y repetirlo
-  entierra los motivos que solo aparecen una vez.
-- **Un `.uos` es append-only lógico.** Modificar no es editar: es escribir una versión
-  nueva del manifiesto que apunta al `sha256` de la anterior. La autoridad está en
-  `prev_manifest_sha256`, dentro del manifiesto; `provenance/chain.json` la materializa
-  para poder recorrerla sin abrir todas las versiones. El validador comprueba que la cadena
-  y los manifiestos **cuenten la misma historia** — retocar un manifiesto, arrancar un
-  eslabón o pegar la cadena de otro caso invalidan.
-- **Lo estructurado vive solo en el manifiesto.** `ExportOutput` es `extra="forbid"` y lo
-  comparten seis canales: ensancharlo con `n_assets` o `conformidad` daría dos sitios donde
-  la misma verdad puede divergir y obligaría a los otros cinco a cargar con campos que no
-  usan.
-- ⚠️ **El contenedor lleva el GEMELO, no sólo las entradas.** Durante un tiempo llevó la
-  malla del escáner, las fotos y el DICOM —o sea lo que la clínica ya tenía— y el campo
-  gaussiano ajustado se quedaba en un PLY al lado. Era una lectura equivocada del §1.1: ahí
-  pone que UOS no re-encodea **datos fuente**, y nombra el DICOM; el §3.1 dibuja la malla
-  como «STL convertido». Hoy viajan el campo, el compuesto y la apariencia.
-- ⚠️ **Tres capas de gaussianas comparten `kind` y por eso cada una lleva descriptor.** El
-  campo es densidad **medida** por el CBCT; el compuesto, medida de dos modalidades con su
-  columna `origen`; la apariencia, reconstrucción contra renders. Sin el `.gs.json` un
-  consumidor ve tres `mesh_gs_scene` y no puede saber cuál puede usar para medir. El
-  descriptor arrastra el `esquema_campo` del contrato, que es lo que impide el fallo
-  callado: el PLY de facto de 3DGS usa `scale_0..2` con los mismos nombres y guarda el
-  **logaritmo**; aquí van milímetros lineales, y un visor estándar exponenciaría nuestros
-  milímetros y renderizaría basura con muy buen aspecto.
-- **La escena es un glTF binario y los GS cuelgan de ella** (§5.1). El nodo raíz de la malla
-  **es** el marco canónico y cada capa de gaussianas va debajo con su `matrix`, que es la
-  registración. ⚠️ glTF guarda las matrices **por columnas** y el manifiesto por filas:
-  confundirlas no revienta, coloca la nube girada y espejada. Los payloads van apuntados con
-  `extras.uos_gs_uri`, que es el fallback declarado mientras `KHR_gaussian_splatting` no se
-  ratifique — el §13 dice que en v1.0 se retira.
-- **El STL original va como `document`, no como escena.** Lo dice el §5.1. La conversión a
-  glTF pierde —`float32` desde `float64`— así que el original se queda: el convertido es
-  presentación y el reversible es el fichero del escáner, byte a byte.
-- ⚠️ **`extras.uos_fdi` NO se emite**, aunque el §5.1 lo contemple «si el mesh viene
-  segmentado». El nuestro no viene segmentado: lo segmentamos con un modelo, y eso es Layer
-  3. Horneado en la escena, quitar `derived/` dejaría de quitar la inferencia y se rompe la
-  regla dura del §5.5. Las etiquetas van en `derived/`, indexadas por vértice — exacto
-  porque la escena conserva el orden de la malla ingerida.
-- ⚠️ **La serie DICOM viaja ENTERA y se verifica corte a corte.** El asset del volumen es
-  un directorio (`volume/ct_001/`) y el manifiesto declara una `Parte` por fichero, con su
-  nombre y su hash. No basta un hash del conjunto: ése dice «esta serie no cuadra», y éstos
-  dicen **cuál** de los 397 cortes. Se comprueba en los dos sentidos — un corte que está
-  dentro y no se declara es tan grave como uno declarado que falta, porque significa que la
-  serie que sale no es la que entró. El `sha256` del directorio se define como el hash
-  sobre `nombre\0hash` ordenado, y **se define en el contrato y no en el escritor**: si el
-  validador lo calculara de otra forma, un contenedor válido daría inválido y nadie sabría
-  cuál de los dos tiene razón.
-- **Los nombres de los cortes SÍ viajan, y es lo correcto** aunque en el resto del
-  contenedor no lo sea: el orden de una serie DICOM es dato clínico, y renombrarlos a
-  `IM0001.dcm…` sería reescribir el fichero que decimos entregar intacto.
-- **El sidecar del volumen (§5.2) se lee de los mismos bytes que viajan**, no de una copia
-  derivada calculada antes en otro sitio. Existe para que un visor web no necesite un
-  parser DICOM completo solo para saber qué le llega, y declara el frame y **nada más sobre
-  la alineación**: la transformada al canónico vive en `registrations` y no se duplica. La
-  orientación se lee del `ImageOrientationPatient`; si no está, se declara la identidad
-  **como aviso**, porque un volumen al que se le supone la orientación se renderiza igual de
-  bien y espejado. El `value_range` se deja nulo cuando el DICOM no lo declara, en vez de
-  barrer 259 MB o de poner el rango típico de un CBCT — que un visor usaría para su ventana.
-- ⚠️ **Una serie con datos identificables en sus cabeceras NO viaja.** El DICOM va intacto
-  —es el punto del formato— así que sus tags irían con él, y el manifiesto afirma
-  `phi_state: pseudonymized`. Un contenedor que dice estar seudonimizado y lleva el nombre
-  del paciente dentro es **peor** que uno que declara `identified`: quien lo reciba se fía
-  del campo y no abre 397 cabeceras a comprobarlo. Se comprueban `PatientName`,
-  `PatientBirthDate`, la institución, los médicos y el número de acceso; el volumen se queda
-  fuera, el caso baja a UOS-Core y el gate dice **qué tag**, nunca su valor. `PatientID`
-  queda fuera de la lista a propósito: un export anonimizado lo rellena con un identificador
-  opaco, y exigir que esté vacío rechazaría series perfectamente anónimas.
-- ⚠️ **Sin registro, el volumen se queda fuera y el resto del caso sale igual.** Su frame no
-  conectaría con el canónico, así que un visor lo colocaría en el sitio equivocado sin poder
-  detectarlo — peor que no llevarlo. Y tirar la exportación entera por eso sería
-  desproporcionado: la malla, las fotos y las vistas están bien. Se declara y se baja a
-  UOS-Core.
-- **El volumen va detrás de una bandera** (`--con-volumen`), por peso: son cientos de megas
-  que multiplican por diez el contenedor. Llevarlos es decisión de quien exporta.
-- **La capa clínica es EXTENSIÓN nuestra, y se declara como tal.** El borrador no define
-  atributos clínicos por pieza: su §9 los manda a `Observation` de FHIR, o sea a un
-  servidor, y entonces un `.uos` suelto no puede contestar «qué dice el informe del 24».
-  Va en `clinical/observations.json` con las 32 observaciones, las medidas que no caben en
-  una pieza y los motivos del gate. **Layer 1, no `derived/`**: es la transcripción de un
-  informe que firmó una persona, y meterla en `derived/` la haría desmontable. Cómo se
-  extrajo cada valor lo dice su `derivation` — `deterministic`, `inferred`, o `null`, que
-  significa **no declarado** y no lo mismo que determinista.
-- **El manifiesto declara sus extensiones** (`extensions`, `extensions_used`,
-  `extensions_required`), y esto **no está en v0.2**: es propuesta nuestra, copiada de
-  glTF, sobre el que UOS se apoya. Sin ella, un lector ajeno ignora lo que añadimos **sin
-  enterarse de que lo ignora**, y un formato abierto se vuelve uno que sólo lee entero su
-  emisor. ⚠️ **Nada nuestro va en `required`**: todo lo que añadimos suma información, y un
-  visor conforme tiene que poder abrir el caso sin entender ninguna de ellas. Hay un test
-  con ese nombre para que, si algún día algo entra ahí, sea deliberado y visible.
-- **El `fhir_map` declara el TIPO de recurso, no una referencia.** El ejemplo del spec
-  escribe `ImagingStudy/is-9911`, o sea un recurso que existe en un servidor concreto; este
-  caso no ha pasado por ningún PMS y no hay identificador que citar. Inventar uno haría que
-  un conector intentara resolverlo. Se afirma lo que sí es verdad hoy —`Media` para las
-  fotos, `ImagingStudy` para el volumen, `DocumentReference` para la malla y para el `.uos`
-  entero— y `resource` queda vacío.
-- **Layer 3 vive en `derived/` y solo ahí.** Es lo que permite desmontar el módulo de IA
-  borrando un directorio y sus entradas del manifiesto, y distribuir el caso en
-  jurisdicciones donde no está habilitado. El validador lo comprueba en los dos sentidos.
+- ⚠️ **It references, it does not transcode.** Files go in as they are and their `sha256`
+  goes in the manifest: what comes out is byte-identical to what went in. The zero
+  deviation it reports is **measured** — the container is re-read and each asset's hash
+  recomputed — not asserted. On the real case: an 11,004,334-byte mesh inside and out.
+- ⚠️ **With no pseudonym it declares `FAILED`, and does NOT fall back to
+  `acquisition_id`.** That identifier comes from the case directory's name, which in a real
+  system carries the patient's name or their record number. A default pseudonym that turns
+  out to be the identifiable datum is worse than having none, because `phi_state` would say
+  `pseudonymized` and be lying.
+- ⚠️ **No vendor filename travels inside.** Real ones carry identifiers — this case's mesh
+  was called `1574 UpperJawScan.stl` and `1574` is the case number. Inside, everything is
+  named by its role: `scene/scan.stl`, `scene/appearance.ply`, `images/img_000.jpg`.
+  Traceability comes from the `sha256`, which is stronger than a name and identifies
+  nobody.
+- **The canonical frame is the SCANNER, not the CBCT**, and that inverts what the pipeline
+  does. Here we work centred on the CBCT because that is where the Gaussian field lives;
+  UOS makes the scanner the hub because it is a dental case's reference geometry — microns
+  against 0.3 mm voxels. The inversion happens at the boundary and **is declared** as
+  `reg.ct_to_ios`, with its matrix, its method and its error, rather than rewriting
+  geometry. It is consistent with fusion annotating rather than transforming.
+- **The views' anatomical axes are MEASURED, not assumed.** It is the same rule that
+  governs the CBCT's apico-coronal axis, which is read from `ImagePositionPatient`. A
+  scanner mesh brings no header saying so, so every direction comes from the FDI labels:
+  *occlusal* from the gum towards the crowns, *right* from the centroid of quadrants 2 and
+  3 to that of quadrants 1 and 4, *anterior* from the molars to the incisors. **With no
+  labels there are no views and it says so**: naming the cloud's principal axes produces
+  plausible and sometimes inverted names, and a view called "right buccal" that shows the
+  left is worse than not having it. It is the same reason the `render-export-agent` names
+  its own by angle.
+- **Only ANNOTATED teeth get their own view.** One per labelled tooth would be sixteen
+  equivalent entries; what makes a deep link useful is that it points where somebody
+  looked. Teeth the report cites and the scanner does not bring are grouped into **one**
+  warning, not one per tooth: the gate already carries one that explains the whole thing,
+  and repeating it buries the reasons that appear only once.
+- **A `.uos` is logically append-only.** Modifying is not editing: it is writing a new
+  version of the manifest that points at the previous one's `sha256`. The authority is
+  `prev_manifest_sha256`, inside the manifest; `provenance/chain.json` materialises it so
+  it can be walked without opening every version. The validator checks that the chain and
+  the manifests **tell the same story** — touching up a manifest, tearing out a link or
+  pasting in another case's chain all invalidate.
+- **Structured data lives only in the manifest.** `ExportOutput` is `extra="forbid"` and is
+  shared by six channels: widening it with `n_assets` or `conformidad` would give two
+  places where the same truth can diverge and would force the other five to carry fields
+  they do not use.
+- ⚠️ **The container carries the TWIN, not just the inputs.** For a while it carried the
+  scanner's mesh, the photos and the DICOM — i.e. what the clinic already had — and the
+  fitted Gaussian field stayed in a PLY next to it. That was a misreading of §1.1: it says
+  UOS does not re-encode **source data**, and it names DICOM; §3.1 draws the mesh as a
+  "converted STL". Today the field, the composite and the appearance all travel.
+- ⚠️ **Three Gaussian layers share a `kind`, so each carries a descriptor.** The field is
+  density **measured** by the CBCT; the composite, a measurement from two modalities with
+  its `origen` column; the appearance, a reconstruction against renders. Without the
+  `.gs.json` a consumer sees three `mesh_gs_scene` and cannot tell which one it may measure
+  with. The descriptor carries the contract's `esquema_campo`, which is what prevents the
+  silent failure: the de facto 3DGS PLY uses `scale_0..2` with the same names and stores
+  the **logarithm**; here they are linear millimetres, and a standard viewer would
+  exponentiate our millimetres and render very good-looking garbage.
+- **The scene is a binary glTF and the GS layers hang off it** (§5.1). The mesh's root node
+  **is** the canonical frame and each Gaussian layer sits underneath with its `matrix`,
+  which is the registration. ⚠️ glTF stores matrices **column-major** and the manifest
+  row-major: confusing them does not blow up, it places the cloud rotated and mirrored. The
+  payloads are pointed at with `extras.uos_gs_uri`, which is the declared fallback while
+  `KHR_gaussian_splatting` is not ratified — §13 says it is withdrawn in v1.0.
+- **The original STL travels as a `document`, not as a scene.** §5.1 says so. Converting to
+  glTF loses information — `float32` from `float64` — so the original stays: the converted
+  one is presentation and the reversible one is the scanner's file, byte for byte.
+- ⚠️ **`extras.uos_fdi` is NOT emitted**, even though §5.1 allows for it "if the mesh comes
+  segmented". Ours does not come segmented: we segment it with a model, and that is Layer
+  3. Baked into the scene, removing `derived/` would stop removing the inference and §5.5's
+  hard rule breaks. The labels go in `derived/`, indexed by vertex — exact because the scene
+  preserves the ingested mesh's ordering.
+- ⚠️ **The DICOM series travels WHOLE and is verified slice by slice.** The volume asset is
+  a directory (`volume/ct_001/`) and the manifest declares one `Parte` per file, with its
+  name and its hash. A hash of the whole set is not enough: that one says "this series does
+  not add up", and these say **which** of the 397 slices. It is checked both ways — a slice
+  that is inside and undeclared is as serious as a declared one that is missing, because it
+  means the series coming out is not the one that went in. The directory's `sha256` is
+  defined as the hash over sorted `name\0hash`, and **it is defined in the contract and not
+  in the writer**: if the validator computed it differently, a valid container would come
+  out invalid and nobody would know which of the two was right.
+- **Slice names DO travel, and that is correct** even though elsewhere in the container it
+  would not be: the ordering of a DICOM series is clinical data, and renaming them to
+  `IM0001.dcm…` would be rewriting the file we claim to deliver intact.
+- **The volume's sidecar (§5.2) is read from the same bytes that travel**, not from a
+  derived copy computed earlier somewhere else. It exists so that a web viewer does not
+  need a full DICOM parser just to know what it is getting, and it declares the frame and
+  **nothing else about alignment**: the transform to the canonical frame lives in
+  `registrations` and is not duplicated. Orientation is read from
+  `ImageOrientationPatient`; if it is absent, the identity is declared **as a warning**,
+  because a volume whose orientation is assumed renders just as well and mirrored.
+  `value_range` is left null when the DICOM does not declare it, rather than sweeping
+  259 MB or putting in a CBCT's typical range — which a viewer would use for its window.
+- ⚠️ **A series with identifiable data in its headers does NOT travel.** The DICOM goes
+  intact — that is the point of the format — so its tags would go with it, and the manifest
+  asserts `phi_state: pseudonymized`. A container that says it is pseudonymised and carries
+  the patient's name inside is **worse** than one declaring `identified`: whoever receives
+  it trusts the field and does not open 397 headers to check. `PatientName`,
+  `PatientBirthDate`, the institution, the physicians and the accession number are all
+  checked; the volume stays out, the case drops to UOS-Core and the gate says **which tag**,
+  never its value. `PatientID` is deliberately off the list: an anonymised export fills it
+  with an opaque identifier, and demanding that it be empty would reject perfectly
+  anonymous series.
+- ⚠️ **With no registration, the volume stays out and the rest of the case ships anyway.**
+  Its frame would not connect to the canonical one, so a viewer would place it in the wrong
+  spot with no way to detect it — worse than not carrying it. And killing the whole export
+  over that would be disproportionate: the mesh, the photos and the views are fine. It is
+  declared and the case drops to UOS-Core.
+- **The volume sits behind a flag** (`--con-volumen`), because of weight: hundreds of
+  megabytes that multiply the container tenfold. Carrying them is the exporter's decision.
+- **The clinical layer is OUR extension, and is declared as such.** The draft does not
+  define per-tooth clinical attributes: its §9 sends them to FHIR's `Observation`, i.e. to a
+  server, and then a standalone `.uos` cannot answer "what does the report say about the
+  24?". It goes in `clinical/observations.json` with the 32 observations, the measurements
+  that do not fit on a single tooth and the gate's reasons. **Layer 1, not `derived/`**: it
+  is the transcription of a report a person signed, and putting it in `derived/` would make
+  it detachable. How each value was extracted is stated by its `derivation` —
+  `deterministic`, `inferred`, or `null`, which means **not declared** and is not the same
+  as deterministic.
+- **The manifest declares its extensions** (`extensions`, `extensions_used`,
+  `extensions_required`), and this **is not in v0.2**: it is our proposal, copied from glTF,
+  which UOS leans on. Without it, an outside reader ignores what we added **without
+  realising it is ignoring it**, and an open format becomes one only its issuer can read in
+  full. ⚠️ **Nothing of ours goes in `required`**: everything we add adds information, and a
+  conforming viewer must be able to open the case without understanding any of it. There is
+  a test by that name so that if something ever lands there, it is deliberate and visible.
+- **The `fhir_map` declares the resource TYPE, not a reference.** The spec's example writes
+  `ImagingStudy/is-9911`, i.e. a resource that exists on a specific server; this case has
+  not been through any PMS and there is no identifier to cite. Inventing one would make a
+  connector try to resolve it. What is true today is asserted — `Media` for the photos,
+  `ImagingStudy` for the volume, `DocumentReference` for the mesh and for the whole `.uos` —
+  and `resource` stays empty.
+- **Layer 3 lives in `derived/` and only there.** That is what makes it possible to detach
+  the AI module by deleting a directory and its manifest entries, and to distribute the case
+  in jurisdictions where it is not enabled. The validator checks it both ways.
 
-**Lo que NO está, y se dice para que nadie lo dé por hecho**
+**What is NOT there, said so nobody assumes otherwise**
 
-- Las **señales** — el nivel `UOS-Sig`. No hay T-Scan ni nada que registrar todavía.
-- El **renderizado** de las gaussianas en el visor de referencia: el paso 3 del §11.2.
-  La escena ya las declara; falta el rasterizador.
-- Las **firmas Ed25519**. No falta el código: falta decidir qué clave firma —la clínica
-  emisora, la plataforma, o ambas— y dónde vive. Firmar con una clave inventada daría un
-  `.uos` que *parece* firmado, que es peor que uno que declara no estarlo. El validador
-  avisa si encuentra `provenance/signatures/` para no ignorarlas en silencio.
+- The **signals** — the `UOS-Sig` level. There is no T-Scan and nothing to record yet.
+- The **rendering** of the Gaussians in the reference viewer: step 3 of §11.2. The scene
+  already declares them; the rasteriser is missing.
+- The **Ed25519 signatures**. It is not the code that is missing: it is deciding which key
+  signs — the issuing clinic, the platform, or both — and where it lives. Signing with an
+  invented key would give a `.uos` that *looks* signed, which is worse than one declaring it
+  is not. The validator warns if it finds `provenance/signatures/` so as not to ignore them
+  silently.
 
-**Historial de cambios**
+**Change history**
 
-| Fecha | Versión | Cambio |
+| Date | Version | Change |
 |---|---|---|
-| 2026-08-24 | 0.1.0 | Registro inicial. Nivel UOS-Core: manifiesto, contenedor ZIP/STORE, validador con niveles de conformidad, vistas con ejes anatómicos medidos y cadena de procedencia entre versiones. Verificado sobre el caso clínico real: `VALIDO`, 10 assets, 19 vistas, malla byte-idéntica. |
-| 2026-08-24 | 0.4.0 | Conformidad con el borrador: la registración deja de escribir `rms_error_mm: null` teniendo el residuo medido —un fallo de nombre que `getattr` tapaba— y de acreditar la ICP al agente equivocado; la escena se parte en un *primitive* por diente con `extras.uos_fdi` (§5.1), que es lo que habilita el picking del §11.3 en un visor ajeno; las fotos declaran `projection` (§5.3); las vistas llevan `mpr` y `clip_planes` cuando el volumen viaja (§7); y se publica el **JSON Schema por versión** que el §12 exige, contrastado por el propio validador. |
-| 2026-08-24 | 0.3.0 | El contenedor lleva el **gemelo** y no sólo las entradas: escena glTF con los nodos GS colgando y su registración como `matrix`, campo y compuesto con descriptor que declara si están **medidos**, segmentación en `derived/`, capa clínica, y un **mecanismo de extensiones** propuesto al borrador. |
-| 2026-08-24 | 0.2.0 | Nivel **UOS-Vol**: la serie DICOM entera como asset-directorio, verificada corte a corte, con su sidecar §5.2 leído de las cabeceras que viajan, y rechazada si esas cabeceras desmienten el `phi_state`. Y el `fhir_map` poblado por tipo de recurso. |
+| 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
+| 2026-08-24 | 0.4.0 | Conformance with the draft: the registration stops writing `rms_error_mm: null` while holding the measured residual — a naming bug `getattr` was covering — and stops crediting the ICP to the wrong agent; the scene is split into one *primitive* per tooth with `extras.uos_fdi` (§5.1), which is what enables §11.3's picking in a third-party viewer; the photos declare `projection` (§5.3); the views carry `mpr` and `clip_planes` when the volume travels (§7); and the **per-version JSON Schema** §12 requires is published, checked by the validator itself. |
+| 2026-08-24 | 0.3.0 | The container carries the **twin** and not only the inputs: a glTF scene with the GS nodes hanging off it and their registration as a `matrix`, field and composite with a descriptor declaring whether they are **measured**, segmentation in `derived/`, the clinical layer, and an **extension mechanism** proposed to the draft. |
+| 2026-08-24 | 0.2.0 | **UOS-Vol** level: the whole DICOM series as a directory asset, verified slice by slice, with its §5.2 sidecar read from the headers that travel, and rejected if those headers contradict the `phi_state`. And the `fhir_map` populated by resource type. |
 
 
 ---
 
-### La fase 6 en el orquestador
+### Phase 6 in the orchestrator
 
-`IngestionPipeline.exportar(result, destino)` dispara los **seis** canales sobre un
-`PipelineResult` y devuelve otro **nuevo**, con `exports` y los motivos de revisión
-acumulados. Cinco materializan una pieza del gemelo —STL, campo, compuesto, paquete del
-visor, render— y el sexto, `uos-export-agent`, empaqueta el caso entero como escena.
+`IngestionPipeline.exportar(result, destino)` fires the **six** channels over a
+`PipelineResult` and returns a **new** one, with `exports` and the accumulated review
+reasons. Five materialise a piece of the twin — STL, field, composite, viewer package,
+render — and the sixth, `uos-export-agent`, packages the whole case as a scene.
 
-Va en un método aparte —no dentro de `run`— por contrato: exportar **escribe
-ficheros**, y `run`/`fuse` son puras respecto al disco salvo por el almacén de artefactos.
+It sits in a separate method — not inside `run` — by contract: exporting **writes files**,
+and `run`/`fuse` are pure with respect to disk except for the artifact store.
 
-Tres reglas que conviene tener a mano:
+Three rules worth keeping to hand:
 
-- **Los canales son independientes.** Que no haya malla no impide exportar el campo, y que
-  falle el render no borra el STL ya escrito.
-- **`PipelineResult.reversible`** exige que cada canal que corrió esté dentro de *su*
-  presupuesto —milímetros para geometría, PSNR/SSIM para imagen—, que ninguno esté en
-  `FAILED`, y que se haya exportado algo. Sin recorrido no hay reversibilidad que afirmar.
-- **`MISSING` no es un motivo de revisión humana.** Que una adquisición sea solo CBCT es
-  normal y no dice nada del fichero que sí se escribió; un `FAILED` sí se declara.
+- **The channels are independent.** No mesh does not prevent exporting the field, and a
+  failing render does not delete the STL already written.
+- **`PipelineResult.reversible`** requires every channel that ran to be within *its* budget
+  — millimetres for geometry, PSNR/SSIM for images — that none is `FAILED`, and that
+  something was exported. With no run there is no reversibility to assert.
+- **`MISSING` is not a human review reason.** An acquisition being CBCT-only is normal and
+  says nothing about the file that was written; a `FAILED` is declared.
 
-Probado de punta a punta en
+Tested end to end in
 [`apps/agent-orchestrator/tests/test_e2e.py`](apps/agent-orchestrator/tests/test_e2e.py):
-**ingesta → fusión → segmentación → exportación**, con la fusión registrando las nubes
-reales del twin —la malla del `mesh-agent` contra el campo del `cbct-agent`— y no un blob
-sintético contra sí mismo. Tres comprobaciones cargan el peso:
+**ingestion → fusion → segmentation → export**, with fusion registering the twin's real
+clouds — the `mesh-agent`'s mesh against the `cbct-agent`'s field — and not a synthetic blob
+against itself. Three checks carry the weight:
 
-- **La geometría que sale es la que entró**, comparando las cotas del OBJ original con las
-  del STL regenerado. Existe porque las métricas internas de cada agente miden contra lo que
-  *ese agente* escribió: un eje perdido o un espejo pasarían todas y esta no.
-- **La fusión desbloquea `frame="twin"`**, que necesita la `RigidTransform` que solo ella
-  escribe. Ata las fases por una dependencia real y no por el orden de las llamadas: si
-  alguien desconectara la fusión, se pondría rojo aunque cada etapa siguiera pasando lo suyo.
-- **Las etiquetas de diente llegan al fichero**: el `region_id` del PLY exportado tiene que
-  ser el que infirió la segmentación. Esta es la que encontró algo — ver más abajo.
+- **The geometry that comes out is the one that went in**, comparing the original OBJ's
+  bounds with the regenerated STL's. It exists because each agent's internal metrics measure
+  against what *that agent* wrote: a lost axis or a mirror would pass all of them and not
+  this one.
+- **Fusion unblocks `frame="twin"`**, which needs the `RigidTransform` only fusion writes.
+  It ties the phases together through a real dependency and not through call order: if
+  someone disconnected fusion, it would go red even though every stage still passed its own.
+- **Tooth labels reach the file**: the exported PLY's `region_id` has to be the one
+  segmentation inferred. This is the one that found something — see below.
 
-El modelo de segmentación del recorrido es un **doble de test**, porque el de verdad pide
-GPU y un checkpoint sin versionar. No debilita lo que se prueba: la integración tiene que
-demostrar que la etapa está *atada*, y para eso el origen de las etiquetas da igual. La
-calidad del modelo se mide en otro sitio y no es un test.
+The run's segmentation model is a **test double**, because the real one needs a GPU and an
+unversioned checkpoint. It does not weaken what is being tested: an integration test has to
+prove the stage is *wired in*, and for that the labels' origin is irrelevant. The model's
+quality is measured elsewhere and is not a test.
 
-⚠️ **Atar la segmentación al recorrido destapó una pérdida silenciosa.** Las dos etapas
-pasaban sus tests por separado —el `segmentation-agent` guardaba `region_id` en el
-artefacto, el `field-export-agent` escribía un PLY correcto— y la etiqueta se perdía justo
-entre ellas: el fichero salía con la geometría bien y sin nada que dijera qué gaussiana es
-qué diente. Es el mismo modo de fallo que el centroide descartado del `cbct-agent`, y por el
-mismo motivo no lo veía nadie: **ningún test de etapa mira lo que la etapa siguiente
-necesita**.
+⚠️ **Tying segmentation into the run exposed a silent loss.** Both stages passed their tests
+separately — the `segmentation-agent` stored `region_id` in the artifact, the
+`field-export-agent` wrote a correct PLY — and the label was lost exactly between them: the
+file came out with correct geometry and nothing saying which Gaussian is which tooth. It is
+the same failure mode as the `cbct-agent`'s discarded centroid, and invisible for the same
+reason: **no stage test looks at what the next stage needs**.
 
-⚠️ **Confianza y reversibilidad no son lo mismo**, y el recorrido lo enseña: registrar la
-malla del escáner contra los vóxeles de tejido duro del CBCT da 0,605 mm sobre un 52,7 %
-solapado, así que el gate humano **salta** — correctamente, no son la misma superficie. Y
-aun así la exportación sale con sus métricas en verde, porque el error de reconstrucción
-mide si el fichero reproduce el twin, no si el twin está bien registrado.
+⚠️ **Confidence and reversibility are not the same thing**, and the run shows it:
+registering the scanner's mesh against the CBCT's hard-tissue voxels gives 0.605 mm over a
+52.7% overlap, so the human gate **fires** — correctly, they are not the same surface. And
+the export still comes out with its metrics green, because reconstruction error measures
+whether the file reproduces the twin, not whether the twin is well registered.
 
 ---
 
-### Agentes de desarrollo (dev-time)
+### Development agents (dev-time)
 
-Herramientas de IA externas que el equipo usa para asistir el desarrollo. **No forman parte del sistema en producción** ni tienen acceso autónomo al runtime: toda su salida entra al repositorio como código propuesto y pasa por Pull Request + revisión humana (y por el guardián `ai-code-reviewer`) antes de mergearse.
+External AI tools the team uses to assist development. **They are not part of the production system** and have no autonomous access to the runtime: all of their output enters the repository as proposed code and goes through a Pull Request + human review (and through the `ai-code-reviewer` guardian) before being merged.
 
-| Herramienta | Rol en el proyecto | Modelo | Notas de gobernanza |
+| Tool | Role in the project | Model | Governance notes |
 |---|---|---|---|
-| OpenCode / Claude Code | Asistentes de codificación interactivos: generación, refactorización, tests y documentación bajo dirección de una persona del equipo | Claude (Opus/Sonnet según sesión) | Conducidos por humano (no autónomos); sin acceso a datos clínicos; todo output vía PR + revisión humana. No se les delega decisiones clínicas ni de arquitectura. |
+| OpenCode / Claude Code | Interactive coding assistants: generation, refactoring, tests and documentation under the direction of a team member | Claude (Opus/Sonnet depending on the session) | Human-driven (not autonomous); no access to clinical data; all output via PR + human review. No clinical or architectural decisions are delegated to them. |
 
-> Se documentan a nivel de fila (no con la ficha de agente) porque son asistentes **interactivos**, no agentes del sistema: no tienen contrato de datos, fase de pipeline ni reglas de delegación propias. Registra aquí cualquier otra herramienta de IA dev-time que se incorpore.
+> They are documented at row level (not with an agent card) because they are **interactive** assistants, not system agents: they have no data contract, no pipeline phase and no delegation rules of their own. Register here any other dev-time AI tool that gets adopted.

@@ -28,23 +28,28 @@ porque los payloads ya vienen comprimidos y porque así un cliente HTTP puede le
 índice y bajarse **un asset suelto por rangos** sin traerse el caso entero — que en un
 caso real con CBCT son 270 MB. Mismo precedente que `.usdz`.
 
-Un caso medido de referencia: **419 entradas, 397 cortes DICOM, 0 errores y 0 avisos.**
+Un caso medido de referencia: **12 entradas, 18 assets (13 externos), 397 cortes DICOM
+declarados con hash propio, 0 errores.**
 
 ### 1.1 · Lo medido, tal y como se midió
 
+⚠️ **Lo adquirido se DECLARA, no se transporta.** El escaneo intraoral, la serie CBCT,
+las fotos y el informe entran como assets `external: true`, cuya `uri` es su dirección de
+contenido (`sha256:<hex>`) y no una ruta dentro del ZIP. El contenedor medido de
+referencia lleva **12 entradas y 18 assets, 13 de ellos externos**.
+
 | Ruta | Qué es |
 |---|---|
-| `scene/scan.stl` | el escaneo intraoral, **el fichero original** |
-| `volume/ct_001/` | la serie CBCT, **corte a corte, byte a byte** |
 | `scene/field.ply` | el campo gaussiano del CBCT: una primitiva por vóxel ocupado, con la atenuación que el escáner midió |
 | `scene/composite.ply` | escáner y CBCT en el mismo espacio, con columna `origen` por gaussiana |
 | `scene/scene.glb` | la malla para el visor |
-| `images/` | fotografía clínica |
+| `derived/` | lo que infirió un algoritmo, separable de un tirón |
+| `clinical/observations.json` | las observaciones colgadas de sus códigos FDI |
 
 Cada asset lleva su `sha256`, y el volumen además **un hash por corte**. Eso no es un
-adorno de integridad: es lo que permite decir que el DICOM que sale del contenedor es
-idéntico al que entró, y hay tests que lo comprueban quitando un corte, añadiendo uno de
-más y alterando uno.
+adorno de integridad: es lo que permite que quien custodie el DICOM demuestre que el suyo
+es el que se midió, sin que el contenedor lo transporte. Hay tests que lo comprueban
+quitando un corte, añadiendo uno de más y alterando uno.
 
 ⚠️ El campo gaussiano **no es un render bonito, es una medida**. `density` es sigma
 normalizada —atenuación Beer-Lambert— y no opacidad; las escalas van en milímetros
@@ -105,26 +110,29 @@ jurisdicción donde el módulo de IA no está habilitado no requiere reexportar 
 sugiera el picking por `extras`: metidas en la escena, quitar `derived/` dejaría de quitar
 la inferencia y la regla se rompería en silencio.
 
-## 1.4 · Dos perfiles: el completo y el ligero
+## 1.4 · Lo adquirido nunca viaja dentro
 
-El mismo formato admite dos maneras de empaquetar un caso, y **cambian la garantía, no la
-forma**.
+**No hay dos perfiles.** Hubo un momento en que el formato admitía empaquetar el caso
+«completo» —DICOM byte a byte dentro del ZIP— o «ligero». Ya no: el contenedor **NUNCA**
+lleva los originales adquiridos. No es una variante ni una bandera de exportación, es el
+formato.
 
-| | qué lleva | qué afirma |
-|---|---|---|
-| **completo** | todo dentro, DICOM byte a byte | «el DICOM que sale es el que entró», y el validador lo comprueba |
-| **ligero** (`--sin-originales`) | campo gaussiano, escena, manifiesto | «sé el hash de lo que debería haber ahí» |
+Los originales siguen **declarados**: mismo `id`, mismo `kind`, mismo `sha256` y mismo
+tamaño, con `external: true`. Lo que cambia es la `uri`, que pasa a ser la **dirección de
+contenido** (`sha256:<hex>`) en vez de una ruta dentro del ZIP. Quien tenga el fichero
+puede probar que es el mismo; el contenedor no lo custodia y no pretende hacerlo.
 
-En el ligero los originales siguen **declarados**: mismo `id`, misma `uri` lógica, mismo
-`sha256` y mismo tamaño, con `external: true`. Quien tenga el fichero puede probar que es
-el mismo; el contenedor ya no lo custodia.
+Por qué así: la custodia del dato clínico crudo es del centro, no de un fichero que se
+pasa por correo. Y el contenedor sigue siendo verificable —cada asset externo se puede
+contrastar contra su hash— sin convertirse en una copia más del historial del paciente.
 
-⚠️ **Y eso deja de cumplir el §1.1 del spec**, que exige que el DICOM adquirido viaje
-byte-idéntico por trazabilidad forense. Es una decisión de producto —los originales viven
-en otro sistema— y se toma fuera del formato. Lo que el formato hace es **no dejar que
-las dos cosas parezcan la misma**: el validador **avisa por cada asset externo**, y un
-contenedor ligero declara menos niveles de conformidad por construcción, porque los
-niveles salen de lo que de verdad hay dentro.
+⚠️ **El validador avisa una vez por contenedor**, no una por asset externo: con trece
+externos, trece avisos idénticos entrenan a ignorarlos. Sobre el caso real: `valido True,
+externos 13`, dos avisos.
+
+⚠️ **Los niveles de conformidad no bajan por externalizar.** Se calculan sobre los `kind`
+**declarados** en el manifiesto, no sobre los bytes que el ZIP transporta. Un contenedor
+declara los mismos niveles lleve o no lleve el DICOM dentro.
 
 ⚠️ La `uri` de un asset externo sigue siendo la ruta **lógica** (`scene/scan.stl`), nunca
 dónde está el fichero en un disco. No es estilo: la ruta local de un caso clínico lleva el
@@ -137,10 +145,12 @@ existe para no sacar.
 transformación que los relaciona, en un fichero que se abre en un navegador sin instalar
 nada y sin subir nada a ningún servidor.
 
-**El STL original no se pierde nunca.** El contenedor lleva el escaneo tal cual, y además
-la reversibilidad está medida: la malla se regenera con **4,59 × 10⁻⁶ mm** de error contra
-un presupuesto de 0,1 mm — el único error que queda es el `float32` del propio STL. Es
-decir: aceptar el formato **no obliga a renunciar** al fichero con el que ya se trabaja.
+**El STL no se pierde: se regenera.** El contenedor no transporta el escaneo original
+—lo declara por su hash— pero la reversibilidad está **medida**: la malla se regenera
+desde la escena con **4,59 × 10⁻⁶ mm** de error contra un presupuesto de 0,1 mm, y el
+único error que queda es el `float32` del propio STL. Es decir: aceptar el formato **no
+obliga a renunciar** al fichero con el que ya se trabaja, y el que sale está además ya
+registrado contra el resto del caso.
 
 **Y encima del STL, lo que el STL no puede dar.** El exportador de malla compuesta
 entrega dos cosas que el escáner por sí solo no tiene:
