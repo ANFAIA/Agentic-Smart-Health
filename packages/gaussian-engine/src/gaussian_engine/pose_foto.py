@@ -436,7 +436,7 @@ def estima_pose(ruta: Path, V: np.ndarray, etiquetas: np.ndarray,
                     "rvec": [float(x) for x in np.asarray(rv).ravel()],
                     "tvec": [float(x) for x in np.asarray(tv).ravel()],
                 })
-                if len(i) < 6:
+                if e is None or sop is None:   # <=> len(i) < 6
                     continue
                 punt = (round(sop, 3), len(i), -round(e, 1))
                 if mejor is None or punt > mejor[0]:
@@ -616,7 +616,7 @@ def color_por_vertice(
     if medido.any() and (~medido).any():
         arbol = cKDTree(V[medido])
         d, i = arbol.query(V[~medido])
-        cerca = d <= INTERPOLA_MM
+        cerca = np.asarray(d) <= INTERPOLA_MM
         idx = np.where(~medido)[0][cerca]
         rgb_out[idx] = rgb_out[np.where(medido)[0][i[cerca]]]
         interpolado[idx] = True

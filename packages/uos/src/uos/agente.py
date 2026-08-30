@@ -167,16 +167,16 @@ def _splats_khr(ruta_ply: Path, columnas: Any) -> Any:
         # acaba en el `.uos` los serializa en ingles (`name`, `unit`). Son la misma
         # informacion y este conversor tiene que poder leer las dos, porque las dos existen
         # y las dos llegan aqui.
-        nom = c["name"] if isinstance(c, dict) else getattr(c, "nombre", None)
+        nom_col = c["name"] if isinstance(c, dict) else getattr(c, "nombre", None)
         unidad = (c.get("unit") if isinstance(c, dict) else getattr(c, "unidad", "")) or ""
-        if nom not in col:
+        if nom_col not in col:
             continue
         # La convencion viaja en la UNIDAD y no en un campo aparte: `logit` para la
         # opacidad, `log(mm)` para las escalas. Ver `esquema_apariencia`.
         if unidad == "logit":
-            col[nom] = 1.0 / (1.0 + np.exp(-col[nom]))
+            col[nom_col] = 1.0 / (1.0 + np.exp(-col[nom_col]))
         elif unidad.startswith("log"):
-            col[nom] = np.exp(col[nom])
+            col[nom_col] = np.exp(col[nom_col])
 
     apila = lambda *ns: np.stack([col[x] for x in ns], 1)  # noqa: E731
     # ⚠️ El cuaternion cambia de ORDEN, no de valor. El PLY INRIA lo guarda `(w,x,y,z)` y

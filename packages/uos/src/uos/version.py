@@ -24,8 +24,12 @@ lector decide soportarla, no que tenga que hacerlo.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from uos.manifiesto import UOS_VERSION
+
+if TYPE_CHECKING:
+    from uos.manifiesto import Manifiesto
 
 
 class Lectura(StrEnum):
@@ -77,7 +81,7 @@ def puede_reemitir(version: str, *, implementada: str = UOS_VERSION) -> bool:
     return como_leer(version, implementada=implementada) is Lectura.ESTRICTA
 
 
-def lee_permisivo(crudo: bytes | str) -> tuple[object, list[str]]:
+def lee_permisivo(crudo: bytes | str) -> tuple[Manifiesto, list[str]]:
     """`(manifiesto, campos ignorados)` de una menor superior. Solo por esta via.
 
     **Se le pregunta a pydantic que sobra, en vez de mantener una copia del modelo.** La

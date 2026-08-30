@@ -1286,8 +1286,8 @@ def escribe_inria(
     # ⚠️ `nx,ny,nz` iban a CERO por convencion INRIA — campos declarados y vacios. Van
     # rellenos cuando se sabe la normal, porque de ahi sale el relieve de `f_rest_*` y un
     # lector tiene que poder recalcularlo o contradecirlo.
-    for eje, col in zip(("nx", "ny", "nz"), range(3), strict=True):
-        filas[eje] = 0.0 if nrm is None else nrm[:, col].astype(np.float32)
+    for nombre_eje, k in zip(("nx", "ny", "nz"), range(3), strict=True):
+        filas[nombre_eje] = 0.0 if nrm is None else nrm[:, k].astype(np.float32)
     filas["f_dc_0"] = f_dc[:, 0].astype(np.float32)
     filas["f_dc_1"] = f_dc[:, 1].astype(np.float32)
     filas["f_dc_2"] = f_dc[:, 2].astype(np.float32)
@@ -1432,7 +1432,8 @@ def entrena_apariencia(
                 f"el scan_colored.ply reutilizado trae {len(vcol):,} vertices y esta "
                 f"malla tiene {len(posiciones):,}: no son del mismo escaneo"
             )
-        por_pieza, motivos_tono = [], []
+        por_pieza: list = []
+        motivos_tono: list[str] = []
         medido = interpolado = n_por_pieza = 0
         print(f"Paso 1-2/4: color y render REUTILIZADOS de {reusa}")
     else:
@@ -1461,8 +1462,7 @@ def entrena_apariencia(
         # que rellenar, y un vertice mal segmentado recibe el color de un diente vecino en vez
         # de una sombra.
         medido = interpolado = 0
-        por_pieza: list = []
-        motivos_tono: list[str] = []
+        por_pieza, motivos_tono = [], []
         if etiquetas is not None and lado_fotos:
             try:
                 from analysis_agents.dental import ancho_admitido
@@ -1485,7 +1485,7 @@ def entrena_apariencia(
             except ImportError as e:
                 print(f"  ⚠ sin color por pieza ({e})")
 
-        if por_pieza:
+        if por_pieza and etiquetas is not None:
             eje = _eje_oclusal(posiciones, etiquetas)
             vcol_pieza, med_pieza = pinta_malla(
                 posiciones, etiquetas, por_pieza, color_de_encia(list(rutas_fotos)), eje
@@ -1501,6 +1501,8 @@ def entrena_apariencia(
             from gaussian_engine.pose_foto import color_por_vertice
 
             diag_por_foto: dict[str, dict] = {}
+            if etiquetas is None:
+                raise ValueError("el color por vertice necesita etiquetas FDI")
             cm = color_por_vertice(list(rutas_fotos), posiciones, caras, etiquetas,
                                    respaldo_rgb=respaldo, traza=traza,
                                    diag_por_foto=diag_por_foto)

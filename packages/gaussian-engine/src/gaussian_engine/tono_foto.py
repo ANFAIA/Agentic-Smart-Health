@@ -522,7 +522,6 @@ def tonos_de_fotos(
     # cuyas ocho «coronas» detectadas eran sus cúspides. A ninguna de las dos se le puede
     # contestar de qué lado es, y darle un lado sería peor que no dárselo: repartiría ocho
     # códigos FDI entre las cúspides de un molar y plantaría ese color en el contenedor.
-    descartadas = [f for f, v in lado_conocido.items() if v == NO_ES_TIRA]
     espejo = {f: (f // 10 % 2 and f + 10 or f - 10) for f in arco}
     mejor: dict[int, TonoPieza] = {}
     motivos: list[str] = []
@@ -586,8 +585,8 @@ def tonos_de_fotos(
     )
     descartadas = sorted({c.fdi for c, ok in zip(candidatas, es_mucosa, strict=True)
                           if not ok})
-    validas = {id(c) for c, ok in zip(candidatas, es_mucosa, strict=True) if ok}
-    con_sonda = [c for c in candidatas if id(c) in validas]
+    validas_id = {id(c) for c, ok in zip(candidatas, es_mucosa, strict=True) if ok}
+    con_sonda = [c for c in candidatas if id(c) in validas_id]
     ajuste = ajuste_de_iluminacion(
         [np.median(_lineal(c.rgb[c.mascara]), axis=0) for c in con_sonda],
         [c.encia for c in con_sonda],  # type: ignore[misc]
@@ -630,7 +629,7 @@ def tonos_de_fotos(
     # ── Pase 2: el color de cada pieza, ya en la misma escala ───────────────
     for lect in lecturas:
         factor = None
-        if ajuste is not None and lect.encia is not None and id(lect) in validas:
+        if ajuste is not None and lect.encia is not None and id(lect) in validas_id:
             ref, beta = ajuste
             factor = (ref / lect.encia) ** beta
         tercios = tono_por_tercios(lect.rgb, lect.mascara, HACIA_CERVICAL_SUPERIOR,
@@ -641,7 +640,8 @@ def tonos_de_fotos(
         if lect.fdi not in mejor or n > mejor[lect.fdi].n_pixeles:
             mejor[lect.fdi] = TonoPieza(
                 fdi=lect.fdi, lab=tercios, n_pixeles=n, foto_sha256=lect.digest,
-                correccion=None if factor is None else tuple(float(b) for b in beta),
+                correccion=None if factor is None else (float(beta[0]), float(beta[1]),
+                                                        float(beta[2])),
             )
     # ⚠️ **Una pieza sin color medido tiene que DECIRSE.** Quien abre el contenedor ve
     # trece coronas con su color y una sin campo `color`, y no puede distinguir «no se

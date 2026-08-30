@@ -459,7 +459,7 @@ class CBCTAgent(BaseIngestionAgent):
                 # original tenía ~4,5M vóxeles. Sin esto, el consumidor no sabe si
                 # el campo es completo o una submuestra.
                 paso=paso.astype(np.int64),
-                n_origen=int(n_origen),
+                n_origen=np.asarray(int(n_origen), dtype=np.int64),
             ),
             n_primitives=int(centers.shape[0]),
             detail=(

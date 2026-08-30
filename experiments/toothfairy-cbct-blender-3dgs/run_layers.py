@@ -29,9 +29,9 @@ PAQUETE = Path("/home/lgarbayo/agentic-smart-health/data/processed/demo-capas")
 PY_GPU = "/home/lgarbayo/.venvs/dental-gpu/bin/python"
 sys.path.insert(0, str(EXPERIMENT))
 
-from tf_pipeline.volume_io import Volume  # noqa: E402
-from tf_pipeline import bands  # noqa: E402
 from gs.render_drr import _mu_volume, drr  # noqa: E402
+from tf_pipeline import bands  # noqa: E402
+from tf_pipeline.volume_io import Volume  # noqa: E402
 
 HU_PACIENTE = 300.0  # máscara de "dónde acaba el paciente" (tejido ≥ blando)
 BANDAS = ["todo", "densidad-baja", "densidad-media", "densidad-alta", "densidad-muy-alta"]

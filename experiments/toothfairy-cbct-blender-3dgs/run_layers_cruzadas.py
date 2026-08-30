@@ -28,10 +28,10 @@ RAIZ = Path("/home/lgarbayo/agentic-smart-health")
 sys.path.insert(0, str(EXPERIMENT))
 sys.path.insert(0, str(RAIZ / "scripts"))
 
-from run_layers import PAQUETE, gpu, escribe_transforms  # noqa: E402
-from tf_pipeline.volume_io import Volume  # noqa: E402
-from tf_pipeline import bands  # noqa: E402
 from gs.render_drr import _mu_volume, drr  # noqa: E402
+from run_layers import PAQUETE, escribe_transforms, gpu  # noqa: E402
+from tf_pipeline import bands  # noqa: E402
+from tf_pipeline.volume_io import Volume  # noqa: E402
 
 CHECKPOINT = RAIZ / "data/processed/cbct-diente/modelo.pt"
 F1_UMBRAL = 0.530

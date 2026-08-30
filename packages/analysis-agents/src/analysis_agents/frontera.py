@@ -59,8 +59,8 @@ def concavidad(pos: np.ndarray, tri: np.ndarray) -> np.ndarray:
     a, b, c = (pos[tri[:, i]] for i in range(3))
     n_cara = np.cross(b - a, c - a)          # su modulo es 2x el area: pondera solo
     n = np.zeros_like(pos)
-    for i in range(3):
-        np.add.at(n, tri[:, i], n_cara)
+    for k in range(3):
+        np.add.at(n, tri[:, k], n_cara)
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
 
     i, j = _aristas(tri)
