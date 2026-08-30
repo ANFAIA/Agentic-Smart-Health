@@ -140,9 +140,10 @@ superficie que nadie había medido antes, mientras los canales que sí prometen
 reversibilidad daban 0,000000 mm.
 
 **El contenedor `.uos` y su visor** — el entregable, y lo que el resto alimenta. Un caso
-clínico real cierra en **419 entradas · 397 cortes DICOM · conformidad UOS-Core + UOS-Vol ·
-0 errores y 0 avisos · 18 vistas**, con la serie CBCT byte a byte y **hash por corte**
-—hay tests que lo comprueban quitando un corte, colando uno de más y alterando uno—. El
+clínico real cierra en **12 entradas · 18 assets, 13 externos · conformidad UOS-Core +
+UOS-Vol · 0 errores · 18 vistas**. Lo adquirido no viaja dentro: la serie CBCT se declara
+por su dirección de contenido con **hash por corte** para sus 397 cortes —hay tests que lo
+comprueban quitando un corte, colando uno de más y alterando uno—. El
 [visor de referencia](https://github.com/lgarbayo/uos-viewer) (repo aparte) lo abre en el
 navegador **por rangos y sin subir nada**: malla, capa clínica por pieza, vistas guardadas
 y las capas del campo gaussiano. Qué lleva dentro y a quién le sirve:

@@ -39,10 +39,11 @@ un N pequeño declarado es defendible; escondido detrás de un porcentaje, no.
 
 ## 2 · Lo que está terminado y medido
 
-**El contenedor.** Un caso real cierra en **419 entradas, 397 cortes DICOM, conformidad
-UOS-Core + UOS-Vol, 0 errores y 0 avisos, 18 vistas**. La serie CBCT entra byte a byte con
-hash por corte, y hay tests que lo comprueban quitando un corte, colando uno de más y
-alterando uno.
+**El contenedor.** Un caso real cierra en **12 entradas, 18 assets (13 externos),
+conformidad UOS-Core + UOS-Vol, 0 errores, 18 vistas**. Lo adquirido no viaja dentro: la
+serie CBCT se declara por su dirección de contenido, con hash por corte para sus 397
+cortes, y hay tests que lo comprueban quitando un corte, colando uno de más y alterando
+uno.
 
 **El pipeline de agentes.** Ingesta de las cuatro modalidades → fusión geométrica (ICP,
 rms 0,67 mm) → fusión semántica → segmentación → composición → exportación, ejecutable de
