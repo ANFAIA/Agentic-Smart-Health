@@ -8,8 +8,7 @@ Multi-agent system for integrating, analysing and representing heterogeneous den
 
 ![UOS viewer demo](docs/assets/viewer-demo.gif)
 
-The viewer demo is trimmed to the first 48 seconds of the recorded run, so the
-README shows the final `.uos` experience without carrying the full screencast.
+The viewer demo shows the `.uos` container loaded in the interactive dental twin viewer.
 
 ---
 
@@ -43,7 +42,7 @@ packaged as a `.uos` container.
 
 ![Animated synthetic pipeline demo](docs/assets/pipeline-demo.svg)
 
-Regenerate it with:
+Regenerate the pipeline animation and its measured event log with:
 
 ```bash
 uv run python scripts/demo_pipeline_readme.py

@@ -425,17 +425,6 @@ def _reveal(begin: float, total: int, *, fade: float = 0.35) -> str:
     )
 
 
-def _active(begin: float, total: int) -> str:
-    start = begin / total
-    peak = min((begin + 0.35) / total, 0.93)
-    end = min((begin + 2.5) / total, 0.94)
-    return (
-        '<animate attributeName="opacity" values="0.04;0.04;0.82;0.82;0.04;0.04" '
-        f'keyTimes="0;{start:.4f};{peak:.4f};{end:.4f};0.9500;1" '
-        f'dur="{total}s" repeatCount="indefinite"/>'
-    )
-
-
 def _stage(stages: list[Stage], key: str) -> Stage:
     try:
         return next(stage for stage in stages if stage.key == key)
@@ -465,25 +454,19 @@ def _flow_card(
     begin: float,
     total: int,
 ) -> str:
-    glow = _active(begin, total)
     dot = 17 + index
     return f"""
-  <g>
+  <g opacity="0">
+    {_reveal(begin, total, fade=0.45)}
     <rect x="{x}" y="{y}" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
-    <rect x="{x}" y="{y}" width="184" height="126" rx="10" fill="#38bdf8" opacity="0.04">
-      {glow}
-    </rect>
     <circle cx="{x + 22}" cy="{y + 27}" r="12" fill="#020617" stroke="#64748b"/>
     {_svg_text(x + 17, y + 32, str(index), size=13, fill="#f8fafc", weight=700)}
     {_svg_text(x + 44, y + 29, title, size=14, fill="#f8fafc", weight=700)}
     {_svg_text(x + 44, y + 50, subtitle, size=11, fill="#93c5fd")}
     {_svg_text(x + 20, y + 82, lines[0], size=12, fill="#cbd5e1")}
     {_svg_text(x + 20, y + 104, lines[1], size=12, fill="#cbd5e1")}
-    <circle cx="{x + 160}" cy="{y + 27}" r="4" fill="#22c55e" opacity="0">
-      <animate attributeName="opacity" values="0;0;1;1;0" begin="{begin + 0.3:.1f}s"
-        dur="2.0s" repeatCount="indefinite"/>
-    </circle>
+    <circle cx="{x + 160}" cy="{y + 27}" r="4" fill="#22c55e"/>
     <text x="{x + 150}" y="{y + 110}" font-family="ui-monospace, SFMono-Regular, Menlo,
       Consolas, monospace" font-size="{dot}" fill="#1e293b" opacity="0.42">.</text>
   </g>"""
@@ -491,8 +474,8 @@ def _flow_card(
 
 def _arrow(x1: int, x2: int, y: int, *, begin: float, total: int) -> str:
     return f"""
-  <g opacity="0.25">
-    {_active(begin, total)}
+  <g opacity="0">
+    {_reveal(begin, total, fade=0.25)}
     <line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="#38bdf8" stroke-width="3"
       stroke-linecap="round"/>
     <path d="M {x2} {y} l -9 -6 v 12 z" fill="#38bdf8"/>
@@ -501,8 +484,8 @@ def _arrow(x1: int, x2: int, y: int, *, begin: float, total: int) -> str:
 
 def _turn_arrow(*, begin: float, total: int) -> str:
     return f"""
-  <g opacity="0.25">
-    {_active(begin, total)}
+  <g opacity="0">
+    {_reveal(begin, total, fade=0.25)}
     <path d="M 594 304 C 594 352 258 338 258 386" fill="none"
       stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
     <path d="M 258 386 l -7 -10 h 14 z" fill="#38bdf8"/>
