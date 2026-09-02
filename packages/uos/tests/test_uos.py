@@ -1350,3 +1350,66 @@ def _recorre_textos(nodo, ruta=""):
     elif isinstance(nodo, list):
         for i, v in enumerate(nodo):
             yield from _recorre_textos(v, f"{ruta}[{i}]")
+
+
+def test_UOS_Distributable_separa_abrible_de_enviable(tmp_path, malla) -> None:
+    """B-6: los niveles dicen si un lector puede ABRIR el contenedor, no si puede SALIR.
+
+    Core/Vol/Sig/Full describen que tipos de asset hay dentro. Ninguno responde a la
+    pregunta que se hace justo antes de adjuntar un caso a un correo. Son las condiciones
+    de B-1, B-3 y B-4 a la vez, y a la vez porque de una en una no deciden: un contenedor
+    con el proposito declarado y la cara dentro no se puede mandar igual.
+
+    Que NO sea distribuible no es un error — es lo normal mientras el caso vive dentro de
+    la clinica. Lo que no puede pasar es que nadie lo sepa hasta despues.
+    """
+    from uos.manifiesto import Consentimiento, Proposito
+    from uos.manifiesto import Desidentificacion as D
+
+    a = _asset(malla)
+    # Le falta el proposito: valido, abrible, y no enviable.
+    m = _manifiesto([a])
+    salida = escribe_uos(tmp_path / "sin-proposito.uos", m, [("scene/scan.stl", malla)])
+    inf = valida(salida)
+    assert inf.valido, inf.errores
+    assert not inf.distribuible
+    assert any("purpose_of_use" in r for r in inf.no_distribuible_porque)
+
+    # Con todo declarado, si.
+    completo = _manifiesto(
+        [a], purpose_of_use=Proposito.FABRICACION,
+        subject=Sujeto(pseudonym="P-1",
+                       consent=Consentimiento(scope=[Proposito.FABRICACION])),
+        deidentification=D(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+            options=["CleanDescriptors", "CleanRecognizableVisualFeatures"],
+        ),
+    )
+    salida2 = escribe_uos(tmp_path / "listo.uos", completo, [("scene/scan.stl", malla)])
+    inf2 = valida(salida2)
+    assert inf2.distribuible, inf2.no_distribuible_porque
+
+
+def test_un_contenedor_identificado_NUNCA_es_distribuible(tmp_path, malla) -> None:
+    """El caso que importa: todo lo demas declarado y dato identificable dentro.
+
+    Es exactamente el estado en el que sale hoy nuestro pipeline —lleva densidad medida
+    del CBCT sin limpiar rasgos reconocibles (B-3)— y el perfil tiene que decirlo aunque
+    el consentimiento, el proposito y la de-identificacion esten todos rellenos.
+    """
+    from uos.manifiesto import Consentimiento, Proposito
+    from uos.manifiesto import Desidentificacion as D
+
+    a = _asset(malla)
+    m = _manifiesto(
+        [a], phi_state=EstadoPHI.IDENTIFIED, purpose_of_use=Proposito.TRATAMIENTO,
+        subject=Sujeto(pseudonym="P-1",
+                       consent=Consentimiento(scope=[Proposito.TRATAMIENTO])),
+        deidentification=D(profile="DICOM PS3.15 E.1"),
+    )
+    salida = escribe_uos(tmp_path / "identificado.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert inf.valido, inf.errores
+    assert not inf.distribuible
+    assert any("identified" in r for r in inf.no_distribuible_porque)

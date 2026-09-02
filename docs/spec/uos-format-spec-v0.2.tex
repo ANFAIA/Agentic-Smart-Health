@@ -1720,6 +1720,31 @@ which is what an implementer needs in order to decide whether it can open it. Wh
 per asset, by \code{external} --- and a reader that conflates the two will promise a file
 it does not have.
 
+\paragraph{\code{UOS-Distributable}: an orthogonal profile.}
+The levels answer whether a reader can \emph{open} the container. Nothing answered whether
+it is in a condition to \emph{leave} the organisation that issued it, which is the question
+asked immediately before attaching a case to an email. That profile is derived the same way
+the levels are --- checked, not chosen --- and a container is \code{UOS-Distributable} when
+all of the following hold:
+
+\begin{itemize}
+  \item \code{phi\_state} is not \code{identified};
+  \item \code{deidentification} is present and consistent with the payload
+  (\S\ref{sec:phi}) --- in particular the face rule;
+  \item \code{purpose\_of\_use} is declared and contained in \code{consent.scope}
+  (\S\ref{sec:consent});
+  \item no asset declares layer 3 outside \code{derived/} (\S\ref{sec:derived});
+  \item the container validates against its own manifest.
+\end{itemize}
+
+They are one profile and not five flags because separately they decide nothing: a container
+with its purpose declared and a reconstructible face inside is no more sendable than one
+with neither.
+
+\textbf{Not being distributable is not an error.} It is the normal state of a case while it
+lives inside the clinic, and a validator \MUSTNOT{} report it as one. What it \MUST{} do is
+say so, and say what is missing, before somebody attaches the file to an email.
+
 \subsection{The validation algorithm}\label{sec:algo}
 
 A conforming validator performs these checks in this order. \textbf{E} = error,
@@ -1784,7 +1809,9 @@ absent from \code{applied\_to} warns (W); a measured volume-derived layer withou
 19 & W & Extensions declared but unused; and one warning per required extension, since a
 reader that does not implement it must not open the container.\\
 20 & E & \code{canonical\_frame.units == "mm"}.\\
-21 & --- & Report the conformance levels satisfied, the chain length, and the view count.\\
+21 & --- & Report the conformance levels satisfied, whether the container is
+\code{UOS-Distributable} and, when it is not, what is missing; plus the chain length and
+the view count.\\
 \bottomrule
 \end{longtable}
 

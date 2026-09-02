@@ -229,7 +229,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.8.0"
+    version = "0.9.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -969,6 +969,11 @@ class UOSExportAgent(BaseExportAgent):
 
         avisos = (list(motivos or []) + aviso_vistas + aviso_volumen
                   + aviso_derivados + list(informe.avisos))
+        if not informe.distribuible:
+            avisos.append(
+                "NO es UOS-Distributable, asi que no debe salir de la organizacion que lo "
+                "emite: " + "; ".join(informe.no_distribuible_porque)
+            )
         # Lo estructurado vive en el MANIFIESTO, que es el registro del caso. Meterlo
         # tambien en `ExportOutput` daria dos sitios donde la misma verdad puede divergir,
         # y el contrato de exportacion es compartido: ensancharlo por un canal obliga a
@@ -980,7 +985,9 @@ class UOSExportAgent(BaseExportAgent):
             max_deviation_mm=0.0,
             hitl_reasons=avisos,
             detail=(
-                f"{','.join(n.value for n in informe.niveles)} · {len(assets)} assets "
+                f"{','.join(n.value for n in informe.niveles)}"
+                f"{' · UOS-Distributable' if informe.distribuible else ''} · "
+                f"{len(assets)} assets "
                 f"byte-identicos, {len(registros)} registracion(es), {informe.vistas} "
                 f"vista(s), version {informe.version} de la cadena, frame canonico "
                 f"{FRAME_IOS}"

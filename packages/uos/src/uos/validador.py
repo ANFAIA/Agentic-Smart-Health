@@ -50,6 +50,14 @@ class Informe:
     errores: list[str] = field(default_factory=list)
     avisos: list[str] = field(default_factory=list)
     niveles: list[Conformidad] = field(default_factory=list)
+    # ⚠️ **Perfil ORTOGONAL a los niveles, y por eso va aparte (B-6).** Los niveles dicen
+    # que TIPOS de asset lleva el contenedor, o sea si un lector puede abrirlo. Ninguno
+    # dice si el contenedor esta en condiciones de salir de la organizacion que lo emitio,
+    # que es una pregunta distinta y la que se hace antes de mandarlo a alguien. Se
+    # DERIVA igual que los niveles: no se elige, se comprueba.
+    distribuible: bool = False
+    #: Que le falta para serlo. Vacio cuando `distribuible` es cierto.
+    no_distribuible_porque: list[str] = field(default_factory=list)
     # Cuantas versiones del caso hay encadenadas (§8) y cuantas vistas guardadas (§7).
     # `version` es 0 cuando el contenedor no declara cadena: no es «la primera», es que
     # no hay historial que recorrer, y son cosas distintas.
@@ -115,7 +123,48 @@ def valida(ruta: Path) -> Informe:
         )
     inf.niveles = [n for n, exige in _EXIGE.items()
                    if exige <= {a.kind for a in m.assets}]
+    _perfil_distribuible(m, inf)
     return inf
+
+
+def _perfil_distribuible(m: Manifiesto, inf: Informe) -> None:
+    """UOS-Distributable: si el contenedor puede salir de quien lo emitio (B-6).
+
+    ⚠️ **«Abrible» y «distribuible» son preguntas distintas y solo se contestaba la
+    primera.** Core/Vol/Sig/Full describen que tipos de asset hay dentro; nada describia
+    si el caso esta en condiciones de mandarse a un laboratorio o a un colega. Son las
+    condiciones de B-1, B-3 y B-4 juntas, y juntas porque de una en una no deciden nada:
+    un contenedor con el proposito declarado y la cara dentro no se puede mandar igual.
+
+    No es un error: un contenedor puede ser perfectamente valido y no ser distribuible —
+    es lo normal mientras el caso vive dentro de la clinica. Lo que no puede es que nadie
+    lo sepa antes de adjuntarlo a un correo.
+    """
+    faltan: list[str] = []
+    if m.phi_state == EstadoPHI.IDENTIFIED:
+        faltan.append(
+            "declara `phi_state: identified`: lleva dato identificable dentro"
+        )
+    if m.deidentification is None:
+        faltan.append("no declara `deidentification`: no dice que medidas se aplicaron")
+    if m.purpose_of_use is None:
+        faltan.append(
+            "no declara `purpose_of_use`: quien lo reciba tendria que suponer para que se "
+            "le manda"
+        )
+    fuera = [a.id for a in m.assets
+             if a.regulatory.layer == 3 and not a.uri.startswith("derived/")]
+    if fuera:
+        faltan.append(
+            f"lleva capa 3 fuera de derived/ ({', '.join(fuera)}): borrar ese directorio "
+            "no quitaria la inferencia"
+        )
+    # Los errores del propio validador cuentan: un contenedor que no cuadra consigo mismo
+    # no se manda a nadie, por muy declarado que este todo lo demas.
+    if inf.errores:
+        faltan.append("no valida contra su propio manifiesto")
+    inf.no_distribuible_porque = faltan
+    inf.distribuible = not faltan
 
 
 def _valida_esquema(crudo: bytes, inf: Informe) -> None:
