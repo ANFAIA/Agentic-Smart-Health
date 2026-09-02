@@ -45,11 +45,16 @@ make lint
 
 ## Branching and pull requests
 
-- Work on a feature branch: `git checkout -b feat/short-description`.
+- Work on a branch created from `develop`: `git checkout -b feat/short-description`.
 - Keep commits small and focused. Write commit messages in the imperative mood.
-- Open a pull request against `main`. Every PR must pass `make lint` and `make test`.
+- Open normal feature, fix, documentation and maintenance pull requests against
+  `develop`. Every PR must pass `make lint` and `make test`.
+- Open pull requests from `develop` into `main` only when preparing a public release.
+- Create version tags and GitHub Releases from `main`, not from development branches.
 - Update `CHANGELOG.md` under `[Unreleased]` with a summary of your changes.
 - If your change adds or modifies an agent, update `AGENTS.md` accordingly.
+- See the full
+  [branch and release policy](docs/architecture/branching-and-release-workflow.md).
 
 ---
 
