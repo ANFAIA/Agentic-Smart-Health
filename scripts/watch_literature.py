@@ -57,6 +57,8 @@ from pathlib import Path
 
 import yaml
 
+RESUMEN_EN = "Watches scientific literature and proposes manifest entries."
+
 REPO = Path(__file__).resolve().parent.parent
 MANIFIESTO = REPO / "data" / "research-agent" / "knowledge_base" / "manifest.yaml"
 

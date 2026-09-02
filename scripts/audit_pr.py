@@ -30,6 +30,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+RESUMEN_EN = "Architecture guardian for pull requests in the monorepo."
+
 APPS_DIR = "apps"
 CORE_SCHEMAS_PREFIX = "packages/core-schemas/"
 

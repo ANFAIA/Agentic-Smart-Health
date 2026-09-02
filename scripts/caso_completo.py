@@ -27,6 +27,8 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+RESUMEN_EN = "Runs the full pipeline over one real clinical case, stage by stage."
+
 RAIZ = Path(__file__).resolve().parent.parent
 # Todos los paquetes del workspace, descubiertos. Estaba escrito a mano y se olvido
 # `gaussian-engine` al anadirlo: el caso corrio los tres primeros minutos y murio en la

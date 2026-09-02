@@ -33,6 +33,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+RESUMEN_EN = "Optimises the seeded Gaussian field as a 3DGS representation."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for paquete in ("core-schemas", "ingestion-agents", "fusion-agents", "export-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))

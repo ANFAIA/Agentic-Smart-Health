@@ -42,6 +42,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+RESUMEN_EN = "Computes the measured metrics promised in the project brief."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for _src in sorted(RAIZ.glob("packages/*/src")):
     sys.path.insert(0, str(_src))

@@ -113,6 +113,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Negative experiment: trains 3DGS from a dental arch."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for _paquete in ("ingestion-agents", "fusion-agents", "analysis-agents", "core-schemas"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))

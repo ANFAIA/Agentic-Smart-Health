@@ -73,6 +73,8 @@ from torch_geometric.transforms import NormalizeScale
 from torch_geometric.utils import scatter
 from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 
+RESUMEN_EN = "Labels each tooth in a dental arch with its FDI code."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-aggregation"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))

@@ -49,6 +49,8 @@ from pathlib import Path
 
 import yaml
 
+RESUMEN_EN = "Blocks third-party, oversized or clinical data from entering the repository."
+
 REPO = Path(__file__).resolve().parent.parent
 MANIFIESTO = REPO / "data" / "research-agent" / "knowledge_base" / "manifest.yaml"
 

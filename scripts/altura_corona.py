@@ -86,6 +86,8 @@ import numpy as np
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 
+RESUMEN_EN = "Measures clinical crown height on the intraoral scanner mesh."
+
 _RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_RAIZ / "packages/ingestion-agents/src"))
 sys.path.insert(0, str(_RAIZ / "packages/fusion-agents/src"))

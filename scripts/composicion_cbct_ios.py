@@ -35,6 +35,8 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+RESUMEN_EN = "Composes CBCT teeth and IOS gum geometry as Gaussians."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "export-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))
