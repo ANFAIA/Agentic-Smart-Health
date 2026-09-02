@@ -1307,3 +1307,46 @@ def test_el_desplazamiento_de_fechas_NO_viaja_si_no_esta_identificado(tmp_path, 
     inf = valida(salida)
     assert not inf.valido
     assert any("date_shift_days" in e for e in inf.errores), inf.errores
+
+
+def test_el_esquema_publicado_esta_ENTERO_en_ingles() -> None:
+    """G-1: el esquema es el unico artefacto que un ajeno usa sin leernos el codigo.
+
+    ⚠️ **Salia bilingue sin que nadie lo decidiera.** Los nombres de campo y los valores de
+    enumeracion son ingleses porque son el formato de cable; `title` y `description` los
+    generaba pydantic del nombre de la clase y del docstring, que estan en castellano
+    porque el contrato lo leemos nosotros. El resultado era un esquema cuya mitad legible
+    no la puede leer su destinatario — y este fichero existe justo para que alguien
+    compruebe su lector contra algo que no sea su propia salida.
+
+    Se comprueba sobre el fichero PUBLICADO y no sobre el generado: lo que viaja es aquel.
+    """
+    import json as _json
+    import re
+
+    from uos.esquema import RUTA
+
+    publicado = Path(__file__).resolve().parents[3] / RUTA
+    crudo = publicado.read_text(encoding="utf-8")
+    castellano = re.compile(
+        r"[áéíóúñ¿¡]|\b(que|para|los|las|con|una|del|por|como|cada|sobre|este|segun)\b"
+    )
+    culpables = [
+        f"{ruta}: {texto}"
+        for ruta, texto in _recorre_textos(_json.loads(crudo))
+        if castellano.search(texto)
+    ]
+    assert culpables == [], "el esquema publicado lleva castellano:\n" + "\n".join(culpables)
+
+
+def _recorre_textos(nodo, ruta=""):
+    """Los `title` y `description` del esquema, con su ruta, para poder senalar cual."""
+    if isinstance(nodo, dict):
+        for k, v in nodo.items():
+            if k in ("title", "description") and isinstance(v, str):
+                yield f"{ruta}.{k}", v
+            else:
+                yield from _recorre_textos(v, f"{ruta}.{k}")
+    elif isinstance(nodo, list):
+        for i, v in enumerate(nodo):
+            yield from _recorre_textos(v, f"{ruta}[{i}]")

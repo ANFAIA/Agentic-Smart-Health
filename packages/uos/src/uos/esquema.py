@@ -45,16 +45,101 @@ ID = (
 )
 
 
+# ── El esquema se publica EN INGLES, y el contrato se lee en castellano ────────────
+#
+# ⚠️ **Este fichero es el unico artefacto que un implementador ajeno usa sin leernos el
+# codigo**, y salia bilingue sin que nadie lo decidiera: los nombres de campo y los valores
+# de enumeracion son ingleses porque son el formato de cable, y `title` y `description` los
+# generaba pydantic solo, a partir del nombre de la clase y del docstring — que estan en
+# castellano porque el contrato lo leemos nosotros. El resultado era un esquema cuya mitad
+# legible no la puede leer su destinatario (G-1 de la revision externa).
+#
+# La traduccion vive aqui y no en `manifiesto.py` a proposito: `title`/`description` son
+# **decisiones de publicacion**, no del contrato, y los `StrEnum` no admiten un atributo de
+# clase que no acabe siendo un miembro mas de la enumeracion. Lo que evita que se quede
+# atras es la comprobacion de abajo, que revienta en cuanto aparece un modelo sin entrada.
+#
+# La clave del `$defs` pasa a ser el titulo ingles y las referencias se reescriben con ella,
+# porque un generador de documentacion usa esa clave como encabezado.
+PUBLICACION_EN: dict[str, tuple[str, str]] = {
+    "Asset": ("Asset", "One file or directory the container carries or references."),
+    "Parte": ("Part", "One file inside an asset that is a directory, such as a DICOM slice."),
+    "Frame": ("Frame", "A coordinate system in which asset positions are expressed."),
+    "Registro": ("Registration", "A rigid transform taking points from one frame to another."),
+    "Visita": ("Visit", "One clinical encounter the assets belong to."),
+    "Sujeto": ("Subject", "The patient, always by pseudonym."),
+    "Adquisicion": ("Acquisition", "When an asset was captured, and on what equipment."),
+    "Dispositivo": ("Device", "The equipment, with fixed keys and no serial number."),
+    "Proyeccion": ("Projection", "What kind of 2D image an asset is, and which teeth it targets."),
+    "Regulatorio": ("Regulatory", "The regulatory layer of an asset and its clearances."),
+    "Autorizacion": ("Clearance", "What one jurisdiction says about this asset."),
+    "Desidentificacion": (
+        "Deidentification",
+        "What was done to de-identify, in the vocabulary of DICOM PS3.15 Annex E.",
+    ),
+    "Herramienta": ("Tool", "The program that applied the de-identification."),
+    "Consentimiento": ("Consent", "What the patient consented to, which bounds purpose of use."),
+    "RecursoFHIR": ("FHIRResource", "Which FHIR R4 resource an asset corresponds to."),
+    "Extension": ("Extension", "A format extension the container declares and may require."),
+    "Procedencia": ("Provenance", "The append-only hash chain linking versions of this case."),
+    "EstadoPHI": (
+        "PHIState",
+        "Explicit PHI state. No value of it makes a container non-personal data.",
+    ),
+    "EstadoRegulatorio": ("ClearanceStatus", "Closed vocabulary for a clearance status."),
+    "Proposito": ("PurposeOfUse", "Closed vocabulary for what a container was issued for."),
+    "Clase": ("AssetKind", "What kind of thing an asset is."),
+}
+
+
+def _a_ingles(esquema: dict[str, Any]) -> dict[str, Any]:
+    """Reescribe `$defs`, `title` y `description` del esquema al ingles.
+
+    Revienta si algun modelo no declara su traduccion: un esquema publicado a medias en
+    castellano es peor que uno entero en castellano, porque parece traducido.
+    """
+    defs = esquema.get("$defs", {})
+    faltan = sorted(set(defs) - set(PUBLICACION_EN))
+    if faltan:
+        raise SystemExit(
+            "Estos modelos no declaran su titulo y descripcion en ingles para el esquema "
+            "publicado:\n  " + "\n  ".join(faltan)
+            + "\n\nAnadelos a `PUBLICACION_EN` en `uos/esquema.py`. El esquema es el "
+            "unico artefacto\nque un implementador ajeno usa sin leer nuestro codigo."
+        )
+    nombres = {viejo: PUBLICACION_EN[viejo][0] for viejo in defs}
+
+    def _traduce(nodo: Any) -> Any:
+        if isinstance(nodo, dict):
+            salida = {}
+            for k, v in nodo.items():
+                if k == "$ref" and isinstance(v, str) and v.startswith("#/$defs/"):
+                    salida[k] = "#/$defs/" + nombres.get(v.removeprefix("#/$defs/"), v)
+                else:
+                    salida[k] = _traduce(v)
+            return salida
+        return [_traduce(x) for x in nodo] if isinstance(nodo, list) else nodo
+
+    esquema = _traduce(esquema)
+    esquema["$defs"] = {}
+    for viejo, cuerpo in defs.items():
+        titulo, descripcion = PUBLICACION_EN[viejo]
+        esquema["$defs"][titulo] = {
+            **_traduce(cuerpo), "title": titulo, "description": descripcion,
+        }
+    return esquema
+
+
 def esquema_del_manifiesto() -> dict[str, Any]:
     """El JSON Schema del manifiesto, derivado del contrato."""
-    esquema = Manifiesto.model_json_schema(mode="serialization")
+    esquema = _a_ingles(Manifiesto.model_json_schema(mode="serialization"))
     esquema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     esquema["$id"] = ID
     esquema["title"] = f"UOS manifest v{UOS_VERSION}"
     esquema["description"] = (
-        "Manifiesto de un contenedor Unified Oral Scene. Derivado del contrato de la "
-        "implementacion de referencia, no escrito a mano: un esquema copiado se separa "
-        "del codigo en el primer campo que alguien anade."
+        "The manifest of a Unified Oral Scene container. Derived from the reference "
+        "implementation's contract rather than written by hand: a schema copied by hand "
+        "diverges from the code at the first field somebody adds."
     )
     return esquema
 

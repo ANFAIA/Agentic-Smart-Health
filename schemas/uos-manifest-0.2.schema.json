@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "Adquisicion": {
+    "Acquisition": {
       "additionalProperties": false,
       "properties": {
         "time": {
@@ -17,22 +17,23 @@
           "title": "Time"
         },
         "device": {
-          "$ref": "#/$defs/Dispositivo"
+          "$ref": "#/$defs/Device"
         }
       },
-      "title": "Adquisicion",
-      "type": "object"
+      "title": "Acquisition",
+      "type": "object",
+      "description": "When an asset was captured, and on what equipment."
     },
     "Asset": {
       "additionalProperties": false,
-      "description": "El sobre comun a todo asset (§4.1).\n\n`sha256` no es decorativo: es lo que hace la procedencia verificable (§2.5) y lo que\npermite decir que el DICOM que sale es byte-identico al que entro.",
+      "description": "One file or directory the container carries or references.",
       "properties": {
         "id": {
           "title": "Id",
           "type": "string"
         },
         "kind": {
-          "$ref": "#/$defs/Clase"
+          "$ref": "#/$defs/AssetKind"
         },
         "visit": {
           "title": "Visit",
@@ -61,7 +62,7 @@
           "type": "string"
         },
         "acquisition": {
-          "$ref": "#/$defs/Adquisicion"
+          "$ref": "#/$defs/Acquisition"
         },
         "load_priority": {
           "default": 30,
@@ -69,12 +70,12 @@
           "type": "integer"
         },
         "regulatory": {
-          "$ref": "#/$defs/Regulatorio"
+          "$ref": "#/$defs/Regulatory"
         },
         "projection": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Proyeccion"
+              "$ref": "#/$defs/Projection"
             },
             {
               "type": "null"
@@ -84,7 +85,7 @@
         },
         "parts": {
           "items": {
-            "$ref": "#/$defs/Parte"
+            "$ref": "#/$defs/Part"
           },
           "title": "Parts",
           "type": "array"
@@ -127,9 +128,9 @@
       "title": "Asset",
       "type": "object"
     },
-    "Autorizacion": {
+    "Clearance": {
       "additionalProperties": false,
-      "description": "Que dice UNA jurisdiccion sobre este asset (B-5).\n\nSustituye al par `status` + `jurisdictions`, que no se podia leer: `status` era texto\nlibre y `jurisdictions: []` era ambiguo —¿ninguna, o no declarado?—, que es justo la\nambiguedad que el formato prohibe en `fdi_targets` y en `derivation`. Un estado sin\njurisdiccion no significa nada: «investigational» es una afirmacion frente a UN\nregulador, no una propiedad del fichero.",
+      "description": "What one jurisdiction says about this asset.",
       "properties": {
         "jurisdiction": {
           "title": "Jurisdiction",
@@ -140,7 +141,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/EstadoRegulatorio"
+          "$ref": "#/$defs/ClearanceStatus"
         },
         "reference": {
           "anyOf": [
@@ -160,11 +161,11 @@
         "regime",
         "status"
       ],
-      "title": "Autorizacion",
+      "title": "Clearance",
       "type": "object"
     },
-    "Clase": {
-      "description": "`kind` de un asset (§4.1). El nivel UOS-Core solo exige los tres primeros.",
+    "AssetKind": {
+      "description": "What kind of thing an asset is.",
       "enum": [
         "volume",
         "mesh_gs_scene",
@@ -173,12 +174,12 @@
         "derived_seg",
         "document"
       ],
-      "title": "Clase",
+      "title": "AssetKind",
       "type": "string"
     },
-    "Consentimiento": {
+    "Consent": {
       "additionalProperties": false,
-      "description": "Para que consintio el paciente. `scope` es lo que limita `purpose_of_use`.",
+      "description": "What the patient consented to, which bounds purpose of use.",
       "properties": {
         "fhir_consent": {
           "anyOf": [
@@ -194,7 +195,7 @@
         },
         "scope": {
           "items": {
-            "$ref": "#/$defs/Proposito"
+            "$ref": "#/$defs/PurposeOfUse"
           },
           "title": "Scope",
           "type": "array"
@@ -213,12 +214,12 @@
           "title": "Obtained"
         }
       },
-      "title": "Consentimiento",
+      "title": "Consent",
       "type": "object"
     },
-    "Desidentificacion": {
+    "Deidentification": {
       "additionalProperties": false,
-      "description": "QUE se hizo para de-identificar, en el vocabulario de DICOM PS3.15 Anexo E (B-3).\n\n⚠️ **`phi_state` solo no puede sostener lo que afirma.** Trata la de-identificacion\ncomo una propiedad de las etiquetas DICOM, y el contenedor lleva cosas que identifican\na una persona sin ninguna etiqueta: `scene/field.ply` es la densidad del CBCT con\ntejido blando incluido, y de ahi se reconstruye una **superficie facial** —«imagen\ncomparable» a una fotografia de cara completa bajo HIPAA Safe Harbor, y dato biometrico\nbajo el RGPD—. La denticion identifica por si sola: de eso vive la odontologia forense.\n\nPor eso `pseudonymized` y `anonymized` exigen este bloque. No cambia lo que el\ncontenedor lleva; cambia que diga **que se hizo** en lugar de **como quedo**, que es la\nunica de las dos afirmaciones que alguien puede comprobar.",
+      "description": "What was done to de-identify, in the vocabulary of DICOM PS3.15 Annex E.",
       "properties": {
         "profile": {
           "title": "Profile",
@@ -241,7 +242,7 @@
         "tool": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Herramienta"
+              "$ref": "#/$defs/Tool"
             },
             {
               "type": "null"
@@ -277,12 +278,12 @@
       "required": [
         "profile"
       ],
-      "title": "Desidentificacion",
+      "title": "Deidentification",
       "type": "object"
     },
-    "Dispositivo": {
+    "Device": {
       "additionalProperties": false,
-      "description": "El equipo, con claves FIJAS y **sin numero de serie** (B-3).\n\nEra `map str -> str` sin restriccion, y un mapa libre en un contenedor clinico acaba\nconteniendo el serial del equipo — que bajo HIPAA Safe Harbor es identificador\ndirecto, en la misma lista que el nombre. Si un flujo lo necesita, va en\n`deidentification.note` y el contenedor se declara `identified`.",
+      "description": "The equipment, with fixed keys and no serial number.",
       "properties": {
         "manufacturer": {
           "anyOf": [
@@ -321,22 +322,22 @@
           "title": "Software Version"
         }
       },
-      "title": "Dispositivo",
+      "title": "Device",
       "type": "object"
     },
-    "EstadoPHI": {
-      "description": "Anonimizacion como ESTADO EXPLICITO (§2.6), no como suposicion.\n\nUn `.uos` dice en que estado esta y los visores lo respetan —banner, politicas de\nexport—. Sin este campo, «no se si lleva datos identificables» y «no los lleva» serian\nindistinguibles, que es la peor forma de manejar PHI.",
+    "PHIState": {
+      "description": "Explicit PHI state. No value of it makes a container non-personal data.",
       "enum": [
         "identified",
         "pseudonymized",
         "anonymized",
         "quarantined"
       ],
-      "title": "EstadoPHI",
+      "title": "PHIState",
       "type": "string"
     },
-    "EstadoRegulatorio": {
-      "description": "Vocabulario CERRADO. `status` era `str | None` y por tanto texto libre: dos\nemisores escribian «investigational» y «Investigational (EU MDR)» y ningun lector\npodia compararlos.",
+    "ClearanceStatus": {
+      "description": "Closed vocabulary for a clearance status.",
       "enum": [
         "not_a_device",
         "investigational",
@@ -344,12 +345,12 @@
         "cleared",
         "withdrawn"
       ],
-      "title": "EstadoRegulatorio",
+      "title": "ClearanceStatus",
       "type": "string"
     },
     "Extension": {
       "additionalProperties": false,
-      "description": "Una extension del formato, DECLARADA (no hay §; es propuesta nuestra).\n\n**Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /\n`extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre\nel fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.\nUOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el\nsobre de asset tienen donde\ndecir «esto es una extension, se llama asi, y si no la entiendes ignorala».\n\nLa consecuencia practica la vimos implementando: nuestras extensiones —la capa clinica,\nlos descriptores de gaussianas medidas— viven en directorios propios y **un lector\najeno las ignora sin enterarse de que las ignora**. Eso convierte un formato abierto en\nuno que solo el emisor lee entero, que es justo lo que UOS existe para evitar.\n\n⚠️ La distincion entre `used` y `required` es el corazon del mecanismo, no burocracia:\n`required` dice «sin entender esto NO abras el fichero». Una extension que solo anade\ninformacion va en `used` y nunca en `required` — si estuviera, un visor conforme se\nnegaria a abrir un caso que podria enseniar perfectamente.",
+      "description": "A format extension the container declares and may require.",
       "properties": {
         "name": {
           "title": "Name",
@@ -398,7 +399,7 @@
     },
     "Frame": {
       "additionalProperties": false,
-      "description": "Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2).",
+      "description": "A coordinate system in which asset positions are expressed.",
       "properties": {
         "id": {
           "title": "Id",
@@ -426,9 +427,9 @@
       "title": "Frame",
       "type": "object"
     },
-    "Herramienta": {
+    "Tool": {
       "additionalProperties": false,
-      "description": "Que programa aplico la de-identificacion, para poder repetirla o auditarla.",
+      "description": "The program that applied the de-identification.",
       "properties": {
         "name": {
           "title": "Name",
@@ -462,12 +463,12 @@
       "required": [
         "name"
       ],
-      "title": "Herramienta",
+      "title": "Tool",
       "type": "object"
     },
-    "Parte": {
+    "Part": {
       "additionalProperties": false,
-      "description": "Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).\n\nExiste para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que\nalgo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie\nno cuadra» y «el corte 214 esta corrupto».",
+      "description": "One file inside an asset that is a directory, such as a DICOM slice.",
       "properties": {
         "name": {
           "title": "Name",
@@ -489,12 +490,12 @@
         "sha256",
         "bytes"
       ],
-      "title": "Parte",
+      "title": "Part",
       "type": "object"
     },
-    "Procedencia": {
+    "Provenance": {
       "additionalProperties": false,
-      "description": "Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico.",
+      "description": "The append-only hash chain linking versions of this case.",
       "properties": {
         "prev_manifest_sha256": {
           "anyOf": [
@@ -521,11 +522,11 @@
           "title": "Chain"
         }
       },
-      "title": "Procedencia",
+      "title": "Provenance",
       "type": "object"
     },
-    "Proposito": {
-      "description": "Para que se emitio ESTE contenedor (B-4). Vocabulario cerrado.\n\nUn `.uos` que sale hacia un laboratorio protesico, hacia un colega para una segunda\nopinion y hacia un pipeline de entrenamiento son **tres actos juridicos distintos**, y\nel contenedor no distinguia ninguno. El proposito es lo primero que pregunta cualquier\nrevision de proteccion de datos y es lo que decide que capas pueden viajar; sin el,\ncada receptor tiene que suponerlo.",
+    "PurposeOfUse": {
+      "description": "Closed vocabulary for what a container was issued for.",
       "enum": [
         "treatment",
         "lab_manufacturing",
@@ -533,12 +534,12 @@
         "research",
         "model_training"
       ],
-      "title": "Proposito",
+      "title": "PurposeOfUse",
       "type": "string"
     },
-    "Proyeccion": {
+    "Projection": {
       "additionalProperties": false,
-      "description": "Que clase de imagen 2D es y a que piezas apunta (§5.3).\n\n`fdi_targets` va VACIO cuando no se sabe, que con una foto suelta de una carpeta de\nclinica es lo normal: nadie anoto a que diente apunta. Vacio significa «no consta»,\nno «ninguno» — y adivinarlo desde los pixeles es justo el trabajo que el proyecto no\nda por hecho.",
+      "description": "What kind of 2D image an asset is, and which teeth it targets.",
       "properties": {
         "type": {
           "title": "Type",
@@ -555,12 +556,12 @@
       "required": [
         "type"
       ],
-      "title": "Proyeccion",
+      "title": "Projection",
       "type": "object"
     },
-    "RecursoFHIR": {
+    "FHIRResource": {
       "additionalProperties": false,
-      "description": "A que recurso FHIR R4 corresponde un asset (§9), para el conector con el PMS.\n\n⚠️ **`resource` es una referencia y `resource_type` un TIPO, y no son lo mismo.** El\nejemplo del spec escribe `\"resource\": \"ImagingStudy/is-9911\"`, o sea una referencia a un\nrecurso que existe en un servidor concreto. Nosotros no tenemos ese servidor: el caso no\nha pasado por ningun PMS y no hay identificador que citar. Declarar uno inventado seria\nexactamente el fallo del ADR 003 —plausible, silencioso y ya dentro del contrato—,\nporque un conector que lo leyera intentaria resolverlo.\n\nAsi que se declara lo que SI se sabe: el tipo de recurso al que corresponde cada asset.\nEs una afirmacion de tipo, verdadera hoy y sin servidor, y es lo que un conector\nnecesita para saber que crear. `resource` queda para cuando el caso viva en un PMS de\nverdad y alguien pueda rellenarlo.",
+      "description": "Which FHIR R4 resource an asset corresponds to.",
       "properties": {
         "resource_type": {
           "title": "Resource Type",
@@ -587,12 +588,12 @@
       "required": [
         "resource_type"
       ],
-      "title": "RecursoFHIR",
+      "title": "FHIRResource",
       "type": "object"
     },
-    "Registro": {
+    "Registration": {
       "additionalProperties": false,
-      "description": "Relacion espacial entre dos frames. **Objeto de primera clase** (§6).\n\nToda relacion es explicita, auditable y firmable. La transformada lleva puntos de\n`source_frame` a `target_frame`, en milimetros y mano derecha.\n\n⚠️ `verified_by` vacio en un registro `auto_dl` significa PROVISIONAL, y el visor tiene\nque indicarlo. Un alineamiento automatico que nadie ha mirado no es lo mismo que uno\nfirmado, y presentarlos igual seria exactamente el fallo callado que el spec evita.",
+      "description": "A rigid transform taking points from one frame to another.",
       "properties": {
         "id": {
           "title": "Id",
@@ -671,7 +672,7 @@
         "regulatory": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Regulatorio"
+              "$ref": "#/$defs/Regulatory"
             },
             {
               "type": "null"
@@ -687,12 +688,12 @@
         "transform_4x4_row_major",
         "method"
       ],
-      "title": "Registro",
+      "title": "Registration",
       "type": "object"
     },
-    "Regulatorio": {
+    "Regulatory": {
       "additionalProperties": false,
-      "description": "La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.\n\n**Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un\nprocedimiento determinista y reproducible a partir de capa 1, sin modelo entrenado —\nregistraciones automaticas, conversiones de formato, submuestreos, color medido por\npieza—; 3 es salida de modelo. El 2 no existia: el documento admitia `1..3` y solo\ndefinia el 1 y el 3, asi que todo el computo determinista viajaba como capa 1 sin que\nnadie lo dijera (B-5).\n\n**La 2 no se desmonta y la 3 si.** La 3 vive solo bajo `derived/` porque borrar ese\ndirectorio tiene que quitar toda la inferencia. La 2 puede vivir fuera, pero **tiene\nque declarar `derived_from`**: si es reproducible, se tiene que poder decir a partir\nde que, o la afirmacion no se puede comprobar.\n\n⚠️ **`clearances: []` significa NO DECLARADO**, por definicion escrita y no por\nconvencion. El validador avisa por cada asset de capa 3 que llegue vacio.",
+      "description": "The regulatory layer of an asset and its clearances.",
       "properties": {
         "layer": {
           "default": 1,
@@ -703,18 +704,18 @@
         },
         "clearances": {
           "items": {
-            "$ref": "#/$defs/Autorizacion"
+            "$ref": "#/$defs/Clearance"
           },
           "title": "Clearances",
           "type": "array"
         }
       },
-      "title": "Regulatorio",
+      "title": "Regulatory",
       "type": "object"
     },
-    "Sujeto": {
+    "Subject": {
       "additionalProperties": false,
-      "description": "El paciente, SIEMPRE por seudonimo. El nombre no entra en un `.uos`.",
+      "description": "The patient, always by pseudonym.",
       "properties": {
         "pseudonym": {
           "title": "Pseudonym",
@@ -735,7 +736,7 @@
         "consent": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Consentimiento"
+              "$ref": "#/$defs/Consent"
             },
             {
               "type": "null"
@@ -747,10 +748,10 @@
       "required": [
         "pseudonym"
       ],
-      "title": "Sujeto",
+      "title": "Subject",
       "type": "object"
     },
-    "Visita": {
+    "Visit": {
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -771,12 +772,13 @@
         "id",
         "date"
       ],
-      "title": "Visita",
-      "type": "object"
+      "title": "Visit",
+      "type": "object",
+      "description": "One clinical encounter the assets belong to."
     }
   },
   "additionalProperties": false,
-  "description": "Manifiesto de un contenedor Unified Oral Scene. Derivado del contrato de la implementacion de referencia, no escrito a mano: un esquema copiado se separa del codigo en el primer campo que alguien anade.",
+  "description": "The manifest of a Unified Oral Scene container. Derived from the reference implementation's contract rather than written by hand: a schema copied by hand diverges from the code at the first field somebody adds.",
   "properties": {
     "uos_version": {
       "default": "0.2",
@@ -800,12 +802,12 @@
       "type": "object"
     },
     "phi_state": {
-      "$ref": "#/$defs/EstadoPHI"
+      "$ref": "#/$defs/PHIState"
     },
     "deidentification": {
       "anyOf": [
         {
-          "$ref": "#/$defs/Desidentificacion"
+          "$ref": "#/$defs/Deidentification"
         },
         {
           "type": "null"
@@ -816,7 +818,7 @@
     "purpose_of_use": {
       "anyOf": [
         {
-          "$ref": "#/$defs/Proposito"
+          "$ref": "#/$defs/PurposeOfUse"
         },
         {
           "type": "null"
@@ -825,7 +827,7 @@
       "default": null
     },
     "subject": {
-      "$ref": "#/$defs/Sujeto"
+      "$ref": "#/$defs/Subject"
     },
     "canonical_frame": {
       "$ref": "#/$defs/Frame"
@@ -839,7 +841,7 @@
     },
     "visits": {
       "items": {
-        "$ref": "#/$defs/Visita"
+        "$ref": "#/$defs/Visit"
       },
       "title": "Visits",
       "type": "array"
@@ -853,14 +855,14 @@
     },
     "registrations": {
       "items": {
-        "$ref": "#/$defs/Registro"
+        "$ref": "#/$defs/Registration"
       },
       "title": "Registrations",
       "type": "array"
     },
     "fhir_map": {
       "additionalProperties": {
-        "$ref": "#/$defs/RecursoFHIR"
+        "$ref": "#/$defs/FHIRResource"
       },
       "title": "Fhir Map",
       "type": "object"
@@ -887,7 +889,7 @@
       "type": "array"
     },
     "provenance": {
-      "$ref": "#/$defs/Procedencia"
+      "$ref": "#/$defs/Provenance"
     }
   },
   "required": [
