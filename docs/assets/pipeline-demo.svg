@@ -1,0 +1,214 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760"
+  role="img" aria-labelledby="title desc">
+  <title id="title">Agentic Smart Health synthetic pipeline demo</title>
+  <desc id="desc">Dark animated flow diagram showing synthetic raw dental files becoming
+  a TwinSnapshot, fusion outputs, exports and a UOS directory.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1e3a8a"/>
+      <stop offset="45%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect width="1120" height="760" fill="url(#bg)"/>
+  <rect x="34" y="34" width="1052" height="692" rx="20" fill="#020617"
+    stroke="#1e293b" stroke-width="1.4"/>
+  <text x="62" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="800" fill="#f8fafc">Agentic Smart Health pipeline</text>
+  <text x="64" y="104" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#93c5fd">A synthetic dental case becomes a traceable .uos container</text>
+  <rect x="56" y="130" width="560" height="2" rx="1" fill="#1e293b"/>
+  <rect x="56" y="130" width="0" height="2" rx="1" fill="#38bdf8">
+    <animate attributeName="width" from="0" to="980" dur="20s"
+      repeatCount="indefinite"/>
+  </rect>
+  
+  <clipPath id="step-1-clip">
+    <rect x="54" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.0050;0.0275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-1-clip)">
+    <rect x="54" y="178" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <circle cx="76" cy="205" r="12" fill="#020617" stroke="#64748b"/>
+    <text x="71" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">1</text>
+    <text x="98" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Raw case</text>
+    <text x="98" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">synthetic input</text>
+    <text x="74" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">OBJ / DICOM / report</text>
+    <text x="74" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">photo · synthetic only</text>
+    <circle cx="214" cy="205" r="4" fill="#22c55e"/>
+    <text x="204" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="18" fill="#1e293b" opacity="0.42">.</text>
+  </g>
+  <clipPath id="step-2-clip">
+    <rect x="278" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.1800;0.2025;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-2-clip)">
+    <rect x="278" y="178" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <circle cx="300" cy="205" r="12" fill="#020617" stroke="#64748b"/>
+    <text x="295" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">2</text>
+    <text x="322" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Ingestion</text>
+    <text x="322" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">four agents</text>
+    <text x="298" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">TwinSnapshot</text>
+    <text x="298" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">3 blobs</text>
+    <circle cx="438" cy="205" r="4" fill="#22c55e"/>
+    <text x="428" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="19" fill="#1e293b" opacity="0.42">.</text>
+  </g>
+  <clipPath id="step-3-clip">
+    <rect x="502" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.3550;0.3775;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-3-clip)">
+    <rect x="502" y="178" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <circle cx="524" cy="205" r="12" fill="#020617" stroke="#64748b"/>
+    <text x="519" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">3</text>
+    <text x="546" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Fusion</text>
+    <text x="546" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">geometry + FDI</text>
+    <text x="522" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">rigid registration ok</text>
+    <text x="522" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">segmentation ok</text>
+    <circle cx="662" cy="205" r="4" fill="#22c55e"/>
+    <text x="652" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="20" fill="#1e293b" opacity="0.42">.</text>
+  </g>
+  <clipPath id="step-4-clip">
+    <rect x="166" y="390" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.5300;0.5525;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-4-clip)">
+    <rect x="166" y="390" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <circle cx="188" cy="417" r="12" fill="#020617" stroke="#64748b"/>
+    <text x="183" y="422" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">4</text>
+    <text x="210" y="419" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Exports</text>
+    <text x="210" y="440" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">materialised twin</text>
+    <text x="186" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">STL / PLY / render</text>
+    <text x="186" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">viewer + UOS</text>
+    <circle cx="326" cy="417" r="4" fill="#22c55e"/>
+    <text x="316" y="500" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="21" fill="#1e293b" opacity="0.42">.</text>
+  </g>
+  <clipPath id="step-5-clip">
+    <rect x="390" y="390" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.7050;0.7275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-5-clip)">
+    <rect x="390" y="390" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <circle cx="412" cy="417" r="12" fill="#020617" stroke="#64748b"/>
+    <text x="407" y="422" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">5</text>
+    <text x="434" y="419" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">UOS</text>
+    <text x="434" y="440" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">one container</text>
+    <text x="410" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">8 assets · 11 entries</text>
+    <text x="410" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">8 views · 0 errors</text>
+    <circle cx="550" cy="417" r="4" fill="#22c55e"/>
+    <text x="540" y="500" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="22" fill="#1e293b" opacity="0.42">.</text>
+  </g>
+  
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.1800;0.1925;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <line x1="238" y1="241" x2="274" y2="241" stroke="#38bdf8" stroke-width="3"
+      stroke-linecap="round"/>
+    <path d="M 274 241 l -9 -6 v 12 z" fill="#38bdf8"/>
+  </g>
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.3550;0.3675;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <line x1="462" y1="241" x2="498" y2="241" stroke="#38bdf8" stroke-width="3"
+      stroke-linecap="round"/>
+    <path d="M 498 241 l -9 -6 v 12 z" fill="#38bdf8"/>
+  </g>
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.5300;0.5425;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <path d="M 594 304 C 594 352 258 338 258 386" fill="none"
+      stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M 258 386 l -7 -10 h 14 z" fill="#38bdf8"/>
+  </g>
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7050;0.7175;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <line x1="350" y1="453" x2="386" y2="453" stroke="#38bdf8" stroke-width="3"
+      stroke-linecap="round"/>
+    <path d="M 386 453 l -9 -6 v 12 z" fill="#38bdf8"/>
+  </g>
+  
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7150;0.7325;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <rect x="700" y="162" width="386" height="500" rx="14" fill="#020617"
+      stroke="#38bdf8" stroke-width="1.4"/>
+    <rect x="700" y="162" width="386" height="42" rx="14" fill="#0f172a"/>
+    <circle cx="724" cy="183" r="5" fill="#ef4444"/>
+    <circle cx="744" cy="183" r="5" fill="#f59e0b"/>
+    <circle cx="764" cy="183" r="5" fill="#22c55e"/>
+    <text x="788" y="188" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">demo-case/04_uos/acq-README.uos/</text>
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7300;0.7475;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <text x="750" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#93c5fd">opened ZIP · 745 KB</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7450;0.7625;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="258" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">clinical/</text>
+      <text x="925" y="280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">1 entry</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7550;0.7725;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="310" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="332" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">derived/</text>
+      <text x="925" y="332" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">2 entries</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7650;0.7825;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="362" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="384" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">manifest.json</text>
+      <text x="925" y="384" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">9.5 KB</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7750;0.7925;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="414" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="436" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">provenance/</text>
+      <text x="925" y="436" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">1 entry</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7850;0.8025;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="466" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="488" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">scene/</text>
+      <text x="925" y="488" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">5 entries</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7950;0.8125;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="518" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="540" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">views.json</text>
+      <text x="925" y="540" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">3.2 KB</text>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.8150;0.8325;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="588" width="326" height="48" rx="8" fill="#052e2b"
+        stroke="#0f766e"/>
+      <text x="754" y="617" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="500" fill="#99f6e4">UOS-Core · v0.2 · 3 external refs</text>
+    </g>
+  </g>
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.8100;0.8275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    <rect x="54" y="682" width="562" height="36" rx="10" fill="#0f172a"
+      stroke="#334155"/>
+    <text x="76" y="705" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e0f2fe">Final artifact: one .uos file with scene, provenance and views</text>
+  </g>
+</svg>
