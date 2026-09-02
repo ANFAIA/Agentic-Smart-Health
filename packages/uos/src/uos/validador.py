@@ -18,6 +18,7 @@ from pathlib import Path
 from uos.contenedor import MANIFIESTO, lee_manifiesto_de
 from uos.manifiesto import (
     UOS_VERSION,
+    Anatomico,
     Clase,
     Desidentificacion,
     EstadoPHI,
@@ -349,6 +350,36 @@ def _valida_regulatorio(m: Manifiesto, inf: Informe) -> None:
             inf.avisos.append(
                 f"asset {a.id}: es layer 3 y no declara ninguna `clearance`. Vacio "
                 "significa «no consta», no «no hace falta»"
+            )
+    # ── D-1 y D-2 · los frames se anclan a DICOM y declaran su convencion ──────
+    de_volumen = {a.frame for a in m.assets if a.kind == Clase.VOLUME}
+    for f in [m.canonical_frame, *m.frames]:
+        if f.id in de_volumen:
+            if not f.dicom_frame_of_reference_uid:
+                inf.errores.append(
+                    f"frame {f.id}: lo declara un asset `volume` y no trae "
+                    "`dicom_frame_of_reference_uid`. DICOM ya identifica un sistema de "
+                    "coordenadas con `(0020,0052)`; sin el, un lector que reciba la serie "
+                    "por otro canal solo puede fiarse del nombre"
+                )
+            if f.anatomical != Anatomico.LPS:
+                inf.errores.append(
+                    f"frame {f.id}: lo declara un asset `volume` y su `anatomical` es "
+                    f"{f.anatomical or 'null'}. DICOM impone LPS; «diestro» fija la "
+                    "quiralidad, no que direccion es anterior o superior del paciente"
+                )
+    canonico = m.canonical_frame
+    if canonico.anatomical in (None, Anatomico.DISPOSITIVO):
+        anatomicos = {f.id for f in [canonico, *m.frames]
+                      if f.anatomical in (Anatomico.LPS, Anatomico.RAS)}
+        conecta = any(r.source_frame == canonico.id and r.target_frame in anatomicos
+                      or r.target_frame == canonico.id and r.source_frame in anatomicos
+                      for r in m.registrations)
+        if not conecta:
+            inf.avisos.append(
+                f"el frame canonico {canonico.id} no declara convencion anatomica y no "
+                "hay registracion que lo lleve a un frame LPS o RAS: nadie puede medir un "
+                "angulo ni una distancia a una estructura sin mirar la imagen"
             )
     for r in m.registrations:
         # ⚠️ Una registracion que calculo una maquina es COMPUTO, no adquisicion, y tiene

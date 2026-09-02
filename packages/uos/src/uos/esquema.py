@@ -89,6 +89,10 @@ PUBLICACION_EN: dict[str, tuple[str, str]] = {
     "EstadoRegulatorio": ("ClearanceStatus", "Closed vocabulary for a clearance status."),
     "Proposito": ("PurposeOfUse", "Closed vocabulary for what a container was issued for."),
     "Clase": ("AssetKind", "What kind of thing an asset is."),
+    "Anatomico": (
+        "AnatomicalConvention",
+        "Axis convention of a frame. Handedness fixes chirality, not orientation.",
+    ),
 }
 
 

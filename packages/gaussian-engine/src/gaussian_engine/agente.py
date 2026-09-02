@@ -34,15 +34,23 @@ class CampoStore(Protocol):
     def put(self, **arrays: np.ndarray) -> str: ...
 
 
-def esquema(rmse_hu: float) -> list[ColumnaCampo]:
+def esquema(rmse: float) -> list[ColumnaCampo]:
     """Qué es cada columna del campo ajustado, en el formato que ya usa el contrato.
 
     `scale_*` lleva el aviso porque es donde está la trampa: quien mida sobre estas
     escalas está midiendo un ajuste, no un tejido.
+
+    ⚠️ **El error va en la unidad del CAMPO y no en HU (D-7).** Decía `±N HU`, y un CBCT
+    **no mide unidades Hounsfield**: sus grises dependen del equipo, del campo de visión y
+    de la posición dentro del volumen, y no son convertibles a HU sin un fantoma de
+    calibración. El número era el mismo residuo reescalado por `hu_range`, así que
+    nombrarlo HU le daba una autoridad que no tiene — y en un `.uos` la lee alguien que no
+    sabe de qué equipo salió.
     """
     forma = (
         f"semieje del elipsoide en mm — AJUSTADO para reconstruir la densidad "
-        f"(±{rmse_hu:.0f} HU), NO medido sobre el tejido"
+        f"(±{rmse:.4f} en sigma normalizada; NO es HU: un CBCT no esta calibrado en "
+        f"unidades Hounsfield), NO medido sobre el tejido"
     )
     return [
         *(ColumnaCampo(nombre=n, unidad="mm", significado="centro de la gaussiana")

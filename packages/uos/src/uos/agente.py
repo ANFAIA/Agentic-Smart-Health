@@ -229,7 +229,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.9.0"
+    version = "0.10.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -795,6 +795,7 @@ class UOSExportAgent(BaseExportAgent):
             ))
 
         registros = self._registros(snapshot, registrador)
+        frame_cbct = Frame(id=FRAME_CBCT, description="Volumen CBCT, centrado")
         directorios: dict[str, Path] = {}
         extras: dict[str, str] = {}
         aviso_volumen: list[str] = []
@@ -831,6 +832,18 @@ class UOSExportAgent(BaseExportAgent):
             uri = "volume/ct_001/"
             sidecar_uri = SIDECAR.format(id="ct_001")
             sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
+            # D-1/D-2 · el frame del volumen se ancla al UID que DICOM ya define y declara
+            # su convencion anatomica. Se LEE del sidecar, que a su vez lo leyo de la
+            # serie: aqui no se inventa ninguno de los dos.
+            # ⚠️ Se reconstruye en vez de `model_copy(update=...)`: ese camino NO valida,
+            # y dejaba `anatomical` como `str` donde el contrato declara un enum. Pydantic
+            # solo avisa al serializar, asi que el fallo salia en un warning y no aqui.
+            frame_cbct = Frame(**{
+                **frame_cbct.model_dump(),
+                "dicom_frame_of_reference_uid": sidecar.get(
+                    "dicom_frame_of_reference_uid"),
+                "anatomical": sidecar.get("anatomical"),
+            })
             # ⚠️ El sidecar del volumen SI viaja, y es lo que hace utilizable un volumen
             # referenciado: dice dimensiones, espaciado y orientacion sin parsear DICOM
             # (§5.2). Sin el, el contenedor no podria ni situar el volumen que referencia.
@@ -919,7 +932,7 @@ class UOSExportAgent(BaseExportAgent):
                 id=FRAME_IOS,
                 description="Escaner intraoral, hub geometrico del caso",
             ),
-            frames=[Frame(id=FRAME_CBCT, description="Volumen CBCT, centrado")],
+            frames=[frame_cbct],
             visits=[visita],
             assets=assets,
             registrations=registros,
@@ -1198,10 +1211,37 @@ class UOSExportAgent(BaseExportAgent):
         # `paso` viene en orden (z, y, x) del `occupied`; lo pasamos a (x, y, z)
         # para que el consumidor lo entienda sin conocer la interna del agente.
         paso_xyz = paso_arr[::-1].tolist()
+        # ⚠️ **El umbral es parte del submuestreo, y faltaba (D-8).** «Una primitiva por
+        # voxel OCUPADO» implica un umbral de densidad, y ese umbral **decide que tejido
+        # aparece**: subirlo borra la dentina antes que el esmalte. Un descriptor que
+        # declara `measured: true` y calla el umbral esta aplicando al reves la regla del
+        # silencio — afirma que el campo es la medida cuando es la medida por encima de un
+        # corte que alguien eligio. Con el, la capa se reproduce desde el DICOM
+        # referenciado; sin el, no.
+        rango = datos.get("hu_range")
+        ocupacion = None
+        if rango is not None:
+            umbral = float(np.asarray(rango).ravel()[0])
+            ocupacion = {
+                "threshold": umbral,
+                # La unidad es la del volumen de origen, y NO se llama HU: un CBCT no esta
+                # calibrado en Hounsfield (D-7). El sidecar del volumen lo declara en
+                # `calibrated_hu`.
+                "unit": "grey_value",
+                "note": (
+                    "una primitiva por voxel cuyo valor supera este umbral. Subirlo borra "
+                    "dentina antes que esmalte, asi que cambia QUE TEJIDO aparece. No es "
+                    "HU salvo que el sidecar del volumen declare `calibrated_hu: true`"
+                ),
+            }
         return {
-            "paso_voxeles": paso_xyz,
-            "de": n_origen,
-            "a": n_final,
+            "step_voxels": paso_xyz,
+            "from": n_origen,
+            "to": n_final,
+            # Paso uniforme, no aleatorio: la ingesta tiene que ser reproducible para que
+            # la fiabilidad se pueda medir. Declararlo permite reproducir la capa.
+            "method": "stride",
+            **({} if ocupacion is None else {"occupancy": ocupacion}),
         }
 
     @staticmethod
@@ -1326,7 +1366,8 @@ class UOSExportAgent(BaseExportAgent):
             ],
         }
         if submuestreo is not None:
-            resultado["submuestreo"] = submuestreo
+            # `subsampling` y no `submuestreo`: es formato de cable, lo lee un tercero.
+            resultado["subsampling"] = submuestreo
         return resultado
 
     def _extensiones(self, assets: list) -> dict[str, Extension]:

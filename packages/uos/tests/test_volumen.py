@@ -124,8 +124,19 @@ def test_el_digesto_de_la_serie_no_depende_del_orden_de_lectura(serie):
     assert len(a.parts) == len(list(serie.glob("*.dcm")))
 
 
-def test_renombrar_un_corte_CAMBIA_el_digesto(serie, tmp_path):
-    """El orden de una serie es dato clínico: renombrar no es una operación neutra."""
+def test_renombrar_un_corte_NO_cambia_la_identidad_de_la_serie(serie, tmp_path):
+    """D-3: el digesto identifica la SERIE CLÍNICA, no una serialización suya.
+
+    ⚠️ **Antes iba sobre el nombre y el hash del fichero, y los dos cambian al
+    de-identificar.** Reescribir cabeceras —el paso que da todo flujo clínico, y que B-3
+    además exige— cambiaba el hash de cada corte y con él el digesto, así que la
+    trazabilidad que el §3.4.2 promete se rompía justo en el paso más común.
+
+    Ahora va sobre el `SOPInstanceUID` y el hash de `PixelData`: lo que DICOM define como
+    identidad y lo que la de-identificación no toca. Renombrar deja de mover el digesto —
+    lo cual es correcto: es la misma serie— y el nombre sigue viajando en `parts[]` como
+    dato de ordenación, donde la verificación byte a byte lo sigue viendo.
+    """
     original = asset_de_directorio(serie, "volume/ct_001/", id_="asset.ct_001",
                                    kind=Clase.VOLUME, visit="v1", frame="frame.ct_001",
                                    media_type="application/dicom")
@@ -138,7 +149,13 @@ def test_renombrar_un_corte_CAMBIA_el_digesto(serie, tmp_path):
                                      media_type="application/dicom")
 
     assert renombrada.bytes == original.bytes
-    assert renombrada.sha256 != original.sha256
+    assert renombrada.sha256 == original.sha256, (
+        "renombrar cambio la identidad de la serie, y es la misma serie"
+    )
+    # Pero el nombre NO se pierde: sigue en `parts[]`, que es donde vive el orden.
+    assert [p.name for p in renombrada.parts] != [p.name for p in original.parts]
+    # Y la identidad es la que DICOM define, no una invencion nuestra.
+    assert all(p.sop_instance_uid and p.pixel_data_sha256 for p in original.parts)
 
 
 def _uos_con_la_serie_dentro(destino: Path, serie: Path) -> Path:
@@ -168,7 +185,13 @@ def _uos_con_la_serie_dentro(destino: Path, serie: Path) -> Path:
             profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
         ),
         canonical_frame=Frame(id="frame.ios_master"),
-        frames=[Frame(id="frame.ct_001")],
+        # D-1/D-2 · el frame de un volumen se ancla al UID de DICOM y declara LPS. Los
+        # dos se LEEN del sidecar, que a su vez los leyo de la serie: aqui no se inventan.
+        frames=[Frame(
+            id="frame.ct_001",
+            dicom_frame_of_reference_uid=sidecar["dicom_frame_of_reference_uid"],
+            anatomical=sidecar["anatomical"],
+        )],
         visits=[Visita(id="v1", date="2026-08-28")],
         assets=[volumen],
         registrations=[Registro(

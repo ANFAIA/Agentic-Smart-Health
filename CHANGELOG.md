@@ -59,6 +59,36 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — a DICOM slice's identity is its SOP Instance UID and its pixels, not its
+  file's hash.** `Part.sha256` covers the whole file, so any de-identification changes it —
+  and de-identification is the step every clinical flow takes, and the one B-3 now requires.
+  The traceability the format promises, "whoever holds the series can prove it is this
+  case's, slice by slice", broke at exactly the most common step. `Part` gains
+  `sop_instance_uid` and `pixel_data_sha256`; the volume asset gains `series_instance_uid`
+  and `study_instance_uid`; and the `parts[]` digest is computed over identity when every
+  part declares it, falling back to name and file hash so older containers still verify.
+  Verification is now two levels, reported separately — a de-identified file that preserves
+  identity passes the first and fails the second, and that is information, not an error.
+  Raised as **D-3**.
+- **Frames anchor to DICOM and declare their anatomical convention.**
+  `dicom_frame_of_reference_uid` `(0020,0052)` is required on every frame a `volume`
+  declares: `frame.ct_001` is a string the writer invented, and a reader receiving the
+  series through another channel could only trust it. `anatomical` is `LPS`, `RAS` or
+  `device` — "right-handed" fixes chirality, not orientation, and DICOM, an intraoral
+  scanner and glTF can all be right-handed while agreeing on nothing useful. Volume frames
+  must be LPS. Raised as **D-1** and **D-2**.
+- **A `measured` Gaussian layer declares its occupancy threshold** and its subsampling
+  method. "One primitive per *occupied* voxel" hides a decision that changes which tissue
+  appears — raising the threshold erases dentine before enamel — and a descriptor that
+  says `measured: true` while staying silent about it applies the silence rule backwards.
+  Raised as **D-8**.
+- **BREAKING — the container stops calling CBCT grey values Hounsfield units.** It
+  published the fit error as `±N HU` for a scanner that is not calibrated in them: CBCT
+  greys depend on the device, the field of view and the position inside the volume. The
+  error is now expressed in the field's own unit with the caveat attached, and the volume
+  sidecar declares `calibrated_hu`, true only for a conventional CT. Raised as **D-7**.
+- The synthetic DICOM writer now emits `FrameOfReferenceUID`. It never had, while the
+  fixture's docstring claimed "complete headers" — found by D-1's new rule, not by reading.
 - **`UOS-Distributable`**, a profile orthogonal to the conformance levels. Core/Vol/Sig/Full
   describe which asset kinds a container holds — whether a reader can *open* it. Nothing
   described whether it is in a condition to *leave* the organisation that issued it, which

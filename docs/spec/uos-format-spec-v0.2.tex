@@ -852,6 +852,42 @@ patient did not consent to. A validator reports an error when it is not, and a w
 \code{purpose\_of\_use} is absent. A writer \MUSTNOT{} default it to \code{treatment};
 assuming a legal act is the failure this field exists to prevent.
 
+\subsection{Frame identity and anatomical convention}\label{sec:frameid}
+
+A frame id such as \code{frame.ct\_001} is a string the writer invented. DICOM already
+identifies a coordinate system globally and uniquely --- the \textbf{Frame of Reference
+UID}, tag \code{(0020,0052)}, which every CBCT series carries --- and a reader that
+receives the series through another channel has no way to know that \code{frame.ct\_001}
+is \emph{that} series except by trust.
+
+\begin{longtable}{L{3.6cm} L{11.8cm}}
+\toprule
+\textbf{Rule} & \textbf{Statement}\\
+\midrule
+\endhead
+DICOM identity & \code{Frame} carries \code{dicom\_frame\_of\_reference\_uid}. It \MUST{}
+be present on every frame declared by an asset of \code{kind: volume}, the volume sidecar
+repeats it, and a validator checks they agree. On writing it \MUST{} be read from the
+ingested series and never invented --- the same rule \S\ref{sec:volume} already applies to
+\code{orientation}.\\
+Anatomical convention & \code{Frame.anatomical} is \code{LPS}, \code{RAS} or
+\code{device}. \textbf{``Right-handed'' fixes chirality, not orientation}: DICOM is LPS, an
+intraoral scanner uses an arbitrary device system, glTF is Y-up with no anatomical meaning,
+and all three can be right-handed while agreeing on nothing useful. Any clinical
+measurement over the model --- an angle, a distance to a structure --- needs to know which
+direction is the patient's anterior or superior, and until now that meant looking at the
+image. Every frame of a \code{volume} \MUST{} declare \code{LPS}, which is what DICOM
+imposes.\\
+The canonical frame & It \MAY{} be \code{device}, in which case the manifest \SHOULD{}
+contain a registration from it to an \code{LPS} or \code{RAS} frame. A validator warns
+when neither holds.\\
+Frames are per acquisition & Not per device. Two scans of the same patient at different
+visits are \textbf{different frames} even from the same scanner. Sharing a frame asserts
+that the two clouds are already in one space, and between two visits that is false: the
+patient moved, the bite changed, or both.\\
+\bottomrule
+\end{longtable}
+
 \subsection{FHIR mapping}\label{sec:fhir}
 
 \code{fhir\_map} tells a practice-management connector what to create for each asset.
@@ -1062,6 +1098,16 @@ The conforming alternative is a \textbf{second} GLB under \code{derived/}, decla
 gets the partitioned scene; a distribution that strips it loses the file and not just its
 resolution.
 
+\paragraph{A \code{measured} layer must declare its occupancy threshold.}
+``One primitive per \emph{occupied} voxel'' implies a density threshold, and that threshold
+is a decision that \textbf{changes which tissue appears}: raising it erases dentine before
+enamel. A descriptor that says \code{measured: true} and stays silent about it is applying
+the silence rule backwards --- it asserts the field \emph{is} the measurement when it is
+the measurement above a cut somebody chose. The \code{ash-twin/1.0} profile therefore
+\MUST{} carry \code{occupancy: \{threshold, unit, note\}} and
+\code{subsampling.method} (\code{stride}, \code{mean} or \code{max}). Both are reproducible
+from the referenced DICOM; without them the layer is not.
+
 \subsection{Appearance: the \code{KHR\_gaussian\_splatting} primitive}\label{sec:khr}
 
 \paragraph{Upstream status.} \code{KHR\_gaussian\_splatting} is a Khronos \emph{Release
@@ -1257,6 +1303,37 @@ Two real descriptors, abridged:
 
 % =============================================================================
 \section{Volume}\label{sec:volume}
+
+\paragraph{A slice's identity is not its file's hash.}\label{par:sliceid}
+\code{Part.sha256} covers the whole file, so \textbf{any de-identification changes it} ---
+and de-identification is the step every clinical flow takes, and the one \S\ref{sec:phi}
+now requires. The traceability \S\ref{sec:external} promises --- ``whoever holds the series
+can prove it is this case's, slice by slice'' --- broke at exactly the most common step.
+
+DICOM already settled what identifies an instance: the \textbf{SOP Instance UID}
+\code{(0008,0018)}, which survives de-identification when UIDs are retained, and the pixel
+content \code{(7FE0,0010)}, which de-identification does not touch unless it is explicitly
+cleaned. So \code{Part} additionally carries \code{sop\_instance\_uid} and
+\code{pixel\_data\_sha256} (SHA-256 over the PixelData element's value, without the
+header), and the \code{volume} asset carries \code{series\_instance\_uid} and
+\code{study\_instance\_uid}.
+
+The \code{parts[]} digest is computed over the UID and the pixel hash when every part
+declares them, and falls back to name and file hash when they do not --- so an older
+container still verifies. It therefore identifies the \textbf{clinical series} rather than
+one serialisation of it. File names stay in \code{parts[]} as ordering data, which is what
+\S\ref{sec:volume}'s argument for keeping them was about, but they leave identity.
+
+Verification becomes two levels, reported separately: \textbf{identity} (UID + pixels) and
+\textbf{exact bytes} (file hash). A de-identified file that preserves identity passes the
+first and fails the second, and \emph{that is information, not an error}.
+
+\paragraph{A CBCT does not measure Hounsfield units.}
+Grey values from a CBCT depend on the device, the field of view and the position inside the
+volume; they are not comparable between scanners and not convertible to HU without a
+calibration phantom. The volume sidecar therefore declares \code{calibrated\_hu}, true only
+for a conventional CT. \textbf{Applying \code{rescale} to a CBCT does not yield Hounsfield
+units}, and a reader that assumes it does will window on a scale that does not exist.
 
 A CBCT series is a \textbf{directory asset} (\S\ref{sec:dirasset}): \code{kind: volume},
 one \code{parts[]} entry per slice with its own hash, and, being an acquired original, a content address for its \code{uri} (\S\ref{sec:external}). The slices do not travel;
@@ -1665,7 +1742,7 @@ measured colour) with per-value extraction provenance. \S\ref{sec:clinical}. Car
 \code{ash\_gs\_measured} & 1.0 & The \code{.gs.json} descriptor per Gaussian layer:
 whether it is \emph{measured} or reconstructed, and the schema of its columns.
 \S\ref{sec:gsjson}. The base format treats 3DGS as appearance in a reconstruction frame;
-here there are fields fitted to CBCT density, in the patient frame, with error in HU.\\
+here there are fields fitted to CBCT density, in the patient frame, with error in the field's own unit. \textbf{Not in HU}: a CBCT is not calibrated in Hounsfield units (\S\ref{sec:volume}).\\
 \code{ash\_reversible} & 1.0 & Declares that an arch mesh with per-vertex colour, FDI code
 and a \code{measured} column can be \emph{regenerated} from \code{asset.scene}: geometry
 and FDI from the mesh primitives (\code{extras.uos\_fdi}), colour from the

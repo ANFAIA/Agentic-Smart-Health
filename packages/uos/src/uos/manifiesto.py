@@ -225,12 +225,30 @@ class Parte(BaseModel):
     Existe para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que
     algo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie
     no cuadra» y «el corte 214 esta corrupto».
+
+    ⚠️ **Y el hash del FICHERO no es la identidad del corte (D-3).** `sha256` cubre la
+    cabecera entera, asi que cualquier de-identificacion —el paso que todo flujo clinico da,
+    y que B-3 ademas exige— reescribe etiquetas y cambia el hash. La trazabilidad que el
+    §3.4.2 promete («quien tenga la serie puede probar que es la de este caso, corte a
+    corte») se rompia exactamente en el paso mas comun.
+
+    DICOM ya resolvio que identifica una instancia: el **SOP Instance UID** `(0008,0018)`,
+    que sobrevive a la de-identificacion cuando se elige retener UIDs, y el contenido de
+    pixeles `(7FE0,0010)`, que la de-identificacion no toca salvo que se limpie a proposito.
+    Los dos viajan al lado del hash del fichero, y la verificacion pasa a tener dos niveles
+    que se reportan por separado: **identidad** (UID + pixeles) y **bytes exactos** (hash
+    del fichero). Un corte de-identificado que conserva identidad pasa el primero y falla el
+    segundo, y eso es informacion, no un error.
     """
 
     model_config = ConfigDict(extra="forbid")
     name: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     bytes: int = Field(ge=0)
+    #: `(0008,0018)`. La identidad clinica del corte, estable a traves de la de-identificacion.
+    sop_instance_uid: str | None = None
+    #: SHA-256 sobre el VALOR del elemento PixelData, sin cabecera.
+    pixel_data_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 #: Una uri que no es una ruta sino la identidad del fichero. Ver `Asset._direccion_y_custodia`.
@@ -287,6 +305,10 @@ class Asset(BaseModel):
     # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
     # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
     derived_from: list[str] = Field(default_factory=list)
+    #: D-3 · `(0020,000E)` y `(0020,000D)`. Lo que DICOM define como identidad de la serie
+    #: y del estudio, para que un PACS pueda casar este asset con lo que ya tiene.
+    series_instance_uid: str | None = None
+    study_instance_uid: str | None = None
     # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es lo que hace
     # TODO original adquirido —DICOM, STL, fotos, informes—: se referencia por su direccion
     # de contenido y se acredita por `sha256`. No es un perfil ni una variante; es el
@@ -370,26 +392,71 @@ def digesto_de_partes(partes: list[Parte]) -> str:
     validador lo calculara de otra forma, un contenedor valido daria invalido y nadie
     sabria cual de los dos tiene razon.
 
-    Va sobre los NOMBRES y los hashes, no sobre los bytes concatenados: asi renombrar un
-    corte cambia el digesto —que es lo correcto, el orden de una serie es dato— y no hace
-    falta releer 259 MB para comprobarlo.
+    ⚠️ **Sobre la IDENTIDAD de la serie, no sobre una serializacion suya (D-3).** Iba sobre
+    el nombre y el hash del fichero, y los dos cambian al de-identificar: reescribir
+    cabeceras cambia el hash, y el paso de de-identificacion es el mas comun de un flujo
+    clinico. Un digesto asi identificaba «esta copia concreta de esta serie», no la serie.
+
+    Cuando los cortes declaran su `sop_instance_uid` y su `pixel_data_sha256` se usan esos:
+    el UID es la identidad que DICOM define y el hash de pixeles es lo que la
+    de-identificacion no toca. Cuando no los declaran se cae al nombre y al hash del
+    fichero, que es lo que habia — un contenedor antiguo sigue verificando, y el que trae
+    identidad la usa. Los nombres siguen en `parts[]` como dato de ordenacion.
     """
     import hashlib
 
     h = hashlib.sha256()
+    identidad = all(p.sop_instance_uid and p.pixel_data_sha256 for p in partes)
+    if identidad:
+        for p in sorted(partes, key=lambda x: x.sop_instance_uid or ""):
+            h.update(f"{p.sop_instance_uid}\0{p.pixel_data_sha256}\n".encode())
+        return h.hexdigest()
     for p in sorted(partes, key=lambda x: x.name):
         h.update(f"{p.name}\0{p.sha256}\n".encode())
     return h.hexdigest()
 
 
+class Anatomico(StrEnum):
+    """La convencion de ejes del frame (D-2).
+
+    ⚠️ **«Diestro» fija la quiralidad, no la orientacion.** DICOM es LPS; un escaner
+    intraoral usa un sistema arbitrario del aparato; glTF es Y-arriba sin significado
+    anatomico. Los tres pueden ser diestros y no coincidir en nada util: un lector que
+    reciba el frame del escaner no sabe cual de sus direcciones es anterior, superior o
+    derecha del paciente. Cualquier medida clinica sobre el modelo —un angulo, una
+    distancia a una estructura— necesita saberlo, y hasta ahora habia que mirar la imagen.
+    """
+
+    #: +X izquierda del paciente, +Y posterior, +Z superior. Es lo que DICOM impone.
+    LPS = "LPS"
+    #: +X derecha, +Y anterior, +Z superior. Frecuente en neuroimagen.
+    RAS = "RAS"
+    #: Sistema propio del aparato, sin significado anatomico declarado.
+    DISPOSITIVO = "device"
+
+
 class Frame(BaseModel):
-    """Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2)."""
+    """Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2).
+
+    ⚠️ **Un frame es POR ADQUISICION, no por aparato (D-2).** Dos escaneos del mismo
+    paciente en visitas distintas son frames distintos aunque salgan del mismo escaner.
+    Compartir frame equivale a afirmar que las dos nubes ya estan en el mismo espacio, y
+    entre dos visitas eso es falso: el paciente se movio, la mordida cambio, o las dos.
+    """
 
     model_config = ConfigDict(extra="forbid")
     id: str
     description: str = ""
     units: str = "mm"
     handedness: str = "right"
+    #: D-2. `None` es NO DECLARADO y no equivale a `device`.
+    anatomical: Anatomico | None = None
+    #: D-1 · el identificador que DICOM ya define para un sistema de coordenadas, etiqueta
+    #: `(0020,0052)`. `frame.ct_001` es una cadena que se invento el escritor: un lector
+    #: que reciba la serie por otro canal no tiene forma de saber que es ESA serie salvo
+    #: por confianza. El UID es global y unico, y **se LEE de la serie, nunca se inventa**
+    #: (misma regla que ya rige para `orientation` en el sidecar del volumen).
+    dicom_frame_of_reference_uid: str | None = None
 
 
 class Registro(BaseModel):

@@ -643,7 +643,7 @@ def main() -> int:
                 {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
                  "measured": c.medido, "derived_from": c.derivado_de,
                  "meaning": c.significado, "vocabulary": c.vocabulario}
-                for c in esquema(aj.rmse_hu)
+                for c in esquema(aj.rmse)
             ],
             "reconstruction_error_hu": aj.rmse_hu,
             "compression": aj.compresion,

@@ -61,12 +61,17 @@ def test_el_campo_ajustado_se_declara_derivado_y_no_pisa_al_semilla(almacen):
 
 
 def test_el_esquema_avisa_de_que_la_escala_ya_no_es_una_medida(almacen):
-    """Es la trampa del campo derivado: quien mida sobre estas escalas mide un ajuste."""
-    columnas = {c.nombre: c.significado for c in esquema(47.0)}
+    """Es la trampa del campo derivado: quien mida sobre estas escalas mide un ajuste.
+
+    ⚠️ Y el error va en la unidad del CAMPO, no en HU (D-7): un CBCT no esta calibrado en
+    unidades Hounsfield, asi que llamarlas asi le da al numero una autoridad que no tiene.
+    """
+    columnas = {c.nombre: c.significado for c in esquema(0.0470)}
 
     assert "AJUSTADO" in columnas["scale_0"]
-    assert "47" in columnas["scale_0"]
+    assert "0.047" in columnas["scale_0"]
     assert "NO medido" in columnas["scale_0"]
+    assert "NO es HU" in columnas["scale_0"]
 
 
 def test_lo_que_hace_reversible_el_campo_viaja_al_derivado(almacen):

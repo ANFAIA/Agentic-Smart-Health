@@ -24,6 +24,16 @@
       "type": "object",
       "description": "When an asset was captured, and on what equipment."
     },
+    "AnatomicalConvention": {
+      "description": "Axis convention of a frame. Handedness fixes chirality, not orientation.",
+      "enum": [
+        "LPS",
+        "RAS",
+        "device"
+      ],
+      "title": "AnatomicalConvention",
+      "type": "string"
+    },
     "Asset": {
       "additionalProperties": false,
       "description": "One file or directory the container carries or references.",
@@ -108,6 +118,30 @@
           },
           "title": "Derived From",
           "type": "array"
+        },
+        "series_instance_uid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Series Instance Uid"
+        },
+        "study_instance_uid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Study Instance Uid"
         },
         "external": {
           "default": false,
@@ -419,6 +453,29 @@
           "default": "right",
           "title": "Handedness",
           "type": "string"
+        },
+        "anatomical": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnatomicalConvention"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dicom_frame_of_reference_uid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dicom Frame Of Reference Uid"
         }
       },
       "required": [
@@ -483,6 +540,31 @@
           "minimum": 0,
           "title": "Bytes",
           "type": "integer"
+        },
+        "sop_instance_uid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sop Instance Uid"
+        },
+        "pixel_data_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixel Data Sha256"
         }
       },
       "required": [

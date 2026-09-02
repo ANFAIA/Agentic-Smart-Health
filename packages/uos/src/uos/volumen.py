@@ -134,20 +134,44 @@ def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[s
     else:
         rango = [float(bajo) * pendiente + corte, float(alto) * pendiente + corte]
 
+    # D-1 · el identificador que DICOM ya define para este sistema de coordenadas. Se LEE,
+    # nunca se inventa: es lo unico que permite a un lector que reciba la serie por otro
+    # canal saber que es ESA serie, en vez de fiarse de que `frame.ct_001` signifique algo.
+    for_uid = getattr(primera, "FrameOfReferenceUID", None)
+    if for_uid is None:
+        avisos.append(
+            f"la serie de {frame} no trae `FrameOfReferenceUID` (0020,0052): el sidecar lo "
+            "deja nulo y el frame queda identificado solo por un nombre que se invento el "
+            "escritor"
+        )
     return {
         "frame": frame,
+        "dicom_frame_of_reference_uid": None if for_uid is None else str(for_uid),
+        "series_instance_uid": str(getattr(primera, "SeriesInstanceUID", "") or "") or None,
+        "study_instance_uid": str(getattr(primera, "StudyInstanceUID", "") or "") or None,
+        # D-2 · DICOM impone LPS. No es una eleccion nuestra y por eso va fijo: declarar
+        # otra cosa aqui seria describir mal el dato que se esta empaquetando.
+        "anatomical": "LPS",
         "dimensions": [int(primera.Columns), int(primera.Rows), len(cabeceras)],
         "spacing_mm": [px[1], px[0], dz],
         "orientation": [[round(float(x), 9) for x in fila] for fila in orientacion],
         "origin_mm": origen,
         "rescale": {"slope": pendiente, "intercept": corte},
+        # ⚠️ **Que `rescale` exista NO significa que el resultado sean HU (D-7).** Un CBCT
+        # trae las etiquetas y sus grises **no estan calibrados**: dependen del equipo, del
+        # campo de vision y de la posicion dentro del volumen, y no son comparables entre
+        # escaneres ni convertibles a Hounsfield sin un fantoma. Una TC convencional si.
+        # Sin este campo, un lector aplica `slope`/`intercept` y cree tener HU.
+        "calibrated_hu": str(getattr(primera, "Modality", "") or "").upper() == "CT",
         "value_range": rango,
         "pixel_encoding": _codificacion(primera),
         "modality": str(getattr(primera, "Modality", "") or ""),
         "transfer_function_presets": list(PRESETS),
         "nota": (
             "leido de las cabeceras de la serie que viaja en este contenedor. La "
-            "transformada al frame canonico NO esta aqui: vive en `registrations`."
+            "transformada al frame canonico NO esta aqui: vive en `registrations`. "
+            "`calibrated_hu` distingue una TC (grises en Hounsfield) de un CBCT (grises "
+            "del equipo): aplicar `rescale` a un CBCT NO da unidades Hounsfield."
         ),
     }, avisos
 

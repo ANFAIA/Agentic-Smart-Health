@@ -187,6 +187,7 @@ def write_dicom_series(
     out_dir.mkdir(parents=True, exist_ok=True)
     study_date = study_date or datetime.now(UTC)
     study_uid, series_uid = generate_uid(), generate_uid()
+    frame_uid = generate_uid()
     intercept = -1024.0  # desplaza los HU al rango sin signo habitual del CT
 
     for k in range(volume.shape[0]):
@@ -202,6 +203,12 @@ def write_dicom_series(
         ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
         ds.StudyInstanceUID = study_uid
         ds.SeriesInstanceUID = series_uid
+        # ⚠️ **Faltaba, y DICOM lo exige (D-1).** `(0020,0052)` identifica el sistema de
+        # coordenadas en el que estan expresadas las posiciones de la serie, y es lo unico
+        # que permite a un lector que reciba la serie por otro canal saber que es ESA. Sin
+        # el, el dato sintetico no representaba una serie bien formada — y lo llamabamos
+        # «cabeceras completas».
+        ds.FrameOfReferenceUID = frame_uid
         ds.Modality = "CT"
 
         # Identificadores: sintéticos por construcción. Aun así el `cbct-agent`

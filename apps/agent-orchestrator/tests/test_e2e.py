@@ -566,6 +566,45 @@ def test_el_uos_declara_PHI_por_lo_que_lleva_y_no_por_lo_que_hace(recorrido) -> 
     )
 
 
+def test_el_campo_declara_su_UMBRAL_y_no_finge_unidades_Hounsfield(recorrido) -> None:
+    """D-8 y D-7, sobre los bytes del contenedor.
+
+    ⚠️ **D-8: «una primitiva por vóxel ocupado» esconde una decisión.** Ocupado implica un
+    umbral de densidad, y ese umbral decide QUÉ TEJIDO aparece — subirlo borra dentina
+    antes que esmalte. El descriptor declaraba `measured: true` y el submuestreo, y callaba
+    el umbral: eso es aplicar al revés la regla del silencio, porque afirma que el campo es
+    la medida cuando es la medida por encima de un corte que alguien eligió.
+
+    ⚠️ **D-7: un CBCT no mide unidades Hounsfield.** Sus grises dependen del equipo, del
+    campo de visión y de la posición dentro del volumen. El descriptor publicaba el error
+    del ajuste como «±N HU», que le da al número una autoridad que no tiene.
+    """
+    import json
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    z = zipfile.ZipFile(uos)
+    descriptores = [n for n in z.namelist() if n.endswith(".gs.json")]
+    assert descriptores, "el contenedor no lleva ninguna capa gaussiana descrita"
+
+    for n in descriptores:
+        d = json.loads(z.read(n))
+        sub = d.get("subsampling")
+        if sub is not None:
+            assert "method" in sub, f"{n}: submuestrea y no dice con qué método"
+            if "occupancy" in sub:
+                assert sub["occupancy"]["unit"] != "HU", (
+                    f"{n}: llama HU a los grises de un CBCT sin calibrar"
+                )
+        # Y en ningún sitio se declara un error en HU.
+        crudo = json.dumps(d, ensure_ascii=False)
+        assert " HU)" not in crudo, f"{n}: publica un error en unidades Hounsfield"
+
+
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
     """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
 

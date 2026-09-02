@@ -1413,3 +1413,38 @@ def test_un_contenedor_identificado_NUNCA_es_distribuible(tmp_path, malla) -> No
     assert inf.valido, inf.errores
     assert not inf.distribuible
     assert any("identified" in r for r in inf.no_distribuible_porque)
+
+
+def test_el_frame_de_un_volumen_se_ancla_al_UID_de_DICOM(tmp_path, malla) -> None:
+    """D-1 y D-2: `frame.ct_001` es una cadena que se invento el escritor.
+
+    DICOM ya identifica un sistema de coordenadas de forma global y unica —el Frame of
+    Reference UID, `(0020,0052)`, que toda serie CBCT lleva—. Un lector que reciba la serie
+    por otro canal no tiene forma de saber que `frame.ct_001` es ESA serie salvo por
+    confianza. Y «diestro» fija la quiralidad, no la orientacion: sin declarar LPS, nadie
+    sabe cual de las direcciones es anterior o superior del paciente, que es lo que hace
+    falta para medir un angulo o una distancia a una estructura.
+    """
+    from uos.manifiesto import Anatomico
+
+    a = _asset(malla, frame="frame.ct_001")
+    a = a.model_copy(update={"kind": Clase.VOLUME})
+    m = _manifiesto([a], frames=[Frame(id="frame.ct_001")], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="manual", operator="user:pedro",
+    )])
+    salida = escribe_uos(tmp_path / "sin-uid.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("dicom_frame_of_reference_uid" in e for e in inf.errores), inf.errores
+    assert any("LPS" in e for e in inf.errores), inf.errores
+
+    # Con las dos cosas declaradas, el mismo caso vale.
+    bien = _manifiesto([a], registrations=m.registrations, frames=[Frame(
+        id="frame.ct_001", anatomical=Anatomico.LPS,
+        dicom_frame_of_reference_uid="1.2.826.0.1.3680043.8.498.1",
+    )])
+    salida2 = escribe_uos(tmp_path / "con-uid.uos", bien, [("scene/scan.stl", malla)])
+    assert valida(salida2).valido, valida(salida2).errores

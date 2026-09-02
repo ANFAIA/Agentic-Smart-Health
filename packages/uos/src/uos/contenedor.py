@@ -169,16 +169,42 @@ def json_de(obj: object) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False)
 
 
+def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None]:
+    """`(sop_instance_uid, sha256 de PixelData)` de un corte, o `(None, None)` (D-3).
+
+    ⚠️ **Se hashea el VALOR de `(7FE0,0010)`, no el fichero.** Es la unica parte que la
+    de-identificacion no toca salvo que se limpie a proposito, asi que sobrevive al paso
+    que rompia la trazabilidad basada en el hash del fichero. Un fichero que no sea DICOM
+    legible devuelve `(None, None)` y el corte se queda con lo que ya tenia: la identidad
+    es un anadido, no un requisito para empaquetar.
+    """
+    try:
+        import pydicom
+
+        ds = pydicom.dcmread(ruta, stop_before_pixels=False, force=True)
+        uid = getattr(ds, "SOPInstanceUID", None)
+        px = ds.get(0x7FE00010)
+        if uid is None or px is None or px.value is None:
+            return None, None
+        return str(uid), hashlib.sha256(bytes(px.value)).hexdigest()
+    except Exception:  # noqa: BLE001 - un corte ilegible no debe tumbar el empaquetado
+        return None, None
+
+
 def partes_de(carpeta: Path) -> list[Parte]:
-    """Una `Parte` por fichero del directorio, con su nombre RELATIVO y su hash."""
-    return [
-        Parte(
+    """Una `Parte` por fichero del directorio, con su nombre RELATIVO, su hash y su
+    identidad DICOM cuando el fichero la trae (D-3)."""
+    partes = []
+    for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
+        uid, px = _identidad_dicom(hijo)
+        partes.append(Parte(
             name=hijo.relative_to(carpeta).as_posix(),
             sha256=sha256(hijo),
             bytes=hijo.stat().st_size,
-        )
-        for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file())
-    ]
+            sop_instance_uid=uid,
+            pixel_data_sha256=px,
+        ))
+    return partes
 
 
 def asset_de_directorio(
