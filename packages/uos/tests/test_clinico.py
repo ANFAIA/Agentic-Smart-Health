@@ -62,7 +62,7 @@ def test_el_color_medido_sale_en_la_ficha_de_la_pieza() -> None:
     ficha = capa_clinica(_snapshot(_obs("26", color=_COLOR)), [])
     pieza = ficha["teeth"][0]
     assert pieza["fdi"] == "26"
-    color = pieza["color"]
+    color = pieza["color"]["value"]
     assert color["space"] == "CIELAB"
     assert color["cervical"] == [55.4, 9.6, 22.0]
     assert color["n_pixels"] == 10205
@@ -86,7 +86,7 @@ def test_la_nota_del_color_dice_si_se_corrigio_la_iluminacion() -> None:
     una frase concreta.
     """
     corregido = capa_clinica(_snapshot(_obs("26", color=_COLOR)), [])
-    color_ok = corregido["teeth"][0]["color"]
+    color_ok = corregido["teeth"][0]["color"]["value"]
     nota_ok = color_ok["note"]
     assert "0.65/0.58/0.68" in nota_ok
     # Y el número también viaja: leer una frase no debería ser la única forma de saber si
@@ -96,7 +96,7 @@ def test_la_nota_del_color_dice_si_se_corrigio_la_iluminacion() -> None:
 
     crudo = _COLOR.model_copy(update={"correccion_iluminacion": None})
     sin = capa_clinica(_snapshot(_obs("26", color=crudo)), [])
-    color_no = sin["teeth"][0]["color"]
+    color_no = sin["teeth"][0]["color"]["value"]
     nota_no = color_no["note"]
     assert nota_no != nota_ok
     assert "illumination_slope" not in color_no
@@ -109,7 +109,7 @@ def test_una_pieza_sin_color_no_declara_el_campo() -> None:
     """Ausente no es lo mismo que nulo: si no se midió, no aparece."""
     ficha = capa_clinica(_snapshot(_obs("24", ph=6.2)), [])
     assert "color" not in ficha["teeth"][0]
-    assert ficha["teeth"][0]["ph"] == 6.2
+    assert ficha["teeth"][0]["ph"]["value"] == 6.2
 
 
 def test_el_color_y_el_informe_conviven_en_la_misma_pieza() -> None:
@@ -122,16 +122,52 @@ def test_el_color_y_el_informe_conviven_en_la_misma_pieza() -> None:
         _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
     )
     pieza = ficha["teeth"][0]
-    assert pieza["findings"] == ["restauracion"]
-    assert pieza["color"]["n_pixels"] == 10205
+    assert pieza["findings"]["value"] == ["restauracion"]
+    assert pieza["color"]["value"]["n_pixels"] == 10205
 
 
 def test_la_capa_declara_su_estatuto_regulatorio() -> None:
-    """Layer 1: transcripción de un informe firmado y medidas sobre fotos del paciente.
+    """Layer 1 como DEFECTO del fichero: la transcripción de un informe firmado.
 
     NO es `derived/`: borrar lo inferido no puede llevarse por delante lo que dice el
-    informe ni lo que se midió sobre una fotografía.
+    informe. Y no es una afirmación sobre todo el contenido — lo que se midió sobre una
+    fotografía es capa 2 y lo declara en su sitio (ver el test siguiente).
     """
     ficha = capa_clinica(_snapshot(_obs("11", ph=6.8)), ["revisar"])
     assert ficha["regulatory"]["layer"] == 1
     assert ficha["review"]["reasons"] == ["revisar"]
+
+
+def test_la_capa_va_POR_VALOR_y_el_color_no_es_capa_1() -> None:
+    """B-2: el fichero declaraba `layer: 1` para todo y el color no lo es.
+
+    ⚠️ **El formato tenia procedencia de extraccion por valor y no capa por valor.**
+    `derivation` responde *como* se obtuvo el dato; nadie respondia *quien responde* por
+    el. El bloque `color` —CIELAB por tercios, con la caida del flash descontada— no esta
+    en ningun informe firmado: lo calcula el pipeline. Declararlo capa 1 hacia que un
+    lector que borrase `derived/` conservara mediciones computadas creyendo conservar la
+    transcripcion de un informe.
+
+    Tampoco es capa 3: la segmentacion de la foto en coronas es un watershed y el codigo
+    FDI sale de emparejar anchuras contra una tabla, sin modelo entrenado. Es capa 2, y la
+    capa 2 tiene que decir de que es reproducible.
+    """
+    ficha = capa_clinica(
+        _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
+    )
+    pieza = ficha["teeth"][0]
+
+    assert pieza["color"]["regulatory"]["layer"] == 2
+    assert pieza["color"]["derived_from"], "capa 2 sin `derived_from` no se puede reproducir"
+    # Y lo que SI viene del informe sigue siendo capa 1.
+    assert pieza["findings"]["regulatory"]["layer"] == 1
+
+    # ⚠️ El `confidence` del informe NO se copia al color. Mide el eslabon mas debil de la
+    # cadena que colgo un valor de esta pieza —lo domina el segmentador— y sobre el color
+    # diria algo que nadie ha medido. Al color lo califican `n_pixels` y `measured`.
+    assert "confidence" in pieza["findings"]
+    assert "confidence" not in pieza["color"]
+    assert pieza["color"]["value"]["measured"] is True
+
+    # El defecto del fichero se declara COMO defecto, no como afirmacion sobre el todo.
+    assert ficha["regulatory"]["default"] is True

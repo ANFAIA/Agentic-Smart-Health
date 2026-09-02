@@ -49,8 +49,10 @@ from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
     Adquisicion,
+    Autorizacion,
     Clase,
     EstadoPHI,
+    EstadoRegulatorio,
     Extension,
     Frame,
     Manifiesto,
@@ -225,7 +227,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.6.0"
+    version = "0.7.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -460,10 +462,13 @@ class UOSExportAgent(BaseExportAgent):
                 frame=marco, media_type="application/octet-stream",
                 # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
                 load_priority=25, sidecar_uri=descriptor,
-                # La capa de apariencia es DERIVADA (entrenada contra renders) y va en
-                # `scene/` con `layer=1`, no en `derived/` (que es Layer 3, inferencia
-                # clínica). El campo semilla y el compuesto son `raw` por defecto.
-                **({"regulatory": Regulatorio(layer=1, status="derived")}
+                # ⚠️ **Capa 2, y antes decia `layer=1, status="derived"` (B-5).** Es
+                # 3DGS ajustado contra renders de la malla: computo reproducible a partir
+                # de un asset de capa 1, sin modelo entrenado. No es adquisicion —nadie
+                # midio esto— y tampoco es inferencia clinica, asi que no va a `derived/`.
+                # El `status="derived"` era esa idea dicha en un campo de texto libre que
+                # ningun lector podia interpretar; ahora es la capa, que si se comprueba.
+                **({"regulatory": Regulatorio(layer=2), "derived_from": ["asset.ios"]}
                    if id_ == "asset.gs" else {}),
             ))
             nodos_gs.append(NodoGS(
@@ -708,7 +713,10 @@ class UOSExportAgent(BaseExportAgent):
                         crudo, SEGMENTACION, id_="asset.seg_teeth",
                         kind=Clase.DERIVED_SEG, visit=visita.id, frame=FRAME_IOS,
                         media_type="application/octet-stream",
-                        regulatory=Regulatorio(layer=3, status="investigational"),
+                        regulatory=Regulatorio(layer=3, clearances=[Autorizacion(
+                            jurisdiction="EU", regime="MDR",
+                            status=EstadoRegulatorio.INVESTIGACION,
+                        )]),
                         sidecar_uri=SEGMENTACION_META,
                     ))
                 else:
@@ -1024,6 +1032,12 @@ class UOSExportAgent(BaseExportAgent):
             rms_error_mm=t.rms_mm,
             computed=snapshot.timestamp,
             operator=operador,
+            # ⚠️ **La capa se DECLARA, no se hereda de un defecto (B-5).** Un ICP es
+            # computo determinista sobre dos nubes de capa 1: capa 2. Antes el campo
+            # llevaba `default_factory` y toda registracion salia con `layer: 1`, de modo
+            # que una transformada calculada por una maquina era, sobre el papel, tan
+            # adquirida como el CBCT del que salio.
+            regulatory=Regulatorio(layer=2),
         )]
 
     def _vistas(

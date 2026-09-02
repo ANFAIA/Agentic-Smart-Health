@@ -93,6 +93,7 @@ def valida(ruta: Path) -> Informe:
             )
         _valida_assets(z, m, inf)
         _valida_capas_en_la_escena(z, m, inf)
+        _valida_capas_clinicas(z, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
 
@@ -275,6 +276,33 @@ def _valida_regulatorio(m: Manifiesto, inf: Informe) -> None:
                 f"asset {a.id}: declara layer 3 y NO vive en derived/, asi que no se "
                 "puede desmontar borrando ese directorio"
             )
+        # ⚠️ **Capa 2 sin `derived_from` es una afirmacion que no se puede comprobar.**
+        # La capa 2 dice «esto es computo reproducible a partir de capa 1». Si no se
+        # declara a partir de QUE, no hay nada que reproducir y la etiqueta solo sirve
+        # para sacar el asset del escrutinio que tendria como capa 3.
+        if a.regulatory.layer == 2 and not a.derived_from:
+            inf.errores.append(
+                f"asset {a.id}: declara layer 2 y no dice `derived_from`. La capa 2 es "
+                "computo reproducible; sin sus fuentes esa afirmacion no se puede "
+                "comprobar"
+            )
+        # `clearances: []` significa NO DECLARADO, por definicion escrita. En un asset de
+        # capa 3 —que es el que un regulador miraria— el silencio se avisa.
+        if a.regulatory.layer == 3 and not a.regulatory.clearances:
+            inf.avisos.append(
+                f"asset {a.id}: es layer 3 y no declara ninguna `clearance`. Vacio "
+                "significa «no consta», no «no hace falta»"
+            )
+    for r in m.registrations:
+        # ⚠️ Una registracion que calculo una maquina es COMPUTO, no adquisicion, y tiene
+        # que decirlo. Antes `regulatory` tenia defecto y toda registracion llegaba con
+        # `layer: 1` puesto: la capa del calculo automatico era indistinguible de la de un
+        # dato medido, y nadie podia ver la diferencia porque no habia diferencia escrita.
+        if r.operator and r.operator.startswith(r.AUTO) and r.regulatory is None:
+            inf.errores.append(
+                f"registro {r.id}: lo calculo `{r.operator}` y no declara `regulatory`. "
+                "Un alineamiento automatico es computo (layer 2), no adquisicion"
+            )
 
 
 def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
@@ -334,6 +362,50 @@ def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) 
                         f"asset es layer {a.regulatory.layer}; el FDI por gaussiana es "
                         "salida de modelo y no puede viajar en un plano que no se desmonta"
                     )
+
+
+def _valida_capas_clinicas(z: zipfile.ZipFile, inf: Informe) -> None:
+    """Que cada valor de `clinical/` declare una capa coherente con como se obtuvo (B-2).
+
+    ⚠️ **El fichero declaraba `layer: 1` para todo su contenido y no era cierto.** El
+    grueso es la transcripcion de un informe firmado —capa 1— pero el bloque `color` lo
+    calcula el pipeline desde las fotos: nadie lo firmo. El formato tenia procedencia de
+    extraccion por valor (`derivation`) y NO tenia capa regulatoria por valor, asi que
+    nadie respondia *quien responde* por cada dato. Un lector que borrase `derived/` se
+    quedaba con mediciones computadas creyendo conservar un informe.
+
+    Dos reglas, las dos del §9 llevadas al interior del fichero:
+
+    1. Un valor `inferred` no puede ser capa 1. Si lo propuso un modelo, no es ni
+       adquisicion ni transcripcion, por mucho que acabe siendo correcto.
+    2. Capa 3 dentro de `clinical/` es un error. La capa 3 vive SOLO bajo `derived/`,
+       porque es lo unico que hace cierto que borrar ese directorio quita la inferencia.
+    """
+    try:
+        doc = json.loads(z.read("clinical/observations.json"))
+    except (KeyError, ValueError):
+        return
+    for pieza in doc.get("teeth", []):
+        fdi = pieza.get("fdi", "?")
+        for campo, valor in pieza.items():
+            if not isinstance(valor, dict) or "regulatory" not in valor:
+                continue
+            capa = valor["regulatory"].get("layer")
+            if capa == 3:
+                inf.errores.append(
+                    f"clinical/observations.json: `{fdi}.{campo}` declara layer 3 y la "
+                    "capa 3 vive solo bajo derived/. Aqui no se puede desmontar"
+                )
+            if valor.get("derivation") == "inferred" and capa == 1:
+                inf.errores.append(
+                    f"clinical/observations.json: `{fdi}.{campo}` es `inferred` y declara "
+                    "layer 1. Lo que propuso un modelo no es adquisicion ni transcripcion"
+                )
+            if capa == 2 and not valor.get("derived_from"):
+                inf.errores.append(
+                    f"clinical/observations.json: `{fdi}.{campo}` declara layer 2 y no "
+                    "dice `derived_from`; sin sus fuentes no se puede reproducir"
+                )
 
 
 def _valida_procedencia(

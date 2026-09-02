@@ -152,6 +152,7 @@ def test_un_registro_automatico_sin_verificar_es_un_AVISO_no_un_error(tmp_path, 
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="auto_dl", operator="auto:un-agente@0.1.0",
+        regulatory=Regulatorio(layer=2),
     )])
     salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
@@ -178,12 +179,35 @@ def test_provisional_mira_QUIEN_lo_calculo_y_no_con_que_algoritmo(tmp_path, mall
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="icp_surface", rms_error_mm=0.666,
         operator="auto:geometric-fusion-agent@0.2.0",
+        regulatory=Regulatorio(layer=2),
     )])
     salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
     inf = valida(salida)
     assert inf.valido, inf.errores
     assert any("PROVISIONAL" in a_ and "reg.ct_to_ios" in a_ for a_ in inf.avisos), inf.avisos
+
+
+def test_una_registracion_automatica_TIENE_que_declarar_su_capa(tmp_path, malla):
+    """B-5: `regulatory` no tiene defecto, y una maquina que calcula tiene que decirlo.
+
+    Antes el campo llevaba `default_factory`, asi que toda registracion salia con
+    `layer: 1` puesto sin que nadie lo escribiera: una transformada calculada por un ICP
+    quedaba declarada tan adquirida como el CBCT del que salio, y no habia forma de
+    distinguir «se declaro capa 1» de «nadie lo declaro». Un ICP es computo determinista
+    sobre dos nubes: capa 2.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", operator="auto:geometric-fusion-agent@0.2.0",
+    )])
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("no declara `regulatory`" in e for e in inf.errores), inf.errores
 
 
 def test_un_registro_de_una_PERSONA_sin_verificar_no_es_provisional(tmp_path, malla):

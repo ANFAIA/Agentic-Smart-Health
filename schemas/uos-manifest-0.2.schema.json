@@ -131,6 +131,42 @@
       "title": "Asset",
       "type": "object"
     },
+    "Autorizacion": {
+      "additionalProperties": false,
+      "description": "Que dice UNA jurisdiccion sobre este asset (B-5).\n\nSustituye al par `status` + `jurisdictions`, que no se podia leer: `status` era texto\nlibre y `jurisdictions: []` era ambiguo —¿ninguna, o no declarado?—, que es justo la\nambiguedad que el formato prohibe en `fdi_targets` y en `derivation`. Un estado sin\njurisdiccion no significa nada: «investigational» es una afirmacion frente a UN\nregulador, no una propiedad del fichero.",
+      "properties": {
+        "jurisdiction": {
+          "title": "Jurisdiction",
+          "type": "string"
+        },
+        "regime": {
+          "title": "Regime",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/EstadoRegulatorio"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference"
+        }
+      },
+      "required": [
+        "jurisdiction",
+        "regime",
+        "status"
+      ],
+      "title": "Autorizacion",
+      "type": "object"
+    },
     "Clase": {
       "description": "`kind` de un asset (§4.1). El nivel UOS-Core solo exige los tres primeros.",
       "enum": [
@@ -153,6 +189,18 @@
         "quarantined"
       ],
       "title": "EstadoPHI",
+      "type": "string"
+    },
+    "EstadoRegulatorio": {
+      "description": "Vocabulario CERRADO. `status` era `str | None` y por tanto texto libre: dos\nemisores escribian «investigational» y «Investigational (EU MDR)» y ningun lector\npodia compararlos.",
+      "enum": [
+        "not_a_device",
+        "investigational",
+        "submitted",
+        "cleared",
+        "withdrawn"
+      ],
+      "title": "EstadoRegulatorio",
       "type": "string"
     },
     "Extension": {
@@ -426,7 +474,15 @@
           "title": "Verified By"
         },
         "regulatory": {
-          "$ref": "#/$defs/Regulatorio"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Regulatorio"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -441,7 +497,7 @@
     },
     "Regulatorio": {
       "additionalProperties": false,
-      "description": "La capa regulatoria del asset (§1.1). Layer 3 es SaMD y se puede desmontar.",
+      "description": "La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.\n\n**Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un\nprocedimiento determinista y reproducible a partir de capa 1, sin modelo entrenado —\nregistraciones automaticas, conversiones de formato, submuestreos, color medido por\npieza—; 3 es salida de modelo. El 2 no existia: el documento admitia `1..3` y solo\ndefinia el 1 y el 3, asi que todo el computo determinista viajaba como capa 1 sin que\nnadie lo dijera (B-5).\n\n**La 2 no se desmonta y la 3 si.** La 3 vive solo bajo `derived/` porque borrar ese\ndirectorio tiene que quitar toda la inferencia. La 2 puede vivir fuera, pero **tiene\nque declarar `derived_from`**: si es reproducible, se tiene que poder decir a partir\nde que, o la afirmacion no se puede comprobar.\n\n⚠️ **`clearances: []` significa NO DECLARADO**, por definicion escrita y no por\nconvencion. El validador avisa por cada asset de capa 3 que llegue vacio.",
       "properties": {
         "layer": {
           "default": 1,
@@ -450,23 +506,11 @@
           "title": "Layer",
           "type": "integer"
         },
-        "status": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Status"
-        },
-        "jurisdictions": {
+        "clearances": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/Autorizacion"
           },
-          "title": "Jurisdictions",
+          "title": "Clearances",
           "type": "array"
         }
       },

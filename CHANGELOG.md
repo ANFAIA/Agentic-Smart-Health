@@ -59,6 +59,43 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — regulatory layer is declared per value, not per file** (`ash-clinical/2.0`).
+  `clinical/observations.json` declared `layer: 1` once, for all of it, on the grounds that
+  it is "the transcription of a report a person signed". Most of it is. The `color` block —
+  CIELAB per crown third with the flash falloff regressed out — is not: the pipeline
+  computes it from the photographs, and nobody signed it. The format had extraction
+  provenance per value (`derivation`, answering *how*) and no regulatory layer per value,
+  so nothing answered *who answers for it*: a reader who deleted `derived/` kept computed
+  measurements believing they kept a signed report. Raised as **B-2**.
+
+  `confidence`, `agent` and `derivation` move down with it. They used to be written once
+  per tooth over a `setdefault`, so with two observations on one tooth `findings`
+  accumulated while those three were overwritten by the last — and, worse, the same
+  `confidence` floated over `color`, which comes from an entirely different chain. The
+  file-level `regulatory` stays as the declared **default**.
+- **The specification defines layer 2 for the first time**, and `regulatory` changes shape.
+  `layer` accepted `1..3` while the document defined only 1 and 3, so every deterministic
+  computation — the ICP transform, the STL converted to glTF, the subsampled density field,
+  the trained appearance — shipped as Layer 1 without anybody saying so. Layer 2 is
+  *computed by a deterministic, reproducible procedure from layer-1 assets, with no trained
+  model*; it may live outside `derived/` but **must** declare `derived_from`, because a
+  reproducibility claim the container cannot substantiate is not a claim. Raised as **B-5**.
+- **BREAKING — `regulatory.status` and `regulatory.jurisdictions` are replaced by
+  `clearances[]`.** `status` was free text and `jurisdictions: []` was ambiguous — none, or
+  not declared? — which is exactly the ambiguity the format forbids in `fdi_targets` and
+  `derivation`. A clearance is `{jurisdiction, regime, status, reference}` with `status`
+  closed to `not_a_device | investigational | submitted | cleared | withdrawn`. An empty
+  array now means *not declared* by written definition, and the validator warns for every
+  Layer 3 asset that leaves it empty.
+- **BREAKING — `Registro.regulatory` loses its default.** With `default_factory` every
+  registration arrived carrying `layer: 1`, so a transform computed by an ICP was, on
+  paper, as acquired as the CBCT it came from, and "declared layer 1" was indistinguishable
+  from "nobody declared it". It is now optional and the validator requires it whenever
+  `operator` begins with `auto:`.
+- New validator checks 17c and 17d: layer 2 declares `derived_from`, layer-3 assets without
+  clearances warn, automatic registrations declare their layer; and inside `clinical/`, no
+  value is layer 3, no `inferred` value is layer 1, and every layer-2 value names its
+  sources.
 - **BREAKING — the Gaussian layers stop carrying `region_id` too.** `scene/field.ply` and
   `scene/composite.ply` shipped a `region_id` column: the same FDI code, from the same
   segmenter, in two more assets the manifest declares Layer 1. The external review named

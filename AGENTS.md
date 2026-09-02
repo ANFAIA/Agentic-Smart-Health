@@ -281,7 +281,7 @@ that fixes whatever the new version finds.
 | Field | Value |
 |---|---|
 | **Name** | `docs-guardian` |
-| **Version** | `0.6.0` |
+| **Version** | `0.7.0` |
 | **Location** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Status** | `active` |
 | **Trigger** | `pre-commit` hook (**does not block**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -1418,11 +1418,21 @@ wrote.
   define per-tooth clinical attributes: its §9 sends them to FHIR's `Observation`, i.e. to a
   server, and then a standalone `.uos` cannot answer "what does the report say about the
   24?". It goes in `clinical/observations.json` with the 32 observations, the measurements
-  that do not fit on a single tooth and the gate's reasons. **Layer 1, not `derived/`**: it
-  is the transcription of a report a person signed, and putting it in `derived/` would make
-  it detachable. How each value was extracted is stated by its `derivation` —
+  that do not fit on a single tooth and the gate's reasons. **Layer 1 is the file's
+  default, not a claim about its content**: it is the transcription of a report a person
+  signed, and putting it in `derived/` would make it detachable — but the `color` block is
+  Layer 2, computed by the pipeline from the photographs, and says so in its own entry.
+  Every value carries its own `regulatory`, `derivation` and `confidence`; nothing floats
+  over the tooth any more. How each value was extracted is stated by its `derivation` —
   `deterministic`, `inferred`, or `null`, which means **not declared** and is not the same
   as deterministic.
+
+  ⚠️ **`confidence` is not how sure the extractor was.** It is the weakest link in the
+  chain that attached a value to *this* tooth, and the segmenter's confidence in the FDI
+  code dominates it — which is why a `deterministic` value legitimately arrives at 0.745.
+  The file says so in its own `regulatory` block, because every reader that does not know
+  reads it as a contradiction. `color` carries none: that number is about the
+  report-to-tooth chain and says nothing about a colour measurement.
 - **The manifest declares its extensions** (`extensions`, `extensions_used`,
   `extensions_required`), and this **is not in v0.2**: it is our proposal, copied from glTF,
   which UOS leans on. Without it, an outside reader ignores what we added **without
@@ -1456,6 +1466,7 @@ wrote.
 | Date | Version | Change |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
+| 2026-09-02 | 0.7.0 | **B-2 and B-5.** Regulatory layer **per value** in `clinical/observations.json` (`ash-clinical/2.0`): the file declared Layer 1 for everything, and the `color` block — CIELAB per crown third, flash falloff regressed out — is computed by the pipeline, not transcribed from a signed report. It is now Layer 2 with its `derived_from`. **Layer 2 is defined for the first time**: computed by a deterministic, reproducible procedure from Layer 1, with no trained model. It existed in fact — the ICP transform, the STL converted to glTF, the trained appearance — and all of it shipped as Layer 1 because the document defined only 1 and 3. `status` + `jurisdictions` are replaced by `clearances[]` with a closed status vocabulary; an empty array means *not declared*, by written definition, and the validator warns. `Registro.regulatory` loses its default so that an automatic registration has to declare its layer instead of inheriting one. |
 | 2026-09-02 | 0.6.0 | **B-1, second pass.** The first pass removed the FDI code from `scene/scene.glb`, which is what the external review named — it reviewed the specification, not one of our containers. Opening a real one showed the same violation in two more files: `scene/field.ply` and `scene/composite.ply` shipped a `region_id` column, the same code from the same segmenter, in two more assets declared Layer 1. The column is now extracted on the way into the container and rewritten as `derived/seg_gaussians.<layer>.bin`, the per-Gaussian sibling of `derived/seg_teeth.bin`. The working files on disk are untouched: what is regulated is the container. Check 17b extended to PLY headers, and an end-to-end test now walks **every** layer of `scene/` rather than the one that was fixed. |
 | 2026-09-02 | 0.5.0 | **B-1 of the external review**: `scene/scene.glb` stops being split by tooth and stops carrying `extras.uos_fdi`, and the `KHR_gaussian_splatting` primitive stops carrying `_REGION_ID`. Both are FDI codes, both come from a segmenter, and both were baked into an asset the manifest declared Layer 1 — so deleting `derived/` no longer removed the inference that §3.1 promises can be removed. The labels keep travelling whole in `derived/seg_teeth`; picking is rebuilt in the reader by vertex index. A new validator check parses every non-Layer-3 GLB and rejects both attributes, because the previous check verified where Layer 3 is **declared**, not where its content **is**. |
 | 2026-08-24 | 0.4.0 | Conformance with the draft: the registration stops writing `rms_error_mm: null` while holding the measured residual — a naming bug `getattr` was covering — and stops crediting the ICP to the wrong agent; the scene is split into one *primitive* per tooth with `extras.uos_fdi` (§5.1), which is what enables §11.3's picking in a third-party viewer; the photos declare `projection` (§5.3); the views carry `mpr` and `clip_planes` when the volume travels (§7); and the **per-version JSON Schema** §12 requires is published, checked by the validator itself. |

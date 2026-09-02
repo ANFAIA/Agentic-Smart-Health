@@ -58,13 +58,59 @@ PRIORIDAD = {
 }
 
 
+class Autorizacion(BaseModel):
+    """Que dice UNA jurisdiccion sobre este asset (B-5).
+
+    Sustituye al par `status` + `jurisdictions`, que no se podia leer: `status` era texto
+    libre y `jurisdictions: []` era ambiguo —¿ninguna, o no declarado?—, que es justo la
+    ambiguedad que el formato prohibe en `fdi_targets` y en `derivation`. Un estado sin
+    jurisdiccion no significa nada: «investigational» es una afirmacion frente a UN
+    regulador, no una propiedad del fichero.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    jurisdiction: str
+    regime: str
+    status: EstadoRegulatorio
+    #: El numero de expediente o de autorizacion, cuando existe. `None` NO es "no hay":
+    #: es "no consta aqui", igual que `weights_sha256` en el sidecar de `derived/`.
+    reference: str | None = None
+
+
+class EstadoRegulatorio(StrEnum):
+    """Vocabulario CERRADO. `status` era `str | None` y por tanto texto libre: dos
+    emisores escribian «investigational» y «Investigational (EU MDR)» y ningun lector
+    podia compararlos."""
+
+    NO_ES_PRODUCTO = "not_a_device"
+    INVESTIGACION = "investigational"
+    PRESENTADO = "submitted"
+    AUTORIZADO = "cleared"
+    RETIRADO = "withdrawn"
+
+
 class Regulatorio(BaseModel):
-    """La capa regulatoria del asset (§1.1). Layer 3 es SaMD y se puede desmontar."""
+    """La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.
+
+    **Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un
+    procedimiento determinista y reproducible a partir de capa 1, sin modelo entrenado —
+    registraciones automaticas, conversiones de formato, submuestreos, color medido por
+    pieza—; 3 es salida de modelo. El 2 no existia: el documento admitia `1..3` y solo
+    definia el 1 y el 3, asi que todo el computo determinista viajaba como capa 1 sin que
+    nadie lo dijera (B-5).
+
+    **La 2 no se desmonta y la 3 si.** La 3 vive solo bajo `derived/` porque borrar ese
+    directorio tiene que quitar toda la inferencia. La 2 puede vivir fuera, pero **tiene
+    que declarar `derived_from`**: si es reproducible, se tiene que poder decir a partir
+    de que, o la afirmacion no se puede comprobar.
+
+    ⚠️ **`clearances: []` significa NO DECLARADO**, por definicion escrita y no por
+    convencion. El validador avisa por cada asset de capa 3 que llegue vacio.
+    """
 
     model_config = ConfigDict(extra="forbid")
     layer: int = Field(default=1, ge=1, le=3)
-    status: str | None = None
-    jurisdictions: list[str] = Field(default_factory=list)
+    clearances: list[Autorizacion] = Field(default_factory=list)
 
 
 class Adquisicion(BaseModel):
@@ -281,7 +327,11 @@ class Registro(BaseModel):
     computed: datetime | None = None
     operator: str | None = None
     verified_by: str | None = None
-    regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
+    #: ⚠️ **Sin defecto a proposito (B-5).** Con `default_factory` toda registracion
+    #: llegaba con `layer: 1` puesto y no habia forma de distinguir «se declaro capa 1» de
+    #: «nadie lo declaro». Una registracion calculada por una maquina es computo, no
+    #: adquisicion, y el validador exige que lo diga cuando `operator` empieza por `auto:`.
+    regulatory: Regulatorio | None = None
 
     #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
     #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.

@@ -410,10 +410,11 @@ deliberate:
 \textbf{Plane} & \textbf{Where} & \textbf{What it is, and what may be done to it}\\
 \midrule
 \endhead
-\textbf{Data} & \code{assets[]} & Acquired measurements, and the representations UOS
-composes from them --- each declaring its source in \code{derived\_from} and, where the
-conversion loses something, saying so (\S\ref{sec:scenes}). Regulatory layer 1. Immutable:
-a writer never edits an asset in place (\S\ref{sec:provenance}).\\
+\textbf{Data} & \code{assets[]} & Acquired measurements --- regulatory layer 1 --- and
+the representations UOS computes from them --- regulatory layer 2 --- each declaring its
+source in \code{derived\_from} and, where the conversion loses something, saying so
+(\S\ref{sec:scenes}). Immutable: a writer never edits an asset in place
+(\S\ref{sec:provenance}).\\
 \textbf{Presentation} & \code{views.json} & Camera states, layer visibility, clipping.
 Layer 1, disposable, versionable, cheap to rewrite.\\
 \textbf{Inference} & \code{derived/} & Anything a model produced. Regulatory layer 3.
@@ -421,6 +422,34 @@ Layer 1, disposable, versionable, cheap to rewrite.\\
 complete \code{.uos}.\\
 \bottomrule
 \end{longtable}
+
+\paragraph{The three regulatory layers.}
+\code{regulatory.layer} takes one of three values, and until this revision only two of
+them were defined --- so everything computed travelled as layer 1 without anybody saying
+so.
+
+\begin{longtable}{L{1.4cm} L{13.9cm}}
+\toprule
+\textbf{Layer} & \textbf{What it is}\\
+\midrule
+\endhead
+\textbf{1} & \textbf{Acquired}, or transcribed from a document a person signed. A DICOM
+series, a scanner mesh, a photograph; the pH someone measured and wrote down.\\
+\textbf{2} & \textbf{Computed} by a deterministic, reproducible procedure from layer-1
+assets, \emph{with no trained model}. Automatic registrations, format conversions,
+subsampling, per-tooth colour measured off a photograph. A layer-2 asset \MAY{} live
+outside \code{derived/}, but it \MUST{} declare \code{derived\_from}: if the claim is that
+it is reproducible, the container has to say from what, or the claim cannot be checked.\\
+\textbf{3} & \textbf{Model output.} Lives only under \code{derived/}
+(\S\ref{sec:derived}).\\
+\bottomrule
+\end{longtable}
+
+Layer 2 is not a softer layer 3. The distinction that matters to a regulator is whether a
+trained model is in the path, and the distinction that matters to a reader is whether the
+value can be recomputed. Layer 2 answers yes to the second and no to the first, and it is
+exactly the class that was invisible before: an ICP transform, an STL converted to glTF, a
+subsampled density field, all of them shipping as though they had been measured.
 
 \paragraph{Rationale.} The third plane is what makes the format shippable. Distributing
 the same case in a jurisdiction where the AI module is not cleared requires deleting a
@@ -624,8 +653,12 @@ which stays true whether or not the container holds it.\\
 \code{acquisition} & object & --- & \code{\{time: date-time|null, device: map str->str\}}.\\
 \code{load\_priority} & int & default 30 & Progressive-loading hint; lower loads first.
 See table below.\\
-\code{regulatory} & \code{Regulatory} & --- & \code{\{layer: 1..3, status: str|null,
-jurisdictions: str[]\}}. \S\ref{sec:derived}.\\
+\code{regulatory} & \code{Regulatory} & --- & \code{\{layer: 1..3, clearances:
+Clearance[]\}}, where a \code{Clearance} is \code{\{jurisdiction, regime, status,
+reference|null\}} and \code{status} is one of \code{not\_a\_device},
+\code{investigational}, \code{submitted}, \code{cleared}, \code{withdrawn}. An empty
+\code{clearances} means \textbf{not declared}, by written definition; a validator \MUST{}
+warn for each layer-3 asset that leaves it empty. \S\ref{sec:planes}, \S\ref{sec:derived}.\\
 \code{projection} & \code{Projection}\,|\,null & --- & 2D imaging only. \S\ref{sec:image2d}.\\
 \code{parts} & \code{Part[]} & --- & Directory assets only, carried or referenced.
 \S\ref{sec:dirasset}.\\
@@ -1250,25 +1283,75 @@ reproducible. Silence never gets promoted to an assertion.
 
 \newpage
 \begin{lstlisting}[style=js]
-{ "schema": "ash-clinical/1.0",
+{ "schema": "ash-clinical/2.0",
   "vocabulary": "ISO-3950 (FDI) for teeth; the finding vocabulary is closed",
-  "regulatory": {"layer": 1, "note": "transcription of a report signed by a person"},
+  "regulatory": {
+    "layer": 1, "default": true,
+    "note": "THE FILE DEFAULT, not a claim about all of its content: every value in
+             teeth[] declares its own layer and overrides this one",
+    "confidence": "a value's confidence is NOT how sure the extractor was: it is the
+                   weakest link in the chain that attached this value to THIS tooth, and
+                   it is dominated by the segmenter's confidence in the FDI code" },
   "teeth": [
-    { "fdi": "11", "findings": ["aparato_ortodoncico"], "confidence": 0.745,
-      "agent": "report-agent@0.1.0", "derivation": "deterministic",
-      "observed": "2026-08-17T15:39:38.921947+00:00",
-      "n_roots": 1, "n_canals": 1,
-      "color": { "space": "CIELAB",
-                 "cervical": [74.89, 9.83, 24.06],
-                 "middle":   [74.83, 6.70, 20.93],
-                 "incisal":  [71.56, 6.77, 19.14],
-                 "from_photo": "sha256:baeb31fa...", "n_pixels": 33508, "measured": true,
-                 "illumination_slope": [0.649, 0.577, 0.677],
-                 "note": "measured per tooth; NOT a certified shade-guide value; flash
-                          falloff removed using the patient's own gingiva as reference, so
-                          teeth ARE comparable to each other; the absolute level is not,
-                          because the photograph carries no grey reference" } } ] }
+    { "fdi": "11",
+      "findings": { "value": ["aparato_ortodoncico"],
+                    "regulatory": {"layer": 1}, "derivation": "deterministic",
+                    "confidence": 0.745, "agent": "report-agent@0.1.0",
+                    "observed": "2026-08-17T15:39:38.921947+00:00" },
+      "n_roots": { "value": 1, "regulatory": {"layer": 1}, ... },
+      "color":   { "regulatory": {"layer": 2}, "derivation": "deterministic",
+                   "derived_from": ["sha256:baeb31fa..."],
+                   "value": { "space": "CIELAB",
+                              "cervical": [74.89, 9.83, 24.06],
+                              "middle":   [74.83, 6.70, 20.93],
+                              "incisal":  [71.56, 6.77, 19.14],
+                              "from_photo": "sha256:baeb31fa...", "n_pixels": 33508,
+                              "measured": true,
+                              "illumination_slope": [0.649, 0.577, 0.677],
+                              "note": "measured per tooth; NOT a certified shade-guide
+                                       value; flash falloff removed using the patient's
+                                       own gingiva as reference, so teeth ARE comparable
+                                       to each other; the absolute level is not, because
+                                       the photograph carries no grey reference" } } } ] }
 \end{lstlisting}
+
+\paragraph{Regulatory layer per value, not per file.}
+This file used to declare \code{layer: 1} once, for everything in it, on the grounds that
+it is ``the transcription of a report a person signed''. Most of it is. The \code{color}
+block is not: nobody signed a CIELAB triple per crown third with the flash falloff
+regressed out --- the pipeline computes it from the photographs. The format had extraction
+provenance per value (\code{derivation}, answering \emph{how} a value was obtained) and no
+regulatory layer per value, so nothing answered \emph{who answers for it}. A reader who
+deleted \code{derived/} kept computed measurements believing they kept a signed report.
+
+Two rules, both of them \S\ref{sec:derived}'s carried inside the file:
+
+\begin{itemize}
+  \item A value with \code{derivation: "inferred"} \MUSTNOT{} declare \code{layer: 1}.
+  What a model proposed is neither acquisition nor transcription, however right it turns
+  out to be.
+  \item A value declaring \code{layer: 3} inside \code{clinical/} is an \textbf{error}.
+  Layer 3 lives only under \code{derived/}; that is the whole of what makes deleting the
+  directory mean something.
+\end{itemize}
+
+The file-level \code{regulatory} stays, as the \textbf{default} for values that do not
+declare their own, and says so in the object itself.
+
+\paragraph{What \code{confidence} measures, said in the file.}
+A value can carry \code{derivation: "deterministic"} and \code{confidence: 0.745} without
+contradicting itself, and the file has to say why or every reader will read it as a
+contradiction. The two answer different questions: \code{derivation} is how the value was
+extracted --- a pattern found it written --- and \code{confidence} is how much of the
+chain that attached it to \emph{this tooth} holds up. It is a minimum over that chain, and
+in practice the segmenter's confidence in the FDI code dominates it. Deleting it where the
+extraction was deterministic, which is the obvious-looking fix, would throw away the one
+thing worth knowing: the report says this, and we are not certain which tooth it is about.
+
+For the same reason \code{color} carries \textbf{no} \code{confidence}. That number is
+about the report-to-tooth chain and says nothing about a colour measurement, which is
+qualified by its own support: \code{n\_pixels}, \code{illumination\_slope},
+\code{measured}.
 
 Note the shape of that \code{note}: it states what the measurement supports (relative
 comparison between teeth) and what it does not (absolute shade), instead of shipping a
@@ -1303,7 +1386,9 @@ the source asset, in the order the scene declares them. \code{0} = unassigned.\\
 \begin{lstlisting}[style=js]
 { "model": {"name": "ash-seg-teeth", "version": null, "weights_sha256": "ea0060d5..."},
   "source_assets": ["asset.scene"],
-  "regulatory": {"layer": 3, "status": "investigational", "jurisdictions": []},
+  "regulatory": {"layer": 3, "clearances": [
+     {"jurisdiction": "EU", "regime": "MDR", "status": "investigational",
+      "reference": null}]},
   "generated": "2026-08-28T02:07:17.244507+00:00",
   "encoding": { "dtype": "int16-le", "count": 112067,
                 "indexes": "one code per vertex of `asset.scene`, in the same order the
@@ -1594,6 +1679,12 @@ the \code{\_REGION\_ID} attribute on any primitive, and a \code{.ply} declares n
 \code{region\_id} property. This verifies where layer 3 \emph{is}, which is the other half
 --- and without it check 17 passes on a container whose layer-1 payloads are full of model
 output.\\
+17c & E & Layer 2 declares \code{derived\_from} (\S\ref{sec:planes}); layer-3 assets with
+an empty \code{clearances} raise a warning; a registration whose \code{operator} begins
+with \code{auto:} declares \code{regulatory}.\\
+17d & E & Clinical layers (\S\ref{sec:clinical}): inside \code{clinical/}, no value
+declares layer 3, no \code{inferred} value declares layer 1, and every layer-2 value
+declares \code{derived\_from}.\\
 18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a
@@ -1690,7 +1781,7 @@ fine.
   \item Write the payload at \code{derived/<name>.<ext>} and a sidecar at
   \code{derived/<name>.meta.json} carrying \code{model} (name, version,
   \code{weights\_sha256} --- \code{null} if unknown, never a substitute hash),
-  \code{source\_assets}, \code{regulatory} (layer 3, \code{status}, \code{jurisdictions}),
+  \code{source\_assets}, \code{regulatory} (layer 3, \code{clearances}),
   \code{generated}, and an \code{encoding} block that says \textbf{what the bytes index}.
   \item Declare both as assets with \code{regulatory.layer: 3}.
   \item Verify the removability invariant: delete \code{derived/} and its manifest entries,
