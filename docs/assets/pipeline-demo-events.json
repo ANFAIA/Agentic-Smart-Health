@@ -1,0 +1,118 @@
+{
+  "workdir": "demo-case (generated in /tmp by default; use --workdir to choose it)",
+  "synthetic": true,
+  "cbct_slices": 16,
+  "stages": [
+    {
+      "key": "input",
+      "title": "0. Synthetic raw case",
+      "files": [
+        "demo-case/input/scan_upper.obj",
+        "demo-case/input/cbct/16 DICOM slices",
+        "demo-case/input/informe.txt",
+        "demo-case/input/intraoral-photo/synthetic-smile.png"
+      ],
+      "metrics": [
+        "public synthetic data",
+        "CBCT spacing 1.8 mm",
+        "no patient file enters git"
+      ]
+    },
+    {
+      "key": "ingestion",
+      "title": "1. Ingestion agents",
+      "files": [
+        "demo-case/01_ingestion/twin_snapshot.json",
+        "demo-case/01_ingestion/outcomes.json",
+        "demo-case/01_ingestion/artifacts/3 content-addressed blobs"
+      ],
+      "metrics": [
+        "mesh-agent / cbct-agent / report-agent / image-agent",
+        "surface_ref sha256:93a2e6aefc5...",
+        "gaussian_field_ref sha256:761256ab1d1..."
+      ]
+    },
+    {
+      "key": "fusion",
+      "title": "2. Fusion and segmentation",
+      "files": [
+        "demo-case/02_fusion/fusion.json",
+        "demo-case/02_fusion/segmentation.json"
+      ],
+      "metrics": [
+        "geometric-fusion-agent ok",
+        "rms_error_mm 0.765",
+        "segmentation-agent ok",
+        "semantic-fusion-agent attaches report findings to FDI regions"
+      ]
+    },
+    {
+      "key": "exports",
+      "title": "3. Export agents",
+      "files": [
+        "demo-case/03_exports/acq-README.stl",
+        "demo-case/03_exports/acq-README.ply",
+        "demo-case/03_exports/acq-README-visor/",
+        "demo-case/03_exports/render/",
+        "demo-case/03_exports/exports.json"
+      ],
+      "metrics": [
+        "6 export channels wrote files",
+        "reversible true",
+        "STL / PLY / PNG / viewer package / UOS"
+      ]
+    },
+    {
+      "key": "uos",
+      "title": "4. UOS container",
+      "files": [
+        "demo-case/04_uos/acq-README.uos",
+        "demo-case/04_uos/manifest.json",
+        "demo-case/04_uos/validation.txt"
+      ],
+      "metrics": [
+        "levels UOS-Core",
+        "errors 0",
+        "views 8",
+        "external acquired assets 3"
+      ]
+    }
+  ],
+  "agents": {
+    "ingestion": [
+      "cbct-agent@0.1.0",
+      "mesh-agent@0.1.0",
+      "report-agent@0.1.0",
+      "image-agent@0.1.0"
+    ],
+    "fusion": [
+      "geometric-fusion-agent@0.2.0",
+      "semantic-fusion-agent@0.1.0"
+    ],
+    "analysis": [
+      "segmentation-agent@0.1.0"
+    ],
+    "exports": [
+      "export-agent@0.1.0",
+      "field-export-agent@0.1.0",
+      "composite-export-agent@0.1.0",
+      "composite-mesh-export-agent@0.3.0",
+      "viewer-export-agent@0.3.0",
+      "uos-export-agent@0.4.0",
+      "render-export-agent@0.1.1"
+    ]
+  },
+  "validation": {
+    "valid": true,
+    "levels": [
+      "UOS-Core"
+    ],
+    "errors": [],
+    "warnings": [
+      "el contenedor REFERENCIA 3 original(es) adquirido(s) que no custodia, asi que su contenido no se verifica aqui: asset.ios, asset.img_000, asset.doc_000",
+      "registro reg.ct_to_ios: automatico y sin `verified_by` — el visor debe presentarlo como PROVISIONAL"
+    ],
+    "views": 8,
+    "external_acquired_assets": 3
+  }
+}
