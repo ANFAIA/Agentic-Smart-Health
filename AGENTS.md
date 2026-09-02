@@ -1274,7 +1274,7 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.4.0` |
+| **Version** | `0.5.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
@@ -1364,11 +1364,18 @@ wrote.
 - **The original STL travels as a `document`, not as a scene.** §5.1 says so. Converting to
   glTF loses information — `float32` from `float64` — so the original stays: the converted
   one is presentation and the reversible one is the scanner's file, byte for byte.
-- ⚠️ **`extras.uos_fdi` is NOT emitted**, even though §5.1 allows for it "if the mesh comes
-  segmented". Ours does not come segmented: we segment it with a model, and that is Layer
-  3. Baked into the scene, removing `derived/` would stop removing the inference and §5.5's
-  hard rule breaks. The labels go in `derived/`, indexed by vertex — exact because the scene
-  preserves the ingested mesh's ordering.
+- ⚠️ **Neither `extras.uos_fdi` nor `_REGION_ID` is emitted**, even though §5.1 allows the
+  first "if the mesh comes segmented". Ours does not come segmented: we segment it with a
+  model, and that is Layer 3. Baked into the scene, removing `derived/` would stop removing
+  the inference and §5.5's hard rule breaks. The labels go in `derived/`, indexed by vertex
+  — exact because the scene preserves the ingested mesh's ordering.
+
+  This was violated between 0.4.0 and 0.5.0: the scene shipped split into one *primitive*
+  per tooth, so that a third-party viewer could do §11.3's picking, and the manifest kept
+  declaring it Layer 1. An external review of the specification flagged it as blocking
+  (B-1) and it is reverted. **The price is real**: a foreign glTF viewer opens the
+  container, draws the arch, and cannot select a tooth. Picking now requires `derived/`,
+  which is the only way the three-plane separation is true rather than documented.
 - ⚠️ **The DICOM series travels WHOLE and is verified slice by slice.** The volume asset is
   a directory (`volume/ct_001/`) and the manifest declares one `Parte` per file, with its
   name and its hash. A hash of the whole set is not enough: that one says "this series does
@@ -1449,6 +1456,7 @@ wrote.
 | Date | Version | Change |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
+| 2026-09-02 | 0.5.0 | **B-1 of the external review**: `scene/scene.glb` stops being split by tooth and stops carrying `extras.uos_fdi`, and the `KHR_gaussian_splatting` primitive stops carrying `_REGION_ID`. Both are FDI codes, both come from a segmenter, and both were baked into an asset the manifest declared Layer 1 — so deleting `derived/` no longer removed the inference that §3.1 promises can be removed. The labels keep travelling whole in `derived/seg_teeth`; picking is rebuilt in the reader by vertex index. A new validator check parses every non-Layer-3 GLB and rejects both attributes, because the previous check verified where Layer 3 is **declared**, not where its content **is**. |
 | 2026-08-24 | 0.4.0 | Conformance with the draft: the registration stops writing `rms_error_mm: null` while holding the measured residual — a naming bug `getattr` was covering — and stops crediting the ICP to the wrong agent; the scene is split into one *primitive* per tooth with `extras.uos_fdi` (§5.1), which is what enables §11.3's picking in a third-party viewer; the photos declare `projection` (§5.3); the views carry `mpr` and `clip_planes` when the volume travels (§7); and the **per-version JSON Schema** §12 requires is published, checked by the validator itself. |
 | 2026-08-24 | 0.3.0 | The container carries the **twin** and not only the inputs: a glTF scene with the GS nodes hanging off it and their registration as a `matrix`, field and composite with a descriptor declaring whether they are **measured**, segmentation in `derived/`, the clinical layer, and an **extension mechanism** proposed to the draft. |
 | 2026-08-24 | 0.2.0 | **UOS-Vol** level: the whole DICOM series as a directory asset, verified slice by slice, with its §5.2 sidecar read from the headers that travel, and rejected if those headers contradict the `phi_state`. And the `fhir_map` populated by resource type. |

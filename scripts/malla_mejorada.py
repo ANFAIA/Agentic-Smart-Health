@@ -66,7 +66,7 @@ def lee_stl(datos: bytes) -> tuple[np.ndarray, np.ndarray]:
 
 
 def lee_glb(datos: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """`scene.glb` a `(vertices, triangulos, fdi por vertice)`.
+    """`scene.glb` a `(vertices, triangulos)`.
 
     ⚠️ **Esta es la fuente correcta, y no el STL original.** El encargo del proyecto es
     «regenerar ficheros STL e imagenes a partir del Digital Twin»: regenerar, no
@@ -75,10 +75,12 @@ def lee_glb(datos: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     porque `scene.glb` **es** la escena del gemelo (§5.1 del borrador: el mesh convertido y
     las gaussianas en un unico glTF binario), no una copia del fichero de entrada.
 
-    ⚠️ **Y el FDI viene aqui dentro.** Las primitivas comparten el mismo array de vertices
-    y se distinguen por sus indices y por su `extras.uos_fdi`, que es lo que el borrador
-    define para el picking semantico. Asi que la geometria por pieza no hay que
-    reconstruirla: ya viaja en el modelo.
+    ⚠️ **El FDI NO viene aqui dentro, y es deliberado.** La escena se emitia partida en un
+    *primitive* por diente con `extras.uos_fdi`; eso es salida de un segmentador —Layer 3—
+    horneada en un asset de Layer 1, asi que borrar `derived/` dejaba de quitar la
+    inferencia. Ahora la escena es un solo *primitive* y las etiquetas se cruzan desde
+    `derived/seg_teeth`, por indice de vertice, que es el mismo camino que ya usaba un
+    `.uos` cuya geometria llega como STL suelto.
     """
     largo_json = struct.unpack("<I", datos[12:16])[0]
     cabecera = json.loads(datos[20:20 + largo_json])
@@ -97,14 +99,8 @@ def lee_glb(datos: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     prims = cabecera["meshes"][0]["primitives"]
     pos = lee(prims[0]["attributes"]["POSITION"]).astype(np.float64)
-    caras, fdi = [], np.zeros(len(pos), np.int16)
-    for pr in prims:
-        tri = lee(pr["indices"]).astype(np.int32).reshape(-1, 3)
-        caras.append(tri)
-        codigo = (pr.get("extras") or {}).get("uos_fdi")
-        if codigo is not None:
-            fdi[np.unique(tri)] = int(codigo)
-    return pos, np.concatenate(caras), fdi
+    caras = [lee(pr["indices"]).astype(np.int32).reshape(-1, 3) for pr in prims]
+    return pos, np.concatenate(caras)
 
 
 def lee_apariencia(datos: bytes, esquema: dict) -> dict[str, np.ndarray]:
@@ -218,7 +214,7 @@ def main() -> int:
         glb = "scene/scene.glb" if "scene/scene.glb" in dentro else None
         malla = next((n for n in dentro if n.startswith("scene/scan.")), None)
         if glb is not None:
-            pos, caras, fdi_glb = lee_glb(z.read(glb))
+            pos, caras, fdi_glb = (*lee_glb(z.read(glb)), None)
             crudo_malla = None
             print(f"  geometria leida del gemelo ({glb}), sin usar el escaner original")
         elif malla is not None:
@@ -267,7 +263,9 @@ def main() -> int:
     escalas = np.stack([ap_col["scale_0"], ap_col["scale_1"], ap_col["scale_2"]], 1).mean(1)
     rgb, medido = color_desde_gaussianas(pos, centros, f_dc, ap_col["opacity"], escalas)
 
-    # El FDI del propio gemelo manda: viene con la geometria y no hay que comprobar orden.
+    # ⚠️ El FDI SIEMPRE se cruza desde `derived/`: ninguna geometria lo trae ya consigo
+    # (B-1). `fdi_glb` se conserva como `None` explicito para que el aviso de abajo siga
+    # distinguiendo «no habia etiquetas» de «las habia y no alinean».
     fdi = fdi_glb
     if fdi is None and seg is not None:
         fdi = etiquetas_alineadas(seg[0], seg[1], len(pos), caras)

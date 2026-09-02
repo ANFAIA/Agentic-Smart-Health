@@ -201,7 +201,6 @@ def _splats_khr(ruta_ply: Path, columnas: Any) -> Any:
         opacidad=col["opacity"].astype(np.float32),
         sh0=apila("f_dc_0", "f_dc_1", "f_dc_2").astype(np.float32),
         sh1=None if sh1 is None else sh1.astype(np.float32),
-        region_id=(col["region_id"].astype(np.int16) if "region_id" in col else None),
         # La oclusion y las normales viajan si el PLY las trae. Sin `ao` el visor dibuja la
         # arcada sin sombreado; sin normales no pasa nada al dibujar —el relieve ya esta en
         # el grado 1— pero se pierde el dato con el que se calculo.
@@ -222,7 +221,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.4.0"
+    version = "0.5.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -529,7 +528,13 @@ class UOSExportAgent(BaseExportAgent):
                 # escrito, no de una lista fija. `escribe_inria` emite `region_id` solo
                 # cuando hay segmentacion, y la lista fija no lo declaraba nunca: el
                 # codigo FDI viajaba en los bytes y no en el sidecar.
-                esq_ap = esquema_apariencia(_props_ap)
+                #
+                # ⚠️ **`region_id` se cae aqui, y el descriptor tiene que caerse con el.**
+                # La primitiva `KHR_gaussian_splatting` que se escribe en la escena ya no
+                # lleva `_REGION_ID` (B-1: es Layer 3 y la escena es Layer 1). Declararlo
+                # igualmente describiria una columna que el contenedor no lleva, que es
+                # exactamente el fallo que este bloque arreglo la primera vez.
+                esq_ap = esquema_apariencia([c for c in _props_ap if c != "region_id"])
                 descriptor_ap = "scene/appearance.gs.json"
                 extras_escena[descriptor_ap] = json_de(self._descriptor_gs(
                     snapshot,
@@ -602,11 +607,12 @@ class UOSExportAgent(BaseExportAgent):
                 generador=f"{self.name}@{self.version}",
                 nodos_gs=nodos_gs,
                 splats=splats_khr,
-                # ⚠️ El FDI por vertice parte la malla en un primitive por diente con
-                # `extras.uos_fdi` (§5.1). Sin eso, el picking semantico del §11.3 —que
-                # esta definido sobre ese campo— no funciona en un visor ajeno, por mucho
-                # que las mismas etiquetas viajen ademas en `derived/seg_teeth`.
-                etiquetas=etiquetas_ios,
+                # ⚠️ La escena NO se parte por diente y NO lleva el FDI. Se partia (0.4.0)
+                # para que el picking del §11.3 funcionase en un visor ajeno, y el precio
+                # era hornear Layer 3 en un asset de Layer 1: quitar `derived/` dejaba de
+                # quitar la inferencia. Las etiquetas siguen viajando en
+                # `derived/seg_teeth`, indexadas por vertice, y quien las quiera las cruza
+                # por indice — que es exacto porque la escena conserva el orden.
                 extras={
                     "uos_frame": FRAME_IOS,
                     "uos_units": "mm",

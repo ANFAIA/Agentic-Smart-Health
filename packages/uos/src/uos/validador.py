@@ -92,6 +92,7 @@ def valida(ruta: Path) -> Informe:
                 + ", ".join(ignorados)
             )
         _valida_assets(z, m, inf)
+        _valida_capas_en_la_escena(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
 
@@ -274,6 +275,46 @@ def _valida_regulatorio(m: Manifiesto, inf: Informe) -> None:
                 f"asset {a.id}: declara layer 3 y NO vive en derived/, asi que no se "
                 "puede desmontar borrando ese directorio"
             )
+
+
+def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Que ningun glTF de Layer 1 o 2 lleve dentro el codigo FDI (B-1).
+
+    ⚠️ **Este es el check que hace verificable la removibilidad de `derived/`.** El de
+    `_valida_regulatorio` comprueba donde se DECLARA la capa 3; este comprueba donde esta
+    su CONTENIDO, que es otra cosa. Durante la 0.4.0 el manifiesto declaraba la escena
+    como Layer 1 —y pasaba— mientras la escena viajaba partida en un *primitive* por
+    diente con `extras.uos_fdi`, o sea con la salida del segmentador horneada dentro.
+    Borrar `derived/` no borraba la inferencia, y el §3.1 promete que si.
+
+    El codigo FDI aparece de dos formas y las dos son Layer 3: `extras.uos_fdi` por
+    *primitive* de malla y `_REGION_ID` por gaussiana. En un asset de Layer 3 las dos son
+    licitas; fuera de el, no.
+    """
+    for a in m.assets:
+        if not a.uri.endswith(".glb") or a.regulatory.layer == 3:
+            continue
+        try:
+            crudo = z.read(a.uri)
+            largo = int.from_bytes(crudo[12:16], "little")
+            doc = json.loads(crudo[20:20 + largo])
+        except (KeyError, ValueError):
+            # Que el GLB no se pueda leer ya lo dice `_valida_assets`; aqui no se repite.
+            continue
+        for malla in doc.get("meshes", []):
+            for pr in malla.get("primitives", []):
+                if "uos_fdi" in (pr.get("extras") or {}):
+                    inf.errores.append(
+                        f"asset {a.id}: un primitive de {a.uri} declara `extras.uos_fdi` "
+                        f"y el asset es layer {a.regulatory.layer}; el codigo FDI sale de "
+                        "un segmentador, asi que borrar derived/ no quitaria la inferencia"
+                    )
+                if "_REGION_ID" in (pr.get("attributes") or {}):
+                    inf.errores.append(
+                        f"asset {a.id}: un primitive de {a.uri} lleva `_REGION_ID` y el "
+                        f"asset es layer {a.regulatory.layer}; el FDI por gaussiana es "
+                        "salida de modelo y no puede viajar en un plano que no se desmonta"
+                    )
 
 
 def _valida_procedencia(

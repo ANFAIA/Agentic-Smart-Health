@@ -400,7 +400,7 @@ provenance/chain.json         <- 3 versions of this case
 % =============================================================================
 \section{Data model}\label{sec:model}
 
-\subsection{The three planes}
+\subsection{The three planes}\label{sec:planes}
 
 Everything in a \code{.uos} belongs to exactly one of three planes, and the separation is
 deliberate:
@@ -886,46 +886,54 @@ Normative rules for the graph:
 
 \subsection{Mesh primitives and semantic picking}\label{sec:picking}
 
-The mesh is split into \textbf{one primitive per tooth}, plus one primitive holding
-everything else. Each tooth primitive carries its FDI code:
-
-\begin{lstlisting}[style=js]
-{ "attributes": {"POSITION": 0, "NORMAL": 1}, "indices": 16, "mode": 4,
-  "extras": {"uos_fdi": "27"} }
-\end{lstlisting}
+The mesh travels \textbf{unpartitioned}: a single primitive, a single index buffer, and
+\emph{no} \code{uos\_fdi} anywhere. \code{scene/scene.glb} is a layer-1 asset and it
+carries layer-1 content only.
 
 \begin{longtable}{L{4.2cm} L{11.2cm}}
 \toprule
 \textbf{Rule} & \textbf{Statement}\\
 \midrule
 \endhead
-Vertex order is invariant & All primitives \MUST{} share \emph{the same} \code{POSITION}
-and \code{NORMAL} accessors. Only the index buffer is partitioned. This is what allows
-\code{derived/seg\_teeth.bin} to be a flat array indexed by vertex, joined by position and
-nothing else. A writer that re-orders vertices here breaks that join silently.\\
-Face assignment & A face belongs to a tooth when \textbf{all three} of its vertices carry
-that label. Two would suffice to keep the border, but would drag in triangles crossing to
-the neighbouring tooth and the crown would come out with lateral flash.\\
-The remainder & Faces belonging to no tooth --- gingiva, and faces crossing between teeth
---- go into a primitive with \emph{no} \code{uos\_fdi}. They are neither redistributed
-(which would invent a boundary) nor discarded (which would leave holes a viewer would draw
-as perforations of the scan).\\
-Code type & \code{uos\_fdi} is a \textbf{string} (\code{"27"}, not \code{27}). An FDI code
-is not a quantity, and writing it as a number invites arithmetic on it.\\
+No FDI in the scene & A primitive of an asset whose \code{regulatory.layer} is not 3
+\MUSTNOT{} declare \code{extras.uos\_fdi}, and \MUSTNOT{} declare the
+\code{\_REGION\_ID} attribute on a \code{KHR\_gaussian\_splatting} primitive. Both are FDI
+codes and both come from a segmentation model.\\
+Vertex order is invariant & The scene \MUST{} preserve the vertex order of the mesh it was
+built from. This is what allows \code{derived/seg\_teeth.bin} to be a flat array indexed by
+vertex, joined by position and nothing else. A writer that re-orders vertices here breaks
+that join silently --- and with the scene unpartitioned, that join is now the \emph{only}
+route to per-tooth selection.\\
+Where picking comes from & A reader that wants per-tooth selection builds it at load time
+from \code{derived/seg\_teeth.bin}, by vertex index. For Gaussians it is the same join that
+produced them in the first place: nearest crown vertex. \textbf{Picking without
+\code{derived/} is not available}, and a writer \MUSTNOT{} make it available by baking the
+codes into the scene.\\
+Code type & Where an FDI code does appear --- in \code{derived/}, or in a layer-3 asset ---
+it is a \textbf{string} (\code{"27"}, not \code{27}). An FDI code is not a quantity, and
+writing it as a number invites arithmetic on it.\\
 \bottomrule
 \end{longtable}
 
-\paragraph{The compromise this section encodes, stated plainly.}
-The partition into primitives comes from a segmentation model --- i.e. from layer 3 ---
-and it is baked into a layer-1 scene. So deleting \code{derived/} no longer erases
-\emph{every} trace of inference: it leaves the mesh split into fourteen pieces carrying
-their codes. What it does erase is the \textbf{per-vertex} label, which is the one with
-enough resolution to paint and to measure; what survives is primitive granularity, which
-is only enough to select. This is a trade, not a clean rule, and it is documented as one. It is made because picking
-is defined over \code{extras.uos\_fdi}: without it a foreign
-viewer opens the container and cannot select a tooth, however faithfully the labels travel
-in \code{derived/}. A writer that needs the clean rule instead \MAY{} emit the mesh
-unpartitioned and declare in the manifest that picking requires \code{derived/}.
+\paragraph{What this costs, stated plainly.}
+A foreign glTF viewer opens the container, draws the arch, and \emph{cannot select a
+tooth}. That is a real loss of interoperability and it is accepted deliberately.
+
+Version 0.2 of this document specified the opposite: the mesh was split into one primitive
+per tooth, each carrying its code, so that picking worked in any glTF viewer. The partition
+comes from a segmentation model --- layer 3 --- and it was baked into a layer-1 scene, so
+deleting \code{derived/} no longer erased every trace of inference; it left the mesh split
+into fourteen pieces carrying their codes. \S\ref{sec:planes} justifies the third plane
+with a concrete case: distributing the case ``in a jurisdiction where the AI module is not
+authorised'' by deleting a directory. With the partition baked in, that distribution still
+contained model output, and no documented compromise sustains the claim in front of an
+auditor. The rule is therefore not a writer's option but the only conforming form.
+
+\paragraph{If a generic glTF reader really needs the selection.}
+The conforming alternative is a \textbf{second} GLB under \code{derived/}, declared layer
+3, with its model sidecar --- never the same file. A reader that accepts \code{derived/}
+gets the partitioned scene; a distribution that strips it loses the file and not just its
+resolution.
 
 \subsection{Appearance: the \code{KHR\_gaussian\_splatting} primitive}\label{sec:khr}
 
@@ -1573,7 +1581,12 @@ check.\\
 15 & E & Frame connectivity (\S\ref{sec:frames}).\\
 16 & W & Each provisional registration (\S\ref{sec:manifest}).\\
 17 & E & Regulatory: every asset under \code{derived/} has layer 3, and every layer-3 asset
-is under \code{derived/}.\\
+is under \code{derived/}. This verifies where layer 3 is \emph{declared}.\\
+17b & E & Layer content in the scene (\S\ref{sec:picking}): for every asset whose
+\code{regulatory.layer} is not 3 and whose \code{uri} ends in \code{.glb}, no primitive
+declares \code{extras.uos\_fdi} and none declares the \code{\_REGION\_ID} attribute. This
+verifies where layer 3 \emph{is}, which is the other half --- and without it check 17
+passes on a container whose layer-1 scene is full of model output.\\
 18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a

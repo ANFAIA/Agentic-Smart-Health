@@ -638,16 +638,21 @@ def _gltf_de(ruta) -> dict:
 
 
 
-def test_la_escena_lleva_el_FDI_por_sub_mesh(tmp_path, malla):
-    """§5.1 pide `extras.uos_fdi` por sub-mesh, y no es decoracion: el picking semantico
-    del §11.3 esta definido SOBRE ese campo.
+def test_la_escena_NO_lleva_el_FDI_ni_por_sub_mesh_ni_por_gaussiana(tmp_path, malla):
+    """B-1: `scene/scene.glb` es Layer 1 y el codigo FDI sale de un segmentador.
 
-    Sin el, un visor ajeno abre nuestro contenedor y no puede seleccionar un diente por
-    mucho que las etiquetas viajen en `derived/seg_teeth` — eso lo lee el NUESTRO porque
-    sabe que existe, no un lector cualquiera.
+    Se emitia (0.4.0) para que el picking del §11.3 funcionase en un visor ajeno, y el
+    precio era que quitar `derived/` dejaba de quitar la inferencia: la malla seguia
+    partida en catorce trozos con su codigo. La revision externa lo declaro bloqueante.
+
+    Un solo primitive, sin `extras`, y la primitiva de gaussianas sin `_REGION_ID`. Las
+    etiquetas siguen viajando enteras en `derived/seg_teeth`, que es lo que el segundo
+    assert comprueba: la regla no es «se pierde el dato», es «el dato vive en su plano».
     """
-    import numpy as np
+    import zipfile
+
     from uos.agente import UOSExportAgent
+    from uos.derivados import SEGMENTACION
 
     pos, etq = _arcada_de_juguete()
     salida = UOSExportAgent(_Almacen(pos)).export(
@@ -656,19 +661,68 @@ def test_la_escena_lleva_el_FDI_por_sub_mesh(tmp_path, malla):
     )
     assert salida.ok, salida.detail
 
-    prims = _gltf_de(salida.path)["meshes"][0]["primitives"]
-    con_fdi = {p["extras"]["uos_fdi"] for p in prims if "extras" in p}
-    assert con_fdi == {str(int(f)) for f in np.unique(etq) if f > 0}
-    # Y queda un primitive SIN codigo: la encia y las caras que cruzan de un diente a
-    # otro. Ni se reparten ni se descartan — descartarlas dejaria agujeros en la malla.
-    assert any("extras" not in p for p in prims)
+    g = _gltf_de(salida.path)
+    prims = g["meshes"][0]["primitives"]
+    assert len(prims) == 1, "la malla viaja partida: eso es Layer 3 horneada en Layer 1"
+    assert "extras" not in prims[0]
+    for m in g["meshes"]:
+        for pr in m["primitives"]:
+            assert "uos_fdi" not in (pr.get("extras") or {})
+            assert "_REGION_ID" not in pr["attributes"]
+
+    with zipfile.ZipFile(salida.path) as z:
+        assert SEGMENTACION in z.namelist(), "las etiquetas tienen que seguir viajando"
 
 
-def test_partir_por_FDI_no_toca_el_orden_de_los_vertices(tmp_path, malla):
+def test_el_validador_CAZA_el_FDI_horneado_en_una_escena_de_layer_1(tmp_path, malla):
+    """B-1: el check de `derived/` mira donde se DECLARA la capa 3, no donde esta.
+
+    Durante la 0.4.0 el manifiesto declaraba `asset.scene` como Layer 1 y el validador
+    pasaba, mientras la escena viajaba partida por diente con `extras.uos_fdi` dentro.
+    Este test reconstruye ese contenedor —un GLB parcheado a mano— y exige que ahora
+    falle. Sin el, revertir la particion es una decision que nada protege de volver.
+    """
+    import struct
+
+    from uos.agente import UOSExportAgent
+    from uos.validador import valida
+
+    pos, etq = _arcada_de_juguete()
+    salida = UOSExportAgent(_Almacen(pos)).export(
+        _snapshot(surface_ref="sha256:malla"), tmp_path / "c",
+        pseudonimo="P-1", malla=malla, etiquetas_ios=etq,
+    )
+    assert valida(salida.path).valido, "el contenedor limpio tiene que pasar"
+
+    # El mismo contenedor con el FDI horneado en la escena, como lo emitia la 0.4.0.
+    with zipfile.ZipFile(salida.path) as z:
+        entradas = [(i, z.read(i.filename)) for i in z.infolist()]
+    parcheado = tmp_path / "con-fdi.uos"
+    with zipfile.ZipFile(parcheado, "w", zipfile.ZIP_STORED) as z:
+        for info, crudo in entradas:
+            if info.filename == "scene/scene.glb":
+                largo = struct.unpack_from("<I", crudo, 12)[0]
+                doc = json.loads(crudo[20:20 + largo])
+                doc["meshes"][0]["primitives"][0]["extras"] = {"uos_fdi": "16"}
+                cab = json.dumps(doc).encode()
+                cab += b" " * (-len(cab) % 4)
+                binario = crudo[20 + largo:]
+                crudo = (
+                    struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(cab) + len(binario))
+                    + struct.pack("<II", len(cab), 0x4E4F534A) + cab + binario
+                )
+            z.writestr(info, crudo)
+
+    inf = valida(parcheado)
+    assert not inf.valido
+    assert any("uos_fdi" in e for e in inf.errores), inf.errores
+
+
+def test_la_escena_conserva_el_orden_de_los_vertices(tmp_path, malla):
     """La union entre `derived/seg_teeth` y la escena es POSICIONAL: el codigo `i` es del
-    vertice `i`. Lo que se parte es el indice, nunca las posiciones, y todos los
-    primitives comparten el mismo accesor de POSITION. Si eso cambia, la segmentacion se
-    pinta sobre los dientes equivocados y nada protesta."""
+    vertice `i`. Con la escena sin partir (B-1) esa union es lo UNICO que queda para
+    reconstruir el picking, asi que importa mas que antes: si el orden cambia, la
+    segmentacion se pinta sobre los dientes equivocados y nada protesta."""
 
     from uos.agente import UOSExportAgent
 
@@ -1075,7 +1129,7 @@ def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_pat
     gs = _splats_khr(ply, columnas)
 
     pos, etq = _arcada_de_juguete()
-    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), splats=gs)
     largo = int.from_bytes(glb[12:16], "little")
     doc = _json.loads(glb[20:20 + largo])
 
@@ -1102,8 +1156,8 @@ def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_pat
 
     # Grado 1 entero o nada: la extensión exige que si va un grado superior estén todos.
     assert all(f"KHR_gaussian_splatting:SH_DEGREE_1_COEF_{k}" in a for k in range(3))
-    # El FDI por gaussiana no es de la extensión: va como atributo de aplicación.
-    assert "_REGION_ID" in a
+    # El FDI por gaussiana NO viaja: es Layer 3 y esta escena es Layer 1 (B-1).
+    assert "_REGION_ID" not in a
 
     # Y la apariencia cuelga del nodo de la malla, que ES el marco canónico (§5.1).
     assert doc["nodes"][0]["children"] == [1]
@@ -1167,10 +1221,10 @@ def test_sin_grado_1_la_apariencia_sigue_siendo_valida(tmp_path):
     ply = tmp_path / "appearance.ply"
     ply.write_bytes(crudo)
     gs = _splats_khr(ply, columnas)
-    assert gs.sh1 is None and gs.region_id is None
+    assert gs.sh1 is None
 
     pos, etq = _arcada_de_juguete()
-    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    glb = construye_glb(pos, np.array([[0, 1, 2]]), splats=gs)
     largo = int.from_bytes(glb[12:16], "little")
     a = _json.loads(glb[20:20 + largo])["meshes"][1]["primitives"][0]["attributes"]
     assert not any(k.startswith("KHR_gaussian_splatting:SH_DEGREE_1") for k in a)

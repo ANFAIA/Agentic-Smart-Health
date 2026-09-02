@@ -25,7 +25,7 @@ human-readable and linked to the relevant pull request or issue where applicable
 
 - **UOS format specification** (`docs/spec/uos-format-spec-v0.2.tex`): a self-contained
   LaTeX source covering the container, data model, manifest, scenes, volume, clinical
-  layer, `derived/`, views, provenance, extensions, the 21-check validation algorithm and
+  layer, `derived/`, views, provenance, extensions, the 22-check validation algorithm and
   a cookbook of seven recipes. Written to be sufficient on its own: someone who has never
   seen this repository should be able to open, render, verify, extend and re-emit a `.uos`
   from it.
@@ -43,6 +43,30 @@ human-readable and linked to the relevant pull request or issue where applicable
 
 ### Changed
 
+- **BREAKING — `scene/scene.glb` no longer carries the FDI code, in either form.** The mesh
+  stops being split into one *primitive* per tooth with `extras.uos_fdi`, and the
+  `KHR_gaussian_splatting` primitive stops carrying `_REGION_ID`. Both are FDI codes, both
+  come from a segmentation model — Layer 3 — and both were baked into an asset the manifest
+  declared Layer 1, so deleting `derived/` stopped short of removing the inference the
+  three-plane separation promises it removes. Raised as **B-1** in an external review of the
+  format specification, and blocking: the claim that Layer 1 is not regulated medical
+  software is what the separation buys, and a documented compromise does not sustain it in
+  front of an auditor.
+
+  Nothing is lost. `derived/seg_teeth.bin` already shipped with every partitioned container,
+  and per-tooth selection is rebuilt in the reader by vertex index — for Gaussians, by the
+  same nearest-crown-vertex join that produced them. **What is lost is interoperability, and
+  it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
+  select a tooth. Picking now requires `derived/`, which is what makes the separation true
+  rather than merely documented.
+- New validator check (17b): every GLB in an asset that is not Layer 3 is parsed, and both
+  `extras.uos_fdi` and `_REGION_ID` are rejected. Check 17 verifies where Layer 3 is
+  *declared*; this verifies where its content *is*. Without it, check 17 passes on a
+  container whose Layer 1 scene is full of model output — which is exactly what happened
+  between `uos-export-agent` 0.4.0 and 0.5.0.
+- `scene/appearance.gs.json` stops declaring a `region_id` column, which the shipped
+  primitive no longer has. A descriptor that names a column the container does not carry is
+  the same failure the descriptor's own derivation was written to prevent.
 - **The public documentation surface is now entirely in English.** The root `README.md`,
   `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `docs/cierre-mvp.md` and the three
   package READMEs (`ingestion-agents`, `fusion-agents`, `tooth-aggregation`) are
