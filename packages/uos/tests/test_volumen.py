@@ -28,7 +28,7 @@ from core_schemas import Modality, Provenance, RigidTransform, TwinSnapshot
 from ingestion_agents import synthetic
 from uos import UOSExportAgent, lee_manifiesto, valida
 from uos.contenedor import asset_de_directorio
-from uos.manifiesto import Clase, digesto_de_partes
+from uos.manifiesto import Clase, Desidentificacion, digesto_de_partes
 from uos.validador import Conformidad
 from uos.volumen import SIDECAR, describe_serie
 
@@ -163,6 +163,10 @@ def _uos_con_la_serie_dentro(destino: Path, serie: Path) -> Path:
     m = Manifiesto(
         case_id="urn:uuid:0", generator={"name": "test", "version": "0"},
         phi_state=EstadoPHI.PSEUDONYMIZED, subject=Sujeto(pseudonym="P-1"),
+        # B-3: fuera de `identified`, el bloque es obligatorio.
+        deidentification=Desidentificacion(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        ),
         canonical_frame=Frame(id="frame.ios_master"),
         frames=[Frame(id="frame.ct_001")],
         visits=[Visita(id="v1", date="2026-08-28")],

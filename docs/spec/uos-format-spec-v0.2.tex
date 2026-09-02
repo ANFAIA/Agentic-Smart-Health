@@ -744,9 +744,69 @@ know whether this carries identifiers'' and ``it does not'' would be indistingui
 which is the worst way to handle PHI. Viewers \MUST{} honour it in banners and export
 policy.
 
-\code{subject} carries \code{pseudonym} (an opaque token; the reference implementation uses
-a truncated hash) and an optional \code{fhir\_patient} reference. A patient name \MUSTNOT{}
-appear anywhere in a \code{.uos}.
+\code{subject} carries \code{pseudonym}, an optional \code{fhir\_patient} reference, and an
+optional \code{consent} (\S\ref{sec:consent}). A patient name \MUSTNOT{} appear anywhere in
+a \code{.uos}.
+
+\code{pseudonym} \MUST{} be either a random identifier whose correspondence table lives
+outside the container, or an \textbf{HMAC} under a per-issuer key. A plain hash of the
+clinical identifier, truncated or not, \MUSTNOT{} be used: the space of identifiers a
+clinic issues is small, so an unkeyed hash inverts by dictionary and the pseudonym
+pseudonymises nothing.
+
+\paragraph{What \code{phi\_state} cannot say on its own.}
+It is a claim about DICOM tags, and \textbf{the container identifies a person without any
+tags}. \code{scene/field.ply} is the CBCT density including soft tissue, and a facial
+surface is reconstructible from it --- under HIPAA Safe Harbor an ``image comparable'' to a
+full-face photograph, under the GDPR a biometric datum in the special category. The
+dentition identifies on its own; forensic odontology is the field that does it. \textbf{No
+value of \code{phi\_state} makes a \code{.uos} non-personal data}, and a writer \MUSTNOT{}
+present one as if it did.
+
+So the field stays, and \code{pseudonymized} and \code{anonymized} \MUST{} additionally
+carry a \code{deidentification} block naming what was actually done, in the vocabulary
+DICOM PS3.15 Annex E already defines:
+
+\begin{lstlisting}[style=js]
+"deidentification": {
+  "profile": "DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+  "options": ["RetainLongitudinalTemporalInformationModifiedDates",
+              "CleanDescriptors", "CleanRecognizableVisualFeatures"],
+  "applied_to": ["asset.ct_001", "asset.img_001"],
+  "tool": {"name": "...", "version": "...", "sha256": "..."},
+  "date_shift_days": null,
+  "note": "..." }
+\end{lstlisting}
+
+\begin{longtable}{L{3.6cm} L{11.8cm}}
+\toprule
+\textbf{Rule} & \textbf{Statement}\\
+\midrule
+\endhead
+Say what was done & \code{phi\_state} other than \code{identified} \MUST{} carry
+\code{deidentification}. Declaring the state without the measures that produced it is a
+claim nobody can check. A validator warns for each \code{volume} or \code{image2d} asset
+absent from \code{applied\_to}: not being in the list means nothing was applied to it.\\
+The face & If \code{phi\_state} is not \code{identified} and the container carries a
+Gaussian layer with \code{measured: true} derived from a volume, \code{options} \MUST{}
+include \code{CleanRecognizableVisualFeatures}, and the layer that travels \MUST{} be the
+one generated \emph{after} it was applied. Otherwise nothing stops a writer generating the
+field from the original CBCT and defacing only the referenced series, which is the copy
+nobody looks at.\\
+The date shift & \code{date\_shift\_days} \MUST{} be \code{null} unless \code{phi\_state}
+is \code{identified}. Shifting every date in a case by the same amount preserves
+longitudinality and is the recommended option; publishing \emph{how far} undoes exactly the
+measure it claims to apply.\\
+The device & \code{acquisition.device} has fixed keys --- \code{manufacturer},
+\code{model}, \code{software\_version} --- and \textbf{no serial number}. It was a free
+\code{str}$\to$\code{str} map, and a free map in a clinical container ends up holding the
+serial, which Safe Harbor lists as a direct identifier alongside the name. A flow that
+needs it declares \code{phi\_state: identified}.\\
+Dates in general & Every \code{date-time} in the manifest is subject to the policy declared
+in \code{deidentification}. Safe Harbor keeps only the year of a date relative to an
+individual.\\
+\bottomrule
+\end{longtable}
 
 \paragraph{The obligation this puts on a writer.} \code{phi\_state} is a claim about the
 \emph{case}, and a case includes originals the container does not hold
@@ -763,6 +823,34 @@ Referencing does not weaken this and does not strengthen it either. It keeps ide
 of \emph{this file} --- a content address carries no patient directory, no filename, no tags
 --- but the tags still exist in the series someone else holds, and \code{phi\_state} still
 speaks for them.
+
+\subsection{Consent and purpose of use}\label{sec:consent}
+
+A \code{.uos} leaving the clinic for a dental laboratory, for a colleague's second opinion,
+and for a model-training pipeline are \textbf{three different legal acts}. Until this
+revision the container distinguished none of them, so every recipient had to assume one.
+Purpose of use is the first question any data-protection review asks, and it is what
+decides which layers may travel at all.
+
+\begin{lstlisting}[style=js]
+"subject": { "pseudonym": "59be9708...",
+             "consent": { "fhir_consent": "Consent/c-1234",
+                          "scope": ["treatment", "lab_manufacturing"],
+                          "obtained": "2026-08-01" } },
+"purpose_of_use": "lab_manufacturing"
+\end{lstlisting}
+
+\code{scope} and \code{purpose\_of\_use} draw from one closed vocabulary:
+\code{treatment}, \code{lab\_manufacturing}, \code{second\_opinion}, \code{research},
+\code{model\_training}. \code{fhir\_consent} follows \S\ref{sec:fhir}'s rule --- a known
+type, a \code{null} reference until the resource exists on a server; FHIR R4's
+\code{Consent} is its natural destination.
+
+\code{purpose\_of\_use} declares what \emph{this} container was emitted for and \MUST{} be
+contained in \code{subject.consent.scope}: a container cannot be issued for a use the
+patient did not consent to. A validator reports an error when it is not, and a warning when
+\code{purpose\_of\_use} is absent. A writer \MUSTNOT{} default it to \code{treatment};
+assuming a legal act is the failure this field exists to prevent.
 
 \subsection{FHIR mapping}\label{sec:fhir}
 
@@ -1685,6 +1773,12 @@ with \code{auto:} declares \code{regulatory}.\\
 17d & E & Clinical layers (\S\ref{sec:clinical}): inside \code{clinical/}, no value
 declares layer 3, no \code{inferred} value declares layer 1, and every layer-2 value
 declares \code{derived\_from}.\\
+17e & E/W & PHI and purpose (\S\ref{sec:phi}, \S\ref{sec:consent}): a non-\code{identified}
+\code{phi\_state} carries \code{deidentification} (E); each \code{volume}/\code{image2d}
+absent from \code{applied\_to} warns (W); a measured volume-derived layer without
+\code{CleanRecognizableVisualFeatures} is an error (E); \code{date\_shift\_days} outside
+\code{identified} is an error (E); \code{purpose\_of\_use} outside
+\code{consent.scope} is an error (E), and its absence a warning (W).\\
 18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a
@@ -1890,11 +1984,24 @@ the seam shows. The scanner STL has no root, so giving it one makes it a differe
 reversibility asks for the same piece back, improved. Per-tooth files additionally depend on
 a segmentation that does not currently separate crowns reliably (\S\ref{sec:limits}).
 
-\subsection{Strip inference before distribution}
+\subsection{Prepare a container for distribution}
 
-Delete every entry under \code{derived/}, delete the corresponding \code{assets[]} entries,
-re-serialise, and write a new version with a note saying what was removed. Re-validate. The
-result is a valid, complete \code{.uos} at the same conformance levels.
+Stripping inference is one of three steps, and doing only it produces a container that is
+regulatorily clean and still legally undeclared.
+
+\begin{enumerate}
+  \item \textbf{Remove the inference plane.} Delete every entry under \code{derived/},
+  delete the corresponding \code{assets[]} entries, re-serialise, and write a new version
+  with a note saying what was removed.
+  \item \textbf{Declare the purpose.} Set \code{purpose\_of\_use} to the act this copy is
+  for, and check it against \code{subject.consent.scope} (\S\ref{sec:consent}).
+  \item \textbf{Check the PHI claim against the payload} (\S\ref{sec:phi}). In particular,
+  a container that still carries a \code{measured} Gaussian layer derived from a volume
+  cannot claim \code{pseudonymized} unless recognisable visual features were cleaned before
+  that layer was generated.
+\end{enumerate}
+
+Re-validate. The result is a valid, complete \code{.uos} at the same conformance levels.
 
 % =============================================================================
 \section{Versioning and compatibility}\label{sec:versioning}

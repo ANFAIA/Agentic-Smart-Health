@@ -530,6 +530,42 @@ def test_el_uos_del_recorrido_no_lleva_el_FDI_dentro_de_ninguna_capa(recorrido) 
     )
 
 
+def test_el_uos_declara_PHI_por_lo_que_lleva_y_no_por_lo_que_hace(recorrido) -> None:
+    """B-3: `phi_state` es una afirmación sobre el contenido, no sobre el pipeline.
+
+    ⚠️ **Seudonimizar el identificador no seudonimiza el contenedor.** El pipeline
+    sustituye el `patient_id` del DICOM por un HMAC, y eso es correcto para las
+    ETIQUETAS. Pero si viaja una capa gaussiana `measured` del CBCT, lleva tejido blando
+    y de ella se reconstruye una superficie facial — «imagen comparable» a una fotografía
+    de cara completa bajo HIPAA Safe Harbor, dato biométrico bajo el RGPD. Declarar
+    `pseudonymized` ahí sería afirmar algo que el propio contenido desmiente.
+
+    Lo que este test fija es que el estado se **calcula** desde lo que se lleva dentro y
+    que el motivo sube al gate, no que valga uno concreto: el día que se implemente el
+    defacing, el mismo contenedor podrá declarar `pseudonymized` con verdad.
+    """
+    import json
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    m = json.loads(zipfile.ZipFile(uos).read("manifest.json"))
+    assert m["deidentification"] is not None, (
+        "declarar un phi_state sin decir qué medidas lo produjeron no se puede comprobar"
+    )
+    assert m["deidentification"]["profile"].startswith("DICOM PS3.15")
+    # Y no se declara una opción que no se ejecuta: eso es lo que un auditor lee como
+    # garantía. El defacing no está implementado, así que la lista va vacía.
+    assert "CleanRecognizableVisualFeatures" not in m["deidentification"]["options"]
+    assert m["phi_state"] == "identified", (
+        "lleva densidad medida del CBCT sin limpiar rasgos y aun así dice estar "
+        "seudonimizado"
+    )
+
+
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
     """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
 

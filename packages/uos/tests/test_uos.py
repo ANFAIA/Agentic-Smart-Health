@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from uos import Asset, Frame, Manifiesto, Registro, Sujeto, Visita, escribe_uos, valida
 from uos.contenedor import MANIFIESTO, lee_manifiesto
-from uos.manifiesto import Clase, EstadoPHI, Regulatorio
+from uos.manifiesto import Clase, Desidentificacion, EstadoPHI, Regulatorio
 from uos.validador import Conformidad
 
 
@@ -30,6 +30,12 @@ def _manifiesto(assets: list[Asset], **kw) -> Manifiesto:
         case_id="urn:uuid:0",
         generator={"name": "test", "version": "0"},
         phi_state=EstadoPHI.PSEUDONYMIZED,
+        # B-3: declarar el estado sin decir que medidas lo produjeron es una afirmacion
+        # que nadie puede comprobar, asi que el bloque es obligatorio fuera de
+        # `identified`. Aqui va el minimo: perfil y herramienta, sin opciones aplicadas.
+        deidentification=Desidentificacion(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        ),
         subject=Sujeto(pseudonym="P-1"),
         canonical_frame=Frame(id="frame.ios_master"),
         visits=[Visita(id="v1", date="2026-08-23")],
@@ -1253,3 +1259,51 @@ def test_sin_grado_1_la_apariencia_sigue_siendo_valida(tmp_path):
     a = _json.loads(glb[20:20 + largo])["meshes"][1]["primitives"][0]["attributes"]
     assert not any(k.startswith("KHR_gaussian_splatting:SH_DEGREE_1") for k in a)
     assert "_REGION_ID" not in a
+
+
+# --- B-3 y B-4: PHI y proposito de uso ---------------------------------------- #
+def test_el_proposito_TIENE_que_caber_en_lo_que_se_consintio(tmp_path, malla) -> None:
+    """B-4: salir hacia un laboratorio, una segunda opinion o un entrenamiento son tres
+    actos juridicos distintos, y el contenedor no distinguia ninguno.
+
+    Emitir para `model_training` un caso cuyo consentimiento solo cubre `treatment` no es
+    un matiz administrativo: es el uso para el que el paciente NO dio permiso, y es la
+    primera pregunta de cualquier revision de proteccion de datos.
+    """
+    from uos.manifiesto import Consentimiento, Proposito
+
+    a = _asset(malla)
+    m = _manifiesto(
+        [a], purpose_of_use=Proposito.ENTRENAMIENTO,
+        subject=Sujeto(pseudonym="P-1",
+                       consent=Consentimiento(scope=[Proposito.TRATAMIENTO])),
+    )
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("model_training" in e for e in inf.errores), inf.errores
+
+
+def test_el_desplazamiento_de_fechas_NO_viaja_si_no_esta_identificado(tmp_path, malla) -> None:
+    """B-3: `date_shift_days` es la CLAVE de re-identificacion.
+
+    Desplazar todas las fechas del caso por igual conserva la longitudinalidad y es la
+    opcion recomendada de PS3.15. Publicar cuantos dias se desplazaron deshace exactamente
+    la medida que se dice haber aplicado: con el numero, cualquiera vuelve a las fechas
+    reales. Solo puede viajar en un contenedor que ya se declara `identified`, donde no
+    protege nada porque no hay nada que proteger.
+    """
+    from uos.manifiesto import Desidentificacion as D
+
+    a = _asset(malla)
+    m = _manifiesto([a], deidentification=D(
+        profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        options=["RetainLongitudinalTemporalInformationModifiedDates"],
+        date_shift_days=137,
+    ))
+    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("date_shift_days" in e for e in inf.errores), inf.errores

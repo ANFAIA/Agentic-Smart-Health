@@ -113,10 +113,96 @@ class Regulatorio(BaseModel):
     clearances: list[Autorizacion] = Field(default_factory=list)
 
 
+class Proposito(StrEnum):
+    """Para que se emitio ESTE contenedor (B-4). Vocabulario cerrado.
+
+    Un `.uos` que sale hacia un laboratorio protesico, hacia un colega para una segunda
+    opinion y hacia un pipeline de entrenamiento son **tres actos juridicos distintos**, y
+    el contenedor no distinguia ninguno. El proposito es lo primero que pregunta cualquier
+    revision de proteccion de datos y es lo que decide que capas pueden viajar; sin el,
+    cada receptor tiene que suponerlo.
+    """
+
+    TRATAMIENTO = "treatment"
+    FABRICACION = "lab_manufacturing"
+    SEGUNDA_OPINION = "second_opinion"
+    INVESTIGACION = "research"
+    ENTRENAMIENTO = "model_training"
+
+
+class Consentimiento(BaseModel):
+    """Para que consintio el paciente. `scope` es lo que limita `purpose_of_use`."""
+
+    model_config = ConfigDict(extra="forbid")
+    #: Referencia al recurso `Consent` de FHIR R4 cuando el caso vive en un servidor.
+    #: `None` mientras no exista, misma regla que `RecursoFHIR.resource`.
+    fhir_consent: str | None = None
+    scope: list[Proposito] = Field(default_factory=list)
+    obtained: datetime | None = None
+
+
+class Herramienta(BaseModel):
+    """Que programa aplico la de-identificacion, para poder repetirla o auditarla."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    version: str | None = None
+    sha256: str | None = None
+
+
+class Desidentificacion(BaseModel):
+    """QUE se hizo para de-identificar, en el vocabulario de DICOM PS3.15 Anexo E (B-3).
+
+    ⚠️ **`phi_state` solo no puede sostener lo que afirma.** Trata la de-identificacion
+    como una propiedad de las etiquetas DICOM, y el contenedor lleva cosas que identifican
+    a una persona sin ninguna etiqueta: `scene/field.ply` es la densidad del CBCT con
+    tejido blando incluido, y de ahi se reconstruye una **superficie facial** —«imagen
+    comparable» a una fotografia de cara completa bajo HIPAA Safe Harbor, y dato biometrico
+    bajo el RGPD—. La denticion identifica por si sola: de eso vive la odontologia forense.
+
+    Por eso `pseudonymized` y `anonymized` exigen este bloque. No cambia lo que el
+    contenedor lleva; cambia que diga **que se hizo** en lugar de **como quedo**, que es la
+    unica de las dos afirmaciones que alguien puede comprobar.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    profile: str
+    #: Las opciones con nombre del Anexo E: `CleanDescriptors`,
+    #: `CleanRecognizableVisualFeatures`, `RetainLongitudinalTemporalInformationModifiedDates`...
+    options: list[str] = Field(default_factory=list)
+    #: Sobre que assets se ejecuto. El validador avisa por cada `volume` o `image2d` que
+    #: no aparezca aqui: no estar en la lista significa que no se le aplico nada.
+    applied_to: list[str] = Field(default_factory=list)
+    tool: Herramienta | None = None
+    #: ⚠️ **El desplazamiento de fechas es la CLAVE de re-identificacion.** Solo viaja si
+    #: el contenedor ya se declara `identified`; en cualquier otro estado va a `null`,
+    #: porque publicarlo deshace la medida que dice haber aplicado.
+    date_shift_days: int | None = None
+    note: str | None = None
+
+    #: La opcion de PS3.15 que quita la superficie facial reconstruible (el «defacing»).
+    LIMPIA_RASGOS: ClassVar[str] = "CleanRecognizableVisualFeatures"
+
+
+class Dispositivo(BaseModel):
+    """El equipo, con claves FIJAS y **sin numero de serie** (B-3).
+
+    Era `map str -> str` sin restriccion, y un mapa libre en un contenedor clinico acaba
+    conteniendo el serial del equipo — que bajo HIPAA Safe Harbor es identificador
+    directo, en la misma lista que el nombre. Si un flujo lo necesita, va en
+    `deidentification.note` y el contenedor se declara `identified`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    manufacturer: str | None = None
+    model: str | None = None
+    software_version: str | None = None
+
+
 class Adquisicion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     time: datetime | None = None
-    device: dict[str, str] = Field(default_factory=dict)
+    device: Dispositivo = Field(default_factory=lambda: Dispositivo())
 
 
 class Proyeccion(BaseModel):
@@ -367,8 +453,12 @@ class Sujeto(BaseModel):
     """El paciente, SIEMPRE por seudonimo. El nombre no entra en un `.uos`."""
 
     model_config = ConfigDict(extra="forbid")
+    #: ⚠️ **HMAC con clave, NUNCA un hash simple del identificador clinico.** El espacio de
+    #: identificadores de una clinica es pequeno, asi que un hash sin clave se invierte por
+    #: diccionario y el seudonimo no seudonimiza nada. Ver `cbct_agent.pseudonymize`.
     pseudonym: str
     fhir_patient: str | None = None
+    consent: Consentimiento | None = None
 
 
 class RecursoFHIR(BaseModel):
@@ -439,6 +529,12 @@ class Manifiesto(BaseModel):
     created: datetime = Field(default_factory=lambda: datetime.now(UTC))
     generator: dict[str, str]
     phi_state: EstadoPHI
+    #: ⚠️ Obligatorio cuando `phi_state` no es `identified` (B-3): declarar un estado sin
+    #: decir que medidas lo produjeron es una afirmacion que nadie puede comprobar.
+    deidentification: Desidentificacion | None = None
+    #: Para que se emitio ESTE contenedor (B-4). Tiene que estar dentro de
+    #: `subject.consent.scope`: no se puede emitir para algo que el paciente no consintio.
+    purpose_of_use: Proposito | None = None
     subject: Sujeto
     canonical_frame: Frame
     frames: list[Frame] = Field(default_factory=list)

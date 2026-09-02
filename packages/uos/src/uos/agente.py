@@ -51,10 +51,12 @@ from uos.manifiesto import (
     Adquisicion,
     Autorizacion,
     Clase,
+    Desidentificacion,
     EstadoPHI,
     EstadoRegulatorio,
     Extension,
     Frame,
+    Herramienta,
     Manifiesto,
     Procedencia,
     Proyeccion,
@@ -227,7 +229,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.7.0"
+    version = "0.8.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -856,14 +858,63 @@ class UOSExportAgent(BaseExportAgent):
         # La version anterior del caso, si la hay: de ella salen `prev_manifest_sha256` y
         # la cadena que este contenedor continua. Por defecto es el propio destino, que
         # es lo que hace que reexportar encima produzca una version N+1 y no un borrado.
+        # ── PHI: que se hizo, y que se puede afirmar con eso (B-3, B-4) ──────
+        # `applied_to` es la lista de assets sobre los que se ejecuto de verdad. No estar
+        # en ella significa «no se le aplico nada», no «no hacia falta».
+        desident = Desidentificacion(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+            # ⚠️ Lo que este pipeline hace HOY, y nada mas. Anadir aqui una opcion que no
+            # se ejecuta seria la peor clase de mentira: la que un auditor lee como
+            # garantia. El defacing NO esta implementado.
+            options=[],
+            applied_to=[a.id for a in assets
+                        if a.kind in (Clase.VOLUME, Clase.IMAGE2D)],
+            tool=Herramienta(name="agentic-smart-health", version=self.version),
+            note=("el identificador de paciente se sustituye por un HMAC-SHA256 truncado "
+                  "con sal por emisor (`ASH_PSEUDONYM_SALT`), estable entre adquisiciones "
+                  "y no invertible sin la sal. NO se limpian descriptores ni rasgos "
+                  "visuales reconocibles"),
+        )
+        _medidas_de_volumen = [
+            a.id for a in assets
+            if a.kind == Clase.MESH_GS_SCENE
+            and isinstance(extras_escena.get(a.sidecar_uri or ""), str)
+            and '"measured": true' in extras_escena[a.sidecar_uri or ""].lower()
+        ]
+        phi = EstadoPHI.PSEUDONYMIZED
+        if _medidas_de_volumen:
+            phi = EstadoPHI.IDENTIFIED
+            motivos = list(motivos or []) + [
+                "phi_state: identified — el contenedor lleva "
+                f"{', '.join(_medidas_de_volumen)}, capa(s) de densidad MEDIDA con tejido "
+                "blando, y de un campo asi se reconstruye la superficie facial. El "
+                "identificador del paciente si esta seudonimizado; el contenido no. Para "
+                "poder declarar `pseudonymized` hace falta limpiar rasgos reconocibles "
+                "(defacing, PS3.15 E) ANTES de generar la capa, y no esta implementado"
+            ]
+        # ⚠️ Sin consentimiento declarado no se inventa un alcance: `purpose_of_use` se
+        # queda a `None` y el validador avisa. Ponerle `treatment` por defecto seria
+        # afirmar un acto juridico que nadie ha consentido.
+        proposito = None
+        consentimiento = None
+
         previo_sha, cadena_previa = _prev_sha, _prev_cadena
         manifiesto = Manifiesto(
             uos_version=UOS_VERSION,
             case_id=f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, snapshot.acquisition_id)}",
             generator={"name": "agentic-smart-health", "version": self.version},
-            # El pipeline seudonimiza: el nombre del paciente no entra en ningun artefacto.
-            phi_state=EstadoPHI.PSEUDONYMIZED,
-            subject=Sujeto(pseudonym=pseudonimo),
+            # ⚠️ **Lo que se declara depende de lo que se lleve dentro (B-3).** El
+            # pipeline seudonimiza el identificador del paciente con HMAC, y eso basta
+            # para las ETIQUETAS. No basta para el contenedor: si viaja una capa
+            # gaussiana `measured` del CBCT, lleva tejido blando y de ahi se reconstruye
+            # una superficie facial — «imagen comparable» a una foto de cara completa bajo
+            # Safe Harbor, dato biometrico bajo el RGPD. Sin limpieza de rasgos
+            # reconocibles, decir `pseudonymized` seria afirmar algo que el contenido
+            # desmiente, asi que se declara lo que hay y el motivo sube al gate.
+            phi_state=phi,
+            deidentification=desident,
+            purpose_of_use=proposito,
+            subject=Sujeto(pseudonym=pseudonimo, consent=consentimiento),
             canonical_frame=Frame(
                 id=FRAME_IOS,
                 description="Escaner intraoral, hub geometrico del caso",

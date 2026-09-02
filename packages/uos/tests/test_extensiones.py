@@ -19,6 +19,7 @@ from uos import UOSExportAgent, escribe_uos, lee_manifiesto, valida
 from uos.manifiesto import (
     Asset,
     Clase,
+    Desidentificacion,
     EstadoPHI,
     Extension,
     Frame,
@@ -59,6 +60,10 @@ def _manifiesto(assets, **kw) -> Manifiesto:
     base = dict(
         case_id="urn:uuid:0", generator={"name": "test", "version": "0"},
         phi_state=EstadoPHI.PSEUDONYMIZED, subject=Sujeto(pseudonym="P-1"),
+        # B-3: fuera de `identified` el bloque es obligatorio.
+        deidentification=Desidentificacion(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        ),
         canonical_frame=Frame(id="frame.ios_master"),
         visits=[Visita(id="v1", date="2026-08-24")], assets=assets,
     )

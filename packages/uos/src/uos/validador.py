@@ -16,7 +16,14 @@ from enum import StrEnum
 from pathlib import Path
 
 from uos.contenedor import MANIFIESTO, lee_manifiesto_de
-from uos.manifiesto import UOS_VERSION, Clase, Manifiesto, digesto_de_partes
+from uos.manifiesto import (
+    UOS_VERSION,
+    Clase,
+    Desidentificacion,
+    EstadoPHI,
+    Manifiesto,
+    digesto_de_partes,
+)
 from uos.procedencia import CADENA, FIRMAS, Cadena, revisa_cadena
 from uos.vistas import VISTAS, Vista
 
@@ -94,6 +101,7 @@ def valida(ruta: Path) -> Informe:
         _valida_assets(z, m, inf)
         _valida_capas_en_la_escena(z, m, inf)
         _valida_capas_clinicas(z, inf)
+        _valida_phi(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
 
@@ -480,6 +488,83 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
             inf.errores.append(f"vista {v.id}: identificador repetido en {VISTAS}")
         vistos.add(v.id)
     inf.vistas = len(vistas)
+
+
+def _es_medida(z: zipfile.ZipFile, a) -> bool:
+    """Si el sidecar de una capa gaussiana declara que sus valores son medidos."""
+    if not a.sidecar_uri:
+        return False
+    try:
+        return bool(json.loads(z.read(a.sidecar_uri)).get("measured"))
+    except (KeyError, ValueError):
+        return False
+
+
+def _valida_phi(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Que `phi_state` sea una afirmacion sostenible, y que el proposito conste (B-3, B-4).
+
+    ⚠️ **`phi_state` hablaba de etiquetas DICOM y el contenedor identifica sin etiquetas.**
+    Un campo gaussiano medido sobre un CBCT lleva tejido blando: de ahi se reconstruye una
+    superficie facial, que HIPAA Safe Harbor cuenta como «imagen comparable» a una
+    fotografia de cara completa y el RGPD como dato biometrico. Ningun valor de `phi_state`
+    convierte esto en dato no personal; lo unico que se puede declarar con honradez es QUE
+    SE HIZO, en el vocabulario de DICOM PS3.15 Anexo E.
+    """
+    identificado = m.phi_state == EstadoPHI.IDENTIFIED
+    d = m.deidentification
+    if not identificado and d is None:
+        inf.errores.append(
+            f"el manifiesto declara `phi_state: {m.phi_state.value}` y no trae bloque "
+            "`deidentification`. Decir el estado sin decir que medidas lo produjeron es "
+            "una afirmacion que nadie puede comprobar"
+        )
+    if d is not None:
+        aplicado = set(d.applied_to)
+        for a in m.assets:
+            if a.kind in (Clase.VOLUME, Clase.IMAGE2D) and a.id not in aplicado:
+                inf.avisos.append(
+                    f"asset {a.id}: es {a.kind.value} y no aparece en "
+                    "`deidentification.applied_to`. No estar en la lista significa que no "
+                    "se le aplico nada"
+                )
+        # ⚠️ **La cara.** Si viaja una capa MEDIDA derivada de un volumen y no se declara
+        # la limpieza de rasgos reconocibles, el contenedor lleva una superficie facial
+        # reconstruible. Nada impide hoy generar el campo del CBCT original y aplicar el
+        # defacing solo a la serie referenciada, que es la que nadie ve.
+        # La senal es el descriptor, no el nombre del asset: `measured: true` en una capa
+        # gaussiana significa que sus valores salen de una medida fisica, y la unica
+        # modalidad que mide densidad aqui es el CBCT. Leerlo del sidecar y no de una lista
+        # de ids evita que la regla deje de aplicarse el dia que un asset se llame distinto.
+        de_volumen = [a.id for a in m.assets
+                      if a.kind == Clase.MESH_GS_SCENE and _es_medida(z, a)]
+        if not identificado and de_volumen and Desidentificacion.LIMPIA_RASGOS not in d.options:
+            inf.errores.append(
+                f"el contenedor lleva {', '.join(de_volumen)} —capa medida derivada de un "
+                f"volumen— y `deidentification.options` no incluye "
+                f"`{Desidentificacion.LIMPIA_RASGOS}`. De un campo de densidad con tejido "
+                "blando se reconstruye la cara: eso es un identificador, con etiquetas o sin"
+            )
+        if d.date_shift_days is not None and not identificado:
+            inf.errores.append(
+                "`deidentification.date_shift_days` viaja con "
+                f"`phi_state: {m.phi_state.value}`. El desplazamiento es la clave de "
+                "re-identificacion: publicarlo deshace la medida que dice haber aplicado"
+            )
+    # B-4 · no se puede emitir para algo que el paciente no consintio.
+    if m.purpose_of_use is not None:
+        alcance = m.subject.consent.scope if m.subject.consent else []
+        if m.purpose_of_use not in alcance:
+            inf.errores.append(
+                f"el contenedor se emite para `{m.purpose_of_use.value}` y "
+                + ("el consentimiento no declara ese alcance"
+                   if alcance else "el sujeto no declara consentimiento")
+            )
+    elif m.assets:
+        inf.avisos.append(
+            "el contenedor no declara `purpose_of_use`: salir hacia un laboratorio, hacia "
+            "una segunda opinion o hacia un entrenamiento son actos distintos y quien lo "
+            "reciba tendra que suponerlo"
+        )
 
 
 def _valida_extensiones(m: Manifiesto, inf: Informe) -> None:

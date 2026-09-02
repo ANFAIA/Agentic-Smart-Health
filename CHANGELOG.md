@@ -59,6 +59,45 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — `pseudonymized` and `anonymized` now require a `deidentification` block.**
+  `phi_state` treated de-identification as a property of DICOM tags, and the container
+  identifies a person with no tags at all: `scene/field.ply` is the CBCT density including
+  soft tissue, and a facial surface reconstructs from it — an "image comparable" to a
+  full-face photograph under HIPAA Safe Harbor, a biometric datum under the GDPR. The
+  dentition identifies on its own. The block names what was actually done, in the
+  vocabulary DICOM PS3.15 Annex E already defines, because *what was done* is the only one
+  of the two statements anybody can check. Raised as **B-3**.
+
+  **The exporter now computes `phi_state` from what it ships.** Our pipeline pseudonymises
+  the patient identifier with an HMAC — correct, and enough for the tags — and does not
+  implement defacing. So a container carrying a `measured` Gaussian layer derived from the
+  CBCT declares `identified`, with the reason sent to the human gate. It is the honest
+  answer available today; the day defacing exists, the same container declares
+  `pseudonymized` truthfully. The `options` list declares only what actually runs: an
+  option named but not executed is the worst kind of lie, the kind an auditor reads as a
+  guarantee.
+- **BREAKING — `acquisition.device` is an object with fixed keys** (`manufacturer`,
+  `model`, `software_version`) and no serial number. A free `str→str` map in a clinical
+  container ends up holding the serial, which Safe Harbor lists as a direct identifier
+  alongside the patient's name.
+- `deidentification.date_shift_days` may only travel in a container already declared
+  `identified`. Shifting every date by the same amount preserves longitudinality and is the
+  recommended PS3.15 option; publishing how far undoes exactly the measure it claims.
+- **`subject.consent` and `purpose_of_use`**, from one closed vocabulary (`treatment`,
+  `lab_manufacturing`, `second_opinion`, `research`, `model_training`). A container leaving
+  for a dental laboratory, for a second opinion, and for a training pipeline are three
+  different legal acts and the format distinguished none of them, so every recipient had to
+  assume one. `purpose_of_use` must be contained in `consent.scope`, and neither is ever
+  defaulted — assuming a legal act is the failure the field exists to prevent. Raised as
+  **B-4**.
+- Recipe §14.9 becomes *prepare a container for distribution*: removing `derived/` is one
+  of three steps, and doing only it produces a container that is regulatorily clean and
+  still legally undeclared. The other two are declaring the purpose and checking the PHI
+  claim against the payload.
+- The reference implementation already satisfied B-3's pseudonym rule: `cbct_agent.pseudonymize`
+  is an HMAC-SHA256 under `ASH_PSEUDONYM_SALT`, not the plain truncated hash the
+  specification described. The specification's wording was what was wrong, and it now
+  states the requirement normatively.
 - **BREAKING — regulatory layer is declared per value, not per file** (`ash-clinical/2.0`).
   `clinical/observations.json` declared `layer: 1` once, for all of it, on the grounds that
   it is "the transcription of a report a person signed". Most of it is. The `color` block —
