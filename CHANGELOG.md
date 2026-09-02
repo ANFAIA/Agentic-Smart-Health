@@ -79,6 +79,14 @@ human-readable and linked to the relevant pull request or issue where applicable
   79118 llevan codigo FDI en region_id" — true of its working file and false of the
   container. A header describing an absent value is worse than describing nothing: a reader
   goes looking for bytes that are not there.
+- §16 of the specification declares that no partitioned scene is emitted under `derived/`.
+  B-1 point 5 offers that second GLB as the conforming way to keep per-tooth selection for a
+  generic glTF reader, and the reference writer does not produce it: the reader it would
+  serve barely exists — reaching `derived/scene_partitioned.glb` means already knowing
+  enough about the format to join `derived/seg_teeth.bin` instead, at 0.22 MB against 17.8 —
+  and a duplicate of the same geometry with nothing declaring which copy governs is worse
+  than the loss. Declared rather than left silent, so a second implementer reads it as a
+  choice and not an oversight.
 - New validator check (17b): every GLB in an asset that is not Layer 3 is parsed, and both
   `extras.uos_fdi` and `_REGION_ID` are rejected; every PLY is checked for a `region_id`
   property. Check 17 verifies where Layer 3 is *declared*; this verifies where its content

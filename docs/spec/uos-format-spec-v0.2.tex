@@ -1904,6 +1904,19 @@ discovering the change when their reader breaks. The warning is also the written
   \item \textbf{Camera pose for 2D imaging is not emitted.} \S\ref{sec:image2d}.
   \item \textbf{\code{COLOR\_0} is not emitted} on splat primitives, so non-extension
   viewers see an uncoloured point cloud. \S\ref{sec:khr}.
+  \item \textbf{No partitioned scene is emitted under \code{derived/}.}
+  \S\ref{sec:picking} defines the conforming way to keep per-tooth selection for a generic
+  glTF reader --- a \emph{second} GLB, declared layer 3, with its model sidecar --- and the
+  reference writer does not emit it. Two reasons, and the first is the one that decides it.
+  \textbf{The reader it would serve barely exists}: reaching
+  \code{derived/scene\_partitioned.glb} means knowing that a \code{.uos} is a ZIP, that
+  \code{derived/} exists, and that an alternative scene lives inside it --- and a reader
+  that knows all three already knows enough to join \code{derived/seg\_teeth.bin} by vertex
+  index, which is 0.22\,MB against the 17.8\,MB the duplicate would cost. \textbf{And a
+  duplicate with no arbiter is worse than the loss}: two copies of the same geometry, each
+  individually valid, with nothing in the container declaring which one governs when they
+  drift. A writer that has a concrete reader asking for it should emit it; one that does
+  not, should not.
   \item \textbf{There is no distributable example container.} Every figure here was
   measured on a real patient's case, which the project holds and does not publish. A
   conformance fixture --- synthetic, or built from an openly licensed dataset --- is what
