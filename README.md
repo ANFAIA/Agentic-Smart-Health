@@ -453,6 +453,7 @@ Technical documentation aimed at developers and contributors stays in this READM
 | [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex) | the format specification: what a `.uos` carries, how it is read, how it is extended |
 | [`docs/spec/uos-white-paper.tex`](docs/spec/uos-white-paper.tex) | why a new format is needed, which hypotheses were tested and with what results |
 | [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | why FDI segmentation is not solved, with the measurement |
+| [`docs/architecture/branching-and-release-workflow.md`](docs/architecture/branching-and-release-workflow.md) | how `develop`, `main`, pull requests, tags and releases are used |
 | [`docs/research/frontera-encia-desde-foto.md`](docs/research/frontera-encia-desde-foto.md) | where the tooth-gum boundary actually is, and what is missing to use it |
 | [`docs/research/color-por-pieza-desde-foto.md`](docs/research/color-por-pieza-desde-foto.md) | the shade of each crown, and how the flash falloff is discounted without inverting it |
 | [`docs/research/segmentacion-diente-cbct.md`](docs/research/segmentacion-diente-cbct.md) | how far a classifier gets on the CBCT, and where it stops getting there |
