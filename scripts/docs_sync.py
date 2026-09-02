@@ -63,6 +63,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+RESUMEN_EN = "Checks that documentation stays aligned with code and repository inventory."
+
 REPO = Path(__file__).resolve().parent.parent
 
 # Variables que pone el entorno de ejecución, no la configuración del proyecto.
@@ -119,36 +121,59 @@ def _sincronizar(doc: Path, ident: str, contenido: str, escribir: bool) -> str |
     )
 
 
-def _primera_linea_doc(ruta: str) -> str:
-    """Docstring del modulo, o primer comentario util de un script de shell."""
+def _resumen_en(ruta: str) -> str:
+    """La frase en ingles que el propio script declara para la portada.
+
+    Vive en el fichero, no en una tabla aparte: quien reescriba lo que hace un
+    script ve las dos frases —el docstring en castellano y este resumen— en la
+    misma pantalla. Los docstring de `scripts/` son ensayos de decenas de lineas
+    y no se traducen; el README solo necesita el renglon.
+    """
     texto = (REPO / ruta).read_text(encoding="utf-8")
     if ruta.endswith(".py"):
-        try:
-            doc = ast.get_docstring(ast.parse(texto)) or ""
-        except SyntaxError:
-            doc = ""
-        primera = doc.strip().splitlines()[0] if doc.strip() else ""
-        return primera.split("—", 1)[-1].strip() if "—" in primera else primera
+        for nodo in ast.parse(texto).body:
+            if (
+                isinstance(nodo, ast.Assign)
+                and any(
+                    isinstance(d, ast.Name) and d.id == "RESUMEN_EN" for d in nodo.targets
+                )
+                and isinstance(nodo.value, ast.Constant)
+                and isinstance(nodo.value.value, str)
+            ):
+                return nodo.value.value
+        return ""
     for linea in texto.splitlines():
-        if linea.startswith("#") and not linea.startswith("#!"):
-            limpia = linea.lstrip("# ").strip()
-            if limpia:
-                return limpia.split("—", 1)[-1].strip() if "—" in limpia else limpia
+        if linea.startswith("# resumen-en:"):
+            return linea.split(":", 1)[1].strip()
     return ""
 
 
 def tabla_scripts(ficheros: set[str]) -> str:
-    filas = ["| Script | Qué hace |", "|---|---|"]
+    filas = ["| Script | What it does |", "|---|---|"]
+    mudos = []
     for ruta in sorted(
         f for f in ficheros if f.startswith("scripts/") and f.endswith((".py", ".sh"))
     ):
-        filas.append(f"| [`{ruta}`]({ruta}) | {_primera_linea_doc(ruta) or '—'} |")
+        descripcion = _resumen_en(ruta)
+        if not descripcion:
+            mudos.append(ruta)
+        filas.append(f"| [`{ruta}`]({ruta}) | {descripcion or '—'} |")
+    if mudos:
+        raise SystemExit(
+            "Estos scripts no declaran su resumen para el README:\n  "
+            + "\n  ".join(mudos)
+            + "\n\nAnade en el fichero, tras el bloque de imports, una linea\n"
+            '  RESUMEN_EN = "Que hace, en ingles y en una frase."\n'
+            "(en los `.sh`, un comentario `# resumen-en: ...`).\n"
+            "La portada esta en ingles y los docstring en castellano: el resumen\n"
+            "vive al lado del codigo que describe, no en una tabla aparte."
+        )
     return "\n".join(filas)
 
 
 def tabla_make() -> str:
     """Objetivo -> receta real. Mas honesto que una descripcion a mano."""
-    filas = ["| Comando | Ejecuta |", "|---|---|"]
+    filas = ["| Command | Runs |", "|---|---|"]
     objetivo = None
     recetas: dict[str, list[str]] = {}
     for linea in (REPO / "Makefile").read_text(encoding="utf-8").splitlines():
@@ -165,7 +190,7 @@ def tabla_make() -> str:
 
 def tabla_agentes(ficheros: set[str]) -> str:
     """Resumen, NO las fichas: inputs, outputs y herramientas son prosa."""
-    filas = ["| Agente | Implementado en |", "|---|---|"]
+    filas = ["| Agent | Implemented in |", "|---|---|"]
     for nombre, (ruta, _) in sorted(agentes_implementados(ficheros).items()):
         filas.append(f"| `{nombre}` | [`{ruta}`]({ruta}) |")
     return "\n".join(filas)
@@ -248,7 +273,7 @@ def declaradas_en_ejemplo() -> set[str]:
 
 
 def tabla_env(leidas: dict[str, tuple[str, str | None]]) -> str:
-    filas = ["| Variable | Se lee en | Por defecto |", "|---|---|---|"]
+    filas = ["| Variable | Read in | Default |", "|---|---|---|"]
     for var, (fichero, defecto) in sorted(leidas.items()):
         valor = f"`{defecto}`" if defecto else "—"
         filas.append(f"| `{var}` | `{fichero}` | {valor} |")

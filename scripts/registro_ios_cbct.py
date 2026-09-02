@@ -98,6 +98,8 @@ from ingestion_agents.mesh_agent import parse_stl
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
+RESUMEN_EN = "Measures whether the intraoral scanner and CBCT can be aligned."
+
 # Isovalor del esmalte. Ver decisión 1 del encabezado.
 HU_ESMALTE = 2000
 # Un escaneo maxilar es mayoritariamente paladar y encía: sin esmalte contra el que

@@ -32,6 +32,8 @@ from pathlib import Path
 
 import yaml
 
+RESUMEN_EN = "Materialises the research agent knowledge base."
+
 REPO = Path(__file__).resolve().parent.parent
 MANIFEST = REPO / "data" / "research-agent" / "knowledge_base" / "manifest.yaml"
 

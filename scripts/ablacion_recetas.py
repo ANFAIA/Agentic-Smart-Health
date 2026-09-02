@@ -34,6 +34,8 @@ from gsplat.strategy import DefaultStrategy
 from torchmetrics.functional import structural_similarity_index_measure as ssim_fn
 from vtk.util.numpy_support import vtk_to_numpy
 
+RESUMEN_EN = "Training recipe ablation: what each component contributes."
+
 vtk.vtkObject.GlobalWarningDisplayOff()
 
 # Raiz del repo: se ancla en .git, igual que los notebooks. data/ esta gitignored,

@@ -53,6 +53,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Measures whether tooth displacement can be reported robustly."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-aggregation"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))

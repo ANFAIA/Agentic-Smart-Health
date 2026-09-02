@@ -40,6 +40,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Trains real 3DGS over the scanner surface."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for src in sorted(RAIZ.glob("packages/*/src")):
     sys.path.insert(0, str(src))

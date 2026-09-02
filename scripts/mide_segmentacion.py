@@ -63,6 +63,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Measures how much FDI segmentation can be discarded from a `.uos` file."
+
 # Wheeler, dientes permanentes: (mesiodistal, vestibulolingual, altura de corona) en mm.
 # La clave es el ultimo digito del FDI; los dos primeros cuadrantes son maxilar.
 CORONA_MAXILAR = {

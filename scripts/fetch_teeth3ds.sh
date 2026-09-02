@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# resumen-en: Downloads Teeth3DS+ reproducibly from the official Google Drive source.
 #
 # fetch_teeth3ds.sh — Descarga reproducible de Teeth3DS+ desde el Google Drive oficial.
 #

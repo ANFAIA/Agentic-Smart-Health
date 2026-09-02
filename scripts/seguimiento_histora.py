@@ -60,6 +60,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Measures gingival margin movement between two scans."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for paquete in ("ingestion-agents", "fusion-agents", "analysis-agents", "core-schemas"):
     sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))

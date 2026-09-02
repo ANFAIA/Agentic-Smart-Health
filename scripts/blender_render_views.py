@@ -47,6 +47,8 @@ from pathlib import Path
 import bpy
 import mathutils
 
+RESUMEN_EN = "Headless Blender multi-view renderer for intraoral meshes."
+
 # --------------------------------------------------------------------------- #
 # Argumentos (tras el "--" que separa los de Blender de los del script)
 # --------------------------------------------------------------------------- #

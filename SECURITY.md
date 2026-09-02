@@ -5,9 +5,18 @@
 This policy covers the **Agentic Smart Health** monorepo, including:
 
 - `apps/agent-orchestrator` — the multi-agent orchestration layer.
-- `apps/slicer-mcp-server` — the MCP server that bridges agents with 3D Slicer.
+- `apps/research-agent` — the literature agent: the only component that holds an API
+  key and reaches the network.
 - `packages/core-schemas` — shared Pydantic schemas for clinical data contracts.
-- `packages/3dgs-engine` — the 3D Gaussian Splatting rendering engine.
+- `packages/ingestion-agents` — ingestion of CBCT/DICOM, intraoral meshes, reports
+  and images.
+- `packages/fusion-agents` and `packages/analysis-agents` — fusion, registration and
+  anatomical segmentation over the digital twin.
+- `packages/export-agents` and `packages/uos` — materialisation of the twin, viewer
+  assets and `.uos` containers.
+- `packages/gaussian-engine` and `packages/3dgs-engine` — Gaussian field and 3DGS
+  processing code.
+- `packages/tooth-aggregation` — per-tooth aggregation across acquisitions.
 
 Given that this system processes sensitive clinical data (CBCT/DICOM, STL, clinical reports), security issues are treated with the highest priority.
 
@@ -17,7 +26,8 @@ Given that this system processes sensitive clinical data (CBCT/DICOM, STL, clini
 
 | Version | Supported |
 |---|---|
-| `main` (pre-release) | Yes |
+| `main` | Yes |
+| `develop` | No; integration branch only |
 | Tagged releases | Yes (latest only) |
 | Older releases | No |
 
@@ -30,7 +40,8 @@ Given that this system processes sensitive clinical data (CBCT/DICOM, STL, clini
 This is especially critical for vulnerabilities that could:
 
 - Expose or leak patient clinical data (DICOM, STL, PDF reports, or any data handled by the ingestion agents).
-- Allow unauthorized access to or manipulation of the MCP server (`slicer-mcp-server`) or its exposed tools.
+- Allow unauthorized access to or manipulation of the orchestrator, generated viewer
+  assets, exported files or `.uos` containers.
 - Compromise the integrity of the Digital Twin (unauthorized writes, data poisoning).
 - Bypass anonymisation or pseudonymisation mechanisms.
 - Violate GDPR, HIPAA, or equivalent clinical data protection regulations.
@@ -70,7 +81,8 @@ We follow **responsible disclosure**: we will work with you to understand and fi
 - Never commit secrets, API keys, or credentials. Use `.env` files (excluded from version control via `.gitignore`) and reference `.env.example` for required variables.
 - Never commit real patient data to the repository, even in anonymised form. Use the synthetic datasets provided under `data/`.
 - Dependencies are pinned via `uv.lock`. Review dependency updates carefully; run `make test` after any lockfile change.
-- The MCP server exposes tools to external agent clients. Any new tool added to `slicer-mcp-server` must be reviewed for injection risks and excessive permission grants before merging.
+- Any new external integration, agent-facing tool or generated viewer surface must be
+  reviewed for injection risks and excessive permission grants before merging.
 - Clinical data flowing through agents must remain within the authorised storage boundaries defined in the architecture (`docs/architecture/`). No agent may forward or persist clinical data to external services without explicit human approval.
 
 ---

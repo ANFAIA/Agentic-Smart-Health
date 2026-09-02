@@ -72,9 +72,14 @@ main
 
 ## GitHub Protection
 
-The policy above should be enforced in GitHub, not only documented.
+This workflow is currently documented as repository policy. It does not require
+branch protection rules to be enabled immediately, because the repository belongs
+to an organisation and those settings may require administrator permissions.
 
-Recommended protection for `main`:
+If an administrator decides to enforce the workflow in GitHub later, the
+recommended protections are:
+
+For `main`:
 
 - Require a pull request before merging.
 - Require status checks to pass before merging.
@@ -83,7 +88,7 @@ Recommended protection for `main`:
 - Block force pushes.
 - Block branch deletion.
 
-Recommended protection for `develop`:
+For `develop`:
 
 - Require a pull request before merging.
 - Require status checks to pass before merging.

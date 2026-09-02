@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+RESUMEN_EN = "Regenerates the README pipeline animation from the synthetic case."
+
 RAIZ = Path(__file__).resolve().parent.parent
 for src in sorted(RAIZ.glob("packages/*/src")):
     sys.path.insert(0, str(src))

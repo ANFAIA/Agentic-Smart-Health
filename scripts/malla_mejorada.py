@@ -33,6 +33,8 @@ from pathlib import Path
 
 import numpy as np
 
+RESUMEN_EN = "Builds the improved STL from the UOS container and nothing else."
+
 RAIZ = Path(__file__).resolve().parents[1]
 for src in sorted(RAIZ.glob("packages/*/src")):
     if str(src) not in sys.path:

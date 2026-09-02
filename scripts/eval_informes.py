@@ -39,6 +39,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+RESUMEN_EN = "Measures how much report content reaches the shared data contract."
+
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "packages/ingestion-agents/src"))
 

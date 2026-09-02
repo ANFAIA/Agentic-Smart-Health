@@ -22,7 +22,7 @@ Summary generated from the code — the cards below are not: inputs, outputs and
 tools are prose and are written by hand.
 
 <!-- generado: agentes — no editar a mano -->
-| Agente | Implementado en |
+| Agent | Implemented in |
 |---|---|
 | `cbct-agent` | [`packages/ingestion-agents/src/ingestion_agents/cbct_agent.py`](packages/ingestion-agents/src/ingestion_agents/cbct_agent.py) |
 | `composite-export-agent` | [`packages/export-agents/src/export_agents/compuesto.py`](packages/export-agents/src/export_agents/compuesto.py) |

@@ -37,6 +37,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+RESUMEN_EN = "Trains the CBCT tooth segmenter against the threshold baseline."
+
 # Clases del mapa de 6 del espejo de ToothFairy2 (ver `tf_pipeline/bands.py`).
 CLASES_DIENTE = (2, 3, 4, 5)
 
