@@ -380,28 +380,41 @@ def _svg_text(x: int, y: int, text: str, *, size: int = 15, fill: str = "#1f2933
     )
 
 
+def _reveal(begin: float, total: int, *, fade: float = 0.35) -> str:
+    """Animacion acumulativa: oculto hasta `begin`, visible hasta cerrar el ciclo."""
+    start = begin / total
+    visible = min((begin + fade) / total, 0.92)
+    return (
+        '<animate attributeName="opacity" values="0;0;1;1;0" '
+        f'keyTimes="0;{start:.4f};{visible:.4f};0.9400;1" '
+        f'dur="{total}s" repeatCount="indefinite"/>'
+    )
+
+
 def render_svg(stages: list[Stage]) -> str:
     total = 18
-    rows: list[tuple[int, str, str]] = []
-    for i, stage in enumerate(stages):
-        rows.append((i, "dir", stage.title))
-        for file in stage.files:
-            rows.append((i, "file", "  " + file.replace("demo-case/", "")))
-
     row_bits = []
     y = 190
-    for i, kind, label in rows[:28]:
-        color = "#2563eb" if kind == "dir" else "#334155"
-        weight = "700" if kind == "dir" else "500"
-        delay = 0.4 + i * 3.2
-        row_bits.append(
-            f'<text x="82" y="{y}" font-family="ui-monospace, SFMono-Regular, Menlo, '
-            f'Consolas, monospace" font-size="15" font-weight="{weight}" fill="{color}">'
-            f"{html.escape(label)}"
-            f'<animate attributeName="fill" values="{color};#0f766e;{color}" '
-            f'begin="{delay:.1f}s" dur="1.4s" repeatCount="indefinite"/></text>'
-        )
-        y += 22
+    for i, stage in enumerate(stages):
+        begin = 0.1 + i * 3.2
+        rows = [("dir", stage.title)] + [
+            ("file", "  " + file.replace("demo-case/", "")) for file in stage.files
+        ]
+        for j, (kind, label) in enumerate(rows):
+            color = "#2563eb" if kind == "dir" else "#334155"
+            weight = "700" if kind == "dir" else "500"
+            row_begin = begin + j * 0.12
+            row_bits.append(
+                f'<text x="82" y="{y}" opacity="0" '
+                f'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" '
+                f'font-size="15" font-weight="{weight}" fill="{color}">'
+                f"{html.escape(label)}"
+                f"{_reveal(row_begin, total)}"
+                f'<animate attributeName="fill" values="{color};#0f766e;{color}" '
+                f'begin="{row_begin:.1f}s" dur="1.2s" repeatCount="indefinite"/>'
+                "</text>"
+            )
+            y += 22
 
     cards = []
     for i, stage in enumerate(stages):
@@ -419,16 +432,20 @@ def render_svg(stages: list[Stage]) -> str:
 
     metric_lines = []
     y = 198
-    for stage in stages:
-        metric_lines.append(_svg_text(760, y, stage.title, size=14, fill="#0f172a"))
+    for i, stage in enumerate(stages):
+        begin = 0.1 + i * 3.2
+        group = [_svg_text(760, y, stage.title, size=14, fill="#0f172a")]
         y += 22
         for metric in stage.metrics[:3]:
             wrapped = textwrap.wrap(metric, width=34)[:2]
             for j, line in enumerate(wrapped):
                 prefix = "- " if j == 0 else "  "
-                metric_lines.append(_svg_text(778, y, prefix + line, size=13, fill="#475569"))
+                group.append(_svg_text(778, y, prefix + line, size=13, fill="#475569"))
                 y += 18
         y += 12
+        metric_lines.append(
+            f'<g opacity="0">{_reveal(begin, total)}{"".join(group)}</g>'
+        )
 
     header = _svg_text(
         126,
