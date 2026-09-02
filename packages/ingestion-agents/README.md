@@ -1,14 +1,14 @@
-# `ingestion-agents` — Fase 1 del pipeline
+# `ingestion-agents` — Phase 1 of the pipeline
 
-Traducen **un** fichero clínico crudo a un fragmento del contrato de
-[`core-schemas`](../core-schemas/). Regla del proyecto: **1 modalidad = 1 soporte
-= 1 agente**. Son los **únicos** componentes que tocan ficheros crudos.
+They translate **one** raw clinical file into a fragment of the
+[`core-schemas`](../core-schemas/) contract. Project rule: **1 modality = 1 support
+= 1 agent**. They are the **only** components that touch raw files.
 
-| Agente | Entrada | Soporte | Produce |
+| Agent | Input | Support | Produces |
 |---|---|---|---|
-| `MeshAgent` | OBJ / STL intraoral | superficial | `surface_ref` — posiciones `float64`, caras, normales, color (el STL siempre va pelado) |
-| `CBCTAgent` | directorio de serie DICOM | volumétrico | `gaussian_field_ref` — campo σ semilla |
-| `ReportAgent` | PDF / TXT / MD | regional | `list[RegionalObservation]` — pH por FDI |
+| `MeshAgent` | intraoral OBJ / STL | surface | `surface_ref` — `float64` positions, faces, normals, colour (an STL always arrives bare) |
+| `CBCTAgent` | DICOM series directory | volumetric | `gaussian_field_ref` — seed σ field |
+| `ReportAgent` | PDF / TXT / MD | regional | `list[RegionalObservation]` — pH per FDI |
 
 ```python
 from agent_orchestrator import CaseInput, IngestionPipeline
@@ -18,11 +18,11 @@ pipeline = IngestionPipeline(ArtifactStore("data/interim/artifacts"))
 result = pipeline.run(CaseInput.from_case_dir("data/interim/mi-caso"))
 
 result.snapshot        # TwinSnapshot | None
-result.hitl_required   # ¿necesita revisión humana?
-result.latency_s       # métrica del brief: < 60 s
+result.hitl_required   # does it need human review?
+result.latency_s       # brief metric: < 60 s
 ```
 
-Demo de punta a punta con datos sintéticos (sin datos de paciente):
+End-to-end demo with synthetic data (no patient data):
 
 ```bash
 uv run python apps/agent-orchestrator/main.py --demo
@@ -30,43 +30,43 @@ uv run python apps/agent-orchestrator/main.py --demo
 
 ---
 
-## Flujo de una ingesta
+## The flow of one ingestion
 
-### 1 · Vista de conjunto
+### 1 · Overview
 
-De los ficheros crudos al contrato. El orquestador reparte, los agentes traducen,
-el almacén guarda lo pesado y el contrato se ensambla al final.
+From raw files to the contract. The orchestrator dispatches, the agents translate,
+the store keeps the heavy things and the contract is assembled at the end.
 
 ```mermaid
 flowchart LR
-  subgraph RAW["Ficheros crudos<br/>(única lectura de datos crudos del sistema)"]
+  subgraph RAW["Raw files<br/>(the system's only read of raw data)"]
     direction TB
     F1["scan.obj / scan.stl"]
-    F2["cbct/ · serie DICOM"]
+    F2["cbct/ · DICOM series"]
     F3["informe.pdf / .txt / .md"]
   end
 
   RAW --> ORQ["CaseInput.from_case_dir()<br/>IngestionPipeline.run()"]
 
-  ORQ -->|"paralelo · ThreadPoolExecutor"| A1
+  ORQ -->|"parallel · ThreadPoolExecutor"| A1
   ORQ --> A2
   ORQ --> A3
 
-  subgraph AG["Agentes · 1 modalidad = 1 soporte = 1 agente"]
+  subgraph AG["Agents · 1 modality = 1 support = 1 agent"]
     direction TB
-    A1["mesh-agent<br/>superficial"]
-    A2["cbct-agent<br/>volumétrico"]
+    A1["mesh-agent<br/>surface"]
+    A2["cbct-agent<br/>volumetric"]
     A3["report-agent<br/>regional"]
   end
 
-  A1 -->|"positions · faces · normals · colors"| ST[("ArtifactStore<br/>sha256:&lt;contenido&gt;")]
+  A1 -->|"positions · faces · normals · colors"| ST[("ArtifactStore<br/>sha256:&lt;content&gt;")]
   A2 -->|"centers · scales · rotations · density"| ST
   A1 --> OUT["3 × IngestionOutput"]
   A2 --> OUT
-  A3 -->|"RegionalObservation (pH por FDI)"| OUT
+  A3 -->|"RegionalObservation (pH per FDI)"| OUT
 
   OUT --> ASM["_assemble() + _hitl_reasons()"]
-  ST -.->|"exists(): ¿referencia colgante?"| ASM
+  ST -.->|"exists(): dangling reference?"| ASM
   ASM --> RES["PipelineResult<br/>snapshot · outcomes · hitl · latency_s"]
 
   classDef file fill:#eef2f4,stroke:#6b7b83,color:#16232b;
@@ -77,25 +77,25 @@ flowchart LR
   class OUT,RES out;
 ```
 
-Una modalidad **no aportada nunca llega al agente**: el orquestador la declara
-`MISSING` él mismo. Es lo que impide confundir «no había CBCT» con «el CBCT
-estaba roto» — dos situaciones con respuestas clínicas distintas.
+A modality that was **not supplied never reaches the agent**: the orchestrator declares
+it `MISSING` itself. That is what stops "there was no CBCT" being confused with "the
+CBCT was broken" — two situations with different clinical answers.
 
-El paralelismo es con **hilos**, no procesos: el trabajo real es I/O de disco y
-numpy, que sueltan el GIL. Es lo que da margen al presupuesto de < 60 s del brief.
+Parallelism uses **threads**, not processes: the real work is disk I/O and numpy, which
+release the GIL. That is what leaves headroom under the brief's < 60 s budget.
 
-### 2 · El envoltorio *fail-loud* (lo que comparten los tres)
+### 2 · The *fail-loud* wrapper (what the three share)
 
-Ningún agente implementa esto: lo hereda de `BaseIngestionAgent.ingest()`. Las
-subclases solo escriben `_ingest()`, y **pueden lanzar** — el envoltorio lo captura.
+No agent implements this: it is inherited from `BaseIngestionAgent.ingest()`. Subclasses
+only write `_ingest()`, and **they may raise** — the wrapper catches it.
 
 ```mermaid
 flowchart TB
-  IN["ingest(source)<br/>started = perf_counter()"] --> EX{"¿existe el fichero?"}
-  EX -->|"no"| MISS["status = MISSING<br/>«no se aportó esta modalidad»"]
-  EX -->|"sí"| TRY["_ingest(source)<br/>lógica propia del agente"]
-  TRY -->|"excepción"| FAIL["status = FAILED + detail<br/>_quarantine(): ruta + traceback,<br/>NUNCA el contenido clínico"]
-  TRY -->|"traducido"| OK["status = OK<br/>+ Provenance(confidence)"]
+  IN["ingest(source)<br/>started = perf_counter()"] --> EX{"does the file exist?"}
+  EX -->|"no"| MISS["status = MISSING<br/>«this modality was not supplied»"]
+  EX -->|"yes"| TRY["_ingest(source)<br/>the agent's own logic"]
+  TRY -->|"exception"| FAIL["status = FAILED + detail<br/>_quarantine(): path + traceback,<br/>NEVER the clinical content"]
+  TRY -->|"translated"| OK["status = OK<br/>+ Provenance(confidence)"]
   MISS --> RET["IngestionOutput<br/>+ latency_s"]
   FAIL --> RET
   OK --> RET
@@ -110,47 +110,48 @@ flowchart TB
   class RET out;
 ```
 
-**No hay canal de excepción hacia el orquestador.** Los tres caminos terminan en
-el mismo `IngestionOutput`; el fallo es un *dato* con motivo, no una excepción que
-se lleve por delante las otras dos modalidades ([decisión 1](#1-un-fallo-es-un-dato-no-una-excepción)).
+**There is no exception channel towards the orchestrator.** All three paths end in the
+same `IngestionOutput`; a failure is a *value* with a reason, not an exception that takes
+the other two modalities down with it
+([decision 1](#1-a-failure-is-data-not-an-exception)).
 
-### 3 · Qué hace cada `_ingest()`
+### 3 · What each `_ingest()` does
 
-Misma forma de entrada y de salida, tres traducciones distintas. Ninguno decide
-nada: solo traducen y declaran con qué confianza.
+Same input and output shape, three different translations. None of them decides
+anything: they only translate and declare with what confidence.
 
 ```mermaid
 flowchart LR
   subgraph MESH["mesh-agent · Support.SURFACE"]
     direction TB
-    M1["read_mesh()<br/>.obj → parse_obj (color por vértice)<br/>.stl → parse_stl (binario/ASCII, pelado)"]
-    M2["dedup de la sopa de triángulos<br/>reconstruye la topología (STL)"]
-    M3["vertex_normals()<br/>media ponderada por área"]
-    M4["¿color real (std > 0)<br/>o placeholder constante?"]
+    M1["read_mesh()<br/>.obj → parse_obj (per-vertex colour)<br/>.stl → parse_stl (binary/ASCII, bare)"]
+    M2["dedup of the triangle soup<br/>rebuilds the topology (STL)"]
+    M3["vertex_normals()<br/>area-weighted average"]
+    M4["real colour (std > 0)<br/>or constant placeholder?"]
     M1 --> M2 --> M3 --> M4
   end
 
   subgraph CBCT["cbct-agent · Support.VOLUMETRIC"]
     direction TB
-    C1["_read_series() · pydicom<br/>orden por ImagePositionPatient"]
+    C1["_read_series() · pydicom<br/>ordered by ImagePositionPatient"]
     C2["RescaleSlope/Intercept → Hounsfield"]
-    C3["umbral 300 HU<br/>+ submuestreo determinista"]
-    C4["gaussianas isótropas: σ del HU,<br/>escala ½ vóxel, cuaternión identidad"]
+    C3["300 HU threshold<br/>+ deterministic subsampling"]
+    C4["isotropic Gaussians: σ from HU,<br/>half-voxel scale, identity quaternion"]
     C1 --> C2 --> C3 --> C4
   end
 
   subgraph REP["report-agent · Support.REGIONAL"]
     direction TB
-    R1["extract_text()<br/>.txt/.md directo · .pdf vía pypdf"]
-    R2["backend rules (regex línea a línea)<br/>o llm (Claude, tool forzada)"]
-    R3["validación contra ontology.py<br/>FDI existente · pH 3–9"]
-    R4["lo rechazado → Discard<br/>con motivo, nunca en silencio"]
+    R1["extract_text()<br/>.txt/.md directly · .pdf via pypdf"]
+    R2["rules backend (line-by-line regex)<br/>or llm (Claude, forced tool)"]
+    R3["validation against ontology.py<br/>existing FDI · pH 3–9"]
+    R4["whatever is rejected → Discard<br/>with a reason, never in silence"]
     R1 --> R2 --> R3 --> R4
   end
 
   M4 --> S[("store.put(**arrays)<br/>→ sha256:…")]
   C4 --> S
-  R4 --> O["RegionalObservation[]<br/>(no pasa por el store)"]
+  R4 --> O["RegionalObservation[]<br/>(does not go through the store)"]
 
   classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
   classDef file fill:#eef2f4,stroke:#6b7b83,color:#16232b;
@@ -160,34 +161,34 @@ flowchart LR
   class O out;
 ```
 
-Detalles que el diagrama comprime y conviene no perder:
+Details the diagram compresses and that are worth not losing:
 
-- El **orden de los cortes DICOM** no se deja al azar: un orden equivocado deforma
-  el volumen **en silencio**.
-- El **submuestreo del CBCT** es de paso uniforme, no aleatorio: la ingesta tiene
-  que ser reproducible para poder medir la fiabilidad.
-- El `report-agent` procesa **línea a línea** porque un informe dental enumera un
-  hallazgo por línea; emparejar un pH con el diente de *su* línea evita colgar el
-  valor del diente equivocado.
-- El **campo gaussiano del CBCT es una semilla**, no una reconstrucción RGS: es la
-  inicialización que un optimizador refinaría después.
+- The **order of the DICOM slices** is not left to chance: a wrong order deforms the
+  volume **silently**.
+- **CBCT subsampling** uses a uniform stride, not randomness: ingestion has to be
+  reproducible for reliability to be measurable.
+- The `report-agent` processes **line by line** because a dental report lists one finding
+  per line; pairing a pH with the tooth on *its* line avoids hanging the value off the
+  wrong tooth.
+- The **CBCT Gaussian field is a seed**, not an RGS reconstruction: it is the
+  initialisation an optimiser would refine afterwards.
 
-### 4 · Del `IngestionOutput` al `TwinSnapshot`
+### 4 · From `IngestionOutput` to `TwinSnapshot`
 
-El ensamblado y el gate humano viven en el orquestador, no en los agentes.
+Assembly and the human gate live in the orchestrator, not in the agents.
 
 ```mermaid
 flowchart TB
-  OUTS["3 × IngestionOutput<br/>(cbct · mesh · report)"] --> Q1{"¿CBCT ok<br/>y con artifact_ref?"}
-  Q1 -->|"no"| NIL["snapshot = None<br/>gaussian_field_ref es obligatorio:<br/>antes eso que degradar el contrato"]
-  Q1 -->|"sí"| Q2{"¿alguna referencia<br/>colgante en el store?"}
-  Q2 -->|"sí"| ERR["RuntimeError<br/>(único punto que sí revienta:<br/>no es un dato degradado,<br/>es una inconsistencia)"]
-  Q2 -->|"no"| SNAP["TwinSnapshot<br/>modalities = solo las ok<br/>ingestion = LAS TRES, con su estado<br/>Provenance.confidence = mín(las tres)"]
+  OUTS["3 × IngestionOutput<br/>(cbct · mesh · report)"] --> Q1{"CBCT ok<br/>and with artifact_ref?"}
+  Q1 -->|"no"| NIL["snapshot = None<br/>gaussian_field_ref is mandatory:<br/>that before degrading the contract"]
+  Q1 -->|"yes"| Q2{"any dangling<br/>reference in the store?"}
+  Q2 -->|"yes"| ERR["RuntimeError<br/>(the only point that does blow up:<br/>this is not degraded data,<br/>it is an inconsistency)"]
+  Q2 -->|"no"| SNAP["TwinSnapshot<br/>modalities = only the ok ones<br/>ingestion = ALL THREE, with their status<br/>Provenance.confidence = min(the three)"]
 
   NIL --> GATE
   SNAP --> GATE{"_hitl_reasons()"}
-  GATE -->|"sin motivos"| GO["persistible sin revisión"]
-  GATE -->|"failed · confianza &lt; 0.7 ·<br/>sin campo gaussiano"| STOP["⚠ requiere revisión humana"]
+  GATE -->|"no reasons"| GO["persistable without review"]
+  GATE -->|"failed · confidence &lt; 0.7 ·<br/>no Gaussian field"| STOP["⚠ requires human review"]
 
   classDef proc fill:#f6e7d3,stroke:#b5701d,color:#8a5416;
   classDef bad fill:#fbe3e3,stroke:#b03a3a,color:#7d2020;
@@ -199,193 +200,189 @@ flowchart TB
   class GATE proc;
 ```
 
-`modalities` lleva **solo las que salieron bien**; `ingestion` lleva **las tres
-siempre**, con su estado. Es lo que hace que un snapshot parcial se declare
-parcial en vez de llegar callado a exportación.
+`modalities` carries **only the ones that went well**; `ingestion` carries **all three
+always**, with their status. That is what makes a partial snapshot declare itself partial
+instead of arriving at export in silence.
 
-### Resumen: dónde vive cada responsabilidad
+### Summary: where each responsibility lives
 
-| Paso | Quién | Fichero |
+| Step | Who | File |
 |---|---|---|
-| Descubrir modalidades del caso | orquestador | `pipeline.py` · `CaseInput.from_case_dir` |
-| Declarar lo no aportado (`MISSING`) | orquestador | `pipeline.py` · `_missing` |
-| Disparar en paralelo | orquestador | `pipeline.py` · `run` |
-| Capturar fallos y poner en cuarentena | base compartida | `base.py` · `ingest` / `_quarantine` |
-| Traducir la modalidad al contrato | cada agente | `mesh_agent.py` · `cbct_agent.py` · `report_agent.py` |
-| Validar el vocabulario clínico | ontología | `ontology.py` |
-| Persistir lo pesado por hash | almacén | `store.py` · `ArtifactStore.put` |
-| Ensamblar el `TwinSnapshot` | orquestador | `pipeline.py` · `_assemble` |
-| Decidir si hace falta una persona | orquestador | `pipeline.py` · `_hitl_reasons` |
+| Discover the case's modalities | orchestrator | `pipeline.py` · `CaseInput.from_case_dir` |
+| Declare what was not supplied (`MISSING`) | orchestrator | `pipeline.py` · `_missing` |
+| Fire in parallel | orchestrator | `pipeline.py` · `run` |
+| Catch failures and quarantine | shared base | `base.py` · `ingest` / `_quarantine` |
+| Translate the modality into the contract | each agent | `mesh_agent.py` · `cbct_agent.py` · `report_agent.py` |
+| Validate the clinical vocabulary | ontology | `ontology.py` |
+| Persist heavy data by hash | store | `store.py` · `ArtifactStore.put` |
+| Assemble the `TwinSnapshot` | orchestrator | `pipeline.py` · `_assemble` |
+| Decide whether a person is needed | orchestrator | `pipeline.py` · `_hitl_reasons` |
 
-La línea divisoria es siempre la misma: **los agentes traducen y declaran; el
-orquestador reparte y decide.**
+The dividing line is always the same: **agents translate and declare; the orchestrator
+dispatches and decides.**
 
 ---
 
-## Decisiones de diseño
+## Design decisions
 
-### 1. Un fallo es un dato, no una excepción
+### 1. A failure is data, not an exception
 
-`BaseIngestionAgent.ingest()` **nunca lanza**. Un DICOM corrupto devuelve
-`status=FAILED` con el motivo, y el `TwinSnapshot` lo declara en su log de
-`ingestion`. El motivo es concreto: las tres modalidades se ingieren en paralelo,
-y si un fichero roto propagara la excepción se llevaría por delante las otras dos.
-Además, un snapshot parcial que **se declara** parcial no puede llegar callado a
-exportación.
+`BaseIngestionAgent.ingest()` **never raises**. A corrupt DICOM returns `status=FAILED`
+with the reason, and the `TwinSnapshot` declares it in its `ingestion` log. The reason is
+concrete: the three modalities are ingested in parallel, and if a broken file propagated
+the exception it would take the other two down with it. On top of that, a partial
+snapshot that **declares itself** partial cannot reach export in silence.
 
-`missing` (no se aportó el fichero) y `failed` (se aportó y no se pudo leer) son
-estados distintos a propósito: sin esa distinción, «no hay malla» y «la malla
-falló» serían el mismo silencio.
+`missing` (the file was not supplied) and `failed` (it was supplied and could not be
+read) are deliberately different states: without that distinction, "there is no mesh" and
+"the mesh failed" would be the same silence.
 
-### 2. La decisión clínica vive en el orquestador, no en el agente
+### 2. The clinical decision lives in the orchestrator, not in the agent
 
-Los agentes reportan `Provenance.confidence`; **no** deciden qué se persiste. El
-gate de human-in-the-loop es una regla explícita y auditable del
-`IngestionPipeline` (umbral por defecto `0.7`). Separar *extracción* de *decisión*
-es lo que mantiene la responsabilidad única y hace el gate revisable.
+Agents report `Provenance.confidence`; they do **not** decide what gets persisted. The
+human-in-the-loop gate is an explicit, auditable rule of the `IngestionPipeline` (default
+threshold `0.7`). Separating *extraction* from *decision* is what keeps the single
+responsibility and makes the gate reviewable.
 
-La confianza no es decorativa — se baja cuando la ingesta vale menos de lo que
-parece:
+Confidence is not decorative — it is lowered when an ingestion is worth less than it
+looks:
 
-| Situación | Confianza | Por qué |
+| Situation | Confidence | Why |
 |---|---|---|
-| Malla con color por vértice real | 1.00 | aporte completo de la modalidad |
-| Malla con color constante (placeholder) | 0.60 | el exportador escribió un gris, nadie midió apariencia |
-| Malla sin color | 0.50 | falta el aporte propio de la modalidad |
-| CBCT submuestreado por tope de primitivas | 0.90 | el campo es una submuestra, no el volumen |
-| Informe del que no se extrae nada | 0.00 | puede ser un PDF escaneado sin OCR |
+| Mesh with real per-vertex colour | 1.00 | full contribution from the modality |
+| Mesh with constant colour (placeholder) | 0.60 | the exporter wrote a grey, nobody measured appearance |
+| Mesh with no colour | 0.50 | the modality's own contribution is missing |
+| CBCT subsampled by a primitive cap | 0.90 | the field is a subsample, not the volume |
+| Report from which nothing is extracted | 0.00 | it may be a scanned PDF with no OCR |
 
-### 3. 🔒 Guardarraíl de reversibilidad en el `mesh-agent`
+### 3. 🔒 Reversibility guardrail in the `mesh-agent`
 
-El brief exige regenerar el STL desde el twin con **< 0,1 mm** de error, y una
-nube splatteada no llega (es lossy). Por eso el `mesh-agent` conserva la
-**superficie de origen tal cual** — `float64` y topología de caras completa — en
-vez de una versión remuestreada. El round-trip fichero → artefacto → fichero
-tiene error **cero**, no «pequeño», y hay un test que lo mide contra el fichero
-reparseado.
+The brief requires regenerating the STL from the twin with **< 0.1 mm** of error, and a
+splatted cloud does not get there (it is lossy). That is why the `mesh-agent` keeps the
+**source surface as it is** — `float64` and complete face topology — instead of a
+resampled version. The file → artifact → file round trip has **zero** error, not "small",
+and there is a test that measures it against the reparsed file.
 
-### 4. El gris de Teeth3DS+ no es color
+### 4. The Teeth3DS+ grey is not colour
 
-Teeth3DS+ escribe `0.502` en los ~110k vértices de cada malla: es el
-*placeholder* del exportador, no apariencia clínica. Persistirlo haría que la
-fusión geométrica pintara las gaussianas con un color que nadie midió, así que un
-color **constante** se trata igual que su ausencia (`color_superficie = None`),
-bajando la confianza. Verificado sobre el dataset real, no sobre un fixture.
+Teeth3DS+ writes `0.502` into the ~110k vertices of every mesh: it is the exporter's
+*placeholder*, not clinical appearance. Persisting it would make geometric fusion paint
+the Gaussians with a colour nobody measured, so a **constant** colour is treated the same
+as its absence (`color_superficie = None`), lowering the confidence. Verified against the
+real dataset, not against a fixture.
 
-### 5. Referencias por contenido (SHA-256), no por ruta
+### 5. References by content (SHA-256), not by path
 
-Los blobs pesados van a un `ArtifactStore` direccionado por contenido. Dos
-propiedades salen gratis: la referencia **es** una huella verificable de qué se
-ingirió (trazabilidad), y reingerir el mismo escaneo no duplica gigabytes
-(deduplicación). Se hashea nombre + dtype + shape + bytes de cada array, no el
-`.npz` serializado: el ZIP lleva marcas de tiempo y el mismo contenido daría
-hashes distintos.
+Heavy blobs go to a content-addressed `ArtifactStore`. Two properties come for free: the
+reference **is** a verifiable fingerprint of what was ingested (traceability), and
+re-ingesting the same scan does not duplicate gigabytes (deduplication). What is hashed
+is name + dtype + shape + bytes of each array, not the serialised `.npz`: the ZIP carries
+timestamps and the same content would yield different hashes.
 
-Vive aquí y no en `packages/3dgs-engine/` porque el módulo de ese paquete
-(`3dgs_engine`) **no es un identificador Python válido** — empieza por dígito — y
-no se puede importar hasta renombrarlo. `ArtifactStore` es la interfaz que se
-sustituirá cuando el motor exista.
+It lives here and not in `packages/3dgs-engine/` because that package's module
+(`3dgs_engine`) **is not a valid Python identifier** — it starts with a digit — and
+cannot be imported until it is renamed. `ArtifactStore` is the interface that will be
+replaced once the engine exists.
 
-### 6. Seudonimización en el borde
+### 6. Pseudonymisation at the edge
 
-El `cbct-agent` deriva el `patient_id` del DICOM a un HMAC-SHA256 truncado
-(`ASH_PSEUDONYM_SALT`). Es **estable** —el mismo paciente da el mismo seudónimo
-entre adquisiciones, que es lo que permite montar su serie temporal— y no
-reversible sin la sal. Es seudonimización, no anonimización: **la sal es el dato
-a proteger**. La sal por defecto es de desarrollo y su nombre lo dice.
+The `cbct-agent` derives the DICOM `patient_id` into a truncated HMAC-SHA256
+(`ASH_PSEUDONYM_SALT`). It is **stable** — the same patient yields the same pseudonym
+across acquisitions, which is what makes their time series possible — and not reversible
+without the salt. This is pseudonymisation, not anonymisation: **the salt is the thing to
+protect**. The default salt is a development one and its name says so.
 
-La cuarentena guarda **ruta + traceback**, nunca el contenido: mover un DICOM a
-un directorio de cuarentena duplicaría dato de paciente fuera del almacenamiento
-autorizado.
+Quarantine stores **path + traceback**, never the content: moving a DICOM into a
+quarantine directory would duplicate patient data outside the authorised storage.
 
-### 7. LLM solo donde la entrada no tiene esquema
+### 7. LLM only where the input has no schema
 
-Un DICOM y un OBJ son formatos: parsearlos es código tipado. Un informe es prosa.
-Por eso el `report-agent` es el único con un backend LLM — y está **desactivado
-por defecto**: `rules` (regex línea a línea) es determinista, corre en CI sin red
-ni clave, y da el suelo medible contra el que comparar al LLM.
+A DICOM and an OBJ are formats: parsing them is typed code. A report is prose. That is
+why the `report-agent` is the only one with an LLM backend — and it is **disabled by
+default**: `rules` (line-by-line regex) is deterministic, runs in CI with no network and
+no key, and gives the measurable floor to compare the LLM against.
 
-> ⚠ **Punto abierto.** La skill `add-ingestion-agent` §5 dice «no metas lógica de
-> LLM: la ingesta es determinista». El backend `llm` existe porque un informe real
-> en prosa libre no se parsea con regex, pero es opt-in y no afecta al camino por
-> defecto. **Decisión pendiente del equipo**: mantenerlo aquí o sacarlo a un
-> agente de extracción aparte.
+> ⚠ **Open point.** The `add-ingestion-agent` skill §5 says "do not put LLM logic in:
+> ingestion is deterministic". The `llm` backend exists because a real free-prose report
+> cannot be parsed with regex, but it is opt-in and does not affect the default path.
+> **Pending team decision**: keep it here or move it out into a separate extraction
+> agent.
 
-### 8. Sin framework de agentes (todavía), y a propósito
+### 8. No agent framework (yet), and on purpose
 
-En la ingesta no hay nada que un framework aporte: son tres tareas
-**independientes**, con esquema fijo de entrada y salida y **sin enrutado
-condicional**. Sus ventajas —grafo de decisión, estado compartido, replanificación—
-presuponen decisiones que aquí no existen.
+There is nothing in ingestion that a framework would add: these are three
+**independent** tasks, with a fixed input and output schema and **no conditional
+routing**. A framework's advantages — decision graph, shared state, replanning —
+presuppose decisions that do not exist here.
 
-La elección (LangGraph / CrewAI / MCP / …) se toma donde sí empieza a haber grafo
-—fusión ↔ segmentación ↔ análisis, con gates y reintentos— y **sin tocar los
-agentes**: dependen del `Protocol` `IngestionAgent`, no del orquestador.
+The choice (LangGraph / CrewAI / MCP / …) is made where a graph does start to appear
+— fusion ↔ segmentation ↔ analysis, with gates and retries — and **without touching the
+agents**: they depend on the `IngestionAgent` `Protocol`, not on the orchestrator.
 
 ---
 
-## Ontología clínica mínima
+## Minimal clinical ontology
 
-`ingestion_agents/ontology.py` — vocabulario controlado, no conocimiento clínico:
+`ingestion_agents/ontology.py` — controlled vocabulary, not clinical knowledge:
 
-- **ISO-FDI (ISO 3950)**: qué códigos existen, su cuadrante, arcada, lado y tipo
-  morfológico. Es el **ancla semántica** que une densidad, color y pH del mismo
-  diente.
-- **Rango plausible** de cada atributo regional. Es más estrecho que el del
-  contrato **a propósito**: el contrato acota lo que es un pH (0–14); la ontología
-  acota lo que es un pH *creíble en un informe dental* (3–9). Un `7.4` mal leído
-  como `74` lo caza el contrato; un `1.2` lo caza esto.
+- **ISO-FDI (ISO 3950)**: which codes exist, their quadrant, arch, side and morphological
+  type. It is the **semantic anchor** that ties together density, colour and pH of the
+  same tooth.
+- **Plausible range** for each regional attribute. It is narrower than the contract's
+  **on purpose**: the contract bounds what a pH is (0–14); the ontology bounds what a
+  *credible pH in a dental report* is (3–9). A `7.4` misread as `74` is caught by the
+  contract; a `1.2` is caught by this.
 
-## Datos sintéticos
+## Synthetic data
 
-`ingestion_agents/synthetic.py` genera un caso donde **las tres modalidades
-describen la misma boca** — arcada parabólica de 16 dientes, materializada como
-malla OBJ y como volumen DICOM, más el informe que cuelga el pH de algunos de
-ellos. No es anatómicamente realista: es **coherente entre modalidades y
-reproducible**, que es lo que la ingesta necesita validar (y lo que ningún
-dataset público suelto da: nadie publica CBCT + malla + informe del mismo
-paciente).
+`ingestion_agents/synthetic.py` generates a case where **the three modalities describe
+the same mouth** — a parabolic 16-tooth arch, materialised as an OBJ mesh and as a DICOM
+volume, plus the report that hangs a pH off some of them. It is not anatomically
+realistic: it is **cross-modality coherent and reproducible**, which is what ingestion
+needs to validate (and what no loose public dataset provides: nobody publishes CBCT +
+mesh + report for the same patient).
 
-## Corpus de evaluación del informe
+## Report evaluation corpus
 
-`ingestion_agents/report_corpus.py` es a los informes lo que `edge_cases.py` a las
-entradas rotas: un catálogo único, 22 informes sintéticos, cada uno con **lo que
-dice de verdad** anotado a mano y **lo que el backend determinista saca de él** hoy.
-Las dos columnas están separadas a propósito — si la referencia fuese lo que el
-regex extrae, el regex tendría 100 % por definición y no habría suelo contra el que
-comparar un LLM.
+`ingestion_agents/report_corpus.py` is to reports what `edge_cases.py` is to broken
+inputs: a single catalogue, 22 synthetic reports, each one with **what it actually says**
+annotated by hand and **what the deterministic backend gets out of it** today. The two
+columns are separated on purpose — if the reference were whatever the regex extracts, the
+regex would score 100% by definition and there would be no floor to compare an LLM
+against.
 
 ```bash
-uv run python scripts/eval_informes.py --detalle     # backend determinista
-uv run python scripts/eval_informes.py --backend llm # requiere ANTHROPIC_API_KEY
+uv run python scripts/eval_informes.py --detalle     # deterministic backend
+uv run python scripts/eval_informes.py --backend llm # requires ANTHROPIC_API_KEY
 ```
 
-Medido sobre el corpus (22 informes · 19 valores de pH · 47 clínicos · 5 índices):
+Measured over the corpus (22 reports · 19 pH values · 47 clinical · 5 indices):
 
-| familia | cobertura de `rules` | valores falsos |
+| family | `rules` coverage | false values |
 |---|---|---|
-| tabulado (8 informes) | **97,8 %** | 0 |
-| prosa (7 informes) | **43,5 %** | 2 |
-| abstención (7 informes) | 100 % | 1 |
-| **total** | **80,3 %** | **3** |
+| tabular (8 reports) | **97.8%** | 0 |
+| prose (7 reports) | **43.5%** | 2 |
+| abstention (7 reports) | 100% | 1 |
+| **total** | **80.3%** | **3** |
 
-Dos lecturas, y la segunda importa más que la primera:
+Two readings, and the second matters more than the first:
 
-1. El determinista **cumple el >95 % del brief en el terreno para el que se
-   escribió** (tabulado) y se queda en 43 % en prosa. La cifra global de 78,8 % no
-   es un veredicto sobre el extractor: es la proporción de cada formato en el
-   corpus. Por eso se reporta por familia.
-2. Hay **3 valores falsos** dentro del contrato, y son un fallo distinto del hueco.
-   El peor: `Tooth #14` (notación Universal, que es el 26 en FDI) se ingiere como
-   FDI 14 —otro diente— con confianza 0,9 y sin descarte que lo delate. Los tres
-   están fijados en `test_corpus_informes.py::FALSOS_POSITIVOS_RULES`, una cifra
-   que solo puede bajar.
+1. The deterministic backend **meets the brief's >95% on the ground it was written for**
+   (tabular) and drops to 43% on prose. The global 78.8% figure is not a verdict on the
+   extractor: it is the proportion of each format in the corpus. That is why it is
+   reported per family.
+2. There are **3 false values** inside the contract, and they are a different failure
+   from the gap. The worst: `Tooth #14` (Universal notation, which is 26 in FDI) is
+   ingested as FDI 14 — a different tooth — with confidence 0.9 and no discard to give it
+   away. All three are pinned in
+   `test_corpus_informes.py::FALSOS_POSITIVOS_RULES`, a number that can only go down.
 
-El corpus no se escribió para aprobar al extractor actual, sino para darle al
-backend `llm` contra qué medirse. Y ya sirvió para eso: medir esta tabla es lo que
-destapó que el LLM solo producía pH —el campo que el regex ya cubre al 98 %— mientras
-los campos en prosa salían del regex incluso con `backend="llm"`. Los dos backends
-cubren hoy los mismos campos, así que `--backend llm` es comparable valor a valor.
+The corpus was not written to give the current extractor a pass, but to give the `llm`
+backend something to measure itself against. And it already served for that: measuring
+this table is what exposed that the LLM only produced pH — the field the regex already
+covers at 98% — while the prose fields came out of the regex even with `backend="llm"`.
+Both backends cover the same fields today, so `--backend llm` is comparable value by
+value.
 
 ## Tests
 
@@ -393,6 +390,6 @@ cubren hoy los mismos campos, así que `--backend llm` es comparable valor a val
 uv run pytest -q --cov=ingestion_agents --cov=agent_orchestrator
 ```
 
-Cobertura actual **96 %** (objetivo del brief: >80 %). Lo no cubierto es el
-backend LLM y la lectura de PDF, ambos extras opcionales que requieren red o
-dependencias fuera del entorno de CI.
+Current coverage **96%** (brief target: >80%). What is not covered is the LLM backend and
+PDF reading, both optional extras that require network or dependencies outside the CI
+environment.

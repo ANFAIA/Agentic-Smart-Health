@@ -1,55 +1,56 @@
-# `tooth-aggregation` — agregación punto → diente
+# `tooth-aggregation` — point → tooth aggregation
 
-Un modelo de segmentación de nubes de puntos devuelve una etiqueta **por punto**.
-El `segmentation-agent` tiene que entregar **dientes**: instancias, cada una con su
-código FDI. Este paquete es ese salto, y solo ese salto.
+A point cloud segmentation model returns one label **per point**. The
+`segmentation-agent` has to deliver **teeth**: instances, each one with its FDI code.
+This package is that jump, and only that jump.
 
-Extraído de [`notebooks/exercise-point-transformer-teeth3ds.ipynb`](../../notebooks/exercise-point-transformer-teeth3ds.md)
-(sección A4), donde se midió sobre Teeth3DS+ completo.
+Extracted from [`notebooks/exercise-point-transformer-teeth3ds.ipynb`](../../notebooks/exercise-point-transformer-teeth3ds.md)
+(section A4), where it was measured over the full Teeth3DS+ dataset.
 
-## Sin `torch`, a propósito
+## No `torch`, on purpose
 
-El *forward* del modelo (GPU, `torch` + `pyg`) es del **llamante**, que pasa aquí las
-log-probabilidades ya calculadas como `ndarray`. La agregación es geometría y
-combinatoria pura: `numpy` + `scipy`.
+The model *forward* pass (GPU, `torch` + `pyg`) belongs to the **caller**, which passes
+the already computed log-probabilities in here as an `ndarray`. Aggregation is pure
+geometry and combinatorics: `numpy` + `scipy`.
 
-Esto no es un detalle de estilo. El stack de GPU vive en un venv aparte
-(`~/.venvs/dental-gpu`, ver [`notebooks/README.md` §04](../../notebooks/README.md)) que
-está **fuera** del workspace `uv`. Un paquete que importara `torch` no se instalaría
-aquí ni podría testearse en CI.
+This is not a style detail. The GPU stack lives in a separate venv
+(`~/.venvs/dental-gpu`, see [`notebooks/README.md` §04](../../notebooks/README.md)) that
+sits **outside** the `uv` workspace. A package that imported `torch` would neither
+install here nor be testable in CI.
 
-## Uso
+## Usage
 
 ```python
 from tooth_aggregation import aggregate_teeth
 
-# logprob (N, C) sale del modelo; points (N, 3) es la malla.
+# logprob (N, C) comes out of the model; points (N, 3) is the mesh.
 dientes = aggregate_teeth(points, logprob, codes={1: 11, 2: 12, ...})
 
 for d in dientes:
     print(d.fdi, d.size, d.confidence)
 ```
 
-Piezas sueltas, si hace falta control fino: `connected_labels` (instancias),
-`merge_fragments` (fusión), `assign_unique` (unicidad FDI), `typical_spacing`.
+Individual pieces, if you need finer control: `connected_labels` (instances),
+`merge_fragments` (merging), `assign_unique` (FDI uniqueness), `typical_spacing`.
 
-## Dos cosas medidas que condicionan cómo se usa
+## Two measured facts that shape how this is used
 
-**La métrica honesta es el acierto por DIENTE, no por punto.** En Teeth3DS+ el acierto
-por punto *subestima* la identificación por diente. La ficha del agente debe declarar la
-segunda.
+**The honest metric is per-TOOTH accuracy, not per-point.** On Teeth3DS+, per-point
+accuracy *underestimates* per-tooth identification. The agent card must declare the
+second one.
 
-**`enforce_unique` viene desactivado por defecto**, y no por prudencia genérica. La
-restricción «un FDI por arcada» presupone *una instancia = un diente*; como la detección
-parte dientes en fragmentos, esa premisa es falsa y forzar un código distinto por trozo
-**inventa** errores. Medido sobre Teeth3DS+: activarlo **sin fusionar antes empeora** el
-acierto por diente; con fusión se recupera casi todo, pero seguía **sin superar al voto
-mayoritario simple**. Actívalo solo si mides que en tu caso la fusión deja de verdad una
-instancia por diente.
+**`enforce_unique` ships disabled by default**, and not out of generic caution. The
+"one FDI per arch" constraint presupposes *one instance = one tooth*; since detection
+splits teeth into fragments, that premise is false and forcing a different code per
+fragment **invents** errors. Measured over Teeth3DS+: enabling it **without merging
+first makes** per-tooth accuracy **worse**; with merging almost everything is recovered,
+but it still **did not beat plain majority voting**. Only enable it if you measure that
+merging really does leave one instance per tooth in your case.
 
-> Las cifras concretas están **solo** en la
-> [ficha del experimento](../../notebooks/exercise-point-transformer-teeth3ds.md), que es la
-> fuente única: se re-miden en cada corrida y duplicarlas aquí las desincronizaría.
+> The concrete figures live **only** in the
+> [experiment card](../../notebooks/exercise-point-transformer-teeth3ds.md), which is the
+> single source: they are re-measured on every run and duplicating them here would let
+> them drift.
 
 ## Tests
 
@@ -57,6 +58,7 @@ instancia por diente.
 uv run pytest packages/tooth-aggregation
 ```
 
-Datos sintéticos (rejillas regulares, para poder razonar los umbrales a mano): que las
-manchas lejanas no se fusionen, que los vecinos de distinta clase tampoco, que la fusión
-sea transitiva, y que la húngara encuentre el **óptimo global** y no la solución voraz.
+Synthetic data (regular grids, so the thresholds can be reasoned about by hand): that
+distant blobs do not merge, that neighbours of a different class do not either, that
+merging is transitive, and that the Hungarian algorithm finds the **global optimum**
+and not the greedy solution.
