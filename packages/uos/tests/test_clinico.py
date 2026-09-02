@@ -19,7 +19,7 @@ from core_schemas import (
     RegionalObservation,
     TwinSnapshot,
 )
-from uos.clinico import capa_clinica
+from uos.clinico import SNOMED, capa_clinica
 
 
 def _snapshot(*observaciones: RegionalObservation) -> TwinSnapshot:
@@ -122,7 +122,9 @@ def test_el_color_y_el_informe_conviven_en_la_misma_pieza() -> None:
         _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
     )
     pieza = ficha["teeth"][0]
-    assert pieza["findings"]["value"] == ["restauracion"]
+    assert pieza["findings"]["value"] == [
+        {"system": SNOMED, "code": None, "display": "restauracion"}
+    ]
     assert pieza["color"]["value"]["n_pixels"] == 10205
 
 
@@ -171,3 +173,30 @@ def test_la_capa_va_POR_VALOR_y_el_color_no_es_capa_1() -> None:
 
     # El defecto del fichero se declara COMO defecto, no como afirmacion sobre el todo.
     assert ficha["regulatory"]["default"] is True
+
+
+def test_el_hallazgo_sale_CODIFICADO_y_su_codigo_va_a_null_a_proposito() -> None:
+    """D-5: `findings: ["aparato_ortodoncico"]` no interopera con nada.
+
+    Ni con el `Observation` de FHIR al que se mapea —que espera un `code` codificado— ni
+    con un sistema de gestion de practica extranjero, ni con un segundo implementador. El
+    vocabulario cerrado de `core_schemas.Hallazgo` es buen control interno y no puede
+    viajar como codigo, asi que sobrevive en `display`.
+
+    ⚠️ **Y `code` va a `null`, que es la mitad importante de este test.** Asignar un
+    identificador SNOMED es terminologia clinica: exige un navegador con licencia y alguien
+    que responda por la equivalencia. Un codigo inventado seria indistinguible de uno
+    correcto para el conector que lo resuelva contra un servidor — el fallo plausible,
+    silencioso y ya dentro del dato clinico que el ADR 003 llama el peor. `null` dice «no
+    mapeado»; un numero a ojo dice «mapeado» y miente.
+    """
+    ficha = capa_clinica(
+        _snapshot(_obs("26", hallazgos=[Hallazgo.CARIES])), []
+    )
+    hallazgo = ficha["teeth"][0]["findings"]["value"][0]
+
+    assert hallazgo["system"] == SNOMED
+    assert hallazgo["display"] == "caries"
+    assert hallazgo["code"] is None
+    # Y el fichero DECLARA por que va nulo, para que nadie lo lea como un hueco.
+    assert "terminologo" in ficha["teeth"][0]["findings"]["coding"]

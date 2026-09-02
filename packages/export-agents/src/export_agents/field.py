@@ -120,7 +120,7 @@ ESQUEMA_COLUMNAS: dict[str, dict] = {
     "rot_2": {"significado": "cuaternion (w, x, y, z) normalizado — componente y"},
     "rot_3": {"significado": "cuaternion (w, x, y, z) normalizado — componente z"},
     "density": {
-        "unidad": "sigma_normalizada",
+        "unidad": "normalised_sigma",
         "significado": "atenuacion Beer-Lambert en [0,1] sobre `hu_range`. NO es opacidad",
     },
     "region_id": {

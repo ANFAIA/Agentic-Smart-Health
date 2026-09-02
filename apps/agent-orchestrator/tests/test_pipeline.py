@@ -812,7 +812,7 @@ def test_el_snapshot_dice_QUE_es_cada_columna(pipeline: IngestionPipeline, case_
     por_nombre = {c.nombre: c for c in snapshot.esquema_campo}
 
     assert {"x", "scale_0", "rot_0", "density"} <= set(por_nombre)
-    assert por_nombre["density"].unidad == "sigma_normalizada"
+    assert por_nombre["density"].unidad == "normalised_sigma"
     assert "NO es opacidad" in por_nombre["density"].significado
 
 
@@ -830,7 +830,7 @@ def test_la_escala_declara_que_son_MILIMETROS_y_no_su_logaritmo(
     escala = next(c for c in snapshot.esquema_campo if c.nombre == "scale_0")
 
     assert escala.unidad == "mm"
-    assert escala.escala == "lineal"
+    assert escala.escala == "linear"
     assert snapshot.perfil_campo == "ash-twin/1.0", "y el perfil se declara, para poder rechazarlo"
 
 

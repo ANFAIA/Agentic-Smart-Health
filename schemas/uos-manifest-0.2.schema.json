@@ -34,6 +34,16 @@
       "title": "AnatomicalConvention",
       "type": "string"
     },
+    "RegistrationFitness": {
+      "description": "What clinical use a registration was measured fit for.",
+      "enum": [
+        "visualization",
+        "measurement",
+        "guided_surgery"
+      ],
+      "title": "RegistrationFitness",
+      "type": "string"
+    },
     "Asset": {
       "additionalProperties": false,
       "description": "One file or directory the container carries or references.",
@@ -523,6 +533,17 @@
       "title": "Tool",
       "type": "object"
     },
+    "OcclusionRecord": {
+      "description": "How the mandible-to-maxilla relation was recorded.",
+      "enum": [
+        "bite_scan",
+        "articulator",
+        "not_recorded",
+        "single_arch"
+      ],
+      "title": "OcclusionRecord",
+      "type": "string"
+    },
     "Part": {
       "additionalProperties": false,
       "description": "One file inside an asset that is a directory, such as a DICOM slice.",
@@ -713,6 +734,49 @@
           ],
           "default": null,
           "title": "Rms Error Mm"
+        },
+        "max_error_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Error Mm"
+        },
+        "target_registration_error_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Registration Error Mm"
+        },
+        "tre_region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tre Region"
+        },
+        "fit_for": {
+          "items": {
+            "$ref": "#/$defs/RegistrationFitness"
+          },
+          "title": "Fit For",
+          "type": "array"
         },
         "computed": {
           "anyOf": [
@@ -941,6 +1005,17 @@
       },
       "title": "Registrations",
       "type": "array"
+    },
+    "occlusion": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OcclusionRecord"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "fhir_map": {
       "additionalProperties": {

@@ -59,6 +59,39 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — clinical findings travel coded.** `findings: ["aparato_ortodoncico"]`
+  interoperates with nothing: not with the FHIR `Observation` it maps to, which expects a
+  coded `code`; not with a foreign practice-management system; not with a second
+  implementer. A finding is now `{system, code, display}`, with this issuer's closed
+  vocabulary demoted to `display` where it belongs. Raised as **D-5**.
+
+  **The SNOMED `code` is `null`, deliberately.** Assigning one is an act of clinical
+  terminology, not of programming: it needs a licensed browser and somebody who answers for
+  the equivalence. A guessed code would be indistinguishable — to the connector that
+  resolves it against a terminology server — from a correct one, which is the plausible,
+  silent, already-inside-the-clinical-record failure ADR 003 calls the worst kind. `null`
+  says *not mapped*; a number put there by hand says *mapped*, and lies. The file declares
+  why, so nobody reads it as a gap.
+- **BREAKING — normative enum values that were Spanish are now English**: `scale: "lineal"`
+  → `"linear"`, `unit: "sigma_normalizada"` → `"normalised_sigma"`. A reader branches on
+  these strings, so they are wire format rather than labels for us. `role`, `note` and
+  `meaning` stay in Spanish, being human labels.
+- **Occlusion, sites and registration fitness** (**D-9**). `reg.mandible_to_maxilla` is a
+  reserved id: mandible-to-maxilla is the clinically most important registration of a dental
+  case and the format did not name it, which invites every writer to call it something
+  different. `occlusion` must be declared even when the answer is `single_arch` — silence is
+  never "there is none". `Registration` gains `max_error_mm`,
+  `target_registration_error_mm` with its region, and `fit_for`: an RMS average does not
+  license guided implant surgery, where the maximum local error is what decides, and an
+  empty `fit_for` means *not declared* rather than *fit for nothing*. `uos_site` reserves a
+  vocabulary for implant sites, edentulous spans, pontics and abutments, which `uos_fdi`
+  could not name.
+- The specification names where UOS maps onto what already exists rather than reinventing
+  it (**D-4**, **D-6**): DICOM's Spatial Registration Object and Encapsulated STL Storage,
+  FHIR `Provenance` for the manifest chain, and FHIR R5's `ImagingSelection` for
+  `projection.fdi_targets` — the last so nobody invents a private extension for something
+  R5 already has. It also documents that a US reader sees `"27"` as a different tooth under
+  the Universal Numbering System.
 - **BREAKING — a DICOM slice's identity is its SOP Instance UID and its pixels, not its
   file's hash.** `Part.sha256` covers the whole file, so any de-identification changes it —
   and de-identification is the step every clinical flow takes, and the one B-3 now requires.

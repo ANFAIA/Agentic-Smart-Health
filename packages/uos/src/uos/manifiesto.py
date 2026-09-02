@@ -435,6 +435,59 @@ class Anatomico(StrEnum):
     DISPOSITIVO = "device"
 
 
+class Oclusion(StrEnum):
+    """Como se registro la relacion entre arcadas (D-9).
+
+    ⚠️ **Es la registracion clinicamente mas importante de un caso dental y el formato no
+    la nombraba.** Mandibula<->maxila —el registro de mordida— es lo que decide si dos
+    arcadas se pueden mirar juntas, y un formato dental que no le da nombre invita a que
+    cada escritor la llame distinto. El caso de referencia es solo maxilar y por eso no
+    aparecia; eso es una razon para reservarla, no para omitirla.
+
+    Y **el silencio no es «no hay»**: un caso con dos arcadas declara como la registro o
+    declara `not_recorded`, que es una afirmacion distinta de no decir nada.
+    """
+
+    #: Escaneo lateral adicional con los dientes en contacto.
+    ESCANEO_MORDIDA = "bite_scan"
+    #: Articulador o registro fisico llevado a digital.
+    ARTICULADOR = "articulator"
+    #: No se registro. Dicho, no callado.
+    NO_REGISTRADA = "not_recorded"
+    #: El caso trae una sola arcada, asi que no hay relacion que registrar.
+    NO_APLICA = "single_arch"
+
+
+class Aptitud(StrEnum):
+    """Para que sirve una registracion, medido y no supuesto (D-9).
+
+    ⚠️ **`rms_error_mm` es un promedio global y no decide un uso clinico.** Para cirugia
+    guiada de implantes lo que importa es el error maximo local en la zona de interes:
+    0,666 mm de RMS es aceptable para visualizar y no para planificar. Un lector
+    **MUST NOT** suponer aptitud para un uso que no este en la lista, y la lista vacia
+    significa NO DECLARADO.
+    """
+
+    VISUALIZACION = "visualization"
+    MEDICION = "measurement"
+    CIRUGIA_GUIADA = "guided_surgery"
+
+
+class Sitio(StrEnum):
+    """Sitios que NO son un diente (D-9).
+
+    `uos_fdi` solo etiqueta dientes, asi que no habia forma de senalar un lecho de
+    implante, una zona edentula ni un pilar protesico — que es de lo que trata media
+    rehabilitacion. Se declara el vocabulario aunque este emisor todavia no los produzca:
+    reservarlo es lo que evita que cada escritor invente el suyo.
+    """
+
+    LECHO_IMPLANTE = "implant_site"
+    EDENTULO = "edentulous"
+    PONTICO = "pontic"
+    PILAR = "abutment"
+
+
 class Frame(BaseModel):
     """Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2).
 
@@ -477,6 +530,17 @@ class Registro(BaseModel):
     transform_4x4_row_major: list[float] = Field(min_length=16, max_length=16)
     method: str
     rms_error_mm: float | None = None
+    #: D-9 · el error MAXIMO local, que es el que decide un uso clinico. El RMS es un
+    #: promedio y se reparte: puede ser bueno y esconder una zona mala.
+    max_error_mm: float | None = None
+    #: Error medido en puntos que NO se usaron para calcular la registracion (TRE). El RMS
+    #: se mide sobre los puntos que si se usaron y por tanto es sistematicamente optimista.
+    target_registration_error_mm: float | None = None
+    #: La region donde se midio el TRE, porque un TRE sin region no dice nada.
+    tre_region: str | None = None
+    #: ⚠️ Vacio significa NO DECLARADO, y un lector **MUST NOT** suponer aptitud para un
+    #: uso que no este aqui. Es la misma regla que `fdi_targets` y `clearances`.
+    fit_for: list[Aptitud] = Field(default_factory=list)
     computed: datetime | None = None
     operator: str | None = None
     verified_by: str | None = None
@@ -489,6 +553,10 @@ class Registro(BaseModel):
     #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
     #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
     AUTO: ClassVar[str] = "auto:"
+
+    #: D-9 · el id RESERVADO del registro de mordida. Reservarlo es lo que evita que cada
+    #: escritor lo llame distinto y que dos contenedores no se puedan comparar.
+    OCLUSION: ClassVar[str] = "reg.mandible_to_maxilla"
 
     @property
     def provisional(self) -> bool:
@@ -608,6 +676,9 @@ class Manifiesto(BaseModel):
     visits: list[Visita] = Field(default_factory=list)
     assets: list[Asset] = Field(default_factory=list)
     registrations: list[Registro] = Field(default_factory=list)
+    #: D-9 · como se registro la relacion entre arcadas. `None` es no declarado y el
+    #: validador avisa: en un caso de dos arcadas es la registracion que mas importa.
+    occlusion: Oclusion | None = None
     fhir_map: dict[str, RecursoFHIR] = Field(default_factory=dict)
     # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.2.
     extensions: dict[str, Extension] = Field(default_factory=dict)

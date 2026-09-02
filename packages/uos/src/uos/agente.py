@@ -49,6 +49,7 @@ from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
     Adquisicion,
+    Aptitud,
     Autorizacion,
     Clase,
     Desidentificacion,
@@ -58,6 +59,7 @@ from uos.manifiesto import (
     Frame,
     Herramienta,
     Manifiesto,
+    Oclusion,
     Procedencia,
     Proyeccion,
     RecursoFHIR,
@@ -229,7 +231,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.10.0"
+    version = "0.11.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -936,6 +938,11 @@ class UOSExportAgent(BaseExportAgent):
             visits=[visita],
             assets=assets,
             registrations=registros,
+            # D-9 · el pipeline ingiere UNA arcada, asi que la respuesta honesta es que no
+            # hay relacion entre arcadas que registrar. Callarlo dejaria al lector sin
+            # saber si es que no se registro o si es que no habia dos arcadas, y son
+            # cosas distintas: la primera es una falta y la segunda no.
+            occlusion=Oclusion.NO_APLICA,
             fhir_map=fhir,
             # ⚠️ Nada nuestro va en `extensions_required`. Todo lo que anadimos SUMA
             # informacion; un visor conforme tiene que poder abrir el caso sin
@@ -1109,6 +1116,12 @@ class UOSExportAgent(BaseExportAgent):
             # que una transformada calculada por una maquina era, sobre el papel, tan
             # adquirida como el CBCT del que salio.
             regulatory=Regulatorio(layer=2),
+            # ⚠️ **Solo visualizacion, y es una afirmacion medida (D-9).** El residuo que
+            # tenemos es el RMS sobre la poblacion solapada; no hay TRE ni error maximo
+            # local, y sin ellos no se puede declarar apto para medir ni para planificar
+            # una cirugia. Declarar la lista corta es lo que impide que un lector suponga
+            # el resto — vacia significaria «no declarado» y seria peor.
+            fit_for=[Aptitud.VISUALIZACION],
         )]
 
     def _vistas(

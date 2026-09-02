@@ -19,10 +19,12 @@ from uos.contenedor import MANIFIESTO, lee_manifiesto_de
 from uos.manifiesto import (
     UOS_VERSION,
     Anatomico,
+    Aptitud,
     Clase,
     Desidentificacion,
     EstadoPHI,
     Manifiesto,
+    Registro,
     digesto_de_partes,
 )
 from uos.procedencia import CADENA, FIRMAS, Cadena, revisa_cadena
@@ -351,6 +353,28 @@ def _valida_regulatorio(m: Manifiesto, inf: Informe) -> None:
                 f"asset {a.id}: es layer 3 y no declara ninguna `clearance`. Vacio "
                 "significa «no consta», no «no hace falta»"
             )
+    # ── D-9 · la mordida, dicha o declarada ausente, nunca callada ─────────────
+    if m.occlusion is None and not any(r.id == Registro.OCLUSION for r in m.registrations):
+        inf.avisos.append(
+            "el contenedor no declara `occlusion`. Mandibula<->maxila es la registracion "
+            "clinicamente mas importante de un caso dental; en uno de una sola arcada la "
+            "respuesta es `single_arch`, pero hay que darla"
+        )
+    for r in m.registrations:
+        # ⚠️ Aptitud: `rms_error_mm` es un PROMEDIO y no decide un uso clinico. 0,666 mm de
+        # RMS vale para mirar y no para planificar una cirugia guiada, y un lector que no
+        # tenga esta lista no puede distinguirlo — supondra, que es lo que hay que impedir.
+        if r.fit_for and Aptitud.CIRUGIA_GUIADA in r.fit_for and r.max_error_mm is None:
+            inf.errores.append(
+                f"registro {r.id}: se declara apto para cirugia guiada y no trae "
+                "`max_error_mm`. Para ese uso decide el error maximo local, no el promedio"
+            )
+        if not r.fit_for:
+            inf.avisos.append(
+                f"registro {r.id}: `fit_for` vacio, o sea NO DECLARADO. Un lector no debe "
+                "suponer que sirve para medir ni para planificar"
+            )
+
     # ── D-1 y D-2 · los frames se anclan a DICOM y declaran su convencion ──────
     de_volumen = {a.frame for a in m.assets if a.kind == Clase.VOLUME}
     for f in [m.canonical_frame, *m.frames]:

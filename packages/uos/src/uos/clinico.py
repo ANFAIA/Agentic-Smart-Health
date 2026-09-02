@@ -31,6 +31,34 @@ from core_schemas import TwinSnapshot
 
 OBSERVACIONES = "clinical/observations.json"
 
+# ── D-5 · el vocabulario propio deja de ser el CODIGO ──────────────────────────────
+#
+# ⚠️ **`findings: ["aparato_ortodoncico"]` no interopera con nada.** Ni con el `Observation`
+# de FHIR al que se mapea —que espera un `code` codificado— ni con un sistema de gestion de
+# practica extranjero, ni con un segundo implementador. El vocabulario cerrado de
+# `core_schemas.Hallazgo` es correcto como control interno y **no puede viajar como codigo**.
+#
+# Asi que cada hallazgo sale como `{system, code, display}`: el termino propio sobrevive en
+# `display`, que es lo que Matias propone, y `code` queda para SNOMED CT.
+#
+# ⚠️ **Y `code` va a `null` a proposito.** Asignar un identificador SNOMED es un acto de
+# terminologia clinica, no de programacion: hace falta un navegador con licencia —SNOMED CT
+# se licencia por pais— y alguien que responda por la equivalencia. Rellenarlos "a ojo"
+# meteria en el contrato exactamente lo que el ADR 003 llama el peor fallo: un valor
+# plausible, silencioso y ya dentro del dato clinico, que un conector resolveria contra un
+# servidor de terminologia y daria por bueno. `null` dice «no mapeado»; un codigo inventado
+# dice «mapeado» y miente. Es la misma regla que deja `weights_sha256` en nulo.
+SNOMED = "http://snomed.info/sct"
+
+#: Estado del mapeo, declarado en el fichero para que nadie lo confunda con un hueco.
+MAPEO_PENDIENTE = (
+    "el `code` SNOMED CT esta sin asignar: mapear un vocabulario clinico exige un "
+    "navegador con licencia y un terminologo que responda por la equivalencia, y un "
+    "codigo inventado seria indistinguible de uno correcto para el conector que lo "
+    "resuelva. `display` lleva el termino del vocabulario cerrado de este emisor"
+)
+
+
 
 def _nota_color(color) -> str:
     """La nota del color, DERIVADA de la medida y no escrita a mano.
@@ -97,7 +125,11 @@ def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
             d["n_canals"] = {"value": a.n_conductos, **marca}
         if a.hallazgos:
             previos = d.get("findings", {}).get("value", [])
-            d["findings"] = {"value": previos + [h.value for h in a.hallazgos], **marca}
+            nuevos = [
+                {"system": SNOMED, "code": None, "display": h.value}
+                for h in a.hallazgos
+            ]
+            d["findings"] = {"value": previos + nuevos, "coding": MAPEO_PENDIENTE, **marca}
         # ⚠️ **El color es capa 2 y NO capa 1, que es lo que decia el fichero entero.**
         # Nadie firmo esto: lo calcula el pipeline desde las fotos. Tampoco es capa 3 —la
         # segmentacion de la foto en coronas es un watershed y el codigo FDI sale de
@@ -139,8 +171,17 @@ def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
     return {
         "schema": "ash-clinical/2.0",
         "extension_of": "UOS v0.2 — el borrador no define atributos clinicos por pieza",
-        "vocabulary": "ISO-3950 (FDI) para las piezas; el vocabulario de hallazgos es "
-                      "cerrado y esta en `core_schemas.Hallazgo`",
+        "vocabulary": {
+            "body_site": (
+                "ISO-3950 (FDI) para `fdi`. ⚠️ Un lector estadounidense lee «27» en el "
+                "Universal Numbering System y es OTRO diente: el mapeo FDI<->Universal "
+                "hay que hacerlo, no suponerlo"
+            ),
+            "findings": (
+                "`display` sale del vocabulario cerrado de `core_schemas.Hallazgo`, que es "
+                "control interno y NO interopera. `code` es SNOMED CT y va sin asignar"
+            ),
+        },
         "regulatory": {
             "layer": 1,
             "default": True,

@@ -89,6 +89,9 @@ PUBLICACION_EN: dict[str, tuple[str, str]] = {
     "EstadoRegulatorio": ("ClearanceStatus", "Closed vocabulary for a clearance status."),
     "Proposito": ("PurposeOfUse", "Closed vocabulary for what a container was issued for."),
     "Clase": ("AssetKind", "What kind of thing an asset is."),
+    "Oclusion": ("OcclusionRecord", "How the mandible-to-maxilla relation was recorded."),
+    "Aptitud": ("RegistrationFitness", "What clinical use a registration was measured fit for."),
+    "Sitio": ("SiteKind", "A labelled site that is not a tooth."),
     "Anatomico": (
         "AnatomicalConvention",
         "Axis convention of a frame. Handedness fixes chirality, not orientation.",

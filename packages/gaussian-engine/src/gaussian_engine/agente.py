@@ -62,7 +62,7 @@ def esquema(rmse: float) -> list[ColumnaCampo]:
             significado="cuaternion (w, x, y, z) normalizado — orientacion del elipsoide",
         ) for i in range(4)),
         ColumnaCampo(
-            nombre="density", unidad="sigma_normalizada",
+            nombre="density", unidad="normalised_sigma",
             significado="amplitud de la gaussiana; sumada con sus vecinas da la densidad",
         ),
     ]

@@ -537,9 +537,11 @@ class ColumnaCampo(BaseModel):
         description="Unidad física. Vacío para lo adimensional (un cuaternión, un código).",
     )
     escala: str = Field(
-        default="lineal",
-        description="`lineal` o `log`. Es lo que separa nuestros milímetros del logaritmo "
-        "que guarda el PLY de 3DGS bajo el mismo nombre.",
+        default="linear",
+        description="`linear` o `log`. Es lo que separa nuestros milímetros del logaritmo "
+        "que guarda el PLY de 3DGS bajo el mismo nombre. ⚠️ El VALOR va en inglés y no en "
+        "castellano (D-5): un lector bifurca sobre esta cadena, así que es formato de "
+        "cable y no una etiqueta para nosotros. `significado` y `role` sí pueden quedarse.",
     )
     significado: str = Field(default="", description="Qué es, en una línea.")
     vocabulario: str | None = Field(

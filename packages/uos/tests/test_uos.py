@@ -1448,3 +1448,45 @@ def test_el_frame_de_un_volumen_se_ancla_al_UID_de_DICOM(tmp_path, malla) -> Non
     )])
     salida2 = escribe_uos(tmp_path / "con-uid.uos", bien, [("scene/scan.stl", malla)])
     assert valida(salida2).valido, valida(salida2).errores
+
+
+def test_una_registracion_no_se_declara_apta_para_lo_que_no_se_ha_medido(tmp_path, malla):
+    """D-9: `rms_error_mm` es un PROMEDIO y no decide un uso clinico.
+
+    Para cirugia guiada de implantes el error que importa es el maximo local en la zona de
+    interes: 0,666 mm de RMS es aceptable para visualizar y no para planificar. Un lector
+    que solo vea el promedio no puede distinguirlo, asi que supondra — y suponer aptitud
+    es exactamente lo que `fit_for` existe para impedir.
+    """
+    from uos.manifiesto import Aptitud
+
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], occlusion="single_arch", registrations=[Registro(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", rms_error_mm=0.666, operator="user:pedro",
+        fit_for=[Aptitud.CIRUGIA_GUIADA],
+    )])
+    salida = escribe_uos(tmp_path / "apto.uos", m, [("scene/scan.stl", malla)])
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("cirugia guiada" in e for e in inf.errores), inf.errores
+
+
+def test_el_contenedor_dice_si_hubo_registro_de_MORDIDA(tmp_path, malla) -> None:
+    """D-9: mandibula<->maxila es la registracion clinicamente mas importante.
+
+    El caso de referencia es solo maxilar y por eso no aparecia — que es razon para
+    reservarla, no para omitirla. Y el silencio no es «no hay»: un caso de una arcada
+    responde `single_arch`, pero responde.
+    """
+    a = _asset(malla)
+    inf = valida(escribe_uos(tmp_path / "muda.uos", _manifiesto([a]),
+                             [("scene/scan.stl", malla)]))
+    assert any("occlusion" in av for av in inf.avisos), inf.avisos
+
+    dicha = _manifiesto([a], occlusion="single_arch")
+    inf2 = valida(escribe_uos(tmp_path / "dicha.uos", dicha,
+                              [("scene/scan.stl", malla)]))
+    assert not any("occlusion" in av for av in inf2.avisos)
