@@ -425,6 +425,17 @@ def _reveal(begin: float, total: int, *, fade: float = 0.35) -> str:
     )
 
 
+def _wipe(begin: float, total: int, width: int, *, fade: float = 0.45) -> str:
+    """Recorte acumulativo: nada existe visualmente hasta que se abre la ventana."""
+    start = begin / total
+    visible = min((begin + fade) / total, 0.92)
+    return (
+        f'<animate attributeName="width" values="0;0;{width};{width};0" '
+        f'keyTimes="0;{start:.4f};{visible:.4f};0.9400;1" '
+        f'dur="{total}s" repeatCount="indefinite"/>'
+    )
+
+
 def _stage(stages: list[Stage], key: str) -> Stage:
     try:
         return next(stage for stage in stages if stage.key == key)
@@ -455,9 +466,14 @@ def _flow_card(
     total: int,
 ) -> str:
     dot = 17 + index
+    clip = f"step-{index}-clip"
     return f"""
-  <g opacity="0">
-    {_reveal(begin, total, fade=0.45)}
+  <clipPath id="{clip}">
+    <rect x="{x}" y="{y}" width="0" height="126">
+      {_wipe(begin, total, 184)}
+    </rect>
+  </clipPath>
+  <g clip-path="url(#{clip})">
     <rect x="{x}" y="{y}" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="{x + 22}" cy="{y + 27}" r="12" fill="#020617" stroke="#64748b"/>

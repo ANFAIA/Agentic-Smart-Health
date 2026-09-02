@@ -21,8 +21,12 @@
       repeatCount="indefinite"/>
   </rect>
   
-  <g opacity="0">
-    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.0050;0.0275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+  <clipPath id="step-1-clip">
+    <rect x="54" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.0050;0.0275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-1-clip)">
     <rect x="54" y="178" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="76" cy="205" r="12" fill="#020617" stroke="#64748b"/>
@@ -35,8 +39,12 @@
     <text x="204" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
       Consolas, monospace" font-size="18" fill="#1e293b" opacity="0.42">.</text>
   </g>
-  <g opacity="0">
-    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.1800;0.2025;0.9400;1" dur="20s" repeatCount="indefinite"/>
+  <clipPath id="step-2-clip">
+    <rect x="278" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.1800;0.2025;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-2-clip)">
     <rect x="278" y="178" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="300" cy="205" r="12" fill="#020617" stroke="#64748b"/>
@@ -49,8 +57,12 @@
     <text x="428" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
       Consolas, monospace" font-size="19" fill="#1e293b" opacity="0.42">.</text>
   </g>
-  <g opacity="0">
-    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.3550;0.3775;0.9400;1" dur="20s" repeatCount="indefinite"/>
+  <clipPath id="step-3-clip">
+    <rect x="502" y="178" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.3550;0.3775;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-3-clip)">
     <rect x="502" y="178" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="524" cy="205" r="12" fill="#020617" stroke="#64748b"/>
@@ -63,8 +75,12 @@
     <text x="652" y="288" font-family="ui-monospace, SFMono-Regular, Menlo,
       Consolas, monospace" font-size="20" fill="#1e293b" opacity="0.42">.</text>
   </g>
-  <g opacity="0">
-    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.5300;0.5525;0.9400;1" dur="20s" repeatCount="indefinite"/>
+  <clipPath id="step-4-clip">
+    <rect x="166" y="390" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.5300;0.5525;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-4-clip)">
     <rect x="166" y="390" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="188" cy="417" r="12" fill="#020617" stroke="#64748b"/>
@@ -77,8 +93,12 @@
     <text x="316" y="500" font-family="ui-monospace, SFMono-Regular, Menlo,
       Consolas, monospace" font-size="21" fill="#1e293b" opacity="0.42">.</text>
   </g>
-  <g opacity="0">
-    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7050;0.7275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+  <clipPath id="step-5-clip">
+    <rect x="390" y="390" width="0" height="126">
+      <animate attributeName="width" values="0;0;184;184;0" keyTimes="0;0.7050;0.7275;0.9400;1" dur="20s" repeatCount="indefinite"/>
+    </rect>
+  </clipPath>
+  <g clip-path="url(#step-5-clip)">
     <rect x="390" y="390" width="184" height="126" rx="10" fill="#0f172a"
       stroke="#334155" stroke-width="1.2"/>
     <circle cx="412" cy="417" r="12" fill="#020617" stroke="#64748b"/>
