@@ -38,6 +38,11 @@ packaged as a `.uos` container.
 
 ![Animated synthetic pipeline demo](docs/assets/pipeline-demo.svg)
 
+The viewer demo below is trimmed to the first 48 seconds of the recorded run, so
+the README shows the final `.uos` experience without carrying the full screencast.
+
+![UOS viewer demo](docs/assets/viewer-demo.gif)
+
 Regenerate it with:
 
 ```bash

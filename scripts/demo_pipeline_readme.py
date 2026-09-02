@@ -8,7 +8,7 @@ pipeline sobre `ingestion_agents.synthetic`, escribe un directorio de trabajo in
 si se pide `--keep-workdir`, y actualiza dos artefactos versionables:
 
 - `docs/assets/pipeline-demo-events.json`: resumen de la ejecucion.
-- `docs/assets/pipeline-demo.svg`: explorador de directorios animado para GitHub.
+- `docs/assets/pipeline-demo.svg`: diagrama de flujo animado para GitHub.
 
 No versiona DICOM, PLY, STL ni `.uos`: esos ficheros se generan en `/tmp` y se resumen.
 """
@@ -21,7 +21,6 @@ import json
 import shutil
 import sys
 import tempfile
-import textwrap
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -312,9 +311,11 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
     shutil.copy2(uos_out.path, public_uos)
     with zipfile.ZipFile(public_uos) as zf:
         manifest = json.loads(zf.read(MANIFIESTO))
-    _json(uos_dir / "manifest.json", manifest)
+    manifest_path = uos_dir / "manifest.json"
+    _json(manifest_path, manifest)
     validation = valida(public_uos)
-    (uos_dir / "validation.txt").write_text(
+    validation_path = uos_dir / "validation.txt"
+    validation_path.write_text(
         "\n".join(
             [
                 f"valid: {validation.valido}",
@@ -342,6 +343,8 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
                 f"errors {len(validation.errores)}",
                 f"views {validation.vistas}",
                 f"external acquired assets {validation.externos}",
+                f"uos_size_kb {public_uos.stat().st_size // 1024}",
+                f"manifest_size_kb {manifest_path.stat().st_size / 1024:.1f}",
             ],
         )
     )
@@ -372,10 +375,18 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
     return stages, summary
 
 
-def _svg_text(x: int, y: int, text: str, *, size: int = 15, fill: str = "#1f2933") -> str:
+def _svg_text(
+    x: int,
+    y: int,
+    text: str,
+    *,
+    size: int = 15,
+    fill: str = "#dbeafe",
+    weight: int = 500,
+) -> str:
     return (
         f'<text x="{x}" y="{y}" font-family="ui-monospace, SFMono-Regular, Menlo, '
-        f"Consolas, monospace\" font-size=\"{size}\" fill=\"{fill}\">"
+        f'Consolas, monospace" font-size="{size}" font-weight="{weight}" fill="{fill}">'
         f"{html.escape(text)}</text>"
     )
 
@@ -391,92 +402,251 @@ def _reveal(begin: float, total: int, *, fade: float = 0.35) -> str:
     )
 
 
+def _active(begin: float, total: int) -> str:
+    start = begin / total
+    peak = min((begin + 0.35) / total, 0.93)
+    end = min((begin + 2.5) / total, 0.94)
+    return (
+        '<animate attributeName="opacity" values="0.04;0.04;0.82;0.82;0.04;0.04" '
+        f'keyTimes="0;{start:.4f};{peak:.4f};{end:.4f};0.9500;1" '
+        f'dur="{total}s" repeatCount="indefinite"/>'
+    )
+
+
+def _stage(stages: list[Stage], key: str) -> Stage:
+    try:
+        return next(stage for stage in stages if stage.key == key)
+    except StopIteration as exc:
+        raise ValueError(f"Stage missing from pipeline summary: {key}") from exc
+
+
+def _metric(stage: Stage, prefix: str, fallback: str) -> str:
+    return next((metric for metric in stage.metrics if metric.startswith(prefix)), fallback)
+
+
+def _metric_tail(stage: Stage, prefix: str, fallback: str) -> str:
+    metric = _metric(stage, prefix, "")
+    if not metric:
+        return fallback
+    return metric.removeprefix(prefix).strip()
+
+
+def _flow_card(
+    x: int,
+    y: int,
+    *,
+    index: int,
+    title: str,
+    subtitle: str,
+    lines: tuple[str, str],
+    begin: float,
+    total: int,
+) -> str:
+    glow = _active(begin, total)
+    dot = 17 + index
+    return f"""
+  <g>
+    <rect x="{x}" y="{y}" width="184" height="126" rx="10" fill="#0f172a"
+      stroke="#334155" stroke-width="1.2"/>
+    <rect x="{x}" y="{y}" width="184" height="126" rx="10" fill="#38bdf8" opacity="0.04">
+      {glow}
+    </rect>
+    <circle cx="{x + 22}" cy="{y + 27}" r="12" fill="#020617" stroke="#64748b"/>
+    {_svg_text(x + 17, y + 32, str(index), size=13, fill="#f8fafc", weight=700)}
+    {_svg_text(x + 44, y + 29, title, size=14, fill="#f8fafc", weight=700)}
+    {_svg_text(x + 44, y + 50, subtitle, size=11, fill="#93c5fd")}
+    {_svg_text(x + 20, y + 82, lines[0], size=12, fill="#cbd5e1")}
+    {_svg_text(x + 20, y + 104, lines[1], size=12, fill="#cbd5e1")}
+    <circle cx="{x + 160}" cy="{y + 27}" r="4" fill="#22c55e" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" begin="{begin + 0.3:.1f}s"
+        dur="2.0s" repeatCount="indefinite"/>
+    </circle>
+    <text x="{x + 150}" y="{y + 110}" font-family="ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace" font-size="{dot}" fill="#1e293b" opacity="0.42">.</text>
+  </g>"""
+
+
+def _arrow(x1: int, x2: int, y: int, *, begin: float, total: int) -> str:
+    return f"""
+  <g opacity="0.25">
+    {_active(begin, total)}
+    <line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="#38bdf8" stroke-width="3"
+      stroke-linecap="round"/>
+    <path d="M {x2} {y} l -9 -6 v 12 z" fill="#38bdf8"/>
+  </g>"""
+
+
+def _turn_arrow(*, begin: float, total: int) -> str:
+    return f"""
+  <g opacity="0.25">
+    {_active(begin, total)}
+    <path d="M 594 304 C 594 352 258 338 258 386" fill="none"
+      stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M 258 386 l -7 -10 h 14 z" fill="#38bdf8"/>
+  </g>"""
+
+
+def _dir_row(y: int, name: str, meta: str, *, begin: float, total: int) -> str:
+    return f"""
+    <g opacity="0">
+      {_reveal(begin, total)}
+      <rect x="690" y="{y - 18}" width="360" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      {_svg_text(710, y + 4, name, size=14, fill="#e5e7eb", weight=700)}
+      {_svg_text(905, y + 4, meta, size=12, fill="#7dd3fc")}
+    </g>"""
+
+
 def render_svg(stages: list[Stage]) -> str:
-    total = 18
-    row_bits = []
-    y = 190
-    for i, stage in enumerate(stages):
-        begin = 0.1 + i * 3.2
-        rows = [("dir", stage.title)] + [
-            ("file", "  " + file.replace("demo-case/", "")) for file in stage.files
-        ]
-        for j, (kind, label) in enumerate(rows):
-            color = "#2563eb" if kind == "dir" else "#334155"
-            weight = "700" if kind == "dir" else "500"
-            row_begin = begin + j * 0.12
-            row_bits.append(
-                f'<text x="82" y="{y}" opacity="0" '
-                f'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" '
-                f'font-size="15" font-weight="{weight}" fill="{color}">'
-                f"{html.escape(label)}"
-                f"{_reveal(row_begin, total)}"
-                f'<animate attributeName="fill" values="{color};#0f766e;{color}" '
-                f'begin="{row_begin:.1f}s" dur="1.2s" repeatCount="indefinite"/>'
-                "</text>"
-            )
-            y += 22
-
-    cards = []
-    for i, stage in enumerate(stages):
-        x = 54 + i * 205
-        begin = i * 3.2
-        cards.append(
-            f'<g><rect x="{x}" y="82" width="178" height="54" rx="8" fill="#ffffff" '
-            f'stroke="#cbd5e1" stroke-width="1.2"/>'
-            f'<rect x="{x}" y="82" width="178" height="54" rx="8" fill="#dbeafe" opacity="0">'
-            f'<animate attributeName="opacity" values="0;0.95;0" begin="{begin:.1f}s" '
-            f'dur="3.2s" repeatCount="indefinite"/></rect>'
-            f'{_svg_text(x + 16, 106, stage.title.split(". ", 1)[-1], size=13, fill="#0f172a")}'
-            f'{_svg_text(x + 16, 126, stage.key, size=12, fill="#64748b")}</g>'
-        )
-
-    metric_lines = []
-    y = 198
-    for i, stage in enumerate(stages):
-        begin = 0.1 + i * 3.2
-        group = [_svg_text(760, y, stage.title, size=14, fill="#0f172a")]
-        y += 22
-        for metric in stage.metrics[:3]:
-            wrapped = textwrap.wrap(metric, width=34)[:2]
-            for j, line in enumerate(wrapped):
-                prefix = "- " if j == 0 else "  "
-                group.append(_svg_text(778, y, prefix + line, size=13, fill="#475569"))
-                y += 18
-        y += 12
-        metric_lines.append(
-            f'<g opacity="0">{_reveal(begin, total)}{"".join(group)}</g>'
-        )
-
+    total = 20
+    starts = [0.1, 3.6, 7.1, 10.6, 14.1]
+    raw = _stage(stages, "input")
+    ingestion = _stage(stages, "ingestion")
+    fusion = _stage(stages, "fusion")
+    exports = _stage(stages, "exports")
+    uos = _stage(stages, "uos")
+    cbct_line = next(
+        (path.rsplit("/", 1)[-1] for path in raw.files if "DICOM slices" in path),
+        "DICOM slices",
+    )
+    spacing = _metric_tail(raw, "CBCT spacing", "-")
+    surface_ref = _metric_tail(ingestion, "surface_ref", "-")
+    rms = _metric_tail(fusion, "rms_error_mm", "-")
+    segmentation = _metric_tail(fusion, "segmentation-agent", "-")
+    export_count = _metric_tail(exports, "export channels wrote files", "6")
+    levels = _metric_tail(uos, "levels", "UOS-Core")
+    errors = _metric_tail(uos, "errors", "0")
+    views = _metric_tail(uos, "views", "8")
+    external_assets = _metric_tail(uos, "external acquired assets", "3")
+    uos_size = _metric_tail(uos, "uos_size_kb", "-")
+    manifest_size = _metric_tail(uos, "manifest_size_kb", "-")
+    cards = [
+        _flow_card(
+            54,
+            178,
+            index=1,
+            title="Raw case",
+            subtitle="synthetic input",
+            lines=(f"OBJ + {cbct_line}", f"{spacing} mm + report"),
+            begin=starts[0],
+            total=total,
+        ),
+        _flow_card(
+            278,
+            178,
+            index=2,
+            title="Ingestion",
+            subtitle="four agents",
+            lines=("TwinSnapshot", f"surface {surface_ref}"),
+            begin=starts[1],
+            total=total,
+        ),
+        _flow_card(
+            502,
+            178,
+            index=3,
+            title="Fusion",
+            subtitle="geometry + FDI",
+            lines=(f"rms {rms} mm", f"segmentation {segmentation}"),
+            begin=starts[2],
+            total=total,
+        ),
+        _flow_card(
+            166,
+            390,
+            index=4,
+            title="Exports",
+            subtitle="materialised twin",
+            lines=(f"{export_count} channels", "STL / PLY / PNG"),
+            begin=starts[3],
+            total=total,
+        ),
+        _flow_card(
+            390,
+            390,
+            index=5,
+            title="UOS",
+            subtitle="one container",
+            lines=(levels, f"validation: {errors} errors"),
+            begin=starts[4],
+            total=total,
+        ),
+    ]
+    arrows = [
+        _arrow(238, 274, 241, begin=starts[1], total=total),
+        _arrow(462, 498, 241, begin=starts[2], total=total),
+        _turn_arrow(begin=starts[3], total=total),
+        _arrow(350, 386, 453, begin=starts[4], total=total),
+    ]
+    directory = f"""
+  <g opacity="0">
+    {_reveal(starts[4] + 0.2, total)}
+    <rect x="660" y="162" width="420" height="354" rx="14" fill="#020617"
+      stroke="#38bdf8" stroke-width="1.4"/>
+    <rect x="660" y="162" width="420" height="42" rx="14" fill="#0f172a"/>
+    <circle cx="684" cy="183" r="5" fill="#ef4444"/>
+    <circle cx="704" cy="183" r="5" fill="#f59e0b"/>
+    <circle cx="724" cy="183" r="5" fill="#22c55e"/>
+    {_svg_text(748, 188, "demo-case/04_uos", size=14, fill="#e5e7eb", weight=700)}
+    {_dir_row(248, "acq-README.uos", f"{uos_size} KB", begin=starts[4] + 0.5, total=total)}
+    {_dir_row(300, "manifest.json", f"{manifest_size} KB", begin=starts[4] + 0.8, total=total)}
+    {_dir_row(352, "validation.txt", "0 errors", begin=starts[4] + 1.1, total=total)}
+    <g opacity="0">
+      {_reveal(starts[4] + 1.4, total)}
+      <rect x="690" y="404" width="360" height="70" rx="8" fill="#052e2b"
+        stroke="#0f766e"/>
+      {_svg_text(714, 433, levels, size=15, fill="#ccfbf1", weight=700)}
+      {_svg_text(714, 458, f"{views} views · {external_assets} external acquired assets",
+                 size=13, fill="#99f6e4")}
+    </g>
+  </g>"""
     header = _svg_text(
-        126,
-        58,
-        "Agentic Smart Health: synthetic case -> TwinSnapshot -> UOS",
-        size=15,
-        fill="#e2e8f0",
+        62,
+        74,
+        "Agentic Smart Health pipeline",
+        size=24,
+        fill="#f8fafc",
+        weight=800,
+    )
+    subhead = _svg_text(
+        64,
+        104,
+        "A synthetic dental case becomes a traceable .uos container",
+        size=14,
+        fill="#93c5fd",
     )
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760"
   role="img" aria-labelledby="title desc">
   <title id="title">Agentic Smart Health synthetic pipeline demo</title>
-  <desc id="desc">Animated directory view showing synthetic raw dental files becoming
-  a TwinSnapshot, fusion outputs, exports and a UOS container.</desc>
-  <rect width="1120" height="760" fill="#f8fafc"/>
-  <rect x="36" y="34" width="1048" height="692" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
-  <rect x="36" y="34" width="1048" height="38" rx="10" fill="#0f172a"/>
-  <circle cx="62" cy="53" r="5" fill="#ef4444"/>
-  <circle cx="80" cy="53" r="5" fill="#f59e0b"/>
-  <circle cx="98" cy="53" r="5" fill="#22c55e"/>
+  <desc id="desc">Dark animated flow diagram showing synthetic raw dental files becoming
+  a TwinSnapshot, fusion outputs, exports and a UOS directory.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1e3a8a"/>
+      <stop offset="45%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect width="1120" height="760" fill="url(#bg)"/>
+  <rect x="34" y="34" width="1052" height="692" rx="20" fill="#020617"
+    stroke="#1e293b" stroke-width="1.4"/>
   {header}
-  <rect x="54" y="146" width="650" height="540" rx="8" fill="#f8fafc" stroke="#dbe3ea"/>
-  <rect x="738" y="146" width="306" height="540" rx="8" fill="#f8fafc" stroke="#dbe3ea"/>
-  {_svg_text(78, 174, "demo-case/", size=17, fill="#0f172a")}
-  {_svg_text(760, 174, "Measured run summary", size=17, fill="#0f172a")}
-  <rect x="54" y="710" width="1010" height="5" rx="2.5" fill="#e2e8f0"/>
-  <rect x="54" y="710" width="0" height="5" rx="2.5" fill="#2563eb">
-    <animate attributeName="width" from="0" to="1010" dur="{total}s" repeatCount="indefinite"/>
+  {subhead}
+  <rect x="56" y="130" width="560" height="2" rx="1" fill="#1e293b"/>
+  <rect x="56" y="130" width="0" height="2" rx="1" fill="#38bdf8">
+    <animate attributeName="width" from="0" to="980" dur="{total}s"
+      repeatCount="indefinite"/>
   </rect>
   {''.join(cards)}
-  {''.join(row_bits)}
-  {''.join(metric_lines)}
+  {''.join(arrows)}
+  {directory}
+  <g opacity="0">
+    {_reveal(starts[4] + 2.1, total)}
+    <rect x="166" y="586" width="884" height="58" rx="12" fill="#0f172a"
+      stroke="#334155"/>
+    {_svg_text(194, 621, "Final artifact: one .uos file carrying scene, provenance, "
+              "relations and validation state", size=15, fill="#e0f2fe", weight=700)}
+  </g>
 </svg>
 """
 

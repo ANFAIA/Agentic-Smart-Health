@@ -74,7 +74,9 @@
         "levels UOS-Core",
         "errors 0",
         "views 8",
-        "external acquired assets 3"
+        "external acquired assets 3",
+        "uos_size_kb 745",
+        "manifest_size_kb 10.5"
       ]
     }
   ],
