@@ -895,10 +895,16 @@ carries layer-1 content only.
 \textbf{Rule} & \textbf{Statement}\\
 \midrule
 \endhead
-No FDI in the scene & A primitive of an asset whose \code{regulatory.layer} is not 3
-\MUSTNOT{} declare \code{extras.uos\_fdi}, and \MUSTNOT{} declare the
-\code{\_REGION\_ID} attribute on a \code{KHR\_gaussian\_splatting} primitive. Both are FDI
-codes and both come from a segmentation model.\\
+No FDI inside any layer & An asset whose \code{regulatory.layer} is not 3 \MUSTNOT{}
+carry the FDI code in \emph{any} of its three forms: \code{extras.uos\_fdi} on a mesh
+primitive, the \code{\_REGION\_ID} attribute on a \code{KHR\_gaussian\_splatting}
+primitive, or a \code{region\_id} property on a Gaussian \code{.ply}. All three are the
+same code and all three come from a segmentation model.\\
+Where the codes go instead & \code{derived/seg\_teeth.bin} carries one code per mesh
+\emph{vertex}; \code{derived/seg\_gaussians.<layer>.bin} carries one code per
+\emph{Gaussian} of the named layer, one file per layer because each has its own count and
+its own order. Both are \code{int16} little-endian with a \code{.meta.json} sidecar
+declaring what they index.\\
 Vertex order is invariant & The scene \MUST{} preserve the vertex order of the mesh it was
 built from. This is what allows \code{derived/seg\_teeth.bin} to be a flat array indexed by
 vertex, joined by position and nothing else. A writer that re-orders vertices here breaks
@@ -1582,11 +1588,12 @@ check.\\
 16 & W & Each provisional registration (\S\ref{sec:manifest}).\\
 17 & E & Regulatory: every asset under \code{derived/} has layer 3, and every layer-3 asset
 is under \code{derived/}. This verifies where layer 3 is \emph{declared}.\\
-17b & E & Layer content in the scene (\S\ref{sec:picking}): for every asset whose
-\code{regulatory.layer} is not 3 and whose \code{uri} ends in \code{.glb}, no primitive
-declares \code{extras.uos\_fdi} and none declares the \code{\_REGION\_ID} attribute. This
-verifies where layer 3 \emph{is}, which is the other half --- and without it check 17
-passes on a container whose layer-1 scene is full of model output.\\
+17b & E & Layer content inside the payloads (\S\ref{sec:picking}): for every asset whose
+\code{regulatory.layer} is not 3, a \code{.glb} declares neither \code{extras.uos\_fdi} nor
+the \code{\_REGION\_ID} attribute on any primitive, and a \code{.ply} declares no
+\code{region\_id} property. This verifies where layer 3 \emph{is}, which is the other half
+--- and without it check 17 passes on a container whose layer-1 payloads are full of model
+output.\\
 18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a

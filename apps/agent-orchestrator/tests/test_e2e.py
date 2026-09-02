@@ -485,6 +485,51 @@ def test_el_uos_del_caso_sintetico_no_se_CONTRADICE(recorrido) -> None:
     assert fallos == [], "el contenedor se contradice:\n  · " + "\n  · ".join(fallos)
 
 
+def test_el_uos_del_recorrido_no_lleva_el_FDI_dentro_de_ninguna_capa(recorrido) -> None:
+    """B-1: ninguna capa de `scene/` lleva el código FDI dentro. Sobre los bytes del ZIP.
+
+    ⚠️ **La primera pasada de B-1 se quedó corta y esto es lo que lo destapó.** Se quitó
+    la partición por diente de `scene/scene.glb` y su `_REGION_ID`, que son las dos formas
+    que la revisión externa nombró — porque revisó la especificación, no un contenedor
+    nuestro. Al abrir uno de verdad aparecieron `scene/field.ply` y `scene/composite.ply`
+    con una columna `region_id`: el mismo código FDI, la misma Layer 3, otros dos ficheros
+    declarados Layer 1.
+
+    Este test mira **todas** las capas y no solo la que se arregló, que es la diferencia
+    entre corregir un fallo y corregir su clase.
+    """
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    z = zipfile.ZipFile(uos)
+    con_fdi = []
+    for n in z.namelist():
+        if not n.startswith("scene/"):
+            continue
+        if n.endswith(".ply"):
+            cab = z.read(n).split(b"end_header")[0].decode("ascii", "replace")
+            if any(lin.startswith("property ") and lin.split()[-1] == "region_id"
+                   for lin in cab.splitlines()):
+                con_fdi.append(n)
+        elif n.endswith(".glb"):
+            if b"uos_fdi" in z.read(n) or b"_REGION_ID" in z.read(n):
+                con_fdi.append(n)
+    assert con_fdi == [], (
+        "estas capas de scene/ llevan el codigo FDI dentro y son Layer 1: "
+        + ", ".join(con_fdi)
+    )
+
+    # Y no se ha perdido: sigue viajando, en el plano que SI se puede quitar.
+    assert any(n.startswith("derived/seg_") for n in z.namelist()), (
+        "se quito el FDI de las capas y no quedo en derived/: eso no es relocalizar, "
+        "es borrar"
+    )
+
+
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
     """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
 

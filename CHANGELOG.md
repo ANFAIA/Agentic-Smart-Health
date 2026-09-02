@@ -59,9 +59,30 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — the Gaussian layers stop carrying `region_id` too.** `scene/field.ply` and
+  `scene/composite.ply` shipped a `region_id` column: the same FDI code, from the same
+  segmenter, in two more assets the manifest declares Layer 1. The external review named
+  only the two forms inside the glTF because it reviewed the specification, not one of our
+  containers. The column is now extracted as the file enters the container and rewritten as
+  `derived/seg_gaussians.<layer>.bin` — the per-Gaussian sibling of `derived/seg_teeth.bin`,
+  one file per layer because each has its own count and order, each with its `.meta.json`.
+  The working files the export agents leave on disk are untouched: what is regulated is the
+  container, not the working directory.
+
+  This also closes the gap that made the column necessary. A Gaussians-only container
+  carries no mesh, so `seg_teeth.bin` indexes nothing and per-tooth selection had no
+  mechanism other than the column — the coupling `uos.agente` documented as "the two things
+  go together". With a per-Gaussian file, both profiles rebuild selection from `derived/`
+  and neither needs Layer 3 inside a Layer 1 payload.
+- The stripped PLY also loses the header `comment` lines that describe the column, and
+  gains one naming where the codes went. `composite-export-agent` writes "de las del CBCT,
+  79118 llevan codigo FDI en region_id" — true of its working file and false of the
+  container. A header describing an absent value is worse than describing nothing: a reader
+  goes looking for bytes that are not there.
 - New validator check (17b): every GLB in an asset that is not Layer 3 is parsed, and both
-  `extras.uos_fdi` and `_REGION_ID` are rejected. Check 17 verifies where Layer 3 is
-  *declared*; this verifies where its content *is*. Without it, check 17 passes on a
+  `extras.uos_fdi` and `_REGION_ID` are rejected; every PLY is checked for a `region_id`
+  property. Check 17 verifies where Layer 3 is *declared*; this verifies where its content
+  *is*. Without it, check 17 passes on a
   container whose Layer 1 scene is full of model output — which is exactly what happened
   between `uos-export-agent` 0.4.0 and 0.5.0.
 - `scene/appearance.gs.json` stops declaring a `region_id` column, which the shipped

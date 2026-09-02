@@ -17,6 +17,7 @@ nada: el `.uos` lleva `reg.ct_to_ios` con su matriz, su metodo y su error.
 from __future__ import annotations
 
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +35,13 @@ from uos.contenedor import (
     json_de,
 )
 from uos.derivados import (
+    SEG_GAUSSIANAS,
+    SEG_GAUSSIANAS_META,
     SEGMENTACION,
     SEGMENTACION_META,
     codifica_etiquetas,
     meta_segmentacion,
+    separa_region_id,
     sha256_de_fichero,
 )
 from uos.escena import MEDIA_GLB, NodoGS, construye_glb, lee_stl_binario
@@ -221,7 +225,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.5.0"
+    version = "0.6.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -400,6 +404,24 @@ class UOSExportAgent(BaseExportAgent):
             uri = f"scene/{corto}{ruta.suffix.lower()}"
             descriptor = f"scene/{corto}.gs.json"
             ficheros[uri] = ruta
+            # ⚠️ **`region_id` no entra en el contenedor dentro de la capa (B-1).** Es el
+            # codigo FDI por gaussiana y sale del segmentador, o sea Layer 3; estos PLY son
+            # Layer 1. Viajaba dentro, asi que quitar `derived/` dejaba la inferencia
+            # puesta — el mismo fallo que la escena partida por diente, en otro fichero y
+            # sin que ningun check lo mirase. Se extrae y se reescribe al lado, indexado
+            # por gaussiana, que es el hermano de `derived/seg_teeth` para estas capas.
+            partido = separa_region_id(ruta.read_bytes())
+            if partido is not None:
+                sin_region, etq_gs = partido
+                ficheros.pop(uri)
+                extras_escena[uri] = sin_region
+                extras_escena[SEG_GAUSSIANAS.format(corto=corto)] = codifica_etiquetas(etq_gs)
+                extras_escena[SEG_GAUSSIANAS_META.format(corto=corto)] = json_de(
+                    meta_segmentacion(
+                        etq_gs, asset_origen=id_, modelo="segmentation-agent",
+                        version=None, unidad="gaussiana",
+                    )
+                )
             # Para el campo semilla, incluir info de submuestreo en el sidecar si el
             # artefacto la trae. Así el consumidor sabe cuántos vóxeles había antes.
             submuestreo = None
@@ -416,6 +438,8 @@ class UOSExportAgent(BaseExportAgent):
             # descriptor. Un lector ajeno no podia separar el CBCT del escaner dentro de un
             # fichero cuyo unico motivo de existir es mezclar los dos. Es el mismo fallo
             # que aqui ya se arreglo para `n_primitives`, en la lista de columnas.
+            # El descriptor describe lo que VIAJA, y `region_id` ya no viaja.
+            _props = [c for c in _props if c != "region_id"]
             _esq = esquema_de_propiedades(_props) if _props else None
             extras_escena[descriptor] = json_de(self._descriptor_gs(
                 snapshot, papel=papel, medido=medido, marco=marco, nota=nota,
@@ -424,8 +448,15 @@ class UOSExportAgent(BaseExportAgent):
                 n_primitives_override=_n,
                 unidades_override=_u,
             ))
-            assets.append(asset_de(
-                ruta, uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
+            # ⚠️ El asset se declara sobre los bytes QUE VIAJAN. Al extraer `region_id`
+            # el payload cambia, y hashear el fichero de disco dejaria el manifiesto
+            # declarando un sha256 que el contenedor no contiene.
+            declara = (
+                partial(asset_de, ruta) if partido is None
+                else partial(asset_de_bytes, sin_region)
+            )
+            assets.append(declara(
+                uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
                 frame=marco, media_type="application/octet-stream",
                 # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
                 load_priority=25, sidecar_uri=descriptor,

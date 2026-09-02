@@ -287,12 +287,31 @@ def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) 
     diente con `extras.uos_fdi`, o sea con la salida del segmentador horneada dentro.
     Borrar `derived/` no borraba la inferencia, y el §3.1 promete que si.
 
-    El codigo FDI aparece de dos formas y las dos son Layer 3: `extras.uos_fdi` por
-    *primitive* de malla y `_REGION_ID` por gaussiana. En un asset de Layer 3 las dos son
-    licitas; fuera de el, no.
+    El codigo FDI aparece de TRES formas y las tres son Layer 3: `extras.uos_fdi` por
+    *primitive* de malla, `_REGION_ID` por gaussiana en el glTF, y la columna `region_id`
+    de un PLY de gaussianas. En un asset de Layer 3 las tres son licitas; fuera de el, no.
+    La tercera es la que sobrevivio a la primera pasada de B-1: la revision externa nombro
+    las dos del glTF porque reviso la spec, no este contenedor.
     """
     for a in m.assets:
-        if not a.uri.endswith(".glb") or a.regulatory.layer == 3:
+        if a.regulatory.layer == 3:
+            continue
+        if a.uri.endswith(".ply"):
+            try:
+                cabecera = z.read(a.uri).split(b"end_header")[0].decode("ascii", "replace")
+            except KeyError:
+                continue
+            if any(
+                lin.startswith("property ") and lin.split()[-1] == "region_id"
+                for lin in cabecera.splitlines()
+            ):
+                inf.errores.append(
+                    f"asset {a.id}: {a.uri} declara la columna `region_id` y el asset es "
+                    f"layer {a.regulatory.layer}; el codigo FDI por gaussiana es salida de "
+                    "modelo y va en derived/seg_gaussians, no dentro de la capa"
+                )
+            continue
+        if not a.uri.endswith(".glb"):
             continue
         try:
             crudo = z.read(a.uri)
