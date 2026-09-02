@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from uos.clinico import OBSERVACIONES
 from uos.contenedor import MANIFIESTO, lee_manifiesto_de
 from uos.manifiesto import (
     UOS_VERSION,
@@ -112,6 +113,10 @@ def valida(ruta: Path) -> Informe:
         _valida_assets(z, m, inf)
         _valida_capas_en_la_escena(z, m, inf)
         _valida_capas_clinicas(z, inf)
+        _valida_derivados(z, m, inf)
+        _valida_gs(z, m, inf)
+        _valida_union_segmentacion(z, m, inf)
+        _valida_entradas_declaradas(z, m, inf)
         _valida_phi(z, m, inf)
         _valida_procedencia(z, m, hashlib.sha256(crudo).hexdigest(), inf)
         _valida_vistas(z, m, inf)
@@ -206,6 +211,14 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
     for a in m.assets:
         if a.external:
             referenciados.append(a.id)
+            # ⚠️ **Del externo no se comprueba nada AQUI, y no es un hueco (T-3).** La
+            # revision pedia verificar que su `uri` sea una direccion de contenido y que
+            # case con su `sha256` —«en las dos direcciones», §3.4.3—. Ya se hace, una capa
+            # antes: `Asset._direccion_y_custodia` es un validador de modelo, asi que un
+            # manifiesto con esa incoherencia ni siquiera llega a parsearse y el check 2 lo
+            # reporta. Repetirlo aqui seria codigo que no puede ejecutarse nunca, que es
+            # peor que no tenerlo: aparenta una cobertura que en realidad viene de otro
+            # sitio. Lo que faltaba era decir DONDE vive la regla, y eso va en la spec.
             continue
         if a.uri.endswith("/"):
             _valida_serie(z, a, dentro, inf)
@@ -288,6 +301,111 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Informe) -> None
     if a.sidecar_uri is not None and a.sidecar_uri not in dentro:
         inf.errores.append(
             f"asset {a.id}: declara el sidecar {a.sidecar_uri} y no esta en el contenedor"
+        )
+
+
+_FDI = {str(x) for x in (
+    *range(11, 19), *range(21, 29), *range(31, 39), *range(41, 49),
+    # ISO 3950 cubre tambien la denticion TEMPORAL, y el validador tiene que aceptarla:
+    # un caso pediatrico no es un caso invalido (D-9).
+    *range(51, 56), *range(61, 66), *range(71, 76), *range(81, 86),
+)} | {"0"}
+
+
+def _valida_derivados(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Lo que `derived/` promete de si mismo, comprobado (T-3).
+
+    El §5.5 pide que TODO asset bajo `derived/` traiga un sidecar que diga que modelo lo
+    produjo, con que pesos y sobre que assets. El check que habia solo verificaba que los
+    sidecars **declarados** existieran: uno que no se declarase no lo miraba nadie, asi que
+    la regla se podia incumplir sin que saltara nada.
+    """
+    dentro = set(z.namelist())
+    ids = {a.id for a in m.assets}
+    for a in m.assets:
+        if not a.uri.startswith("derived/"):
+            continue
+        if not a.sidecar_uri:
+            inf.errores.append(
+                f"asset {a.id}: vive en derived/ y no declara `sidecar_uri`. Sin el nadie "
+                "puede saber que modelo lo produjo, y esa es la condicion del §5.5"
+            )
+            continue
+        if a.sidecar_uri not in dentro:
+            continue
+        try:
+            meta = json.loads(z.read(a.sidecar_uri))
+        except ValueError:
+            inf.errores.append(f"asset {a.id}: su sidecar {a.sidecar_uri} no es JSON valido")
+            continue
+        if not (meta.get("model") or {}).get("name"):
+            inf.errores.append(
+                f"asset {a.id}: su sidecar no dice `model.name`. «Lo produjo un modelo» "
+                "sin decir cual no se puede auditar ni reproducir"
+            )
+        if not meta.get("source_assets"):
+            inf.errores.append(
+                f"asset {a.id}: su sidecar declara `source_assets` vacio. Una inferencia "
+                "sin entradas declaradas no se puede rehacer"
+            )
+        if not meta.get("encoding"):
+            inf.errores.append(
+                f"asset {a.id}: su sidecar no declara `encoding`. Un `int16` suelto sin "
+                "decir que indexa es un monton de numeros"
+            )
+        # T-3 · las etiquetas tienen que ser codigos FDI de verdad, no enteros cualesquiera.
+        vocabulario = (meta.get("labels") or {}).get("present")
+        if vocabulario is not None:
+            malos = sorted({str(c) for c in vocabulario} - _FDI)
+            if malos:
+                inf.errores.append(
+                    f"asset {a.id}: su sidecar declara etiquetas que no son codigos ISO "
+                    f"3950: {', '.join(malos)}"
+                )
+
+    # T-3 · `derived_from` tiene que apuntar a algo declarado.
+    for a in m.assets:
+        colgando = [f for f in a.derived_from if f.startswith("asset.") and f not in ids]
+        if colgando:
+            inf.errores.append(
+                f"asset {a.id}: su `derived_from` cita {', '.join(colgando)}, que el "
+                "manifiesto no declara. Una procedencia que no resuelve no es procedencia"
+            )
+
+
+def _valida_entradas_declaradas(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Que no viaje nada que el manifiesto no nombre (§14.6, T-3).
+
+    ⚠️ **Es la direccion que faltaba.** Se comprobaba que todo lo declarado estuviera; no
+    que todo lo que esta estuviera declarado. Un fichero de mas en el ZIP viaja sin que
+    nadie lo haya declarado, sin hash que lo acredite y sin capa regulatoria — que es
+    exactamente la forma que tendria una fuga.
+    """
+    declarados = {MANIFIESTO, VISTAS, CADENA, OBSERVACIONES, FIRMAS}
+    for a in m.assets:
+        # ⚠️ El sidecar de un asset EXTERNO si viaja: es lo que permite situar un volumen
+        # que el contenedor referencia sin custodiar. Lo que no viaja es el asset.
+        if a.sidecar_uri:
+            declarados.add(a.sidecar_uri)
+        if a.external:
+            continue
+        declarados.add(a.uri)
+        for parte in a.parts:
+            declarados.add(a.uri + parte.name)
+    sobran = [
+        n for n in z.namelist()
+        if not n.endswith("/")
+        and n not in declarados
+        and not any(n.startswith(d) for d in declarados if d.endswith("/"))
+        # Los sidecars de `derived/` van declarados por su asset; los `.meta.json` que
+        # acompanan a un binario declarado se admiten por vecindad.
+        and not (n.endswith(".meta.json") and n.removesuffix(".meta.json") + ".bin" in declarados)
+    ]
+    if sobran:
+        inf.errores.append(
+            "el contenedor lleva ficheros que el manifiesto no declara: "
+            + ", ".join(sorted(sobran))
+            + ". Todo lo que viaja tiene que estar declarado (§14.6)"
         )
 
 
@@ -476,6 +594,154 @@ def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) 
                     )
 
 
+def _valida_gs(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """La primitiva `KHR_gaussian_splatting`, contra lo que la extension exige (T-3).
+
+    ⚠️ **El texto decia «la implementacion de referencia revienta con las dos» y el
+    algoritmo no las comprobaba.** Una escala negativa o una opacidad fuera de `[0,1]` no
+    rompen el fichero: lo pintan mal, en silencio, en el visor de otro. Y un cuaternion sin
+    normalizar codifica una escala encubierta que gira cada elipse un poco.
+
+    Y los grados de armonicos esfericos: si existe el grado *l*, tienen que existir todos
+    los inferiores COMPLETOS. Un grado 1 con dos de sus tres coeficientes no es «casi»
+    correcto — un lector que itere por grados leera basura del buffer contiguo.
+    """
+    import numpy as np
+
+    for a in m.assets:
+        if not a.uri.endswith(".glb") or a.external:
+            continue
+        try:
+            crudo = z.read(a.uri)
+            largo = int.from_bytes(crudo[12:16], "little")
+            doc = json.loads(crudo[20:20 + largo])
+            binario = crudo[20 + largo + 8:]
+        except (KeyError, ValueError, IndexError):
+            continue
+
+        def _lee(indice: int, doc: dict = doc, binario: bytes = binario) -> np.ndarray | None:
+            try:
+                acc = doc["accessors"][indice]
+                vista = doc["bufferViews"][acc["bufferView"]]
+                tipos = {5121: "u1", 5122: "<i2", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
+                n = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}[acc["type"]]
+                dt = np.dtype(tipos[acc["componentType"]])
+                off = vista.get("byteOffset", 0) + acc.get("byteOffset", 0)
+                arr = np.frombuffer(binario, dt, count=acc["count"] * n, offset=off)
+                return arr.reshape(-1, n) if n > 1 else arr
+            except (KeyError, IndexError, ValueError):
+                return None
+
+        for malla in doc.get("meshes", []):
+            for pr in malla.get("primitives", []):
+                attrs = pr.get("attributes") or {}
+                if not any(k.startswith("KHR_gaussian_splatting:") for k in attrs):
+                    continue
+                escala = _lee(attrs["KHR_gaussian_splatting:SCALE"]) \
+                    if "KHR_gaussian_splatting:SCALE" in attrs else None
+                if escala is not None and float(np.min(escala)) < 0:
+                    inf.errores.append(
+                        f"asset {a.id}: `SCALE` de la primitiva de gaussianas tiene valores "
+                        "negativos. La extension pide escala lineal NO negativa"
+                    )
+                op = _lee(attrs["KHR_gaussian_splatting:OPACITY"]) \
+                    if "KHR_gaussian_splatting:OPACITY" in attrs else None
+                if op is not None and (float(np.min(op)) < 0 or float(np.max(op)) > 1):
+                    inf.errores.append(
+                        f"asset {a.id}: `OPACITY` fuera de [0,1]. La extension pide opacidad "
+                        "LINEAL, y un PLY de INRIA la guarda en logit: confundirlas pinta "
+                        "la escena entera mal sin que nada falle"
+                    )
+                rot = _lee(attrs["KHR_gaussian_splatting:ROTATION"]) \
+                    if "KHR_gaussian_splatting:ROTATION" in attrs else None
+                if rot is not None and rot.size:
+                    largos = np.linalg.norm(rot, axis=1)
+                    if float(np.max(np.abs(largos - 1.0))) > 1e-3:
+                        inf.errores.append(
+                            f"asset {a.id}: `ROTATION` no es unitario. Un cuaternion sin "
+                            "normalizar codifica una escala encubierta"
+                        )
+                # Grados SH completos: si esta el grado l, estan todos los inferiores.
+                grados: dict[int, set[int]] = {}
+                for k in attrs:
+                    if ":SH_DEGREE_" in k:
+                        _, cola = k.split(":SH_DEGREE_")
+                        grado, _, coef = cola.partition("_COEF_")
+                        grados.setdefault(int(grado), set()).add(int(coef))
+                if grados:
+                    tope = max(grados)
+                    for grado in range(tope + 1):
+                        # El grado g tiene 2g+1 coeficientes.
+                        if grados.get(grado, set()) != set(range(2 * grado + 1)):
+                            inf.errores.append(
+                                f"asset {a.id}: los armonicos esfericos declaran hasta el "
+                                f"grado {tope} y el grado {grado} esta incompleto. Un "
+                                "lector "
+                                "que itere por grados leera basura del buffer contiguo"
+                            )
+                            break
+
+
+def _hash_posiciones(z: zipfile.ZipFile, a) -> str | None:
+    """SHA-256 del accesor `POSITION` de un GLB, en el orden declarado (T-4)."""
+    try:
+        crudo = z.read(a.uri)
+        largo = int.from_bytes(crudo[12:16], "little")
+        doc = json.loads(crudo[20:20 + largo])
+        binario = crudo[20 + largo + 8:]
+        acc = doc["accessors"][doc["meshes"][0]["primitives"][0]["attributes"]["POSITION"]]
+        vista = doc["bufferViews"][acc["bufferView"]]
+        off = vista.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        return hashlib.sha256(binario[off:off + acc["count"] * 12]).hexdigest()
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Que `derived/seg_*` indexe de verdad lo que dice indexar (T-3).
+
+    La union entre la segmentacion y la escena es POSICIONAL: el codigo `i` es del vertice
+    `i`. Si el recuento no cuadra, esa union no existe y las etiquetas se pintan sobre
+    piezas equivocadas — en silencio, que es lo unico que importa aqui.
+    """
+    dentro = set(z.namelist())
+    for a in m.assets:
+        if not a.uri.startswith("derived/") or not a.sidecar_uri:
+            continue
+        if a.sidecar_uri not in dentro or a.uri not in dentro:
+            continue
+        try:
+            meta = json.loads(z.read(a.sidecar_uri))
+        except ValueError:
+            continue
+        codificacion = meta.get("encoding") or {}
+        # T-4 · el hash del array de posiciones del asset fuente, si el sidecar lo declara.
+        esperado = codificacion.get("source_positions_sha256")
+        if esperado:
+            fuente = next((x for x in m.assets if x.id in (meta.get("source_assets") or [])
+                           and x.uri.endswith(".glb")), None)
+            real = None if fuente is None else _hash_posiciones(z, fuente)
+            if real is not None and real != esperado:
+                inf.errores.append(
+                    f"asset {a.id}: su sidecar acredita el orden de vertices con "
+                    f"{esperado[:12]}… y el asset fuente da {real[:12]}…. La union es "
+                    "posicional: con el orden cambiado, las etiquetas se pintan sobre las "
+                    "piezas equivocadas"
+                )
+        cuenta = codificacion.get("count")
+        if cuenta is None:
+            continue
+        # `int16` little-endian: dos bytes por codigo. Es lo que declara el propio sidecar.
+        esperados = int(cuenta) * 2
+        reales = len(z.read(a.uri))
+        if reales != esperados:
+            inf.errores.append(
+                f"asset {a.id}: su sidecar declara {cuenta} codigos ({esperados} bytes) y "
+                f"el fichero tiene {reales}. La union con la escena es posicional, asi que "
+                "un desajuste pinta las etiquetas sobre las piezas equivocadas"
+            )
+
+
 def _valida_capas_clinicas(z: zipfile.ZipFile, inf: Informe) -> None:
     """Que cada valor de `clinical/` declare una capa coherente con como se obtuvo (B-2).
 
@@ -559,6 +825,7 @@ def _valida_procedencia(
         cadena, case_id=m.case_id, manifiesto_sha256=manifiesto_sha256,
         prev_declarado=m.provenance.prev_manifest_sha256,
     )
+    _valida_cadena_ordenada(cadena, inf)
     inf.version = len(cadena.links)
 
     # ⚠️ Las firmas no se verifican, y por eso se AVISAN. Ignorarlas en silencio dejaria
@@ -567,6 +834,27 @@ def _valida_procedencia(
         inf.avisos.append(
             f"{len(firmas)} firma(s) en {FIRMAS} que este validador NO comprueba: "
             "la verificacion Ed25519 del spec §8 no esta implementada"
+        )
+
+
+def _valida_cadena_ordenada(cadena, inf: Informe) -> None:
+    """Que la cadena sea una SUCESION y no un conjunto (T-3).
+
+    El §8 la define solo-anexar y numerada. Comprobar los hashes sin comprobar el orden
+    deja pasar un historial cuyos eslabones cuadran uno a uno y cuentan otra historia:
+    una version 3 antes que la 2, o un `created` que retrocede.
+    """
+    for i, eslabon in enumerate(cadena.links):
+        if eslabon.version != i + 1:
+            inf.errores.append(
+                f"cadena: el eslabon {i} declara version {eslabon.version} y le toca "
+                f"{i + 1}. La cadena es una sucesion, no un conjunto"
+            )
+    fechas = [e.created for e in cadena.links]
+    if any(b < a for a, b in zip(fechas, fechas[1:], strict=False)):
+        inf.errores.append(
+            "cadena: las fechas de `created` retroceden. Un historial solo-anexar no "
+            "puede tener una version anterior escrita despues de la siguiente"
         )
 
 
@@ -582,6 +870,7 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
         inf.errores.append(f"{VISTAS} no es una lista de vistas valida: {e}")
         return
     visitas = {v.id for v in m.visits}
+    hay_volumen = any(a.kind == Clase.VOLUME for a in m.assets)
     vistos: set[str] = set()
     for v in vistas:
         if v.visit not in visitas:
@@ -591,6 +880,33 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
         if v.id in vistos:
             inf.errores.append(f"vista {v.id}: identificador repetido en {VISTAS}")
         vistos.add(v.id)
+        # T-3 · `mpr` y `clip_planes` solo cuando hay volumen, y el §7 lo declara
+        # normativo. Una vista con controles de volumen en un contenedor sin volumen le
+        # promete a un visor una capa que no existe.
+        if (v.mpr is not None or v.clip_planes is not None) != hay_volumen:
+            inf.errores.append(
+                f"vista {v.id}: declara controles de volumen (`mpr`/`clip_planes`) "
+                + ("y el contenedor no lleva ninguno" if not hay_volumen
+                   else "que faltan, y el contenedor SI lleva volumen")
+            )
+        # T-3 · una camara que no encuadra nada. El `up` paralelo a la direccion de vista
+        # deja la matriz de vista degenerada y el visor pinta negro, o nada.
+        import numpy as np
+
+        d = np.asarray(v.camera.target, float) - np.asarray(v.camera.position, float)
+        u = np.asarray(v.camera.up, float)
+        nd, nu = float(np.linalg.norm(d)), float(np.linalg.norm(u))
+        if nd == 0:
+            inf.errores.append(f"vista {v.id}: la camara mira a su propia posicion")
+        elif nu == 0 or abs(float(np.dot(d / nd, u / nu))) > 0.999:
+            inf.avisos.append(
+                f"vista {v.id}: `up` es (casi) paralelo a la direccion de vista; la matriz "
+                "de vista queda degenerada y un visor pintara negro"
+            )
+        if not 1.0 < v.camera.fov < 179.0:
+            inf.avisos.append(
+                f"vista {v.id}: `fov` de {v.camera.fov} grados esta fuera de lo razonable"
+            )
     inf.vistas = len(vistas)
 
 

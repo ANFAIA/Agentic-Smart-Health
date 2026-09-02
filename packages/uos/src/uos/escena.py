@@ -5,12 +5,21 @@ tiene indices, ni atributos, ni un solo campo de metadatos. El §11.3 hace el pi
 `raycast al mesh -> extras.uos_fdi`, o sea que la escena tiene que poder **llevar cosas
 colgadas**, y un STL no puede llevar ninguna. glTF si.
 
-⚠️ **La conversion es con perdida, y por eso el STL original SIGUE viajando.** glTF exige
-`float32` y nuestras posiciones son `float64`: a ±100 mm eso deja unos 10 nanometros de
-resolucion, irrelevante para mirar y no para afirmar reversibilidad. El §1.1 dice que UOS
-no re-encodea datos fuente y el §3.1 dibuja la malla como «STL convertido»; las dos cosas
-solo son compatibles si el convertido es **presentacion** y el original se queda. Asi que
-el contenedor lleva los dos: `asset.ios` byte-identico y `asset.scene` para mirar.
+⚠️ **Por que el original SIGUE declarado, dicho con precision (T-1).** Aqui ponia «la
+conversion es con perdida: glTF exige float32 y nuestras posiciones son float64». Eso es
+falso para un STL y cierto para un OBJ, y mezclarlo apoyaba la regla en una perdida que
+segun el fichero de entrada no existe:
+
+* **STL binario**: el formato guarda los vertices en `float32` **por definicion**. El
+  `float64` de `mesh_agent` es un ensanchamiento del dato, no precision que hubiera. Volver
+  a `float32` aqui no pierde **nada**: el residuo es el `float32` del propio STL.
+* **OBJ**: es texto decimal y escribe ~8 cifras, que `float64` representa exactamente y
+  `float32` no. Ahi la perdida **si** es real.
+
+Asi que la razon por la que `asset.ios` se queda declarado no es la resolucion: es
+**procedencia y capa**. El §1.1 dice que UOS no re-encodea datos fuente y el §3.1 dibuja la
+malla como «STL convertido»; las dos cosas solo son compatibles si el convertido es
+presentacion y el original se nombra. El contenedor declara los dos.
 
 **Se construye desde la malla INGERIDA, no desde el fichero STL.** El `mesh-agent` guarda
 vertices deduplicados con sus caras, y las etiquetas FDI indexan ESE orden. Convertir el

@@ -1490,3 +1490,49 @@ def test_el_contenedor_dice_si_hubo_registro_de_MORDIDA(tmp_path, malla) -> None
     inf2 = valida(escribe_uos(tmp_path / "dicha.uos", dicha,
                               [("scene/scan.stl", malla)]))
     assert not any("occlusion" in av for av in inf2.avisos)
+
+
+# --- T-3: los checks que el texto declaraba y el algoritmo no hacia ----------- #
+def test_un_fichero_que_el_manifiesto_no_declara_INVALIDA(tmp_path, malla) -> None:
+    """T-3: se comprobaba que todo lo declarado estuviera, no que todo lo que esta lo este.
+
+    Un fichero de mas en el ZIP viaja sin hash que lo acredite, sin capa regulatoria y sin
+    que nadie lo nombre. Es exactamente la forma que tendria una fuga, y el §14.6 lo
+    prohibe desde el principio — solo que nadie lo comprobaba.
+    """
+    import zipfile
+
+    a = _asset(malla)
+    salida = escribe_uos(tmp_path / "c.uos", _manifiesto([a], occlusion="single_arch"),
+                         [("scene/scan.stl", malla)])
+    assert valida(salida).valido
+
+    with zipfile.ZipFile(salida, "a") as z:
+        z.writestr("colado.txt", "esto no lo declara nadie")
+
+    inf = valida(salida)
+    assert not inf.valido
+    assert any("colado.txt" in e for e in inf.errores), inf.errores
+
+
+def test_un_asset_externo_cuyo_uri_no_es_su_hash_NI_SE_PARSEA() -> None:
+    """T-3 pedia este check en el algoritmo, y ya existe una capa antes.
+
+    El §3.4.3 dice que un externo se nombra por su direccion de contenido y que la relacion
+    se verifica «en las dos direcciones». La revision no lo vio porque miro el algoritmo del
+    validador, y la regla vive en el CONTRATO: `Asset._direccion_y_custodia` es un validador
+    de modelo, asi que un manifiesto incoherente ni llega a parsearse.
+
+    Este test fija donde vive la regla. Anadirla tambien al algoritmo habria sido codigo
+    inalcanzable, que aparenta una cobertura que en realidad viene de otro sitio.
+    """
+    import pytest
+    from pydantic import ValidationError
+    from uos.manifiesto import Asset, Clase
+
+    with pytest.raises(ValidationError, match="no son el mismo hash"):
+        Asset(
+            id="asset.ios", kind=Clase.DOCUMENT, visit="v1", frame="frame.ios_master",
+            external=True,
+            uri="sha256:" + "a" * 64, media_type="model/stl", sha256="b" * 64, bytes=1,
+        )

@@ -1081,8 +1081,22 @@ it is not held.
 \vspace{6px}
 
 Measured reversibility on the reference case: the mesh regenerates from the container with
-$4.59\times10^{-6}$\,mm of error against a 0.1\,mm budget --- the residual is the
-\code{float32} of the STL itself.
+$4.59\times10^{-6}$\,mm of error against a 0.1\,mm budget --- an error of the order of
+\code{float32}'s rounding unit, which is what the measurement actually shows.
+
+\paragraph{And that is not why the original stays declared.}
+This section used to argue that converting to glTF is lossy because ``the ingested mesh is
+\code{float64}''. \textbf{That is false for an STL.} A binary STL stores vertices as
+\code{float32} \emph{by definition of the format}; the \code{float64} is the loader's array,
+a widening of data that was never more precise. Going back to \code{float32} for glTF loses
+nothing, and the residual above is the STL's own \code{float32}. From an \textbf{OBJ} ---
+decimal text, typically eight digits --- the loss is real, so the claim was true for half
+the inputs and stated for all of them.
+
+The rule that \code{scene.glb} \MUST{} declare its source in \code{derived\_from} stands,
+for the right reason: \textbf{provenance and regulatory layer} (\S\ref{sec:planes}), not
+resolution. A converted mesh is a layer-2 representation of a layer-1 acquisition, and that
+is true no matter how exact the conversion is.
 
 \subsection{The scene graph}\label{sec:graph}
 
@@ -1769,6 +1783,17 @@ would produce a \code{.uos} that \emph{looks} signed, which is worse than one th
 it is not. A validator that encounters the directory \MUST{} warn that the signatures are
 present and unverified rather than ignore them silently.
 
+\textbf{When it is specified, UOS \MUSTNOT{} define a signature scheme of its own.} The
+open question is one of key infrastructure, and healthcare has answered it. A signature is
+over the exact bytes of \code{manifest.json} --- the ones \S\ref{sec:provenance} already
+requires be hashed --- as a detached \textbf{JWS} (JSON Web Signature, RFC 7515) or
+\textbf{COSE Sign1}. Both admit Ed25519, so the current reservation is not lost; both carry
+a key identifier (\code{kid}) pointing at the issuing clinic or the platform; both have
+libraries in every language and a worked answer for key rotation. Multiple signatures ---
+clinic \emph{and} platform --- then cost nothing: one entry per signer. The validator
+verifies what it can (format, and the trust chain if given one) and keeps reporting the
+rest as present and unverified, exactly as today. This is \MUST{} for v1.0.
+
 % =============================================================================
 \section{Extensions}\label{sec:extensions}
 
@@ -1968,6 +1993,31 @@ absent from \code{applied\_to} warns (W); a measured volume-derived layer withou
 \code{CleanRecognizableVisualFeatures} is an error (E); \code{date\_shift\_days} outside
 \code{identified} is an error (E); \code{purpose\_of\_use} outside
 \code{consent.scope} is an error (E), and its absence a warning (W).\\
+17f & E & \code{derived/} self-description (\S\ref{sec:derived}): every asset there has a
+non-null \code{sidecar\_uri}; the sidecar declares \code{model.name}, a non-empty
+\code{source\_assets} and \code{encoding}; declared labels are ISO 3950 codes (permanent or
+deciduous) or 0; and \code{derived\_from} resolves to declared asset ids.\\
+17g & E & Every ZIP entry is declared by the manifest (\S\ref{sec:container}). The other
+direction was checked and this one was not --- an undeclared file travels with no hash
+accrediting it and no regulatory layer, which is the shape a leak would take.\\
+17h & --- & An external asset's \code{uri} is a content address and equals its
+\code{sha256} (\S\ref{sec:external}, ``checked in both directions''). \textbf{This is
+enforced by the schema, not by the algorithm}: it is a model-level rule, so a manifest with
+that inconsistency does not parse at all and check 2 reports it. Listed here because the
+rule is real and readers look for it in this table --- adding it to the algorithm as well
+would be code that can never run, which suggests a coverage that comes from somewhere
+else.\\
+17i & E & \code{KHR\_gaussian\_splatting}: \code{SCALE} $\geq 0$, \code{OPACITY} in
+$[0,1]$, unit \code{ROTATION}, and complete spherical-harmonic degrees --- if degree $l$ is
+present, every lower degree is present in full.\\
+17j & E & \code{derived/seg\_*} indexes what it claims: byte length matches
+\code{encoding.count}, and where the sidecar declares
+\code{source\_positions\_sha256} it matches the source asset's \code{POSITION} accessor.\\
+17k & E/W & Views: \code{mpr}/\code{clip\_planes} present iff a \code{volume} asset is
+(E); \code{up} not parallel to the view direction and \code{fov} in a sane range (W).\\
+17l & E & Chain order: \code{links[i].version} equals $i+1$ and \code{created} does not go
+backwards. Checking the hashes without the order lets through a history whose links match
+one by one and tell a different story.\\
 18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a
@@ -1978,6 +2028,13 @@ reader that does not implement it must not open the container.\\
 the view count.\\
 \bottomrule
 \end{longtable}
+
+\paragraph{The order of check 4 is normative.}
+``No unknown keys'' \MUST{} be applied \emph{after} the version branch \S\ref{sec:versioning}
+requires, and the algorithm has to say so. A container declaring a higher \textbf{minor} is
+parsed leniently, ignoring and naming the fields the reader does not know --- and running
+check 4 first would reject it as malformed, which contradicts the compatibility a minor is
+defined to promise.
 
 \paragraph{Why check 3 is only a warning.} Validating against the distributed schema is not
 redundant with validating against the implementation's types. The implementation checks
@@ -2287,12 +2344,22 @@ discovering the change when their reader breaks. The warning is also the written
   \code{investigational}, on purpose.
   \item \textbf{Signals (\code{UOS-Sig}) are unimplemented.} The \code{kind} exists; no
   writer emits it and \code{time\_cursor\_s} in views is therefore never populated.
-  \item \textbf{Signatures are unspecified.} \S\ref{sec:provenance}.
-  \item \textbf{\code{value\_range} may be null.} Filling it with an invented number would
-  be worse than leaving it empty --- a viewer would window on it.
+  \item \textbf{Signatures are unspecified.} \S\ref{sec:provenance} names JWS or COSE
+  Sign1 as the destination, so that the first implementation does not invent a scheme; what
+  is undecided is which key signs and where it lives.
   \item \textbf{Camera pose for 2D imaging is not emitted.} \S\ref{sec:image2d}.
   \item \textbf{\code{COLOR\_0} is not emitted} on splat primitives, so non-extension
   viewers see an uncoloured point cloud. \S\ref{sec:khr}.
+  \item \textbf{The Gaussian layers are monolithic.} STORE makes a container
+  \emph{addressable} --- an HTTP client can fetch one asset without downloading the case ---
+  and that is true for the manifest and for a 17.9\,MB GLB. It is not the same as
+  \emph{streamable}, which the title suggests: \code{scene/field.ply} is 78\,MB in one file,
+  so the range request is all-or-nothing, and on a clinic's poor connection that is not
+  progressive. There is no level-of-detail and no per-region loading. A future version
+  should evaluate splitting large layers into parts --- by FDI region or by spatial block ---
+  declared as a directory asset with \code{parts[]}, reusing \S\ref{sec:external}'s existing
+  mechanism exactly; a reader could then request only the parts falling inside the active
+  view's frustum.
   \item \textbf{No partitioned scene is emitted under \code{derived/}.}
   \S\ref{sec:picking} defines the conforming way to keep per-tooth selection for a generic
   glTF reader --- a \emph{second} GLB, declared layer 3, with its model sidecar --- and the
@@ -2401,11 +2468,16 @@ CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
 \endhead
 CBCT$\to$scanner registration & \code{icp\_surface}, RMS 0.666\,mm, \code{verified\_by}
 null & That a registration carries its own error and its own verification status
-(\S\ref{sec:manifest}) --- this one is provisional and a viewer must say so.\\
+(\S\ref{sec:manifest}) --- this one is provisional, a viewer must say so, and \textbf{the
+validator says so too}: it emits a warning naming the registration, so the obligation does
+not rest on the viewer remembering. It also now declares \code{regulatory} (layer 2, an
+automatic computation) and \code{fit\_for: ["visualization"]} --- 0.666\,mm RMS is fine to
+look at and does not license planning.\\
 
 Mesh reversibility & $4.59\times10^{-6}$\,mm against a 0.1\,mm budget & That reversibility
 means regenerating the mesh from what travels, not returning the ingested file
-(\S\ref{sec:external}). The residual is the \code{float32} of the STL itself.\\
+(\S\ref{sec:external}). The residual is the \code{float32} of the STL itself --- the order
+of that format's own rounding unit, not a loss the conversion introduced.\\
 
 Per-slice verification at scale & 397 slices, 419 entries, 0 errors, 0 warnings & That
 \S\ref{sec:dirasset} works on a full series: a missing, altered or extra slice is caught

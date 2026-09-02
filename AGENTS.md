@@ -281,7 +281,7 @@ that fixes whatever the new version finds.
 | Field | Value |
 |---|---|
 | **Name** | `docs-guardian` |
-| **Version** | `0.11.0` |
+| **Version** | `0.12.0` |
 | **Location** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Status** | `active` |
 | **Trigger** | `pre-commit` hook (**does not block**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -1361,9 +1361,12 @@ wrote.
   row-major: confusing them does not blow up, it places the cloud rotated and mirrored. The
   payloads are pointed at with `extras.uos_gs_uri`, which is the declared fallback while
   `KHR_gaussian_splatting` is not ratified — §13 says it is withdrawn in v1.0.
-- **The original STL travels as a `document`, not as a scene.** §5.1 says so. Converting to
-  glTF loses information — `float32` from `float64` — so the original stays: the converted
-  one is presentation and the reversible one is the scanner's file, byte for byte.
+- **The original STL travels as a `document`, not as a scene.** §5.1 says so. It stays
+  declared for **provenance and layer**, not for resolution: a binary STL stores vertices as
+  `float32` by definition, so converting back to `float32` for glTF loses *nothing* — the
+  `float64` in `mesh-agent` is a widening of the data, not precision that was there. From an
+  **OBJ**, which is decimal text with ~8 digits, the loss is real. The claim used to be that
+  the conversion is lossy full stop, which was false for half the inputs (T-1).
 - ⚠️ **Neither `extras.uos_fdi` nor `_REGION_ID` is emitted**, even though §5.1 allows the
   first "if the mesh comes segmented". Ours does not come segmented: we segment it with a
   model, and that is Layer 3. Baked into the scene, removing `derived/` would stop removing
@@ -1466,6 +1469,7 @@ wrote.
 | Date | Version | Change |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
+| 2026-09-03 | 0.12.0 | **T-1 to T-7.** Ten checks the text declared normative and the algorithm never ran: undeclared ZIP entries, `derived/` self-description, `derived_from` resolving, the `KHR_gaussian_splatting` invariants and complete SH degrees, the segmentation join by count and by a hash of the source `POSITION` accessor (T-4), view/volume coherence, and chain ordering. `value_range` is measured instead of left null "because sweeping the series is expensive" — the writer already reads every byte. And the reversibility argument is corrected: a binary STL is `float32` by definition, so the conversion loses nothing from an STL and does lose from an OBJ; the original stays declared for provenance and layer, not resolution. |
 | 2026-09-03 | 0.11.0 | **D-4, D-5, D-6, D-9.** Findings travel coded — `{system, code, display}` with the issuer's closed vocabulary demoted to `display`, where it belongs — and the SNOMED `code` is deliberately `null`: assigning one is clinical terminology, and a guessed code is indistinguishable from a right one to the connector that resolves it. Occlusion gets a reserved id and must be declared even when the answer is `single_arch`; registrations declare what they were measured **fit for**, because an RMS average does not license guided surgery; sites that are not teeth get a vocabulary. Normative enum values that were Spanish (`"lineal"`, `"sigma_normalizada"`) are now English, since a reader branches on them. The specification names where UOS maps onto DICOM's Spatial Registration Object, Encapsulated STL, FHIR `Provenance` and R5's `ImagingSelection` rather than reinventing them. |
 | 2026-09-03 | 0.10.0 | **D-1, D-2, D-3, D-7, D-8.** Frames anchor to the DICOM Frame of Reference UID and declare their anatomical convention — "right-handed" fixes chirality, not which direction is the patient's anterior. A slice's identity stops being its file's hash, which any de-identification changes, and becomes the SOP Instance UID plus a hash of PixelData; verification splits into identity and exact bytes, reported separately. A `measured` layer must declare the occupancy threshold that decides which tissue appears. And the container stops calling CBCT grey values Hounsfield units: it published `±N HU` for a scanner that is not calibrated in them, and the volume sidecar now declares `calibrated_hu`. |
 | 2026-09-02 | 0.9.0 | **B-6 and part of G-1.** `UOS-Distributable`, a profile orthogonal to the conformance levels and derived the same way: the levels say whether a reader can *open* a container, and nothing said whether it is in a condition to *leave* the organisation that issued it — the question asked immediately before attaching a case to an email. It is B-1, B-3 and B-4's conditions at once, because separately they decide nothing. Not being distributable is not an error; it is the normal state of a case inside the clinic, and it now reaches the human gate with what is missing. Separately: the published JSON Schema is now entirely in English. Field names were already the wire format, but `title` and `description` were generated by pydantic from Spanish class names and docstrings, so the one artifact that exists for an outside implementer had an unreadable half. |

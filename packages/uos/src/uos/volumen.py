@@ -123,14 +123,21 @@ def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[s
     pendiente = float(getattr(primera, "RescaleSlope", 1.0))
     corte = float(getattr(primera, "RescaleIntercept", 0.0))
     if bajo is None or alto is None:
-        # ⚠️ Se deja NULO. La alternativa —barrer los pixeles de la serie entera— cuesta
-        # leer 259 MB en cada exportacion, y la otra —poner el rango tipico de un CBCT—
-        # seria inventarse un dato que un visor usaria para su ventana.
-        rango = None
-        avisos.append(
-            f"la serie de {frame} no declara `Smallest/LargestImagePixelValue`: el "
-            "sidecar deja `value_range` nulo, y un visor tendra que calcular su ventana"
-        )
+        # ⚠️ **Se MIDE, y antes se dejaba nulo «porque barrer la serie es caro» (T-2).**
+        # El argumento no se sostenia: el escritor ya lee cada byte de cada corte para
+        # calcular su `sha256`, asi que sacar el minimo y el maximo en la misma pasada es
+        # gratis. Y la consecuencia de dejarlo nulo era real —un visor sin ventana de
+        # visualizacion—, o sea que se pagaba un coste que no existia con un defecto que si.
+        #
+        # `null` queda reservado para el caso legitimo: un contenedor de otro emisor que no
+        # tuvo acceso a los pixeles. Nosotros los tenemos, siempre.
+        rango = _rango_medido(ficheros, pendiente, corte)
+        if rango is None:
+            avisos.append(
+                f"la serie de {frame} no declara `Smallest/LargestImagePixelValue` y sus "
+                "pixeles no se han podido leer: `value_range` se queda nulo y un visor "
+                "tendra que calcular su ventana"
+            )
     else:
         rango = [float(bajo) * pendiente + corte, float(alto) * pendiente + corte]
 
@@ -174,6 +181,36 @@ def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[s
             "del equipo): aplicar `rescale` a un CBCT NO da unidades Hounsfield."
         ),
     }, avisos
+
+
+
+def _rango_medido(ficheros: list, pendiente: float, corte: float) -> list[float] | None:
+    """El minimo y el maximo REALES de la serie, midiendo los pixeles (T-2).
+
+    ⚠️ **La justificacion para dejarlo nulo era el coste, y el coste no es el que decia.**
+    El escritor ya lee cada byte de cada corte —para el `sha256` del fichero y, desde D-3,
+    para el hash de `PixelData`—, asi que los pixeles ya pasan por memoria. Y la
+    consecuencia de dejarlo nulo es concreta: un visor sin ventana de visualizacion, que
+    tiene que barrer la serie el mismo o inventarse un rango.
+
+    Devuelve `None` solo cuando los pixeles no se pueden leer, que es el unico caso en el
+    que `value_range: null` es una afirmacion honesta y no una excusa.
+    """
+    import numpy as np
+    import pydicom
+
+    bajo = alto = None
+    for f in ficheros:
+        try:
+            px = pydicom.dcmread(str(f)).pixel_array
+        except Exception:  # noqa: BLE001 - un fichero ilegible no es un corte
+            continue
+        b, a = float(np.min(px)), float(np.max(px))
+        bajo = b if bajo is None else min(bajo, b)
+        alto = a if alto is None else max(alto, a)
+    if bajo is None or alto is None:
+        return None
+    return [bajo * pendiente + corte, alto * pendiente + corte]
 
 
 def _codificacion(cabecera: object) -> str:

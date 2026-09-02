@@ -113,6 +113,7 @@ def meta_segmentacion(
     jurisdicciones: list[str] | None = None,
     calidad: dict[int, dict] | None = None,
     unidad: str = "vertice",
+    posiciones_sha256: str | None = None,
 ) -> dict[str, Any]:
     """El sidecar del §5.5. Todo lo que hace falta para saber **de dónde salió esto**.
 
@@ -139,6 +140,14 @@ def meta_segmentacion(
         "encoding": {
             "dtype": "int16-le",
             "count": int(etq.size),
+            # ⚠️ **T-4: la union con la escena es posicional y hasta ahora era SILENCIOSA.**
+            # El codigo `i` es del vertice `i`, asi que reordenar los vertices del asset
+            # fuente rompe la union sin que nada proteste — las etiquetas se pintan sobre
+            # las piezas equivocadas y el fichero sigue siendo valido. Este hash es del
+            # array de posiciones EN EL ORDEN DECLARADO: un lector lo recalcula y sabe si
+            # la union sigue en pie. Cuesta hashear ~1,3 MB.
+            **({} if posiciones_sha256 is None
+               else {"source_positions_sha256": posiciones_sha256}),
             "indexes": (
                 f"un código por {unidad} de `{asset_origen}`, en el mismo orden en que el "
                 "asset los declara. 0 = sin asignar."

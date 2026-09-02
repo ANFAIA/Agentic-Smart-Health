@@ -59,6 +59,47 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **Ten validator checks the specification declared normative and the algorithm never ran**
+  (**T-3**). The two that matter most are structural: every ZIP entry must be declared by
+  the manifest — the opposite direction was checked and this one was not, and an undeclared
+  file travels with no hash accrediting it and no regulatory layer, which is the shape a
+  leak would take — and every asset under `derived/` must carry a sidecar naming its model,
+  its sources and its encoding, where before only *declared* sidecars were checked. The
+  rest: `derived_from` resolves to declared ids, `KHR_gaussian_splatting` invariants
+  (`SCALE ≥ 0`, `OPACITY` in [0,1], unit `ROTATION`) and complete spherical-harmonic
+  degrees, the segmentation join by byte count, view/volume coherence, camera sanity, and
+  chain ordering (`version` consecutive, `created` not going backwards).
+
+  The check the review asked for that is **not** in the algorithm is the external asset's
+  content address. It was already enforced one layer earlier, by a model validator, so a
+  manifest with that inconsistency never parses. Adding it again would be code that cannot
+  run, which suggests a coverage that comes from somewhere else; the specification now says
+  where the rule lives instead.
+- **`derived/seg_gaussians.*` are declared as assets.** They shipped inside the ZIP and
+  outside the manifest — no hash, no regulatory layer, nothing linking them to the layer
+  they index. Found by the undeclared-entries check above, not by rereading: an omission
+  from B-1's second pass.
+- **`value_range` is measured, not left null** (**T-2**). The justification was that
+  sweeping every pixel is too expensive; the writer already reads every byte of every slice
+  for its `sha256`, and since D-3 for the PixelData hash too. So a cost that did not exist
+  was being paid with a defect that did — a viewer with no display window. `null` is now
+  reserved for the honest case: a container from an issuer that never had the pixels.
+- **The reversibility argument is corrected** (**T-1**). The specification said converting
+  to glTF is lossy because "the ingested mesh is `float64`". A binary STL stores vertices as
+  `float32` *by definition of the format*, so the `float64` is the loader's widening and the
+  conversion loses **nothing** — the measured residual is the STL's own `float32`. From an
+  OBJ, which is decimal text, the loss is real. The claim was true for half the inputs and
+  stated for all of them. `scene.glb` still must declare `derived_from`, for provenance and
+  regulatory layer rather than resolution.
+- **`source_positions_sha256` in the segmentation sidecar** (**T-4**). The join between
+  `derived/seg_teeth.bin` and the scene is positional, and the specification admitted that
+  breaking it "breaks that join silently". A format should not have silent joins: the
+  sidecar now accredits the source `POSITION` accessor and the validator recomputes it.
+- The specification names **JWS or COSE Sign1** as the destination for signatures rather
+  than leaving a private scheme to be invented (**T-5**), records that the Gaussian layers
+  are **monolithic** so addressable is not confused with streamable (**T-7**), states that
+  check 4 must run *after* the version branch, and updates the reference registration to
+  carry its `regulatory` and `fit_for` (**T-6**).
 - **BREAKING — clinical findings travel coded.** `findings: ["aparato_ortodoncico"]`
   interoperates with nothing: not with the FHIR `Observation` it maps to, which expects a
   coded `code`; not with a foreign practice-management system; not with a second

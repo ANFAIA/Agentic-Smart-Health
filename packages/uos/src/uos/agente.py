@@ -16,6 +16,7 @@ nada: el `.uos` lleva `reg.ct_to_ios` con su matriz, su metodo y su error.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from functools import partial
 from pathlib import Path
@@ -231,7 +232,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.11.0"
+    version = "0.12.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -421,13 +422,32 @@ class UOSExportAgent(BaseExportAgent):
                 sin_region, etq_gs = partido
                 ficheros.pop(uri)
                 extras_escena[uri] = sin_region
-                extras_escena[SEG_GAUSSIANAS.format(corto=corto)] = codifica_etiquetas(etq_gs)
-                extras_escena[SEG_GAUSSIANAS_META.format(corto=corto)] = json_de(
+                uri_seg = SEG_GAUSSIANAS.format(corto=corto)
+                meta_seg = SEG_GAUSSIANAS_META.format(corto=corto)
+                crudo_seg = codifica_etiquetas(etq_gs)
+                extras_escena[uri_seg] = crudo_seg
+                extras_escena[meta_seg] = json_de(
                     meta_segmentacion(
                         etq_gs, asset_origen=id_, modelo="segmentation-agent",
                         version=None, unidad="gaussiana",
                     )
                 )
+                # ⚠️ **Y se DECLARAN como assets.** Viajaban solo en `extras_escena`, o
+                # sea dentro del ZIP y fuera del manifiesto: sin hash que los acredite, sin
+                # capa regulatoria y sin nadie que los enlace con la capa que indexan —
+                # justo lo que el §14.6 prohibe. Lo cazo el check nuevo de T-3, no una
+                # relectura: es la forma que tendria una fuga.
+                assets.append(asset_de_bytes(
+                    crudo_seg, uri_seg, id_=f"asset.seg_{corto}",
+                    kind=Clase.DERIVED_SEG, visit=visita.id, frame=marco,
+                    media_type="application/octet-stream",
+                    regulatory=Regulatorio(layer=3, clearances=[Autorizacion(
+                        jurisdiction="EU", regime="MDR",
+                        status=EstadoRegulatorio.INVESTIGACION,
+                    )]),
+                    sidecar_uri=meta_seg,
+                    derived_from=[id_],
+                ))
             # Para el campo semilla, incluir info de submuestreo en el sidecar si el
             # artefacto la trae. Así el consumidor sabe cuántos vóxeles había antes.
             submuestreo = None
@@ -664,7 +684,9 @@ class UOSExportAgent(BaseExportAgent):
                     # nombra. Y la reversibilidad no es devolverlo, es regenerar la malla
                     # desde esta escena (extension `ash_reversible`).
                     "uos_note": (
-                        "presentacion: float32 desde float64. El original es asset.ios, "
+                        "presentacion en float32. Desde un STL la conversion no "
+                        "pierde nada —el STL binario ya es float32— y desde un OBJ "
+                        "si. El original es asset.ios, "
                         "referenciado por su direccion de contenido y no incluido aqui; "
                         "la malla se regenera desde esta escena"
                     ),
@@ -710,6 +732,13 @@ class UOSExportAgent(BaseExportAgent):
                         pesos_sha256=(None if modelo_segmentacion is None
                                       else sha256_de_fichero(modelo_segmentacion)),
                         calidad=_calidad_frontera(malla_ingerida, etq),
+                        # T-4 · el hash del array de POSITION tal y como va en la escena.
+                        # Es lo unico que convierte la union posicional en comprobable.
+                        posiciones_sha256=hashlib.sha256(
+                            np.ascontiguousarray(
+                                malla_ingerida["positions"], dtype=np.float32
+                            ).tobytes()
+                        ).hexdigest(),
                     )
                     extras_escena[SEGMENTACION] = crudo
                     extras_escena[SEGMENTACION_META] = json_de(meta)
