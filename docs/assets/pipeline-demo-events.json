@@ -66,17 +66,28 @@
       "key": "uos",
       "title": "4. UOS container",
       "files": [
-        "demo-case/04_uos/acq-README.uos",
-        "demo-case/04_uos/manifest.json",
-        "demo-case/04_uos/validation.txt"
+        "demo-case/04_uos/acq-README.uos/",
+        "acq-README.uos/clinical/",
+        "acq-README.uos/derived/",
+        "acq-README.uos/manifest.json",
+        "acq-README.uos/provenance/",
+        "acq-README.uos/scene/",
+        "acq-README.uos/views.json"
       ],
       "metrics": [
         "levels UOS-Core",
         "errors 0",
         "views 8",
         "external acquired assets 3",
+        "assets 8",
+        "zip_entries 11",
         "uos_size_kb 745",
-        "manifest_size_kb 10.5"
+        "manifest_size 9.5 KB",
+        "views_size 3.2 KB",
+        "scene_entries 5",
+        "derived_entries 2",
+        "clinical_entries 1",
+        "provenance_entries 1"
       ]
     }
   ],

@@ -31,8 +31,8 @@
     <text x="71" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">1</text>
     <text x="98" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Raw case</text>
     <text x="98" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">synthetic input</text>
-    <text x="74" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">OBJ + 16 DICOM slices</text>
-    <text x="74" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">1.8 mm mm + report</text>
+    <text x="74" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">OBJ / DICOM / report</text>
+    <text x="74" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">photo · synthetic only</text>
     <circle cx="214" cy="205" r="4" fill="#22c55e" opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" begin="0.4s"
         dur="2.0s" repeatCount="indefinite"/>
@@ -51,7 +51,7 @@
     <text x="322" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Ingestion</text>
     <text x="322" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">four agents</text>
     <text x="298" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">TwinSnapshot</text>
-    <text x="298" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">surface sha256:93a2e6aefc5...</text>
+    <text x="298" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">3 blobs</text>
     <circle cx="438" cy="205" r="4" fill="#22c55e" opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" begin="3.9s"
         dur="2.0s" repeatCount="indefinite"/>
@@ -69,7 +69,7 @@
     <text x="519" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">3</text>
     <text x="546" y="207" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Fusion</text>
     <text x="546" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">geometry + FDI</text>
-    <text x="522" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">rms 0.765 mm</text>
+    <text x="522" y="260" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">rigid registration ok</text>
     <text x="522" y="282" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">segmentation ok</text>
     <circle cx="662" cy="205" r="4" fill="#22c55e" opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" begin="7.4s"
@@ -88,8 +88,8 @@
     <text x="183" y="422" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">4</text>
     <text x="210" y="419" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">Exports</text>
     <text x="210" y="440" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">materialised twin</text>
-    <text x="186" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">6 channels</text>
-    <text x="186" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">STL / PLY / PNG</text>
+    <text x="186" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">STL / PLY / render</text>
+    <text x="186" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">viewer + UOS</text>
     <circle cx="326" cy="417" r="4" fill="#22c55e" opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" begin="10.9s"
         dur="2.0s" repeatCount="indefinite"/>
@@ -107,8 +107,8 @@
     <text x="407" y="422" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#f8fafc">5</text>
     <text x="434" y="419" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#f8fafc">UOS</text>
     <text x="434" y="440" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="500" fill="#93c5fd">one container</text>
-    <text x="410" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">UOS-Core</text>
-    <text x="410" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">validation: 0 errors</text>
+    <text x="410" y="472" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">8 assets · 11 entries</text>
+    <text x="410" y="494" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#cbd5e1">8 views · 0 errors</text>
     <circle cx="550" cy="417" r="4" fill="#22c55e" opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" begin="14.4s"
         dur="2.0s" repeatCount="indefinite"/>
@@ -144,49 +144,76 @@
   
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7150;0.7325;0.9400;1" dur="20s" repeatCount="indefinite"/>
-    <rect x="660" y="162" width="420" height="354" rx="14" fill="#020617"
+    <rect x="700" y="162" width="386" height="500" rx="14" fill="#020617"
       stroke="#38bdf8" stroke-width="1.4"/>
-    <rect x="660" y="162" width="420" height="42" rx="14" fill="#0f172a"/>
-    <circle cx="684" cy="183" r="5" fill="#ef4444"/>
-    <circle cx="704" cy="183" r="5" fill="#f59e0b"/>
-    <circle cx="724" cy="183" r="5" fill="#22c55e"/>
-    <text x="748" y="188" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">demo-case/04_uos</text>
-    
+    <rect x="700" y="162" width="386" height="42" rx="14" fill="#0f172a"/>
+    <circle cx="724" cy="183" r="5" fill="#ef4444"/>
+    <circle cx="744" cy="183" r="5" fill="#f59e0b"/>
+    <circle cx="764" cy="183" r="5" fill="#22c55e"/>
+    <text x="788" y="188" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">demo-case/04_uos/acq-README.uos/</text>
     <g opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7300;0.7475;0.9400;1" dur="20s" repeatCount="indefinite"/>
-      <rect x="690" y="230" width="360" height="34" rx="6" fill="#111827"
-        stroke="#1f2937"/>
-      <text x="710" y="252" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">acq-README.uos</text>
-      <text x="905" y="252" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">745 KB</text>
+      <text x="750" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#93c5fd">opened ZIP · 745 KB</text>
     </g>
     
     <g opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7450;0.7625;0.9400;1" dur="20s" repeatCount="indefinite"/>
-      <rect x="690" y="282" width="360" height="34" rx="6" fill="#111827"
+      <rect x="730" y="258" width="326" height="34" rx="6" fill="#111827"
         stroke="#1f2937"/>
-      <text x="710" y="304" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">manifest.json</text>
-      <text x="905" y="304" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">10.5 KB</text>
+      <text x="750" y="280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">clinical/</text>
+      <text x="925" y="280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">1 entry</text>
     </g>
     
     <g opacity="0">
-      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7600;0.7775;0.9400;1" dur="20s" repeatCount="indefinite"/>
-      <rect x="690" y="334" width="360" height="34" rx="6" fill="#111827"
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7550;0.7725;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="310" width="326" height="34" rx="6" fill="#111827"
         stroke="#1f2937"/>
-      <text x="710" y="356" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">validation.txt</text>
-      <text x="905" y="356" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">0 errors</text>
+      <text x="750" y="332" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">derived/</text>
+      <text x="925" y="332" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">2 entries</text>
     </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7650;0.7825;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="362" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="384" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">manifest.json</text>
+      <text x="925" y="384" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">9.5 KB</text>
+    </g>
+    
     <g opacity="0">
       <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7750;0.7925;0.9400;1" dur="20s" repeatCount="indefinite"/>
-      <rect x="690" y="404" width="360" height="70" rx="8" fill="#052e2b"
+      <rect x="730" y="414" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="436" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">provenance/</text>
+      <text x="925" y="436" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">1 entry</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7850;0.8025;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="466" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="488" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">scene/</text>
+      <text x="925" y="488" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">5 entries</text>
+    </g>
+    
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.7950;0.8125;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="518" width="326" height="34" rx="6" fill="#111827"
+        stroke="#1f2937"/>
+      <text x="750" y="540" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e5e7eb">views.json</text>
+      <text x="925" y="540" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#7dd3fc">3.2 KB</text>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.8150;0.8325;0.9400;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="730" y="588" width="326" height="48" rx="8" fill="#052e2b"
         stroke="#0f766e"/>
-      <text x="714" y="433" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="700" fill="#ccfbf1">UOS-Core</text>
-      <text x="714" y="458" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="500" fill="#99f6e4">8 views · 3 external acquired assets</text>
+      <text x="754" y="617" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="500" fill="#99f6e4">UOS-Core · v0.2 · 3 external refs</text>
     </g>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.8100;0.8275;0.9400;1" dur="20s" repeatCount="indefinite"/>
-    <rect x="166" y="586" width="884" height="58" rx="12" fill="#0f172a"
+    <rect x="54" y="682" width="562" height="36" rx="10" fill="#0f172a"
       stroke="#334155"/>
-    <text x="194" y="621" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="700" fill="#e0f2fe">Final artifact: one .uos file carrying scene, provenance, relations and validation state</text>
+    <text x="76" y="705" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e0f2fe">Final artifact: one .uos file with scene, provenance and views</text>
   </g>
 </svg>

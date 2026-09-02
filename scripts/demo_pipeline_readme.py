@@ -153,6 +153,10 @@ def _short_ref(ref: str | None) -> str:
     return ref[:18] + "..."
 
 
+def _format_kb(size: int) -> str:
+    return f"{size / 1024:.1f} KB"
+
+
 def _outputs(result: PipelineResult) -> list[dict[str, Any]]:
     return [
         {
@@ -311,6 +315,14 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
     shutil.copy2(uos_out.path, public_uos)
     with zipfile.ZipFile(public_uos) as zf:
         manifest = json.loads(zf.read(MANIFIESTO))
+        zip_infos = zf.infolist()
+    zip_names = [info.filename for info in zip_infos]
+    scene_entries = sum(name.startswith("scene/") for name in zip_names)
+    derived_entries = sum(name.startswith("derived/") for name in zip_names)
+    clinical_entries = sum(name.startswith("clinical/") for name in zip_names)
+    provenance_entries = sum(name.startswith("provenance/") for name in zip_names)
+    manifest_size = next(info.file_size for info in zip_infos if info.filename == MANIFIESTO)
+    views_size = next(info.file_size for info in zip_infos if info.filename == "views.json")
     manifest_path = uos_dir / "manifest.json"
     _json(manifest_path, manifest)
     validation = valida(public_uos)
@@ -334,17 +346,28 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
             "uos",
             "4. UOS container",
             [
-                "demo-case/04_uos/acq-README.uos",
-                "demo-case/04_uos/manifest.json",
-                "demo-case/04_uos/validation.txt",
+                "demo-case/04_uos/acq-README.uos/",
+                "acq-README.uos/clinical/",
+                "acq-README.uos/derived/",
+                "acq-README.uos/manifest.json",
+                "acq-README.uos/provenance/",
+                "acq-README.uos/scene/",
+                "acq-README.uos/views.json",
             ],
             [
                 "levels " + ", ".join(validation.niveles),
                 f"errors {len(validation.errores)}",
                 f"views {validation.vistas}",
                 f"external acquired assets {validation.externos}",
+                f"assets {len(manifest['assets'])}",
+                f"zip_entries {len(zip_infos)}",
                 f"uos_size_kb {public_uos.stat().st_size // 1024}",
-                f"manifest_size_kb {manifest_path.stat().st_size / 1024:.1f}",
+                f"manifest_size {_format_kb(manifest_size)}",
+                f"views_size {_format_kb(views_size)}",
+                f"scene_entries {scene_entries}",
+                f"derived_entries {derived_entries}",
+                f"clinical_entries {clinical_entries}",
+                f"provenance_entries {provenance_entries}",
             ],
         )
     )
@@ -490,36 +513,41 @@ def _dir_row(y: int, name: str, meta: str, *, begin: float, total: int) -> str:
     return f"""
     <g opacity="0">
       {_reveal(begin, total)}
-      <rect x="690" y="{y - 18}" width="360" height="34" rx="6" fill="#111827"
+      <rect x="730" y="{y - 18}" width="326" height="34" rx="6" fill="#111827"
         stroke="#1f2937"/>
-      {_svg_text(710, y + 4, name, size=14, fill="#e5e7eb", weight=700)}
-      {_svg_text(905, y + 4, meta, size=12, fill="#7dd3fc")}
+      {_svg_text(750, y + 4, name, size=14, fill="#e5e7eb", weight=700)}
+      {_svg_text(925, y + 4, meta, size=12, fill="#7dd3fc")}
     </g>"""
 
 
 def render_svg(stages: list[Stage]) -> str:
     total = 20
     starts = [0.1, 3.6, 7.1, 10.6, 14.1]
-    raw = _stage(stages, "input")
     ingestion = _stage(stages, "ingestion")
     fusion = _stage(stages, "fusion")
-    exports = _stage(stages, "exports")
     uos = _stage(stages, "uos")
-    cbct_line = next(
-        (path.rsplit("/", 1)[-1] for path in raw.files if "DICOM slices" in path),
-        "DICOM slices",
+    artifacts = next(
+        (
+            path.rsplit("/", 1)[-1].replace(" content-addressed blobs", " blobs")
+            for path in ingestion.files
+            if "content-addressed blobs" in path
+        ),
+        "content blobs",
     )
-    spacing = _metric_tail(raw, "CBCT spacing", "-")
-    surface_ref = _metric_tail(ingestion, "surface_ref", "-")
-    rms = _metric_tail(fusion, "rms_error_mm", "-")
     segmentation = _metric_tail(fusion, "segmentation-agent", "-")
-    export_count = _metric_tail(exports, "export channels wrote files", "6")
     levels = _metric_tail(uos, "levels", "UOS-Core")
     errors = _metric_tail(uos, "errors", "0")
     views = _metric_tail(uos, "views", "8")
     external_assets = _metric_tail(uos, "external acquired assets", "3")
+    assets = _metric_tail(uos, "assets", "8")
+    zip_entries = _metric_tail(uos, "zip_entries", "11")
     uos_size = _metric_tail(uos, "uos_size_kb", "-")
-    manifest_size = _metric_tail(uos, "manifest_size_kb", "-")
+    manifest_size = _metric_tail(uos, "manifest_size", "-")
+    views_size = _metric_tail(uos, "views_size", "-")
+    scene_entries = _metric_tail(uos, "scene_entries", "-")
+    derived_entries = _metric_tail(uos, "derived_entries", "-")
+    clinical_entries = _metric_tail(uos, "clinical_entries", "-")
+    provenance_entries = _metric_tail(uos, "provenance_entries", "-")
     cards = [
         _flow_card(
             54,
@@ -527,7 +555,7 @@ def render_svg(stages: list[Stage]) -> str:
             index=1,
             title="Raw case",
             subtitle="synthetic input",
-            lines=(f"OBJ + {cbct_line}", f"{spacing} mm + report"),
+            lines=("OBJ / DICOM / report", "photo · synthetic only"),
             begin=starts[0],
             total=total,
         ),
@@ -537,7 +565,7 @@ def render_svg(stages: list[Stage]) -> str:
             index=2,
             title="Ingestion",
             subtitle="four agents",
-            lines=("TwinSnapshot", f"surface {surface_ref}"),
+            lines=("TwinSnapshot", artifacts),
             begin=starts[1],
             total=total,
         ),
@@ -547,7 +575,7 @@ def render_svg(stages: list[Stage]) -> str:
             index=3,
             title="Fusion",
             subtitle="geometry + FDI",
-            lines=(f"rms {rms} mm", f"segmentation {segmentation}"),
+            lines=("rigid registration ok", f"segmentation {segmentation}"),
             begin=starts[2],
             total=total,
         ),
@@ -557,7 +585,7 @@ def render_svg(stages: list[Stage]) -> str:
             index=4,
             title="Exports",
             subtitle="materialised twin",
-            lines=(f"{export_count} channels", "STL / PLY / PNG"),
+            lines=("STL / PLY / render", "viewer + UOS"),
             begin=starts[3],
             total=total,
         ),
@@ -567,7 +595,7 @@ def render_svg(stages: list[Stage]) -> str:
             index=5,
             title="UOS",
             subtitle="one container",
-            lines=(levels, f"validation: {errors} errors"),
+            lines=(f"{assets} assets · {zip_entries} entries", f"{views} views · {errors} errors"),
             begin=starts[4],
             total=total,
         ),
@@ -581,22 +609,33 @@ def render_svg(stages: list[Stage]) -> str:
     directory = f"""
   <g opacity="0">
     {_reveal(starts[4] + 0.2, total)}
-    <rect x="660" y="162" width="420" height="354" rx="14" fill="#020617"
+    <rect x="700" y="162" width="386" height="500" rx="14" fill="#020617"
       stroke="#38bdf8" stroke-width="1.4"/>
-    <rect x="660" y="162" width="420" height="42" rx="14" fill="#0f172a"/>
-    <circle cx="684" cy="183" r="5" fill="#ef4444"/>
-    <circle cx="704" cy="183" r="5" fill="#f59e0b"/>
-    <circle cx="724" cy="183" r="5" fill="#22c55e"/>
-    {_svg_text(748, 188, "demo-case/04_uos", size=14, fill="#e5e7eb", weight=700)}
-    {_dir_row(248, "acq-README.uos", f"{uos_size} KB", begin=starts[4] + 0.5, total=total)}
-    {_dir_row(300, "manifest.json", f"{manifest_size} KB", begin=starts[4] + 0.8, total=total)}
-    {_dir_row(352, "validation.txt", "0 errors", begin=starts[4] + 1.1, total=total)}
+    <rect x="700" y="162" width="386" height="42" rx="14" fill="#0f172a"/>
+    <circle cx="724" cy="183" r="5" fill="#ef4444"/>
+    <circle cx="744" cy="183" r="5" fill="#f59e0b"/>
+    <circle cx="764" cy="183" r="5" fill="#22c55e"/>
+    {_svg_text(788, 188, "demo-case/04_uos/acq-README.uos/", size=14, fill="#e5e7eb", weight=700)}
     <g opacity="0">
-      {_reveal(starts[4] + 1.4, total)}
-      <rect x="690" y="404" width="360" height="70" rx="8" fill="#052e2b"
+      {_reveal(starts[4] + 0.5, total)}
+      {_svg_text(750, 238, f"opened ZIP · {uos_size} KB", size=12, fill="#93c5fd",
+                 weight=700)}
+    </g>
+    {_dir_row(276, "clinical/", f"{clinical_entries} entry", begin=starts[4] + 0.8,
+              total=total)}
+    {_dir_row(328, "derived/", f"{derived_entries} entries", begin=starts[4] + 1.0,
+              total=total)}
+    {_dir_row(380, "manifest.json", manifest_size, begin=starts[4] + 1.2, total=total)}
+    {_dir_row(432, "provenance/", f"{provenance_entries} entry", begin=starts[4] + 1.4,
+              total=total)}
+    {_dir_row(484, "scene/", f"{scene_entries} entries", begin=starts[4] + 1.6,
+              total=total)}
+    {_dir_row(536, "views.json", views_size, begin=starts[4] + 1.8, total=total)}
+    <g opacity="0">
+      {_reveal(starts[4] + 2.2, total)}
+      <rect x="730" y="588" width="326" height="48" rx="8" fill="#052e2b"
         stroke="#0f766e"/>
-      {_svg_text(714, 433, levels, size=15, fill="#ccfbf1", weight=700)}
-      {_svg_text(714, 458, f"{views} views · {external_assets} external acquired assets",
+      {_svg_text(754, 617, f"{levels} · v0.2 · {external_assets} external refs",
                  size=13, fill="#99f6e4")}
     </g>
   </g>"""
@@ -642,10 +681,10 @@ def render_svg(stages: list[Stage]) -> str:
   {directory}
   <g opacity="0">
     {_reveal(starts[4] + 2.1, total)}
-    <rect x="166" y="586" width="884" height="58" rx="12" fill="#0f172a"
+    <rect x="54" y="682" width="562" height="36" rx="10" fill="#0f172a"
       stroke="#334155"/>
-    {_svg_text(194, 621, "Final artifact: one .uos file carrying scene, provenance, "
-              "relations and validation state", size=15, fill="#e0f2fe", weight=700)}
+    {_svg_text(76, 705, "Final artifact: one .uos file with scene, provenance and views",
+              size=14, fill="#e0f2fe", weight=700)}
   </g>
 </svg>
 """

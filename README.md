@@ -6,6 +6,11 @@ Multi-agent system for integrating, analysing and representing heterogeneous den
 
 > Open source · Apache 2.0 · Python ≥ 3.13
 
+![UOS viewer demo](docs/assets/viewer-demo.gif)
+
+The viewer demo is trimmed to the first 48 seconds of the recorded run, so the
+README shows the final `.uos` experience without carrying the full screencast.
+
 ---
 
 ## Project context
@@ -37,11 +42,6 @@ OBJ/DICOM/report/photo files are ingested by the agents, assembled into a
 packaged as a `.uos` container.
 
 ![Animated synthetic pipeline demo](docs/assets/pipeline-demo.svg)
-
-The viewer demo below is trimmed to the first 48 seconds of the recorded run, so
-the README shows the final `.uos` experience without carrying the full screencast.
-
-![UOS viewer demo](docs/assets/viewer-demo.gif)
 
 Regenerate it with:
 
