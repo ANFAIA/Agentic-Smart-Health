@@ -70,6 +70,18 @@ human-readable and linked to the relevant pull request or issue where applicable
   degrees, the segmentation join by byte count, view/volume coherence, camera sanity, and
   chain ordering (`version` consecutive, `created` not going backwards).
 
+  Four of the fourteen were finished in a second pass, after an audit showed the first had
+  counted the item rather than its points: a node carrying `extras.uos_gs_uri` must have a
+  `matrix` equal to the **transpose** of the registration taking its frame to the canonical
+  one — glTF is column-major and the manifest row-major, and confusing them places the
+  cloud rotated and mirrored without anything failing; `encoding.count` is checked against
+  the **source asset's** vertex count and not only against its own sidecar; the FDI
+  vocabulary is read from the payload's bytes rather than from the sidecar's own list of
+  labels, since both are written by the same emitter on the same line; and check 3 is now
+  skipped, and says it was skipped, when the container declares a higher minor — running a
+  schema with `additionalProperties: false` against it contradicted the compatibility a
+  minor is defined to promise, in the one case that promise exists for.
+
   The check the review asked for that is **not** in the algorithm is the external asset's
   content address. It was already enforced one layer earlier, by a model validator, so a
   manifest with that inconsistency never parses. Adding it again would be code that cannot

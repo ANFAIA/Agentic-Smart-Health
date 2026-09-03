@@ -605,6 +605,58 @@ def test_el_campo_declara_su_UMBRAL_y_no_finge_unidades_Hounsfield(recorrido) ->
         assert " HU)" not in crudo, f"{n}: publica un error en unidades Hounsfield"
 
 
+def test_la_matriz_del_nodo_GS_es_la_REGISTRACION_traspuesta(recorrido) -> None:
+    """T-3 punto 12: glTF guarda las matrices por COLUMNAS y el manifiesto por FILAS.
+
+    ⚠️ **Confundirlas no revienta nada.** Coloca la nube girada y espejada, con muy buen
+    aspecto, en el visor de otro — el §5.2 lo llama el error clásico de este sitio. Declara
+    normativo que la `matrix` de un nodo colgado del canónico codifique la registración que
+    lleva su frame allí, y esa afirmación vivía sólo en el código del escritor: al leer no
+    la comprobaba nadie.
+
+    Vive aquí y no en los tests del paquete porque hace falta un contenedor con capas
+    gaussianas en el frame del CBCT, y el del recorrido las tiene.
+    """
+    import json
+    import struct
+    import zipfile
+
+    import numpy as np
+    from uos import valida
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    with zipfile.ZipFile(uos) as z:
+        entradas = [(i, z.read(i.filename)) for i in z.infolist()]
+
+    girada = salida / "girada.uos"
+    tocados = 0
+    with zipfile.ZipFile(girada, "w", zipfile.ZIP_STORED) as z:
+        for info, crudo in entradas:
+            if info.filename == "scene/scene.glb":
+                largo = struct.unpack_from("<I", crudo, 12)[0]
+                doc = json.loads(crudo[20:20 + largo])
+                for nodo in doc.get("nodes", []):
+                    if "matrix" in nodo and (nodo.get("extras") or {}).get("uos_gs_uri"):
+                        mm = np.asarray(nodo["matrix"], dtype=np.float64).reshape(4, 4)
+                        nodo["matrix"] = [float(x) for x in mm.T.ravel()]
+                        tocados += 1
+                cab = json.dumps(doc).encode()
+                cab += b" " * (-len(cab) % 4)
+                binario = crudo[20 + largo:]
+                crudo = (struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(cab) + len(binario))
+                         + struct.pack("<II", len(cab), 0x4E4F534A) + cab + binario)
+            z.writestr(info, crudo)
+
+    assert tocados, "el contenedor del recorrido no trae nodos GS con matriz"
+    inf = valida(girada)
+    assert not inf.valido
+    assert any("traspuesta" in e for e in inf.errores), inf.errores
+
+
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
     """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
 

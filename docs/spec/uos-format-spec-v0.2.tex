@@ -2024,8 +2024,15 @@ else.\\
 $[0,1]$, unit \code{ROTATION}, and complete spherical-harmonic degrees --- if degree $l$ is
 present, every lower degree is present in full.\\
 17j & E & \code{derived/seg\_*} indexes what it claims: byte length matches
-\code{encoding.count}, and where the sidecar declares
-\code{source\_positions\_sha256} it matches the source asset's \code{POSITION} accessor.\\
+\code{encoding.count}; \code{count} matches the \emph{source asset's} vertex count, not
+only its own sidecar; every code in the payload is an ISO 3950 code or 0, read from the
+bytes rather than from the sidecar's own list of labels; and where
+\code{source\_positions\_sha256} is declared it matches the source's \code{POSITION}
+accessor.\\
+17m & E & A node carrying \code{extras.uos\_gs\_uri} has a \code{matrix} equal to the
+\textbf{transpose} of the registration taking its frame to the canonical one
+(\S\ref{sec:graph}), within tolerance. glTF stores matrices column-major and the manifest
+row-major; confusing them does not fail, it places the cloud rotated and mirrored.\\
 17k & E/W & Views: \code{mpr}/\code{clip\_planes} present iff a \code{volume} asset is
 (E); \code{up} not parallel to the view direction and \code{fov} in a sane range (W).\\
 17l & E & Chain order: \code{links[i].version} equals $i+1$ and \code{created} does not go
@@ -2044,10 +2051,12 @@ the view count.\\
 
 \paragraph{The order of check 4 is normative.}
 ``No unknown keys'' \MUST{} be applied \emph{after} the version branch \S\ref{sec:versioning}
-requires, and the algorithm has to say so. A container declaring a higher \textbf{minor} is
-parsed leniently, ignoring and naming the fields the reader does not know --- and running
-check 4 first would reject it as malformed, which contradicts the compatibility a minor is
-defined to promise.
+requires. A container declaring a higher \textbf{minor} is parsed leniently, ignoring and
+naming the fields the reader does not know, and checking it against a schema with
+\code{additionalProperties: false} first contradicts the compatibility a minor is defined
+to promise --- in the one case that promise exists for. A validator reading a higher minor
+therefore \MUST{} skip check 3 and say that it skipped it, rather than report every new
+field as unknown.
 
 \paragraph{Why check 3 is only a warning.} Validating against the distributed schema is not
 redundant with validating against the implementation's types. The implementation checks

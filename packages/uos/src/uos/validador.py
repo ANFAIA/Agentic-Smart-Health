@@ -99,7 +99,6 @@ def valida(ruta: Path) -> Informe:
                 )
                 break
         crudo = z.read(MANIFIESTO)
-        _valida_esquema(crudo, inf)
         # ⚠️ La rama de version PRIMERO: si el contenedor declara una mayor superior esto
         # eleva, y es lo correcto — no se valida lo que no se sabe interpretar (§15).
         m, ignorados = lee_manifiesto_de(crudo, nombre=ruta.name)
@@ -110,11 +109,25 @@ def valida(ruta: Path) -> Informe:
                 "no conoce, y por eso no puede emitir una version nueva de este caso: "
                 + ", ".join(ignorados)
             )
+        # ⚠️ **Y el esquema DESPUES de la rama, que es el orden que faltaba (T-3).** El
+        # esquema publicado lleva `additionalProperties: false`, asi que un contenedor de
+        # minor superior —que el §15.2 obliga a leer con indulgencia, ignorando y nombrando
+        # lo que no se conoce— salia con un aviso de «campo desconocido» por cada campo
+        # nuevo. El algoritmo contradecia a la compatibilidad que un minor promete, y lo
+        # hacia en el unico caso para el que esa promesa existe.
+        if not ignorados:
+            _valida_esquema(crudo, inf)
+        else:
+            inf.avisos.append(
+                "no se contrasta contra el JSON Schema publicado: el contenedor declara "
+                "una version menor superior y sus campos nuevos saldrian como desconocidos"
+            )
         _valida_assets(z, m, inf)
         _valida_capas_en_la_escena(z, m, inf)
         _valida_capas_clinicas(z, inf)
         _valida_derivados(z, m, inf)
         _valida_gs(z, m, inf)
+        _valida_matrices_gs(z, m, inf)
         _valida_union_segmentacion(z, m, inf)
         _valida_entradas_declaradas(z, m, inf)
         _valida_phi(z, m, inf)
@@ -682,6 +695,18 @@ def _valida_gs(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
                             break
 
 
+def _cuenta_vertices(z: zipfile.ZipFile, a) -> int | None:
+    """Cuantos vertices declara el accesor `POSITION` de un GLB."""
+    try:
+        crudo = z.read(a.uri)
+        largo = int.from_bytes(crudo[12:16], "little")
+        doc = json.loads(crudo[20:20 + largo])
+        idx = doc["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+        return int(doc["accessors"][idx]["count"])
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
 def _hash_posiciones(z: zipfile.ZipFile, a) -> str | None:
     """SHA-256 del accesor `POSITION` de un GLB, en el orden declarado (T-4)."""
     try:
@@ -695,6 +720,63 @@ def _hash_posiciones(z: zipfile.ZipFile, a) -> str | None:
         return hashlib.sha256(binario[off:off + acc["count"] * 12]).hexdigest()
     except (KeyError, IndexError, ValueError):
         return None
+
+
+def _valida_matrices_gs(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
+    """Que la matriz de un nodo GS sea la registracion que dice ser (T-3, punto 12).
+
+    ⚠️ **Es el fallo clasico de este sitio y no lo comprobaba nadie.** glTF guarda las
+    matrices **por columnas** y el manifiesto **por filas**; confundirlas no revienta nada:
+    coloca la nube girada y espejada, con muy buen aspecto, en el visor de otro. El §5.2
+    declara normativo que la `matrix` de un nodo colgado del canonico codifique la
+    registracion que lleva su frame alli, y hasta ahora esa afirmacion vivia solo en el
+    codigo del escritor.
+
+    Se compara con tolerancia: son `float32` en el GLB y `float64` en el manifiesto.
+    """
+    import numpy as np
+
+    registros = {(r.source_frame, r.target_frame): r for r in m.registrations}
+    for a in m.assets:
+        if not a.uri.endswith(".glb") or a.external:
+            continue
+        try:
+            crudo = z.read(a.uri)
+            largo = int.from_bytes(crudo[12:16], "little")
+            doc = json.loads(crudo[20:20 + largo])
+        except (KeyError, ValueError):
+            continue
+        canonico = m.canonical_frame.id
+        for nodo in doc.get("nodes", []):
+            uri_gs = (nodo.get("extras") or {}).get("uos_gs_uri")
+            if uri_gs is None or "matrix" not in nodo:
+                continue
+            capa = next((x for x in m.assets if x.uri == uri_gs), None)
+            if capa is None:
+                inf.errores.append(
+                    f"asset {a.id}: un nodo apunta a {uri_gs!r} con `uos_gs_uri` y el "
+                    "manifiesto no declara ese asset"
+                )
+                continue
+            if capa.frame == canonico:
+                continue
+            reg = registros.get((capa.frame, canonico))
+            if reg is None:
+                inf.errores.append(
+                    f"asset {a.id}: el nodo de {capa.id} lleva `matrix` y no hay "
+                    f"registracion de {capa.frame} a {canonico} que esa matriz pueda ser"
+                )
+                continue
+            enel = np.asarray(nodo["matrix"], dtype=np.float64).reshape(4, 4)
+            esperada = np.asarray(reg.transform_4x4_row_major, dtype=np.float64).reshape(4, 4)
+            # glTF por COLUMNAS, manifiesto por FILAS: la del nodo es la traspuesta.
+            if not np.allclose(enel, esperada.T, atol=1e-4):
+                inf.errores.append(
+                    f"asset {a.id}: la `matrix` del nodo de {capa.id} no es la traspuesta "
+                    f"de la registracion {reg.id}. glTF guarda por columnas y el manifiesto "
+                    "por filas: confundirlas coloca la nube girada y espejada sin que nada "
+                    "falle"
+                )
 
 
 def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) -> None:
@@ -716,10 +798,10 @@ def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) 
             continue
         codificacion = meta.get("encoding") or {}
         # T-4 · el hash del array de posiciones del asset fuente, si el sidecar lo declara.
+        fuente = next((x for x in m.assets if x.id in (meta.get("source_assets") or [])
+                       and x.uri.endswith(".glb")), None)
         esperado = codificacion.get("source_positions_sha256")
         if esperado:
-            fuente = next((x for x in m.assets if x.id in (meta.get("source_assets") or [])
-                           and x.uri.endswith(".glb")), None)
             real = None if fuente is None else _hash_posiciones(z, fuente)
             if real is not None and real != esperado:
                 inf.errores.append(
@@ -733,12 +815,40 @@ def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifiesto, inf: Informe) 
             continue
         # `int16` little-endian: dos bytes por codigo. Es lo que declara el propio sidecar.
         esperados = int(cuenta) * 2
-        reales = len(z.read(a.uri))
-        if reales != esperados:
+        crudo_seg = z.read(a.uri)
+        if len(crudo_seg) != esperados:
             inf.errores.append(
                 f"asset {a.id}: su sidecar declara {cuenta} codigos ({esperados} bytes) y "
-                f"el fichero tiene {reales}. La union con la escena es posicional, asi que "
-                "un desajuste pinta las etiquetas sobre las piezas equivocadas"
+                f"el fichero tiene {len(crudo_seg)}. La union con la escena es posicional, "
+                "asi que un desajuste pinta las etiquetas sobre las piezas equivocadas"
+            )
+            continue
+
+        # ⚠️ **T-3, punto 8: contra el asset FUENTE y no solo contra si mismo.** Que el
+        # sidecar cuadre con su propio binario no dice nada: los dos los escribe el mismo
+        # emisor en la misma linea. Lo que hace verificable la union es que el recuento
+        # coincida con los vertices de la escena que dice indexar.
+        if fuente is not None:
+            vertices = _cuenta_vertices(z, fuente)
+            if vertices is not None and vertices != int(cuenta):
+                inf.errores.append(
+                    f"asset {a.id}: indexa {cuenta} elementos y {fuente.id} declara "
+                    f"{vertices} vertices. La union es por indice: con recuentos distintos "
+                    "no existe"
+                )
+
+        # ⚠️ **T-3, punto 7: los CODIGOS, no la lista que el sidecar dice tener.** Se
+        # validaba `labels.present`, que es lo que el emisor afirma; esto lee los int16 que
+        # de verdad viajan. Un codigo que no es ISO 3950 no es un diente y nadie sabra que
+        # pintar con el.
+        import numpy as np
+
+        codigos = np.frombuffer(crudo_seg, dtype="<i2")
+        fuera = sorted({str(int(c)) for c in np.unique(codigos)} - _FDI)
+        if fuera:
+            inf.errores.append(
+                f"asset {a.id}: su contenido trae codigos que no son ISO 3950 ni 0: "
+                + ", ".join(fuera[:8]) + ("…" if len(fuera) > 8 else "")
             )
 
 
