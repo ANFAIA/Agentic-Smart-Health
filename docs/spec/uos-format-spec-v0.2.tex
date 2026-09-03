@@ -2394,7 +2394,7 @@ A specification whose only executable definition lives inside its reference impl
 forces a second implementer to check their reader against \emph{their own output}, which is
 checking nothing. The fixture is what makes that unnecessary.
 
-It ships one \textbf{valid} container and several broken ones, each carrying \emph{a single}
+It ships two \textbf{valid} containers and ten broken ones, each carrying \emph{a single}
 defect, with the class of result each should produce written beside it in
 \code{esperado.json}. An implementer runs their validator over the directory and compares.
 Accepting one of the broken ones, or rejecting the valid one, tells them precisely what
@@ -2421,6 +2421,16 @@ physical entry (\S\ref{sec:container}).\\
 field: it is ignored and \emph{named}, not rejected (\S\ref{sec:versioning}).\\
 \code{comprimido.uos} & error & DEFLATE instead of STORE, so range access does not work
 (\S\ref{sec:container}).\\
+\code{serie-completa.uos} & valid & A container that \emph{carries} the DICOM series, slice
+by slice. The reference writer does not emit this --- it references originals --- and a
+validator has to accept an issuer that does. It reaches no conformance level, correctly:
+\code{UOS-Core} requires a renderable scene and this holds only the volume.\\
+\code{serie-corte-faltante.uos} & error & A slice is missing, and the validator must name
+\emph{which} (\S\ref{sec:volume}).\\
+\code{serie-corte-alterado.uos} & error & A slice with the same name and size and one byte
+changed.\\
+\code{serie-corte-sobrante.uos} & error & A slice the manifest does not declare in
+\code{parts[]}. Extra is as serious as missing: nobody knows where it came from.\\
 \bottomrule
 \end{longtable}
 

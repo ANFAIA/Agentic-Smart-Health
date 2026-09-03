@@ -30,7 +30,11 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
 
     destino = tmp_path / "banco"
     indice = genera(destino)
-    assert len(indice) >= 8, "el banco tiene que cubrir algo más que el caso feliz"
+    assert len(indice) >= 12, "el banco tiene que cubrir algo más que el caso feliz"
+    # Y en particular los tres desenlaces del check 7, que exigen un contenedor que
+    # CUSTODIE la serie — algo que nuestro escritor no emite y un validador debe aceptar.
+    por_corte = [c for c in indice if c["fichero"].startswith("serie-corte-")]
+    assert len(por_corte) == 3, "faltan casos de la verificación corte a corte"
 
     esperado = json.loads((destino / "esperado.json").read_text(encoding="utf-8"))
     assert [c["fichero"] for c in esperado["casos"]] == [c["fichero"] for c in indice]

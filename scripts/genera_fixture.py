@@ -74,6 +74,63 @@ def _sin_cadena(nombre: str, crudo: bytes, toca) -> bytes | None:
     return None if nombre.startswith("provenance/") else crudo
 
 
+
+def _con_la_serie_dentro(destino: Path, serie: Path) -> Path:
+    """Un contenedor que CUSTODIA la serie corte a corte.
+
+    ⚠️ **Nuestro escritor no produce esto y no debe.** Referencia los originales y no los
+    custodia (§3.4.3), asi que sin este contenedor el banco no puede ejercitar la
+    verificacion por corte —el check 7— y se queda en UOS-Core: justo el nivel donde esa
+    maquinaria no existe. Un validador tiene que funcionar sobre lo que escribio OTRO
+    emisor, incluido uno que si decida llevar el DICOM dentro, y eso es lo que se prueba.
+    """
+    from uos.contenedor import asset_de_directorio, write_uos
+    from uos.manifiesto import (
+        AssetKind,
+        Deidentification,
+        Frame,
+        Manifest,
+        PHIState,
+        Registration,
+        Subject,
+        Visit,
+    )
+    from uos.volumen import SIDECAR, describe_series
+
+    sidecar_uri = SIDECAR.format(id="ct_001")
+    sidecar, _ = describe_series(serie, frame="frame.ct_001")
+    m = Manifest(
+        case_id="urn:uuid:0", generator={"name": "fixture", "version": "0.2"},
+        phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="FIXTURE-0001"),
+        deidentification=Deidentification(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        ),
+        canonical_frame=Frame(id="frame.ios_master"),
+        frames=[Frame(
+            id="frame.ct_001",
+            dicom_frame_of_reference_uid=sidecar["dicom_frame_of_reference_uid"],
+            anatomical=sidecar["anatomical"],
+        )],
+        visits=[Visit(id="v1", date="2026-09-03")],
+        assets=[asset_de_directorio(
+            serie, "volume/ct_001/", id_="asset.ct_001", kind=AssetKind.VOLUME,
+            visit="v1", frame="frame.ct_001", media_type="application/dicom",
+            sidecar_uri=sidecar_uri,
+        )],
+        registrations=[Registration(
+            id="reg.ct_to_ios", source_frame="frame.ct_001",
+            target_frame="frame.ios_master", method="manual", operator="user:fixture",
+            transform_4x4_row_major=[1.0, 0, 0, 0, 0, 1.0, 0, 0,
+                                     0, 0, 1.0, 0, 0, 0, 0, 1.0],
+        )],
+        occlusion="single_arch",
+    )
+    return write_uos(
+        destino, m, [], directorios={"volume/ct_001/": serie},
+        extras={sidecar_uri: json.dumps(sidecar)},
+    )
+
+
 def _rompe_hash_interno(doc: dict) -> None:
     """Falsea el `sha256` del primer asset que viaja dentro del contenedor."""
     for a in doc["assets"]:
@@ -184,6 +241,50 @@ def genera(destino: Path) -> list[dict]:
     with zipfile.ZipFile(destino / "comprimido.uos", "w", zipfile.ZIP_DEFLATED) as z:
         for nombre, crudo in entradas:
             z.writestr(nombre, crudo)
+
+    # ── check 7 · la verificacion CORTE A CORTE (§6) ──────────────────────────
+    # Sin un contenedor que custodie la serie, el banco no ejercita nada de esto y se
+    # queda en UOS-Core. Son los tres desenlaces que el §6 distingue, y distinguirlos es
+    # la diferencia entre «esta serie no cuadra» y «el corte 3 esta corrupto».
+    con_serie = _con_la_serie_dentro(destino / "serie-completa.uos",
+                                     trabajo / "entrada" / "cbct")
+    indice.append({
+        "fichero": "serie-completa.uos", "espera": "valido",
+        "porque": "custodia la serie DICOM entera y cada corte cuadra con su hash (§6). "
+                  "Nuestro escritor no emite asi —referencia los originales— y un "
+                  "validador tiene que aceptar al emisor que si lo haga. ⚠️ No alcanza "
+                  "NINGUN nivel de conformidad, y es correcto: UOS-Core exige una escena "
+                  "renderizable y este contenedor solo lleva el volumen",
+    })
+
+    def _de_la_serie(nombre: str, espera: str, porque: str, cambia) -> None:
+        _reescribe(con_serie, destino / nombre, cambia)
+        indice.append({"fichero": nombre, "espera": espera, "porque": porque})
+
+    cortes = sorted(n for n in zipfile.ZipFile(con_serie).namelist()
+                    if n.startswith("volume/ct_001/"))
+    _de_la_serie(
+        "serie-corte-faltante.uos", "error",
+        f"falta el corte {cortes[len(cortes) // 2]!r}. Un hash del conjunto diria solo "
+        "que algo cambio; el §6 exige decir CUAL",
+        lambda n, c: None if n == cortes[len(cortes) // 2] else c,
+    )
+    _de_la_serie(
+        "serie-corte-alterado.uos", "error",
+        f"el corte {cortes[0]!r} tiene un byte cambiado: mismo nombre, mismo tamano, "
+        "otro contenido",
+        lambda n, c: (c[:-1] + bytes([c[-1] ^ 0xFF])) if n == cortes[0] else c,
+    )
+    _de_la_serie(
+        "serie-corte-sobrante.uos", "error",
+        "hay un corte de mas que el manifiesto no declara en `parts[]`. Sobrar es tan "
+        "grave como faltar: nadie sabe de donde salio",
+        lambda n, c: c,
+    )
+    with zipfile.ZipFile(destino / "serie-corte-sobrante.uos", "a",
+                         zipfile.ZIP_STORED) as z:
+        z.writestr(cortes[0].rsplit("/", 1)[0] + "/colado.dcm",
+                   zipfile.ZipFile(con_serie).read(cortes[0]))
 
     (destino / "esperado.json").write_text(
         json.dumps({
