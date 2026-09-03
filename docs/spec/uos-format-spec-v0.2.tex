@@ -2394,7 +2394,7 @@ A specification whose only executable definition lives inside its reference impl
 forces a second implementer to check their reader against \emph{their own output}, which is
 checking nothing. The fixture is what makes that unnecessary.
 
-It ships two \textbf{valid} containers and ten broken ones, each carrying \emph{a single}
+It ships two \textbf{valid} containers, one that is valid but must warn, and ten broken ones, each carrying \emph{a single}
 defect, with the class of result each should produce written beside it in
 \code{esperado.json}. An implementer runs their validator over the directory and compares.
 Accepting one of the broken ones, or rejecting the valid one, tells them precisely what
@@ -2431,6 +2431,11 @@ validator has to accept an issuer that does. It reaches no conformance level, co
 changed.\\
 \code{serie-corte-sobrante.uos} & error & A slice the manifest does not declare in
 \code{parts[]}. Extra is as serious as missing: nobody knows where it came from.\\
+\code{serie-corte-deidentificado.uos} & valid, warns & A slice whose tags were cleaned: it
+keeps its SOP Instance UID and its pixels and its bytes are no longer the declared ones.
+\textbf{This is the case the two levels exist for} --- a validator comparing only file
+hashes says ``this series is not this case's'', which is false and is the most expensive
+conclusion available.\\
 \bottomrule
 \end{longtable}
 

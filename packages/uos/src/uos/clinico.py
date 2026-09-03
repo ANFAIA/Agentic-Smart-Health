@@ -50,6 +50,11 @@ OBSERVATIONS = "clinical/observations.json"
 # dice «mapeado» y miente. Es la misma regla que deja `weights_sha256` en nulo.
 SNOMED = "http://snomed.info/sct"
 
+#: ISO 3950 (FDI). El URN del propio estandar: no hay que poseer dominio
+#: ninguno para nombrarlo, y es lo que distingue un «27» FDI de un «27»
+#: del Universal Numbering System, que es un diente distinto.
+ISO_3950 = "urn:iso:std:iso:3950"
+
 #: Estado del mapeo, declarado en el fichero para que nadie lo confunda con un hueco.
 MAPEO_PENDIENTE = (
     "el `code` SNOMED CT esta sin asignar: mapear un vocabulario clinico exige un "
@@ -93,7 +98,20 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
     piezas: dict[str, dict[str, Any]] = {}
     for obs in snapshot.regional:
         a = obs.attributes
-        d = piezas.setdefault(obs.region_id, {"fdi": obs.region_id})
+        # ⚠️ **`body_site` codificado, no solo el numero (D-5).** `fdi: "27"` es un
+        # entero con contexto implicito: un lector estadounidense lo lee en el Universal
+        # Numbering System y es OTRO diente. El `Observation` de FHIR al que esto se mapea
+        # espera un `bodySite` codificado, con su sistema declarado. `fdi` se queda porque
+        # es lo que el resto del contenedor usa como clave, y `body_site` es lo que un
+        # conector puede resolver sin suponer de que pais somos.
+        d = piezas.setdefault(obs.region_id, {
+            "fdi": obs.region_id,
+            "body_site": {
+                "system": ISO_3950,
+                "code": obs.region_id,
+                "display": f"diente FDI {obs.region_id}",
+            },
+        })
         # ⚠️ **La procedencia va POR VALOR, y antes colgaba de la pieza.** `confidence`,
         # `agent` y `derivation` se escribian una vez por diente sobre un `setdefault`: con
         # dos observaciones de la misma pieza, `findings` se acumulaba y estos tres los

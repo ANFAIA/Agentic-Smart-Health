@@ -169,6 +169,13 @@ def json_de(obj: object) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False)
 
 
+def identidad_dicom_de(crudo: bytes) -> tuple[str | None, str | None, float | None, float | None]:
+    """Como `_identidad_dicom` pero sobre BYTES, para quien lee de un ZIP (D-3)."""
+    import io
+
+    return _identidad_dicom(io.BytesIO(crudo))
+
+
 def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None, float | None, float | None]:
     """`(sop_instance_uid, sha256 de PixelData)` de un corte, o `(None, None)` (D-3).
 

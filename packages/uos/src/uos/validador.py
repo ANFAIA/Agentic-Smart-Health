@@ -16,7 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from uos.clinico import OBSERVATIONS
-from uos.contenedor import MANIFIESTO, read_manifest_from
+from uos.contenedor import MANIFIESTO, identidad_dicom_de, read_manifest_from
 from uos.manifiesto import (
     UOS_VERSION,
     AnatomicalConvention,
@@ -138,6 +138,7 @@ def validate(ruta: Path) -> Report:
         _valida_derivados(z, m, inf)
         _valida_gs(z, m, inf)
         _valida_matrices_gs(z, m, inf)
+        _valida_uid_del_sidecar(z, m, inf)
         _valida_union_segmentacion(z, m, inf)
         _valida_entradas_declaradas(z, m, inf)
         _valida_phi(z, m, inf)
@@ -294,6 +295,7 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
         )
         return
     declarados = {a.uri + p.name for p in a.parts}
+    desidentificados = False
     if sobran := hijos - declarados:
         inf.errors.append(
             f"asset {a.id}: {len(sobran)} fichero(s) dentro de {a.uri} que el manifiesto "
@@ -305,9 +307,37 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
             inf.errors.append(f"asset {a.id}: falta {ruta}, que el manifiesto declara")
             continue
         crudo = z.read(ruta)
+        # ⚠️ **Dos niveles, reportados POR SEPARADO (D-3).** El hash del fichero dice si los
+        # BYTES son los mismos; el SOP Instance UID y el hash de `PixelData` dicen si es la
+        # MISMA INSTANCIA CLINICA. Un corte de-identificado conserva la segunda y pierde la
+        # primera —de-identificar reescribe cabeceras— y eso **es informacion, no un
+        # error**: significa «es este corte, con las etiquetas limpiadas». Reportarlo como
+        # un solo fallo de hash le diria a quien lo lea que la serie es otra.
+        identidad_ok = None
+        if parte.sop_instance_uid and parte.pixel_data_sha256:
+            uid, px, _bajo, _alto = identidad_dicom_de(crudo)
+            identidad_ok = (uid == parte.sop_instance_uid
+                            and px == parte.pixel_data_sha256)
+            if not identidad_ok:
+                inf.errors.append(
+                    f"asset {a.id}: {parte.name} NO es la instancia declarada (SOP Instance "
+                    "UID o contenido de pixeles distinto). Es otro corte, no este alterado"
+                )
         if hashlib.sha256(crudo).hexdigest() != parte.sha256:
-            inf.errors.append(f"asset {a.id}: el sha256 de {parte.name} no cuadra")
-        if len(crudo) != parte.bytes:
+            if identidad_ok:
+                desidentificados = True
+                inf.warnings.append(
+                    f"asset {a.id}: {parte.name} conserva su identidad DICOM y sus bytes no "
+                    "son los declarados. Es el mismo corte con las cabeceras reescritas "
+                    "—lo que hace una de-identificacion—, no un corte distinto"
+                )
+            else:
+                inf.errors.append(f"asset {a.id}: el sha256 de {parte.name} no cuadra")
+        if len(crudo) != parte.bytes and not identidad_ok:
+            # ⚠️ Si la identidad se conserva, el tamano distinto es PARTE de la misma
+            # historia —limpiar etiquetas acorta la cabecera— y ya se dijo arriba en un
+            # aviso. Reportarlo aparte como error convertiria una de-identificacion en un
+            # contenedor invalido, que es justo la conclusion que D-3 evita.
             inf.errors.append(
                 f"asset {a.id}: {parte.name} declara {parte.bytes} bytes y tiene {len(crudo)}"
             )
@@ -316,7 +346,7 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
             f"asset {a.id}: el digesto declarado del directorio no es el de sus partes "
             f"({a.sha256[:12]}… vs {real[:12]}…)"
         )
-    if sum(p.bytes for p in a.parts) != a.bytes:
+    if sum(p.bytes for p in a.parts) != a.bytes and not desidentificados:
         inf.errors.append(
             f"asset {a.id}: declara {a.bytes} bytes y sus partes suman "
             f"{sum(p.bytes for p in a.parts)}"
@@ -731,6 +761,31 @@ def _hash_posiciones(z: zipfile.ZipFile, a) -> str | None:
         return hashlib.sha256(binario[off:off + acc["count"] * 12]).hexdigest()
     except (KeyError, IndexError, ValueError):
         return None
+
+
+def _valida_uid_del_sidecar(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
+    """El frame of reference del sidecar contra el del frame (D-1).
+
+    Son dos sitios donde vive el mismo dato. Si divergen, uno de los dos miente y un lector
+    que resuelva por el equivocado cree estar en un espacio en el que no esta — sin nada
+    que se lo indique, porque cada uno por separado es coherente.
+    """
+    for a in m.assets:
+        if a.kind != AssetKind.VOLUME or not a.sidecar_uri:
+            continue
+        try:
+            sc = json.loads(z.read(a.sidecar_uri))
+        except (KeyError, ValueError):
+            continue
+        frame = next((f for f in [m.canonical_frame, *m.frames] if f.id == a.frame), None)
+        suyo = sc.get("dicom_frame_of_reference_uid")
+        if (frame is not None and suyo and frame.dicom_frame_of_reference_uid
+                and suyo != frame.dicom_frame_of_reference_uid):
+            inf.errors.append(
+                f"asset {a.id}: su sidecar declara el frame of reference {suyo} y el frame "
+                f"{frame.id} declara {frame.dicom_frame_of_reference_uid}. Uno de los dos "
+                "miente"
+            )
 
 
 def _valida_matrices_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:

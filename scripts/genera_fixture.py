@@ -286,6 +286,33 @@ def genera(destino: Path) -> list[dict]:
         z.writestr(cortes[0].rsplit("/", 1)[0] + "/colado.dcm",
                    zipfile.ZipFile(con_serie).read(cortes[0]))
 
+    # ⚠️ **El caso que da sentido a los dos niveles (D-3).** Un corte de-identificado
+    # conserva su identidad clinica —SOP Instance UID y pixeles— y pierde sus bytes,
+    # porque limpiar etiquetas reescribe la cabecera. Un validador que solo compare hashes
+    # de fichero dice «esta serie no es la de este caso», que es falso y es la conclusion
+    # mas cara posible. Con los dos niveles dice lo que pasa: es este corte, limpiado.
+    def _deidentifica(nombre: str, crudo: bytes) -> bytes:
+        if not nombre.startswith("volume/ct_001/") or nombre != cortes[0]:
+            return crudo
+        import io
+
+        import pydicom
+
+        ds = pydicom.dcmread(io.BytesIO(crudo))
+        ds.PatientName = ""
+        ds.InstitutionName = ""
+        salida = io.BytesIO()
+        ds.save_as(salida)
+        return salida.getvalue()
+
+    _de_la_serie(
+        "serie-corte-deidentificado.uos", "aviso",
+        f"al corte {cortes[0]!r} se le han limpiado etiquetas: conserva su SOP Instance "
+        "UID y sus pixeles, y sus bytes ya no son los declarados. Es AVISO y no error — "
+        "es el mismo corte de-identificado, no otro corte (§6)",
+        _deidentifica,
+    )
+
     (destino / "esperado.json").write_text(
         json.dumps({
             "formato": "UOS",

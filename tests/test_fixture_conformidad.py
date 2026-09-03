@@ -30,11 +30,16 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
 
     destino = tmp_path / "banco"
     indice = genera(destino)
-    assert len(indice) >= 12, "el banco tiene que cubrir algo más que el caso feliz"
+    assert len(indice) >= 13, "el banco tiene que cubrir algo más que el caso feliz"
     # Y en particular los tres desenlaces del check 7, que exigen un contenedor que
     # CUSTODIE la serie — algo que nuestro escritor no emite y un validador debe aceptar.
     por_corte = [c for c in indice if c["fichero"].startswith("serie-corte-")]
-    assert len(por_corte) == 3, "faltan casos de la verificación corte a corte"
+    assert len(por_corte) == 4, "faltan casos de la verificación corte a corte"
+    # ⚠️ Y uno de ellos NO es un error: un corte de-identificado conserva su identidad
+    # clínica y pierde sus bytes. Un validador que lo llame error dice «esta serie no es
+    # la de este caso», que es falso y es la conclusión más cara posible.
+    assert any(c["fichero"] == "serie-corte-deidentificado.uos" and c["espera"] == "aviso"
+               for c in indice)
 
     esperado = json.loads((destino / "esperado.json").read_text(encoding="utf-8"))
     assert [c["fichero"] for c in esperado["casos"]] == [c["fichero"] for c in indice]
