@@ -129,8 +129,7 @@ and the \emph{relations between them}, in one file.}\\[2.2cm]
 \textbf{Editor} & Luis Garbayo Fern\'andez\\
 \textbf{Copyright} & Luis Garbayo Fern\'andez\\
 \textbf{Licence} & Apache License 2.0, covering \textbf{this document and the}\\
- & \textbf{reference implementation alike}. The licence in the repository\\
- & root applies to both; neither is more freely reusable.\\
+ & \textbf{reference implementation alike}. \\
 \textbf{Extension prefix} & \code{histora\_}, the single prefix this specification\\
  & reserves (\S\ref{sec:extensions}).\\
 \textbf{Produced under} & Version 0.2 was written during the Becas de Verano ANFAIA\\
@@ -139,16 +138,13 @@ and the \emph{relations between them}, in one file.}\\[2.2cm]
 \end{tabular}
 
 \vspace{0.8cm}
-{\color{uosgrey}\small Every figure in this document was measured on a real clinical case
+{\color{uosgrey}\small Every figure was measured on a real clinical case
 contributed by Histora. This is a versioned, living specification, not the deliverable
 of a fixed term. Later versions revise it under the process of
-\S\ref{sec:limits}; \S\ref{sec:artifacts} names where the schema for each
-version lives.}
-
-\vfill
-{\color{uosgrey}\small This document is the contract. An implementation that follows it
+\S\ref{sec:limits}; \S\ref{sec:artifacts} where the schema for each
+version lives. This document is the contract. An implementation that follows it
 can open, render, verify, extend and re-emit a \code{.uos} without access to the
-reference implementation and without asking its authors anything.}
+reference implementation.}
 \vspace{1.5cm}
 \end{titlepage}
 
@@ -2405,7 +2401,7 @@ defect, with the class of result each should produce written beside it in
 Accepting one of the broken ones, or rejecting the valid one, tells them precisely what
 they are missing.
 
-\begin{longtable}{L{5.4cm} L{2.2cm} L{7.4cm}}
+\begin{longtable}{L{6.3cm} L{2.2cm} L{6.5cm}}
 \toprule
 \textbf{Case} & \textbf{Expects} & \textbf{What it exercises}\\
 \midrule
@@ -2685,6 +2681,7 @@ by \code{kid}, and allow several signatures over one payload.
 \bottomrule
 \end{longtable}
 
+\newpage
 \section{Measured figures}\label{app:figures}
 
 Every number in this document comes from a real clinical case --- a maxillary arch, an
@@ -2713,7 +2710,6 @@ CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
 \bottomrule
 \end{longtable}
 
-\newpage
 \subsection*{What has been measured, and what it supports}
 
 \begin{longtable}{L{4.6cm} L{4.0cm} L{6.8cm}}
