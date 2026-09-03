@@ -46,7 +46,7 @@ from uos.derivados import (
     separa_region_id,
     sha256_de_fichero,
 )
-from uos.escena import MEDIA_GLB, GSNode, build_glb, lee_stl_binario
+from uos.escena import MEDIA_GLB, GSNode, build_glb, columnas_de, lee_stl_binario
 from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
@@ -595,28 +595,33 @@ class UOSExportAgent(BaseExportAgent):
                 # lleva `_REGION_ID` (B-1: es Layer 3 y la escena es Layer 1). Declararlo
                 # igualmente describiria una columna que el contenedor no lleva, que es
                 # exactamente el fallo que este bloque arreglo la primera vez.
-                esq_ap = esquema_apariencia([c for c in _props_ap if c != "region_id"])
+                # El esquema de LECTURA: describe el PLY entero, y solo sirve para que
+                # `_splats_khr` sepa en que unidad viene cada columna (logit, log(mm)).
+                esq_lectura = esquema_apariencia(_props_ap)
                 descriptor_ap = "scene/appearance.gs.json"
-                extras_escena[descriptor_ap] = json_de(self._descriptor_gs(
-                    snapshot,
-                    papel="apariencia real entrenada con gsplat",
-                    medido=False,
-                    marco=FRAME_IOS,
-                    # ⚠️ **La nota se LEE del PLY, no se escribe aqui.** Este literal
-                    # describia el color como «un degradado de DOS tonos interpolado por
-                    # altura z» mucho despues de que el color pasara a medirse corona a
-                    # corona: la cabecera del fichero decia una cosa y su propio sidecar
-                    # otra, y el panel del visor mostraba la vieja. Es el mismo fallo que
-                    # ya se arreglo dos veces aqui —las unidades y el esquema— y la misma
-                    # cura: quien describe, pregunta al fichero.
-                    nota=self._nota_color_ply(destino_ap),
-                    esquema_override=esq_ap,
-                    perfil_override="histora-gs-apariencia/1.0",
-                    # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
-                    # el numero de gaussianas escritas no es el de la semilla que se le dio.
-                    n_primitives_override=(_n_ap or len(datos_ap["means"])),
-                    unidades_override=_u_ap,
-                ))
+                # El descriptor se COMPONE aqui y se escribe abajo, cuando ya se
+                # sabe que columnas lleva la primitiva que viaja.
+                def _descriptor(esq):
+                    return self._descriptor_gs(
+                        snapshot,
+                        papel="apariencia real entrenada con gsplat",
+                        medido=False,
+                        marco=FRAME_IOS,
+                        # ⚠️ **La nota se LEE del PLY, no se escribe aqui.** Este literal
+                        # describia el color como «un degradado de DOS tonos interpolado por
+                        # altura z» mucho despues de que el color pasara a medirse corona a
+                        # corona: la cabecera del fichero decia una cosa y su propio sidecar
+                        # otra, y el panel del visor mostraba la vieja. Es el mismo fallo que
+                        # ya se arreglo dos veces aqui —las unidades y el esquema— y la misma
+                        # cura: quien describe, pregunta al fichero.
+                        nota=self._nota_color_ply(destino_ap),
+                        esquema_override=esq,
+                        perfil_override="histora-gs-apariencia/1.0",
+                        # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
+                        # el numero de gaussianas escritas no es el de la semilla que se le dio.
+                        n_primitives_override=(_n_ap or len(datos_ap["means"])),
+                        unidades_override=_u_ap,
+                )
                 # ⚠️ **No hay `asset.apariencia` ni `GSNode`: la capa ES la primitiva.**
                 # Habia las dos cosas —un `.ply` de 12,5 MB declarado como asset y un nodo
                 # con `extras.uos_gs_uri` apuntandolo— porque era el fallback que el
@@ -628,14 +633,22 @@ class UOSExportAgent(BaseExportAgent):
                 # `region_id` es inferencia y no medida, que `f_dc` es color medido por
                 # pieza y que `ao` es visualizacion. La extension no tiene donde decir nada
                 # de eso, asi que cuelga de `asset.scene` como su `sidecar_uri`.
+                # ⚠️ **La primitiva PRIMERO, y el descriptor derivado de ella.** El
+                # descriptor se sacaba del PLY intermedio —que no viaja— asi que describia
+                # otro fichero. Coincidian mientras la primitiva era copia fiel del PLY;
+                # dejaron de coincidir con B-1 y se tapo con un filtro. Ahora se le
+                # pregunta a lo que se envia, que es lo unico que un lector va a abrir.
                 try:
-                    splats_khr = _splats_khr(destino_ap, esq_ap)
+                    splats_khr = _splats_khr(destino_ap, esq_lectura)
                 except (KeyError, ValueError) as e:
                     splats_khr = None
                     aviso_derivados.append(
                         f"la apariencia NO viaja: no se pudo construir la primitiva "
                         f"`KHR_gaussian_splatting` desde el campo entrenado: {e}"
                     )
+                if splats_khr is not None:
+                    esq_ap = esquema_apariencia(columnas_de(splats_khr))
+                    extras_escena[descriptor_ap] = json_de(_descriptor(esq_ap))
             except (KeyError, OSError, ValueError) as e:
                 aviso_derivados.append(
                     f"apariencia no incluida en el `.uos`: {e}"
@@ -872,7 +885,7 @@ class UOSExportAgent(BaseExportAgent):
             # D-1/D-2 · el frame del volumen se ancla al UID que DICOM ya define y declara
             # su convencion anatomica. Se LEE del sidecar, que a su vez lo leyo de la
             # serie: aqui no se inventa ninguno de los dos.
-            # ⚠️ Se reconstruye en vez de `model_copy(update=...)`: ese camino NO validate,
+            # ⚠️ Se reconstruye en vez de `model_copy(update=...)`: ese camino NO valida,
             # y dejaba `anatomical` como `str` donde el contrato declara un enum. Pydantic
             # solo avisa al serializar, asi que el fallo salia en un warning y no aqui.
             frame_cbct = Frame(**{
@@ -1010,7 +1023,7 @@ class UOSExportAgent(BaseExportAgent):
             **extras,
         })
 
-        # Se RELEE y se validate lo que se acaba de escribir, igual que hace el exportador
+        # Se RELEE y se valida lo que se acaba de escribir, igual que hace el exportador
         # de STL: el sha256 de cada asset se recomputa desde el contenedor. Si cuadra, la
         # desviacion del ciclo es exactamente cero y esta MEDIDA, no afirmada — el
         # contenedor referencia, no transcodifica, y esto lo demuestra fichero a fichero.
@@ -1019,7 +1032,7 @@ class UOSExportAgent(BaseExportAgent):
         informe = validate(salida)
         if not informe.valid:
             raise ValueError(
-                "el .uos recien escrito no validate contra su propio manifiesto: "
+                "el .uos recien escrito no valida contra su propio manifiesto: "
                 + "; ".join(informe.errors[:3])
             )
 

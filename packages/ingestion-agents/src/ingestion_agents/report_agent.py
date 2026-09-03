@@ -506,7 +506,7 @@ def valida_propuestas(items: Iterable[Mapping[str, Any]]) -> LLMExtraction:
     prueba entera sin `anthropic` instalado y sin clave. Lo único que queda fuera es
     la llamada HTTP, que no tiene decisiones dentro.
 
-    **Se validate campo a campo, no diente a diente.** Un informe que dice «Diente 16,
+    **Se valida campo a campo, no diente a diente.** Un informe que dice «Diente 16,
     3 raíces, pH 74» trae un valor malo y dos buenos; tumbar la pieza entera perdería
     los dos buenos. Cae solo el que falla, y cae **registrado**: que lo haya propuesto
     un LLM no es motivo para perderlo en silencio, igual que no lo es en el regex.
@@ -591,7 +591,7 @@ def valida_propuestas(items: Iterable[Mapping[str, Any]]) -> LLMExtraction:
 
 
 def extract_by_llm(text: str, *, model: str = _LLM_MODEL) -> LLMExtraction:
-    """Extrae con Claude (salida forzada por esquema) y validate lo que devuelve.
+    """Extrae con Claude (salida forzada por esquema) y valida lo que devuelve.
 
     Aquí no hay política: se llama al modelo y se delega en `valida_propuestas`, que
     es lo que decide qué entra. La separación es lo que permite probar el backend

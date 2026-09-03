@@ -1,4 +1,4 @@
-"""El manifiesto: `manifest.json`. Es el contrato del contenedor, y se validate como tal.
+"""El manifiesto: `manifest.json`. Es el contrato del contenedor, y se valida como tal.
 
 Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
 `.uos`, que es justo el punto: un lector tiene que poder negarse en vez de adivinar.

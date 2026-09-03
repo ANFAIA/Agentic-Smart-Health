@@ -64,6 +64,8 @@ import numpy as np
 
 MEDIA_GLB = "model/gltf-binary"
 
+
+
 _MAGIA = 0x46546C67          # 'glTF'
 _JSON = 0x4E4F534A           # 'JSON'
 _BIN = 0x004E4942            # 'BIN\0'
@@ -131,6 +133,28 @@ class SplatsKHR(NamedTuple):
     # del entrenamiento contra renders sRGB.
     color_space: str = "srgb_rec709_display"
     extras: dict | None = None
+
+
+def columnas_de(gs: SplatsKHR) -> list[str]:
+    """Los nombres de columna que la primitiva LLEVA de verdad.
+
+    ⚠️ **Existe porque el descriptor estaba anclado al fichero equivocado.** Se derivaba
+    del PLY intermedio —que se escribe y no viaja— y describia lo que ESE tenia, no lo que
+    lleva la primitiva que si viaja. Coincidian mientras la primitiva era copia fiel del
+    PLY, y dejaron de coincidir en cuanto `region_id` se quedo fuera (B-1): el descriptor
+    habria declarado una columna que el contenedor no contiene. Se parcheo con un filtro y
+    esto es el arreglo: preguntarle a la primitiva, que es lo que se describe.
+    """
+    cols = ["x", "y", "z", *(f"scale_{i}" for i in range(3)),
+            *(f"rot_{i}" for i in range(4)), "opacity",
+            *(f"f_dc_{i}" for i in range(3))]
+    if gs.sh1 is not None:
+        cols += [f"f_rest_{i}" for i in range(9)]
+    if gs.ao is not None:
+        cols.append("ao")
+    if getattr(gs, "normales", None) is not None:
+        cols += ["nx", "ny", "nz"]
+    return cols
 
 
 def _mesh_splats(

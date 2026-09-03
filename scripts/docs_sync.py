@@ -395,7 +395,7 @@ def _ficha_de(texto: str, nombre: str) -> str | None:
     ficha equivocada: la de `export-agent` nombra a `render-export-agent` en su tabla de
     canales, y es anterior en el documento. La comprobación de versiones pasaba en verde
     comparando contra la versión del vecino — invisible mientras todos declararan `0.1.0`,
-    y silenciosamente rota en cuanto uno subiera. Un guardián que validate contra la fuente
+    y silenciosamente rota en cuanto uno subiera. Un guardián que valida contra la fuente
     equivocada es peor que no tenerlo, porque da confianza sin darla.
 
     El titular es el criterio correcto también para las fichas compartidas: la de fusión se

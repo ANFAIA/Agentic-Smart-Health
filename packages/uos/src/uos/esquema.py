@@ -10,7 +10,7 @@ decisión: un esquema copiado a mano empieza igual al contrato y se separa de é
 primer campo que alguien añade, sin que nada avise. Derivándolo, la única forma de que
 mientan a la vez es que el contrato ya estuviera mal.
 
-⚠️ **Lo que este esquema NO comprueba.** Un JSON Schema validate forma, no verdad: no sabe
+⚠️ **Lo que este esquema NO comprueba.** Un JSON Schema valida forma, no verdad: no sabe
 si un `sha256` coincide con su asset, si el grafo de frames llega al canónico, ni si un
 `derived/` trae su `meta.json`. Eso lo sigue haciendo `validador.py`, y por eso el §12
 pide las dos cosas y no una. Publicar el esquema añade un lector externo; no sustituye al

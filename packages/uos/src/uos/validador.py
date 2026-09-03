@@ -1,4 +1,4 @@
-"""`uos-validate`: comprueba que un `.uos` es lo que dice ser (§12).
+"""`uos-valida`: comprueba que un `.uos` es lo que dice ser (§12).
 
 Los niveles de conformidad del spec —Core, Vol, Sig, Full— no son etiquetas: son lo que
 permite a un implementador decir «soporto esto» sin ambiguedad, y a un emisor saber si su
@@ -100,7 +100,7 @@ def validate(ruta: Path) -> Report:
                 break
         crudo = z.read(MANIFIESTO)
         # ⚠️ La rama de version PRIMERO: si el contenedor declara una mayor superior esto
-        # eleva, y es lo correcto — no se validate lo que no se sabe interpretar (§15).
+        # eleva, y es lo correcto — no se valida lo que no se sabe interpretar (§15).
         # ⚠️ **Un manifiesto ilegible es un ERROR, no una excepcion.** Esto reventaba con
         # `ValidationError` en cuanto el manifiesto no encajaba en el contrato, asi que un
         # contenedor de otro emisor con un fallo de forma tumbaba al validador en vez de
@@ -194,7 +194,7 @@ def _perfil_distribuible(m: Manifest, inf: Report) -> None:
     # Los errores del propio validador cuentan: un contenedor que no cuadra consigo mismo
     # no se manda a nadie, por muy declarado que este todo lo demas.
     if inf.errors:
-        faltan.append("no validate contra su propio manifiesto")
+        faltan.append("no valida contra su propio manifiesto")
     inf.not_distributable_because = faltan
     inf.distributable = not faltan
 
@@ -222,7 +222,7 @@ def _valida_esquema(crudo: bytes, inf: Report) -> None:
         jsonschema.validate(json.loads(crudo), esquema_del_manifiesto())
     except jsonschema.ValidationError as e:
         inf.warnings.append(
-            f"el manifiesto no validate contra el JSON Schema publicado en "
+            f"el manifiesto no valida contra el JSON Schema publicado en "
             f"{'.'.join(str(x) for x in e.absolute_path) or '(raiz)'}: {e.message}. "
             "El contrato lo acepta, asi que lo que se ha quedado atras es el esquema."
         )
@@ -995,7 +995,7 @@ def _valida_procedencia(
     try:
         cadena = Chain.model_validate_json(z.read(CHAIN))
     except ValueError as e:
-        inf.errors.append(f"{CHAIN} no es una cadena validate: {e}")
+        inf.errors.append(f"{CHAIN} no es una cadena valida: {e}")
         return
     inf.errors += revisa_cadena(
         cadena, case_id=m.case_id, manifiesto_sha256=manifiesto_sha256,
@@ -1043,7 +1043,7 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
         crudo = json.loads(z.read(VIEWS))
         vistas = [View.model_validate(v) for v in crudo.get("views", [])]
     except (ValueError, AttributeError) as e:
-        inf.errors.append(f"{VIEWS} no es una lista de vistas validate: {e}")
+        inf.errors.append(f"{VIEWS} no es una lista de vistas valida: {e}")
         return
     visitas = {v.id for v in m.visits}
     hay_volumen = any(a.kind == AssetKind.VOLUME for a in m.assets)

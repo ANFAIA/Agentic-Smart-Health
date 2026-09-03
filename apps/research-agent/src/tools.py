@@ -143,7 +143,7 @@ def write_summary(
          resumen superficial— cubriendo problema/contexto, metodología,
          resultados, limitaciones y relevancia clínica.
 
-    La tool validate que ambas partes estén presentes y que la explicación sea
+    La tool valida que ambas partes estén presentes y que la explicación sea
     más extensa que el abstract; si no, devuelve un error para que el agente
     regenere el contenido.
 

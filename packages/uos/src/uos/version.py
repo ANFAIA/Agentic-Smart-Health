@@ -90,7 +90,7 @@ def lee_permisivo(crudo: bytes | str) -> tuple[Manifest, list[str]]:
     Un arbol duplicado se separa del bueno en el primer campo que alguien anada, que es el
     mismo fallo que evitamos generando el JSON Schema en vez de copiarlo a mano.
 
-    Asi que se validate, se leen las rutas que el error marca como `extra_forbidden`, se podan
+    Asi que se valida, se leen las rutas que el error marca como `extra_forbidden`, se podan
     y se reintenta. Lo que sobra sale nombrado —no se ignora en silencio— porque el lector
     tiene que poder decir QUE dejo sin leer.
     """

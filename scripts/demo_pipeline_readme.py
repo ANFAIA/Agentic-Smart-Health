@@ -129,7 +129,7 @@ def _etiquetas_ios_sinteticas(mesh: Path) -> np.ndarray | None:
 
     El generador escribe, para cada diente, primero la corona y luego su encia. La etiqueta
     de la corona es el FDI; la de la encia es 0. Si el layout cambia, se devuelve `None` y
-    la demo sigue siendo validate, solo con menos vistas en el `.uos`.
+    la demo sigue siendo valida, solo con menos vistas en el `.uos`.
     """
     n_vertices = len(parse_obj(mesh)["positions"])
     codigos = synthetic.upper_arch_codes()

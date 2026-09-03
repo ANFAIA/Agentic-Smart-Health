@@ -797,7 +797,7 @@ def test_el_esquema_publicado_valida_un_contenedor_de_verdad(tmp_path, malla):
 def test_el_esquema_del_repositorio_NO_se_queda_atras(tmp_path):
     """El esquema se DERIVA del contrato, pero el fichero publicado es una copia en disco
     y una copia se separa. Este test es lo que obliga a regenerarlo cuando cambia un
-    campo, en vez de descubrirlo cuando a alguien de fuera no le validate un contenedor."""
+    campo, en vez de descubrirlo cuando a alguien de fuera no le valida un contenedor."""
     import json as _json
 
     from uos.esquema import RUTA, esquema_del_manifiesto
@@ -1206,7 +1206,7 @@ def test_las_unidades_de_la_extension_NO_son_las_del_PLY(tmp_path):
     ⚠️ **Son tres conversiones reales, no tres renombrados.** El PLY INRIA guarda la
     opacidad en logit, las escalas en logaritmo y el cuaternión como `(w,x,y,z)`; la
     extensión pide lineal, lineal y `(x,y,z,w)`. Copiar los arrays tal cual produce un
-    fichero que validate y se dibuja mal: opacidades fuera de rango, elipses del tamaño
+    fichero que valida y se dibuja mal: opacidades fuera de rango, elipses del tamaño
     equivocado y cada una girada. Es el peor tipo de fallo — no revienta.
     """
     import numpy as np

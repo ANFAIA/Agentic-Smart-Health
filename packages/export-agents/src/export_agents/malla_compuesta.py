@@ -74,7 +74,7 @@ from export_agents.stl import read_stl_triangles, write_binary_stl
 # no en milímetros: un CBCT de 0,15 mm de vóxel y uno de 0,4 mm necesitan alfas
 # distintos en mm y el mismo en espaciados. Por debajo de ~2 la superficie se agujerea
 # donde el muestreo es irregular; muy por encima se traga las concavidades y la raíz
-# sale como una cápsula. El valor se validate midiendo la banda de corona, que es para
+# sale como una cápsula. El valor se valida midiendo la banda de corona, que es para
 # lo que existe esa medida.
 ALFA_ESPACIADOS = 2.5
 
