@@ -28,11 +28,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CADENA = "provenance/chain.json"
-FIRMAS = "provenance/signatures/"
+CHAIN = "provenance/chain.json"
+SIGNATURES = "provenance/signatures/"
 
 
-class Eslabon(BaseModel):
+class Link(BaseModel):
     """Una version del caso: el hash de su manifiesto y el de la anterior."""
 
     model_config = ConfigDict(extra="forbid")
@@ -45,20 +45,20 @@ class Eslabon(BaseModel):
     note: str = ""
 
 
-class Cadena(BaseModel):
+class Chain(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str
-    links: list[Eslabon] = Field(default_factory=list)
+    links: list[Link] = Field(default_factory=list)
 
     @property
-    def ultimo(self) -> Eslabon | None:
+    def ultimo(self) -> Link | None:
         return self.links[-1] if self.links else None
 
     def json_canonico(self) -> str:
         return self.model_dump_json(indent=1)
 
-    def continua(self, eslabon: Eslabon) -> Cadena:
-        return Cadena(case_id=self.case_id, links=[*self.links, eslabon])
+    def continua(self, eslabon: Link) -> Chain:
+        return Chain(case_id=self.case_id, links=[*self.links, eslabon])
 
 
 def sha256_texto(texto: str) -> str:
@@ -66,7 +66,7 @@ def sha256_texto(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 
-def lee_version_previa(ruta: Path) -> tuple[str | None, Cadena | None, str | None]:
+def lee_version_previa(ruta: Path) -> tuple[str | None, Chain | None, str | None]:
     """`(hash del manifiesto, cadena, aviso)` de un `.uos` anterior.
 
     Tolerante a proposito: si el fichero anterior no se puede abrir o no lleva cadena, se
@@ -93,9 +93,9 @@ def lee_version_previa(ruta: Path) -> tuple[str | None, Cadena | None, str | Non
         with zipfile.ZipFile(ruta) as z:
             crudo = z.read("manifest.json")
             previo = hashlib.sha256(crudo).hexdigest()
-            if CADENA not in z.namelist():
+            if CHAIN not in z.namelist():
                 return previo, None, None
-            cadena = Cadena.model_validate_json(z.read(CADENA))
+            cadena = Chain.model_validate_json(z.read(CHAIN))
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
         return None, None, None
 
@@ -124,11 +124,11 @@ def encadena(
     case_id: str,
     manifiesto_json: str,
     previo_sha256: str | None,
-    cadena_previa: Cadena | None,
+    cadena_previa: Chain | None,
     generator: dict[str, str],
     assets: int,
     note: str = "",
-) -> Cadena:
+) -> Chain:
     """La cadena que va en esta version, con su eslabon ya anadido.
 
     No hay circularidad: `manifest.json` y `chain.json` son entradas distintas del ZIP, y
@@ -139,9 +139,9 @@ def encadena(
         cadena_previa
         if cadena_previa is not None and cadena_previa.case_id == case_id
         # Un `case_id` distinto no es la misma historia: se empieza cadena, no se mezcla.
-        else Cadena(case_id=case_id)
+        else Chain(case_id=case_id)
     )
-    return base.continua(Eslabon(
+    return base.continua(Link(
         version=len(base.links) + 1,
         manifest_sha256=sha256_texto(manifiesto_json),
         prev_manifest_sha256=previo_sha256,
@@ -152,40 +152,40 @@ def encadena(
     ))
 
 
-def revisa_cadena(cadena: Cadena, *, case_id: str, manifiesto_sha256: str,
+def revisa_cadena(cadena: Chain, *, case_id: str, manifiesto_sha256: str,
                   prev_declarado: str | None) -> list[str]:
     """Los errores de la cadena. Vacio si cuenta la misma historia que el manifiesto."""
     errores: list[str] = []
     if cadena.case_id != case_id:
         errores.append(
-            f"{CADENA} es del caso {cadena.case_id!r} y el manifiesto del "
+            f"{CHAIN} es del caso {cadena.case_id!r} y el manifiesto del "
             f"{case_id!r}: son dos historias distintas"
         )
     if not cadena.links:
-        errores.append(f"{CADENA} no lleva ningun eslabon")
+        errores.append(f"{CHAIN} no lleva ningun eslabon")
         return errores
     for i, e in enumerate(cadena.links):
         esperado = None if i == 0 else cadena.links[i - 1].manifest_sha256
         if e.prev_manifest_sha256 != esperado:
             errores.append(
-                f"{CADENA}: el eslabon {e.version} apunta a "
+                f"{CHAIN}: el eslabon {e.version} apunta a "
                 f"{(e.prev_manifest_sha256 or 'nada')[:12]}… y el anterior es "
                 f"{(esperado or 'nada')[:12]}… — la cadena esta rota"
             )
         if e.version != i + 1:
             errores.append(
-                f"{CADENA}: el eslabon en posicion {i + 1} dice ser la version {e.version}"
+                f"{CHAIN}: el eslabon en posicion {i + 1} dice ser la version {e.version}"
             )
     ultimo = cadena.links[-1]
     if ultimo.manifest_sha256 != manifiesto_sha256:
         errores.append(
-            f"{CADENA}: el ultimo eslabon declara el manifiesto "
+            f"{CHAIN}: el ultimo eslabon declara el manifiesto "
             f"{ultimo.manifest_sha256[:12]}… y el de este contenedor es "
             f"{manifiesto_sha256[:12]}… — la cadena no termina aqui"
         )
     if ultimo.prev_manifest_sha256 != prev_declarado:
         errores.append(
-            f"{CADENA}: el ultimo eslabon viene de "
+            f"{CHAIN}: el ultimo eslabon viene de "
             f"{(ultimo.prev_manifest_sha256 or 'nada')[:12]}… y el manifiesto declara "
             f"{(prev_declarado or 'nada')[:12]}…"
         )

@@ -63,7 +63,7 @@ from analysis_agents.dental import LONGITUD_MM
 from core_schemas import ModalityStatus, TwinSnapshot
 from ingestion_agents.ontology import describe
 
-from export_agents.anatomia import anchos_de_corona, marco_anatomico
+from export_agents.anatomia import anatomical_frame, anchos_de_corona
 from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
 from export_agents.compuesto import _al_marco_del_twin, espaciado_de_malla
 from export_agents.solido import cierra_en_solido
@@ -74,7 +74,7 @@ from export_agents.stl import read_stl_triangles, write_binary_stl
 # no en milímetros: un CBCT de 0,15 mm de vóxel y uno de 0,4 mm necesitan alfas
 # distintos en mm y el mismo en espaciados. Por debajo de ~2 la superficie se agujerea
 # donde el muestreo es irregular; muy por encima se traga las concavidades y la raíz
-# sale como una cápsula. El valor se valida midiendo la banda de corona, que es para
+# sale como una cápsula. El valor se validate midiendo la banda de corona, que es para
 # lo que existe esa medida.
 ALFA_ESPACIADOS = 2.5
 
@@ -475,7 +475,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 "está la coronilla, y una base perpendicular al eje del fichero saldría "
                 "inclinada",
             }
-        marco, motivo = marco_anatomico(superficie, np.asarray(etiquetas_ios))
+        marco, motivo = anatomical_frame(superficie, np.asarray(etiquetas_ios))
         if marco is None:
             return superficie, caras, {"estanca": False, "motivo": motivo}
         return cierra_en_solido(superficie, caras, hacia_las_coronas=marco.oclusal)

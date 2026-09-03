@@ -6,7 +6,7 @@ desplazamiento inservible: se medía contra el registro global del arco, y ese r
 mueve al tocar el `trim` del ICP, así que **todas** las traslaciones se movían con él.
 Medido aquí: la mediana pasa de 0,171 a 0,738 mm solo con cambiar ese hiperparámetro.
 
-Este script valida el arreglo y, sobre todo, **fija el umbral por debajo del cual no se
+Este script validate el arreglo y, sobre todo, **fija el umbral por debajo del cual no se
 puede afirmar nada**. Son dos preguntas distintas y las dos hacen falta.
 
 ## Decisión 1 · la referencia se ajusta con los DEMÁS dientes

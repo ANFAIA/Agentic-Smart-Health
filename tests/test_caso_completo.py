@@ -6,7 +6,7 @@ apariencia, se anunciaba como «Error entrenando apariencia» y el contenedor sa
 —con su PSNR, su cabecera y sus 13 coronas medidas en el PLY— y sin una sola pieza con
 color en `clinical/observations.json`.
 
-⚠️ **La prueba de `capa_clinica` no lo cogía y no podía cogerlo**: se le pasa a mano un
+⚠️ **La prueba de `clinical_layer` no lo cogía y no podía cogerlo**: se le pasa a mano un
 snapshot que ya trae el color. Lo que faltaba probar es el paso ANTERIOR, el que mete el
 color en el snapshot.
 """
@@ -89,7 +89,7 @@ def test_el_color_llega_al_snapshot() -> None:
 
 
 def test_el_color_se_anade_a_la_observacion_del_informe_en_vez_de_duplicarla() -> None:
-    """Son dos afirmaciones sobre el mismo diente; `capa_clinica` agrupa por `region_id`.
+    """Son dos afirmaciones sobre el mismo diente; `clinical_layer` agrupa por `region_id`.
 
     Si se creara una entrada aparte, la segunda pisaría a la primera y el contenedor
     perdería o el hallazgo o el color, según el orden.

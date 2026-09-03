@@ -90,7 +90,7 @@ def ortogonaliza(v: np.ndarray, *previas: np.ndarray) -> np.ndarray:
     return normaliza(w) if np.linalg.norm(w) > _MINIMO_COSENO else np.zeros(3)
 
 
-def marco_anatomico(
+def anatomical_frame(
     posiciones: np.ndarray, etiquetas: np.ndarray
 ) -> tuple[Base | None, str]:
     """Los tres ejes con nombre, medidos. `(None, motivo)` si no se pueden medir.

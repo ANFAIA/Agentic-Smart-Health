@@ -29,7 +29,7 @@ from typing import Any
 
 from core_schemas import TwinSnapshot
 
-OBSERVACIONES = "clinical/observations.json"
+OBSERVATIONS = "clinical/observations.json"
 
 # ── D-5 · el vocabulario propio deja de ser el CODIGO ──────────────────────────────
 #
@@ -82,7 +82,7 @@ def _nota_color(color) -> str:
             "foto no lleva referencia gris")
 
 
-def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
+def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
     """Las observaciones por pieza, las medidas no regionales y el gate.
 
     Los tres van juntos porque los tres son lo mismo: **lo que un clínico no puede deducir

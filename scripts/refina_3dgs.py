@@ -39,7 +39,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 for paquete in ("core-schemas", "ingestion-agents", "fusion-agents", "export-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{paquete}/src"))
 
-from export_agents.render import Vista  # noqa: E402
+from export_agents.render import View  # noqa: E402
 from ingestion_agents import ArtifactStore, CBCTAgent  # noqa: E402
 from ingestion_agents.cbct_agent import HU_SATURATION, _read_series  # noqa: E402
 
@@ -49,7 +49,7 @@ SIGMAS = 3.0
 MM_POR_PIXEL = 0.5
 
 
-def vistas(n: int) -> list[Vista]:
+def vistas(n: int) -> list[View]:
     """`n` direcciones repartidas en azimut, con dos elevaciones.
 
     No se usan las cuatro ortogonales de `VISTAS_POR_DEFECTO`: con tan pocas y todas en
@@ -57,7 +57,7 @@ def vistas(n: int) -> list[Vista]:
     """
     fuera = []
     for i in range(n):
-        fuera.append(Vista(azimut_deg=360.0 * i / n, elevacion_deg=(-25.0 if i % 2 else 25.0)))
+        fuera.append(View(azimut_deg=360.0 * i / n, elevacion_deg=(-25.0 if i % 2 else 25.0)))
     return fuera
 
 

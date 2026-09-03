@@ -144,7 +144,7 @@ def test_fecha_del_informe() -> None:
 
 
 def test_sin_fecha() -> None:
-    assert report_date("Informe sin fecha") is None
+    assert report_date("Report sin fecha") is None
 
 
 def test_fecha_imposible_se_ignora() -> None:

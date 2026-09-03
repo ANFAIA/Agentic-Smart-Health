@@ -45,8 +45,8 @@ import numpy as np
 from core_schemas import ModalityStatus, TwinSnapshot
 
 from export_agents.anatomia import (
+    anatomical_frame,
     distancia_para_encuadrar,
-    marco_anatomico,
     normaliza,
 )
 from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
@@ -193,7 +193,7 @@ CAPAS = (
     ("resto", "Resto del campo", "hueso y craneo sin nombre"),
 )
 
-# Capa de APARIENCIA, opcional: el escaner entrenado como 3DGS. Va aparte de `CAPAS`
+# LayerState de APARIENCIA, opcional: el escaner entrenado como 3DGS. Va aparte de `CAPAS`
 # porque no es lo mismo — aquellas son lo medido y esta una reconstruccion aprendida.
 #
 # ⚠️ **Una sola capa, y el motivo es un limite MEDIDO del visor.** `dental-3dgs-viewer`
@@ -624,7 +624,7 @@ def _encuadre(
             "el paquete del visor no lleva escaner, asi que no hay con que medir los ejes "
             "anatomicos: el encuadre y la orbita se quedan en los del `config.ts`"
         ]
-    marco, motivo = marco_anatomico(pos[es_ios], fdi[es_ios])
+    marco, motivo = anatomical_frame(pos[es_ios], fdi[es_ios])
     if marco is None:
         return None, [
             f"el encuadre del visor no se pudo medir ({motivo}), asi que la orbita se "

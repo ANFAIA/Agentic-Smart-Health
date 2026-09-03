@@ -19,7 +19,7 @@ from core_schemas import (
     RegionalObservation,
     TwinSnapshot,
 )
-from uos.clinico import SNOMED, capa_clinica
+from uos.clinico import SNOMED, clinical_layer
 
 
 def _snapshot(*observaciones: RegionalObservation) -> TwinSnapshot:
@@ -59,7 +59,7 @@ def test_el_color_medido_sale_en_la_ficha_de_la_pieza() -> None:
     no para responder «de qué color es el 26» sin abrir un PLY de 8 MB y buscar sus
     gaussianas. Aquí es un dato con su soporte y su origen.
     """
-    ficha = capa_clinica(_snapshot(_obs("26", color=_COLOR)), [])
+    ficha = clinical_layer(_snapshot(_obs("26", color=_COLOR)), [])
     pieza = ficha["teeth"][0]
     assert pieza["fdi"] == "26"
     color = pieza["color"]["value"]
@@ -85,7 +85,7 @@ def test_la_nota_del_color_dice_si_se_corrigio_la_iluminacion() -> None:
     lo que describe. Por eso el test mira que la nota CAMBIE con el dato, no que contenga
     una frase concreta.
     """
-    corregido = capa_clinica(_snapshot(_obs("26", color=_COLOR)), [])
+    corregido = clinical_layer(_snapshot(_obs("26", color=_COLOR)), [])
     color_ok = corregido["teeth"][0]["color"]["value"]
     nota_ok = color_ok["note"]
     assert "0.65/0.58/0.68" in nota_ok
@@ -95,7 +95,7 @@ def test_la_nota_del_color_dice_si_se_corrigio_la_iluminacion() -> None:
     assert "comparables entre si" in nota_ok
 
     crudo = _COLOR.model_copy(update={"correccion_iluminacion": None})
-    sin = capa_clinica(_snapshot(_obs("26", color=crudo)), [])
+    sin = clinical_layer(_snapshot(_obs("26", color=crudo)), [])
     color_no = sin["teeth"][0]["color"]["value"]
     nota_no = color_no["note"]
     assert nota_no != nota_ok
@@ -107,7 +107,7 @@ def test_la_nota_del_color_dice_si_se_corrigio_la_iluminacion() -> None:
 
 def test_una_pieza_sin_color_no_declara_el_campo() -> None:
     """Ausente no es lo mismo que nulo: si no se midió, no aparece."""
-    ficha = capa_clinica(_snapshot(_obs("24", ph=6.2)), [])
+    ficha = clinical_layer(_snapshot(_obs("24", ph=6.2)), [])
     assert "color" not in ficha["teeth"][0]
     assert ficha["teeth"][0]["ph"]["value"] == 6.2
 
@@ -115,10 +115,10 @@ def test_una_pieza_sin_color_no_declara_el_campo() -> None:
 def test_el_color_y_el_informe_conviven_en_la_misma_pieza() -> None:
     """Son dos afirmaciones sobre el mismo diente y van juntas.
 
-    Partirlas en dos entradas obligaría a quien lee a reunirlas, y `capa_clinica` agrupa
+    Partirlas en dos entradas obligaría a quien lee a reunirlas, y `clinical_layer` agrupa
     por `region_id` — la segunda pisaría a la primera.
     """
-    ficha = capa_clinica(
+    ficha = clinical_layer(
         _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
     )
     pieza = ficha["teeth"][0]
@@ -135,7 +135,7 @@ def test_la_capa_declara_su_estatuto_regulatorio() -> None:
     informe. Y no es una afirmación sobre todo el contenido — lo que se midió sobre una
     fotografía es capa 2 y lo declara en su sitio (ver el test siguiente).
     """
-    ficha = capa_clinica(_snapshot(_obs("11", ph=6.8)), ["revisar"])
+    ficha = clinical_layer(_snapshot(_obs("11", ph=6.8)), ["revisar"])
     assert ficha["regulatory"]["layer"] == 1
     assert ficha["review"]["reasons"] == ["revisar"]
 
@@ -154,7 +154,7 @@ def test_la_capa_va_POR_VALOR_y_el_color_no_es_capa_1() -> None:
     FDI sale de emparejar anchuras contra una tabla, sin modelo entrenado. Es capa 2, y la
     capa 2 tiene que decir de que es reproducible.
     """
-    ficha = capa_clinica(
+    ficha = clinical_layer(
         _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
     )
     pieza = ficha["teeth"][0]
@@ -190,7 +190,7 @@ def test_el_hallazgo_sale_CODIFICADO_y_su_codigo_va_a_null_a_proposito() -> None
     silencioso y ya dentro del dato clinico que el ADR 003 llama el peor. `null` dice «no
     mapeado»; un numero a ojo dice «mapeado» y miente.
     """
-    ficha = capa_clinica(
+    ficha = clinical_layer(
         _snapshot(_obs("26", hallazgos=[Hallazgo.CARIES])), []
     )
     hallazgo = ficha["teeth"][0]["findings"]["value"][0]

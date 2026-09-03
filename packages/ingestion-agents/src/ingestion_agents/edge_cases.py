@@ -195,7 +195,7 @@ def _stl_truncado(tmp: Path) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# Informe
+# Report
 # --------------------------------------------------------------------------- #
 def _informe_vacio(tmp: Path) -> Path:
     destino = tmp / "informe-vacio.txt"
@@ -381,7 +381,7 @@ CASES: tuple[EdgeCase, ...] = (
         "La cabecera anuncia mil triángulos y trae uno.",
         _stl_truncado,
     ),
-    # --- Informe ------------------------------------------------------------
+    # --- Report ------------------------------------------------------------
     EdgeCase(
         "informe-vacio",
         "report",

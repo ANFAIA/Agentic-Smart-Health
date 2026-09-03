@@ -30,7 +30,7 @@ from export_agents import (
     VISTAS_POR_DEFECTO,
     FieldExportAgent,
     RenderExportAgent,
-    Vista,
+    View,
     beer_lambert,
     escribe_ply,
     lee_ply,
@@ -224,7 +224,7 @@ def test_el_orden_de_las_primitivas_no_cambia_la_imagen(ingerido) -> None:
     c, s, d = (a["centers"].astype(np.float64), a["scales"].astype(np.float64),
                a["density"].astype(np.float64))
     orden = np.random.default_rng(0).permutation(len(c))
-    v = Vista(37.0, 12.0)
+    v = View(37.0, 12.0)
     tau_a = profundidad_optica(c, s, d, vista=v, resolucion=64)
     tau_b = profundidad_optica(c[orden], s[orden], d[orden], vista=v, resolucion=64)
     assert np.abs(tau_a - tau_b).max() < 1e-9
@@ -310,9 +310,9 @@ def test_las_vistas_se_nombran_por_angulo_y_no_por_anatomia() -> None:
     En este proyecto suponer el significado de un eje en vez de leerlo salió mal tres veces
     sobre el mismo paciente. `az000_el+00` no puede mentir.
     """
-    assert Vista(0.0, 0.0).nombre == "az000_el+00"
-    assert Vista(90.0, -30.0).nombre == "az090_el-30"
-    assert Vista(360.0, 90.0).nombre == "az000_el+90"
+    assert View(0.0, 0.0).nombre == "az000_el+00"
+    assert View(90.0, -30.0).nombre == "az090_el-30"
+    assert View(360.0, 90.0).nombre == "az000_el+90"
     prohibidos = ("oclusal", "vestibular", "lingual", "frontal", "lateral", "axial")
     for v in VISTAS_POR_DEFECTO:
         assert not any(p in v.nombre for p in prohibidos)
@@ -320,7 +320,7 @@ def test_las_vistas_se_nombran_por_angulo_y_no_por_anatomia() -> None:
 
 def test_la_base_de_la_vista_es_ortonormal_y_dextrogira() -> None:
     """Elegir tres vectores a mano es como se cuela un marco especular."""
-    for vista in (*VISTAS_POR_DEFECTO, Vista(37.0, -63.0), Vista(0.0, 89.5)):
+    for vista in (*VISTAS_POR_DEFECTO, View(37.0, -63.0), View(0.0, 89.5)):
         base = vista.base
         assert np.abs(base @ base.T - np.eye(3)).max() < 1e-12, vista.nombre
         assert np.linalg.det(base) == pytest.approx(1.0), vista.nombre

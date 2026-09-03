@@ -79,7 +79,7 @@ def _alinea(b: bytes, relleno: bytes = b"\x00") -> bytes:
     return b + relleno * (-len(b) % 4)
 
 
-class NodoGS(NamedTuple):
+class GSNode(NamedTuple):
     """Una capa de gaussianas colgada de la malla.
 
     `matriz_fila` es la transformada 4x4 en orden de FILAS —como la escribe el manifiesto—
@@ -209,7 +209,7 @@ def _mesh_splats(
     }
 
 
-def construye_glb(
+def build_glb(
     posiciones: np.ndarray,
     caras: np.ndarray,
     normales: np.ndarray | None = None,
@@ -217,7 +217,7 @@ def construye_glb(
     nombre: str = "scan",
     generador: str = "agentic-smart-health",
     extras: dict | None = None,
-    nodos_gs: list[NodoGS] | None = None,
+    nodos_gs: list[GSNode] | None = None,
     splats: SplatsKHR | None = None,
 ) -> bytes:
     """La escena en un solo `bytes`. Indexada: el orden de vertices se conserva.

@@ -12,7 +12,7 @@ Fuentes (sin API key):
 
 Solo depende de la librería estándar (urllib + json + xml): sin dependencias
 nuevas. La descarga se confina a `knowledge_base/` (reutiliza el sandbox de
-tools.py), acepta solo http(s), valida que sea un PDF y limita el tamaño.
+tools.py), acepta solo http(s), validate que sea un PDF y limita el tamaño.
 """
 
 from __future__ import annotations

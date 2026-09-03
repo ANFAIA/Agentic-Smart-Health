@@ -79,7 +79,7 @@ que medirse sobre la población emparejada.
 **Y el 0,451 mm es una cota superior del error de registro**, no el error: incluye la
 cuantización del vóxel (0,30 mm) y el sesgo de que la isosuperficie de 2000 HU cae
 *por dentro* del esmalte —la PSF de 425 µm difumina el borde aire/esmalte— mientras
-que el escáner ve la superficie externa. Parte de eso es calibrable.
+que el escáner ve la superficie externa. Part de eso es calibrable.
 
 > **Alcance honesto.** Un paciente, un equipo, una arcada. Dice que el registro es
 > alcanzable y con qué margen; no dice que lo sea en general.

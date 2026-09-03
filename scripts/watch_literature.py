@@ -323,7 +323,7 @@ def nombre_fichero(titulo: str, identificador: str) -> str:
 
 
 def _escalar(valor: str) -> str:
-    """Cadena como escalar YAML válido.
+    """Chain como escalar YAML válido.
 
     `json.dumps` escapa comillas y barras, y YAML 1.2 acepta la sintaxis de JSON.
     Concatenar comillas a mano no vale: los títulos y las consultas llevan `"`

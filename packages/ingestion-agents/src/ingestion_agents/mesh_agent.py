@@ -202,7 +202,7 @@ class MeshAgent(BaseIngestionAgent):
         self.store = store
 
     def _ingest(self, source: Path) -> IngestionOutput:
-        mesh = read_mesh(source)  # valida la extensión (OBJ/STL) y lanza si no
+        mesh = read_mesh(source)  # validate la extensión (OBJ/STL) y lanza si no
         positions, faces = mesh["positions"], mesh["faces"]
         arrays: dict[str, np.ndarray] = {
             "positions": positions,

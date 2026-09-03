@@ -34,16 +34,6 @@
       "title": "AnatomicalConvention",
       "type": "string"
     },
-    "RegistrationFitness": {
-      "description": "What clinical use a registration was measured fit for.",
-      "enum": [
-        "visualization",
-        "measurement",
-        "guided_surgery"
-      ],
-      "title": "RegistrationFitness",
-      "type": "string"
-    },
     "Asset": {
       "additionalProperties": false,
       "description": "One file or directory the container carries or references.",
@@ -172,6 +162,19 @@
       "title": "Asset",
       "type": "object"
     },
+    "AssetKind": {
+      "description": "What kind of thing an asset is.",
+      "enum": [
+        "volume",
+        "mesh_gs_scene",
+        "image2d",
+        "signal",
+        "derived_seg",
+        "document"
+      ],
+      "title": "AssetKind",
+      "type": "string"
+    },
     "Clearance": {
       "additionalProperties": false,
       "description": "What one jurisdiction says about this asset.",
@@ -208,17 +211,16 @@
       "title": "Clearance",
       "type": "object"
     },
-    "AssetKind": {
-      "description": "What kind of thing an asset is.",
+    "ClearanceStatus": {
+      "description": "Closed vocabulary for a clearance status.",
       "enum": [
-        "volume",
-        "mesh_gs_scene",
-        "image2d",
-        "signal",
-        "derived_seg",
-        "document"
+        "not_a_device",
+        "investigational",
+        "submitted",
+        "cleared",
+        "withdrawn"
       ],
-      "title": "AssetKind",
+      "title": "ClearanceStatus",
       "type": "string"
     },
     "Consent": {
@@ -369,29 +371,6 @@
       "title": "Device",
       "type": "object"
     },
-    "PHIState": {
-      "description": "Explicit PHI state. No value of it makes a container non-personal data.",
-      "enum": [
-        "identified",
-        "pseudonymized",
-        "anonymized",
-        "quarantined"
-      ],
-      "title": "PHIState",
-      "type": "string"
-    },
-    "ClearanceStatus": {
-      "description": "Closed vocabulary for a clearance status.",
-      "enum": [
-        "not_a_device",
-        "investigational",
-        "submitted",
-        "cleared",
-        "withdrawn"
-      ],
-      "title": "ClearanceStatus",
-      "type": "string"
-    },
     "Extension": {
       "additionalProperties": false,
       "description": "A format extension the container declares and may require.",
@@ -439,6 +418,38 @@
         "version"
       ],
       "title": "Extension",
+      "type": "object"
+    },
+    "FHIRResource": {
+      "additionalProperties": false,
+      "description": "Which FHIR R4 resource an asset corresponds to.",
+      "properties": {
+        "resource_type": {
+          "title": "Resource Type",
+          "type": "string"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_type"
+      ],
+      "title": "FHIRResource",
       "type": "object"
     },
     "Frame": {
@@ -494,45 +505,6 @@
       "title": "Frame",
       "type": "object"
     },
-    "Tool": {
-      "additionalProperties": false,
-      "description": "The program that applied the de-identification.",
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "version": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Version"
-        },
-        "sha256": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sha256"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "title": "Tool",
-      "type": "object"
-    },
     "OcclusionRecord": {
       "description": "How the mandible-to-maxilla relation was recorded.",
       "enum": [
@@ -542,6 +514,17 @@
         "single_arch"
       ],
       "title": "OcclusionRecord",
+      "type": "string"
+    },
+    "PHIState": {
+      "description": "Explicit PHI state. No value of it makes a container non-personal data.",
+      "enum": [
+        "identified",
+        "pseudonymized",
+        "anonymized",
+        "quarantined"
+      ],
+      "title": "PHIState",
       "type": "string"
     },
     "Part": {
@@ -596,6 +579,28 @@
       "title": "Part",
       "type": "object"
     },
+    "Projection": {
+      "additionalProperties": false,
+      "description": "What kind of 2D image an asset is, and which teeth it targets.",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "fdi_targets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fdi Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Projection",
+      "type": "object"
+    },
     "Provenance": {
       "additionalProperties": false,
       "description": "The append-only hash chain linking versions of this case.",
@@ -639,60 +644,6 @@
       ],
       "title": "PurposeOfUse",
       "type": "string"
-    },
-    "Projection": {
-      "additionalProperties": false,
-      "description": "What kind of 2D image an asset is, and which teeth it targets.",
-      "properties": {
-        "type": {
-          "title": "Type",
-          "type": "string"
-        },
-        "fdi_targets": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Fdi Targets",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "Projection",
-      "type": "object"
-    },
-    "FHIRResource": {
-      "additionalProperties": false,
-      "description": "Which FHIR R4 resource an asset corresponds to.",
-      "properties": {
-        "resource_type": {
-          "title": "Resource Type",
-          "type": "string"
-        },
-        "resource": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Resource"
-        },
-        "note": {
-          "default": "",
-          "title": "Note",
-          "type": "string"
-        }
-      },
-      "required": [
-        "resource_type"
-      ],
-      "title": "FHIRResource",
-      "type": "object"
     },
     "Registration": {
       "additionalProperties": false,
@@ -837,6 +788,16 @@
       "title": "Registration",
       "type": "object"
     },
+    "RegistrationFitness": {
+      "description": "What clinical use a registration was measured fit for.",
+      "enum": [
+        "visualization",
+        "measurement",
+        "guided_surgery"
+      ],
+      "title": "RegistrationFitness",
+      "type": "string"
+    },
     "Regulatory": {
       "additionalProperties": false,
       "description": "The regulatory layer of an asset and its clearances.",
@@ -895,6 +856,45 @@
         "pseudonym"
       ],
       "title": "Subject",
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "description": "The program that applied the de-identification.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Tool",
       "type": "object"
     },
     "Visit": {

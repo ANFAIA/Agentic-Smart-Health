@@ -15,14 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from uos import Asset, Frame, Manifiesto, Sujeto, Visita, escribe_uos, valida
+from uos import Asset, Frame, Manifest, Subject, Visit, validate, write_uos
 from uos.contenedor import MANIFIESTO
-from uos.manifiesto import Clase, Desidentificacion, EstadoPHI, Procedencia
+from uos.manifiesto import AssetKind, Deidentification, PHIState, Provenance
 from uos.procedencia import (
-    CADENA,
-    FIRMAS,
-    Cadena,
-    Eslabon,
+    CHAIN,
+    SIGNATURES,
+    Chain,
+    Link,
     encadena,
     lee_version_previa,
 )
@@ -33,24 +33,24 @@ CASO = "urn:uuid:0"
 def _asset(ruta: Path) -> Asset:
     crudo = ruta.read_bytes()
     return Asset(
-        id="asset.ios", kind=Clase.MESH_GS_SCENE, visit="v1", uri="scene/scan.stl",
+        id="asset.ios", kind=AssetKind.MESH_GS_SCENE, visit="v1", uri="scene/scan.stl",
         media_type="model/stl", sha256=hashlib.sha256(crudo).hexdigest(),
         bytes=len(crudo), frame="frame.ios_master",
     )
 
 
-def _manifiesto(assets, **kw) -> Manifiesto:
+def _manifiesto(assets, **kw) -> Manifest:
     base = dict(
         case_id=CASO, generator={"name": "test", "version": "0"},
-        phi_state=EstadoPHI.PSEUDONYMIZED, subject=Sujeto(pseudonym="P-1"),
+        phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="P-1"),
         # B-3: fuera de `identified` el bloque es obligatorio.
-        deidentification=Desidentificacion(
+        deidentification=Deidentification(
             profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
         ),
         canonical_frame=Frame(id="frame.ios_master"),
-        visits=[Visita(id="v1", date="2026-08-23")], assets=assets,
+        visits=[Visit(id="v1", date="2026-08-23")], assets=assets,
     )
-    return Manifiesto(**{**base, **kw})
+    return Manifest(**{**base, **kw})
 
 
 @pytest.fixture
@@ -66,15 +66,15 @@ def _escribe(destino: Path, malla: Path, previo: Path | None = None) -> Path:
                                     else (None, None, None))
     m = _manifiesto(
         [_asset(malla)],
-        provenance=Procedencia(prev_manifest_sha256=previo_sha, chain=CADENA),
+        provenance=Provenance(prev_manifest_sha256=previo_sha, chain=CHAIN),
     )
     crudo = m.json_canonico()
     cadena = encadena(
         case_id=CASO, manifiesto_json=crudo, previo_sha256=previo_sha,
         cadena_previa=cadena_previa, generator=m.generator, assets=1,
     )
-    return escribe_uos(destino, m, [("scene/scan.stl", malla)],
-                       json_manifiesto=crudo, extras={CADENA: cadena.json_canonico()})
+    return write_uos(destino, m, [("scene/scan.stl", malla)],
+                       json_manifiesto=crudo, extras={CHAIN: cadena.json_canonico()})
 
 
 def _reescribe(origen: Path, destino: Path, **reemplazos: str) -> Path:
@@ -91,11 +91,11 @@ def _reescribe(origen: Path, destino: Path, **reemplazos: str) -> Path:
 def test_la_primera_version_no_viene_de_ninguna_parte(tmp_path, malla):
     v1 = _escribe(tmp_path / "v1.uos", malla)
 
-    inf = valida(v1)
+    inf = validate(v1)
     with zipfile.ZipFile(v1) as z:
-        cadena = Cadena.model_validate_json(z.read(CADENA))
+        cadena = Chain.model_validate_json(z.read(CHAIN))
 
-    assert inf.valido, inf.errores
+    assert inf.valid, inf.errors
     assert inf.version == 1
     assert len(cadena.links) == 1
     assert cadena.links[0].prev_manifest_sha256 is None
@@ -109,10 +109,10 @@ def test_la_segunda_version_apunta_al_HASH_de_la_primera(tmp_path, malla):
     with zipfile.ZipFile(v1) as z:
         hash_v1 = hashlib.sha256(z.read(MANIFIESTO)).hexdigest()
     with zipfile.ZipFile(v2) as z:
-        m2 = Manifiesto.model_validate_json(z.read(MANIFIESTO))
-        cadena = Cadena.model_validate_json(z.read(CADENA))
+        m2 = Manifest.model_validate_json(z.read(MANIFIESTO))
+        cadena = Chain.model_validate_json(z.read(CHAIN))
 
-    assert valida(v2).valido
+    assert validate(v2).valid
     assert m2.provenance.prev_manifest_sha256 == hash_v1
     assert [e.version for e in cadena.links] == [1, 2]
     assert cadena.links[1].prev_manifest_sha256 == hash_v1
@@ -125,11 +125,11 @@ def test_la_cadena_crece_sin_perder_eslabones(tmp_path, malla):
     for i in (2, 3, 4):
         v = _escribe(tmp_path / f"v{i}.uos", malla, previo=v)
 
-    inf = valida(v)
+    inf = validate(v)
     with zipfile.ZipFile(v) as z:
-        cadena = Cadena.model_validate_json(z.read(CADENA))
+        cadena = Chain.model_validate_json(z.read(CHAIN))
 
-    assert inf.valido, inf.errores
+    assert inf.valid, inf.errors
     assert inf.version == 4
     assert [e.version for e in cadena.links] == [1, 2, 3, 4]
     for anterior, actual in zip(cadena.links, cadena.links[1:], strict=False):
@@ -160,10 +160,10 @@ def test_un_manifiesto_retocado_deja_de_cuadrar_con_su_cadena(tmp_path, malla):
     m["subject"]["pseudonym"] = "OTRO"
     falso = _reescribe(v1, tmp_path / "falso.uos", **{MANIFIESTO: json.dumps(m, indent=1)})
 
-    inf = valida(falso)
+    inf = validate(falso)
 
-    assert not inf.valido
-    assert any("no termina aqui" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("no termina aqui" in e for e in inf.errors)
 
 
 def test_un_eslabon_arrancado_del_medio_rompe_la_cadena(tmp_path, malla):
@@ -171,63 +171,63 @@ def test_un_eslabon_arrancado_del_medio_rompe_la_cadena(tmp_path, malla):
     v2 = _escribe(tmp_path / "v2.uos", malla, previo=v1)
     v3 = _escribe(tmp_path / "v3.uos", malla, previo=v2)
     with zipfile.ZipFile(v3) as z:
-        cadena = Cadena.model_validate_json(z.read(CADENA))
-    sin_medio = Cadena(case_id=cadena.case_id, links=[cadena.links[0], cadena.links[2]])
-    roto = _reescribe(v3, tmp_path / "roto.uos", **{CADENA: sin_medio.json_canonico()})
+        cadena = Chain.model_validate_json(z.read(CHAIN))
+    sin_medio = Chain(case_id=cadena.case_id, links=[cadena.links[0], cadena.links[2]])
+    roto = _reescribe(v3, tmp_path / "roto.uos", **{CHAIN: sin_medio.json_canonico()})
 
-    inf = valida(roto)
+    inf = validate(roto)
 
-    assert not inf.valido
-    assert any("la cadena esta rota" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("la cadena esta rota" in e for e in inf.errors)
 
 
 def test_una_cadena_de_otro_caso_no_cuela(tmp_path, malla):
     v1 = _escribe(tmp_path / "v1.uos", malla)
     with zipfile.ZipFile(v1) as z:
-        cadena = Cadena.model_validate_json(z.read(CADENA))
-    ajena = Cadena(case_id="urn:uuid:otro", links=cadena.links)
-    mezclado = _reescribe(v1, tmp_path / "mezcla.uos", **{CADENA: ajena.json_canonico()})
+        cadena = Chain.model_validate_json(z.read(CHAIN))
+    ajena = Chain(case_id="urn:uuid:otro", links=cadena.links)
+    mezclado = _reescribe(v1, tmp_path / "mezcla.uos", **{CHAIN: ajena.json_canonico()})
 
-    inf = valida(mezclado)
+    inf = validate(mezclado)
 
-    assert not inf.valido
-    assert any("dos historias distintas" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("dos historias distintas" in e for e in inf.errors)
 
 
 def test_declarar_cadena_y_no_llevarla_invalida(tmp_path, malla):
     """Un lector que ve `provenance.chain` da por hecho que puede recorrer el historial."""
-    m = _manifiesto([_asset(malla)], provenance=Procedencia(chain=CADENA))
-    salida = escribe_uos(tmp_path / "sin.uos", m, [("scene/scan.stl", malla)])
+    m = _manifiesto([_asset(malla)], provenance=Provenance(chain=CHAIN))
+    salida = write_uos(tmp_path / "sin.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("no esta en el contenedor" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("no esta en el contenedor" in e for e in inf.errors)
 
 
 def test_llevar_cadena_sin_declararla_tambien_invalida(tmp_path, malla):
     """Una cadena que nadie referencia no se puede verificar, y aparenta procedencia."""
     m = _manifiesto([_asset(malla)])
-    salida = escribe_uos(
+    salida = write_uos(
         tmp_path / "huerfana.uos", m, [("scene/scan.stl", malla)],
-        extras={CADENA: Cadena(case_id=CASO).json_canonico()},
+        extras={CHAIN: Chain(case_id=CASO).json_canonico()},
     )
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("no lo declara" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("no lo declara" in e for e in inf.errors)
 
 
 def test_venir_de_una_version_anterior_sin_cadena_es_un_AVISO_no_un_error(tmp_path, malla):
     """El historial existe —lo dice el hash— pero no hay por donde recorrerlo."""
-    m = _manifiesto([_asset(malla)], provenance=Procedencia(prev_manifest_sha256="a" * 64))
-    salida = escribe_uos(tmp_path / "corta.uos", m, [("scene/scan.stl", malla)])
+    m = _manifiesto([_asset(malla)], provenance=Provenance(prev_manifest_sha256="a" * 64))
+    salida = write_uos(tmp_path / "corta.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert inf.valido
-    assert any("no hay" in a and CADENA in a for a in inf.avisos)
+    assert inf.valid
+    assert any("no hay" in a and CHAIN in a for a in inf.warnings)
 
 
 def test_las_firmas_no_se_ignoran_en_silencio(tmp_path, malla):
@@ -240,12 +240,12 @@ def test_las_firmas_no_se_ignoran_en_silencio(tmp_path, malla):
     ) as s:
         for n in z.namelist():
             s.writestr(n, z.read(n))
-        s.writestr(f"{FIRMAS}clinica.sig", b"no es una firma")
+        s.writestr(f"{SIGNATURES}clinica.sig", b"no es una firma")
 
-    inf = valida(firmado)
+    inf = validate(firmado)
 
-    assert inf.valido
-    assert any("NO comprueba" in a for a in inf.avisos)
+    assert inf.valid
+    assert any("NO comprueba" in a for a in inf.warnings)
 
 
 def test_un_uos_previo_ilegible_empieza_cadena_en_vez_de_reventar(tmp_path, malla):
@@ -258,9 +258,9 @@ def test_un_uos_previo_ilegible_empieza_cadena_en_vez_de_reventar(tmp_path, mall
 
     v = _escribe(tmp_path / "v1.uos", malla, previo=roto)
     with zipfile.ZipFile(v) as z:
-        m = Manifiesto.model_validate_json(z.read(MANIFIESTO))
+        m = Manifest.model_validate_json(z.read(MANIFIESTO))
     assert m.provenance.prev_manifest_sha256 is None
-    assert valida(v).valido
+    assert validate(v).valid
 
 
 def _stl_binario(triangulos: int = 4) -> bytes:
@@ -298,7 +298,7 @@ def test_una_cadena_ROTA_no_se_continua_y_se_dice(tmp_path):
 
     v1 = tmp_path / "caso.uos"
     manifiesto = json.dumps({"uos_version": "0.2"})
-    cadena = Cadena(case_id="urn:uuid:0", links=[Eslabon(
+    cadena = Chain(case_id="urn:uuid:0", links=[Link(
         version=1,
         manifest_sha256="a" * 64,          # NO es el hash de `manifiesto`
         prev_manifest_sha256=None,
@@ -308,7 +308,7 @@ def test_una_cadena_ROTA_no_se_continua_y_se_dice(tmp_path):
     )])
     with zipfile.ZipFile(v1, "w") as z:
         z.writestr("manifest.json", manifiesto)
-        z.writestr(CADENA, cadena.model_dump_json())
+        z.writestr(CHAIN, cadena.model_dump_json())
 
     sha, prev, aviso = lee_version_previa(v1)
     assert (sha, prev) == (None, None), "no puede reclamar continuidad con una cadena rota"
@@ -324,13 +324,13 @@ def test_una_cadena_SANA_si_se_continua(tmp_path):
     v1 = tmp_path / "caso.uos"
     manifiesto = json.dumps({"uos_version": "0.2"})
     real = hashlib.sha256(manifiesto.encode("utf-8")).hexdigest()
-    cadena = Cadena(case_id="urn:uuid:0", links=[Eslabon(
+    cadena = Chain(case_id="urn:uuid:0", links=[Link(
         version=1, manifest_sha256=real, prev_manifest_sha256=None,
         created=datetime.now(UTC), generator={"name": "t", "version": "0"}, assets=1,
     )])
     with zipfile.ZipFile(v1, "w") as z:
         z.writestr("manifest.json", manifiesto)
-        z.writestr(CADENA, cadena.model_dump_json())
+        z.writestr(CHAIN, cadena.model_dump_json())
 
     sha, prev, aviso = lee_version_previa(v1)
     assert sha == real and prev is not None and aviso is None
@@ -351,17 +351,17 @@ def test_una_rotura_EN_MEDIO_de_la_cadena_tambien_corta_la_continuidad(tmp_path)
     real = hashlib.sha256(manifiesto.encode("utf-8")).hexdigest()
     ahora = datetime.now(UTC)
     gen = {"name": "t", "version": "0"}
-    cadena = Cadena(case_id="urn:uuid:0", links=[
-        Eslabon(version=1, manifest_sha256="1" * 64, prev_manifest_sha256=None,
+    cadena = Chain(case_id="urn:uuid:0", links=[
+        Link(version=1, manifest_sha256="1" * 64, prev_manifest_sha256=None,
                 created=ahora, generator=gen, assets=1),
         # ⚠️ la rotura: apunta a "9"*64 y el eslabón 1 declara "1"*64
-        Eslabon(version=2, manifest_sha256=real, prev_manifest_sha256="9" * 64,
+        Link(version=2, manifest_sha256=real, prev_manifest_sha256="9" * 64,
                 created=ahora, generator=gen, assets=1),
     ])
     v = tmp_path / "caso.uos"
     with zipfile.ZipFile(v, "w") as z:
         z.writestr("manifest.json", manifiesto)
-        z.writestr(CADENA, cadena.model_dump_json())
+        z.writestr(CHAIN, cadena.model_dump_json())
 
     sha, prev, aviso = lee_version_previa(v)
     # El último eslabón SÍ cuadra con el manifiesto, que es lo que engañaba antes.

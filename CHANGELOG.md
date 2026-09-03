@@ -59,6 +59,25 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — the reference implementation's public API is English** (**G-1**).
+  `lee_manifiesto` → `read_manifest`, `valida` → `validate`, `escribe_uos` → `write_uos`,
+  `Manifiesto` → `Manifest`, `Registro` → `Registration`, `Sujeto` → `Subject`, `Vista` →
+  `View`, `Informe` → `Report` with `.valid`, `.errors`, `.warnings`, `.levels`,
+  `.distributable`. The format's success criterion is that a second implementer can open a
+  container, and every name they have to type was in a language they may not read.
+
+  **The eleven module files keep their Spanish names, deliberately.** An integrator never
+  types one: `__init__.py` re-exports everything, so what gets written is
+  `from uos import validate`, not `from uos.validador import validate`. Renaming them is a
+  breaking change to a listing nobody reads, and the specification now says they are a map
+  of this implementation rather than an API. The same line applies to `export_agents`, which
+  the cookbook cites: it is the project's pipeline, not the format's reference
+  implementation, and the specification says so instead of quietly leaving it bilingual.
+
+  The payoff is that `esquema.py`'s title mapping collapses. It existed only as a bridge
+  while the classes were Spanish; now they are called what the schema should call them, so
+  only the one-line English descriptions remain — the docstrings stay Spanish because they
+  are twelve lines of reasoning meant for us, not one line of definition meant for a reader.
 - **BREAKING — the extension prefix is `histora_`.** Every normative identifier renamed:
   the extensions (`histora_clinical`, `histora_gs_measured`, `histora_reversible`), the
   profile ids (`histora-twin/1.0`, `histora-twin-ajustado/1.0`, `histora-gs-apariencia/1.0`),

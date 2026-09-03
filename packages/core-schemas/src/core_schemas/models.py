@@ -218,7 +218,7 @@ def _rotar(
 
 
 class Provenance(BaseModel):
-    """Procedencia de un valor: qué fichero, qué agente, cómo lo obtuvo y con qué confianza.
+    """Provenance de un valor: qué fichero, qué agente, cómo lo obtuvo y con qué confianza.
 
     Se adjunta a cada observación para garantizar la explicabilidad exigida:
     "qué dato se ingirió, qué transformación se aplicó y por qué".
@@ -275,7 +275,7 @@ class Provenance(BaseModel):
     def _el_modelo_y_la_derivacion_van_juntos(self) -> Provenance:
         """Una inferencia sin modelo no es auditable; un modelo sin inferencia, mentira.
 
-        Se valida como par y no como dos campos sueltos porque por separado admiten
+        Se validate como par y no como dos campos sueltos porque por separado admiten
         estados que no significan nada: «inferido por no se sabe quién» no permite
         reproducir ni revisar, y «determinista, con modelo» es una contradicción que
         alguien acabaría creyéndose. *Fail-loud* del ADR 001 §4.7: si el contrato no

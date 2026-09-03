@@ -16,7 +16,7 @@ El pipeline separa la fusión en **dos etapas, con la segmentación en medio**:
 | `GeometricFusionAgent` | registro malla↔CBCT | implementado (fina + gruesa) |
 
 Son dos agentes y no uno porque entre ambos corre otra etapa, y porque tienen
-material y criterio de aceptación distintos: la semántica se valida contra el
+material y criterio de aceptación distintos: la semántica se validate contra el
 informe, la geométrica contra un lote de pares CBCT+IOS.
 """
 

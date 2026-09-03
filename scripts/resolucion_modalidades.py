@@ -124,7 +124,7 @@ def verdad_terreno() -> tuple[np.ndarray, np.ndarray]:
 def muestrear(
     campo: np.ndarray, paso: float, *, fwhm: float = 0.0, ruido: float = 0.0, semilla: int = 0
 ) -> tuple[np.ndarray, int]:
-    """Cadena de adquisición: PSF → muestreo al paso de la modalidad → ruido."""
+    """Chain de adquisición: PSF → muestreo al paso de la modalidad → ruido."""
     c = campo.astype(float)
     if fwhm:
         c = gaussian_filter(c, sigma=fwhm / 2.3548 / FINO, axes=(0, 1))

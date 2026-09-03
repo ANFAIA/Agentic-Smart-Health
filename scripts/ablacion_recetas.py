@@ -91,7 +91,7 @@ def cargar(case_dir: Path):
 # Entrenamiento
 # --------------------------------------------------------------------------- #
 def vista_frontal(pos: np.ndarray, idx_test: np.ndarray) -> int:
-    """Vista retenida más próxima a (azimut 0°, elevación −10°): la frontal.
+    """View retenida más próxima a (azimut 0°, elevación −10°): la frontal.
 
     Anclada por ÁNGULO y no por posición en la lista de retenidas: el índice
     depende de cuántas vistas tenga la rejilla, el ángulo no. Es la misma que

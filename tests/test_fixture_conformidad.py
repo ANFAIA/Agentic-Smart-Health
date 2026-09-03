@@ -26,7 +26,7 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
     corra el banco no sabría cuál de las dos rechazó su lector.
     """
     from genera_fixture import genera
-    from uos import valida
+    from uos import validate
 
     destino = tmp_path / "banco"
     indice = genera(destino)
@@ -36,11 +36,11 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
     assert [c["fichero"] for c in esperado["casos"]] == [c["fichero"] for c in indice]
 
     for caso in indice:
-        inf = valida(destino / caso["fichero"])
+        inf = validate(destino / caso["fichero"])
         if caso["espera"] == "error":
-            assert not inf.valido, f"{caso['fichero']} tendría que fallar y pasa"
+            assert not inf.valid, f"{caso['fichero']} tendría que fallar y pasa"
         else:
-            assert inf.valido, f"{caso['fichero']}: {inf.errores}"
+            assert inf.valid, f"{caso['fichero']}: {inf.errors}"
 
 
 def test_el_caso_valido_del_banco_no_lleva_dato_de_paciente(tmp_path: Path) -> None:

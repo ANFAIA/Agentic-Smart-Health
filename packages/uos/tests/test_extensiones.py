@@ -15,17 +15,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 from core_schemas import Modality, Provenance, RigidTransform, TwinSnapshot
-from uos import UOSExportAgent, escribe_uos, lee_manifiesto, valida
+from uos import UOSExportAgent, read_manifest, validate, write_uos
 from uos.manifiesto import (
     Asset,
-    Clase,
-    Desidentificacion,
-    EstadoPHI,
+    AssetKind,
+    Deidentification,
     Extension,
     Frame,
-    Manifiesto,
-    Sujeto,
-    Visita,
+    Manifest,
+    PHIState,
+    Subject,
+    Visit,
 )
 
 
@@ -50,24 +50,24 @@ def _asset(ruta: Path) -> Asset:
 
     crudo = ruta.read_bytes()
     return Asset(
-        id="asset.doc", kind=Clase.DOCUMENT, visit="v1", uri="scene/scan.stl",
+        id="asset.doc", kind=AssetKind.DOCUMENT, visit="v1", uri="scene/scan.stl",
         media_type="model/stl", sha256=hashlib.sha256(crudo).hexdigest(),
         bytes=len(crudo), frame="frame.ios_master",
     )
 
 
-def _manifiesto(assets, **kw) -> Manifiesto:
+def _manifiesto(assets, **kw) -> Manifest:
     base = dict(
         case_id="urn:uuid:0", generator={"name": "test", "version": "0"},
-        phi_state=EstadoPHI.PSEUDONYMIZED, subject=Sujeto(pseudonym="P-1"),
+        phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="P-1"),
         # B-3: fuera de `identified` el bloque es obligatorio.
-        deidentification=Desidentificacion(
+        deidentification=Deidentification(
             profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
         ),
         canonical_frame=Frame(id="frame.ios_master"),
-        visits=[Visita(id="v1", date="2026-08-24")], assets=assets,
+        visits=[Visit(id="v1", date="2026-08-24")], assets=assets,
     )
-    return Manifiesto(**{**base, **kw})
+    return Manifest(**{**base, **kw})
 
 
 def _snapshot() -> TwinSnapshot:
@@ -85,12 +85,12 @@ def test_usar_una_extension_sin_declararla_INVALIDA(tmp_path, malla):
     """Un lector que ve un nombre en `used` y no lo encuentra en `extensions` no tiene
     forma de saber qué es: ni leerla, ni saltarla a sabiendas."""
     m = _manifiesto([_asset(malla)], extensions_used=["histora_clinical"])
-    salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("no las declara" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("no las declara" in e for e in inf.errors)
 
 
 def test_exigir_algo_que_no_se_usa_INVALIDA(tmp_path, malla):
@@ -101,12 +101,12 @@ def test_exigir_algo_que_no_se_usa_INVALIDA(tmp_path, malla):
         extensions_used=[],
         extensions_required=["x"],
     )
-    salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("EXIGE" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("EXIGE" in e for e in inf.errors)
 
 
 def test_una_extension_que_apunta_a_lo_que_no_esta_INVALIDA(tmp_path, malla):
@@ -115,12 +115,12 @@ def test_una_extension_que_apunta_a_lo_que_no_esta_INVALIDA(tmp_path, malla):
         extensions={"x": Extension(name="x", version="1.0", uri="clinical/no_existe.json")},
         extensions_used=["x"],
     )
-    salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("no es ningun asset declarado" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("no es ningun asset declarado" in e for e in inf.errors)
 
 
 def test_una_extension_OBLIGATORIA_se_avisa_aunque_el_contenedor_sea_valido(tmp_path, malla):
@@ -132,12 +132,12 @@ def test_una_extension_OBLIGATORIA_se_avisa_aunque_el_contenedor_sea_valido(tmp_
         extensions_used=["x"],
         extensions_required=["x"],
     )
-    salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert inf.valido
-    assert any("OBLIGATORIA" in a for a in inf.avisos)
+    assert inf.valid
+    assert any("OBLIGATORIA" in a for a in inf.warnings)
 
 
 def test_declarar_una_extension_y_no_usarla_es_un_AVISO(tmp_path, malla):
@@ -145,12 +145,12 @@ def test_declarar_una_extension_y_no_usarla_es_un_AVISO(tmp_path, malla):
         [_asset(malla)],
         extensions={"x": Extension(name="x", version="1.0")},
     )
-    salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert inf.valido
-    assert any("sobran" in a for a in inf.avisos)
+    assert inf.valid
+    assert any("sobran" in a for a in inf.warnings)
 
 
 # --- y lo que emitimos nosotros ---------------------------------------------- #
@@ -168,7 +168,7 @@ def test_el_agente_declara_lo_que_anade(tmp_path, malla):
     )
 
     assert salida.ok, salida.detail
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     assert "histora_clinical" in m.extensions_used
     assert m.extensions["histora_clinical"].uri == "clinical/observations.json"
     assert "FHIR" in m.extensions["histora_clinical"].description
@@ -185,6 +185,6 @@ def test_NADA_de_lo_nuestro_es_obligatorio(tmp_path, malla):
         _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla
     )
 
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     assert m.extensions_required == []
-    assert valida(salida.path).valido
+    assert validate(salida.path).valid

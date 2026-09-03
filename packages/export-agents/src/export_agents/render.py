@@ -73,7 +73,7 @@ RESOLUCION = 256
 
 
 @dataclass(frozen=True)
-class Vista:
+class View:
     """Una dirección de cámara. El nombre sale de los ángulos, no de la anatomía."""
 
     azimut_deg: float
@@ -105,11 +105,11 @@ class Vista:
         return np.stack([derecha, arriba, vista])
 
 
-VISTAS_POR_DEFECTO: tuple[Vista, ...] = (
-    Vista(0.0, 0.0),
-    Vista(90.0, 0.0),
-    Vista(180.0, 0.0),
-    Vista(0.0, 90.0),
+VISTAS_POR_DEFECTO: tuple[View, ...] = (
+    View(0.0, 0.0),
+    View(90.0, 0.0),
+    View(180.0, 0.0),
+    View(0.0, 90.0),
 )
 """Cuatro direcciones ortogonales. Multivista con el mínimo que cubre los tres ejes."""
 
@@ -119,7 +119,7 @@ def profundidad_optica(
     scales: np.ndarray,
     density: np.ndarray,
     *,
-    vista: Vista,
+    vista: View,
     resolucion: int = RESOLUCION,
     margen_mm: float = MARGEN_MM,
     encuadre: tuple[np.ndarray, np.ndarray] | None = None,
@@ -323,7 +323,7 @@ class RenderExportAgent(BaseExportAgent):
         self,
         store: SurfaceStore,
         *,
-        vistas: tuple[Vista, ...] = VISTAS_POR_DEFECTO,
+        vistas: tuple[View, ...] = VISTAS_POR_DEFECTO,
         resolucion: int = RESOLUCION,
         verify: bool = True,
         **kwargs: Any,

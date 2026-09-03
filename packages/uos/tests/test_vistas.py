@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from uos.vistas import FOV_GRADOS, construye_vistas, marco_anatomico
+from uos.vistas import FOV_GRADOS, anatomical_frame, build_views
 
 # Arcada de juguete, con ejes elegidos a proposito para que NO sean los de los indices:
 #   +X = derecha del paciente · +Y = anterior · +Z = oclusal
@@ -49,7 +49,7 @@ def test_los_tres_ejes_se_miden_y_apuntan_a_donde_dicen():
     """Oclusal hacia las coronas, derecha hacia el cuadrante 1, anterior hacia los incisivos."""
     pos, etq = _arcada()
 
-    marco, motivo = marco_anatomico(pos, etq)
+    marco, motivo = anatomical_frame(pos, etq)
 
     assert motivo == ""
     assert marco is not None
@@ -68,7 +68,7 @@ def test_los_ejes_siguen_a_la_arcada_cuando_la_arcada_gira():
     giro = np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])
     pos, etq = _arcada(giro)
 
-    marco, _ = marco_anatomico(pos, etq)
+    marco, _ = anatomical_frame(pos, etq)
 
     assert marco is not None
     assert marco.oclusal @ (giro @ [0, 0, 1]) > 0.9
@@ -80,7 +80,7 @@ def test_la_base_es_ortonormal():
     """Si no lo fuera, `up` no seria perpendicular a la direccion y el visor la reproyecta."""
     pos, etq = _arcada()
 
-    marco, _ = marco_anatomico(pos, etq)
+    marco, _ = anatomical_frame(pos, etq)
 
     assert marco is not None
     m = np.stack([marco.oclusal, marco.derecha, marco.anterior])
@@ -91,7 +91,7 @@ def test_sin_etiquetas_NO_se_inventan_vistas_y_se_dice_por_que():
     """Bautizar los ejes principales de la nube da nombres plausibles y a veces invertidos."""
     pos, _ = _arcada()
 
-    vistas, avisos = construye_vistas(pos, np.zeros(len(pos), dtype=np.int64), visita="v1")
+    vistas, avisos = build_views(pos, np.zeros(len(pos), dtype=np.int64), visita="v1")
 
     assert vistas == []
     assert len(avisos) == 1
@@ -103,7 +103,7 @@ def test_sin_encia_no_hay_signo_del_eje_oclusal():
     pos, etq = _arcada()
     m = etq > 0
 
-    marco, motivo = marco_anatomico(pos[m], etq[m])
+    marco, motivo = anatomical_frame(pos[m], etq[m])
 
     assert marco is None
     assert "sin encia" in motivo
@@ -113,7 +113,7 @@ def test_un_solo_lado_de_la_arcada_no_permite_decir_cual_es_la_derecha():
     pos, etq = _arcada()
     m = (etq == 0) | (etq // 10 == 1)
 
-    marco, motivo = marco_anatomico(pos[m], etq[m])
+    marco, motivo = anatomical_frame(pos[m], etq[m])
 
     assert marco is None
     assert "los dos lados" in motivo
@@ -122,7 +122,7 @@ def test_un_solo_lado_de_la_arcada_no_permite_decir_cual_es_la_derecha():
 def test_las_camaras_miran_al_centro_desde_la_direccion_que_nombran():
     pos, etq = _arcada()
 
-    vistas, _ = construye_vistas(pos, etq, visita="v1")
+    vistas, _ = build_views(pos, etq, visita="v1")
 
     por_id = {v.id: v for v in vistas}
     assert set(por_id) == {
@@ -145,8 +145,8 @@ def test_la_camara_se_aleja_lo_bastante_para_que_la_arcada_quepa():
     """El encuadre se calcula, no se fija: una arcada al doble de tamano se ve igual."""
     pos, etq = _arcada()
 
-    cerca = {v.id: v for v in construye_vistas(pos, etq, visita="v1")[0]}
-    lejos = {v.id: v for v in construye_vistas(pos * 2.0, etq, visita="v1")[0]}
+    cerca = {v.id: v for v in build_views(pos, etq, visita="v1")[0]}
+    lejos = {v.id: v for v in build_views(pos * 2.0, etq, visita="v1")[0]}
 
     d_cerca = np.linalg.norm(np.array(cerca["view.oclusal"].camera.position)
                              - np.array(cerca["view.oclusal"].camera.target))
@@ -158,7 +158,7 @@ def test_la_camara_se_aleja_lo_bastante_para_que_la_arcada_quepa():
 def test_una_pieza_con_contenido_clinico_tiene_su_vista_y_mira_desde_vestibular():
     pos, etq = _arcada()
 
-    vistas, avisos = construye_vistas(pos, etq, visita="v1", piezas=["16"])
+    vistas, avisos = build_views(pos, etq, visita="v1", piezas=["16"])
 
     assert avisos == []
     v = next(v for v in vistas if v.id == "view.pieza_16")
@@ -174,7 +174,7 @@ def test_una_pieza_anotada_que_el_escaner_no_trae_se_AVISA_en_vez_de_omitirse():
     """El informe habla del 47 y el escaner es del maxilar: el hueco tiene que verse."""
     pos, etq = _arcada()
 
-    vistas, avisos = construye_vistas(pos, etq, visita="v1", piezas=["47"])
+    vistas, avisos = build_views(pos, etq, visita="v1", piezas=["47"])
 
     assert not any(v.id == "view.pieza_47" for v in vistas)
     assert len(avisos) == 1
@@ -187,7 +187,7 @@ def test_las_piezas_que_faltan_van_en_UN_aviso_y_no_en_uno_por_diente():
     pos, etq = _arcada()
     inferior = [str(c) for c in (31, 32, 33, 34, 41, 42, 43, 44)]
 
-    vistas, avisos = construye_vistas(pos, etq, visita="v1", piezas=[*inferior, "16"])
+    vistas, avisos = build_views(pos, etq, visita="v1", piezas=[*inferior, "16"])
 
     assert any(v.id == "view.pieza_16" for v in vistas)
     assert len(avisos) == 1
@@ -199,8 +199,8 @@ def test_la_capa_de_apariencia_solo_aparece_si_hay_apariencia():
     """Declarar `gs` sin escena de apariencia haria que el visor buscara una capa que no esta."""
     pos, etq = _arcada()
 
-    sin_gs, _ = construye_vistas(pos, etq, visita="v1")
-    con_gs, _ = construye_vistas(pos, etq, visita="v1", con_apariencia=True)
+    sin_gs, _ = build_views(pos, etq, visita="v1")
+    con_gs, _ = build_views(pos, etq, visita="v1", con_apariencia=True)
 
     assert set(sin_gs[0].layers) == {"mesh"}
     assert set(con_gs[0].layers) == {"mesh", "gs"}

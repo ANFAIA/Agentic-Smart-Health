@@ -265,13 +265,18 @@ to check a manifest's \emph{shape}. It cannot check truth: not that a \code{sha2
 its asset, that the frame graph reaches the canonical frame, or that \code{derived/} carries
 its sidecar. That is why \S\ref{sec:conformance} requires both the schema and the validation
 algorithm, and why passing the schema alone is not conformance.\\
-Reference implementation & Python package \code{uos} (v0.2.0). Modules map one-to-one onto
-the sections of this document: \code{manifiesto.py} (\S\ref{sec:manifest}),
-\code{contenedor.py} (\S\ref{sec:container}), \code{escena.py} (\S\ref{sec:scenes}),
-\code{volumen.py} (\S\ref{sec:volume}), \code{clinico.py} (\S\ref{sec:clinical}),
-\code{derivados.py} (\S\ref{sec:derived}), \code{vistas.py} (\S\ref{sec:views}),
-\code{procedencia.py} (\S\ref{sec:provenance}), \code{validador.py}
-(\S\ref{sec:conformance}).\\
+Reference implementation & Python package \code{uos}. \textbf{Its public API --- everything
+an integrator types --- is English}: \code{read\_manifest}, \code{validate},
+\code{write\_uos}, \code{Manifest}, \code{Registration}, \code{report.valid},
+\code{report.errors}. The module \emph{files} are not, and deliberately: they are a map of
+this implementation, not an API. Nobody imports them --- the package re-exports everything
+--- and renaming eleven files to make a listing monolingual is a breaking change for
+something no reader types. They map one-to-one onto the sections here:
+\code{manifiesto.py} (\S\ref{sec:manifest}), \code{contenedor.py}
+(\S\ref{sec:container}), \code{escena.py} (\S\ref{sec:scenes}), \code{volumen.py}
+(\S\ref{sec:volume}), \code{clinico.py} (\S\ref{sec:clinical}), \code{derivados.py}
+(\S\ref{sec:derived}), \code{vistas.py} (\S\ref{sec:views}), \code{procedencia.py}
+(\S\ref{sec:provenance}), \code{validador.py} (\S\ref{sec:conformance}).\\
 The measured container & \code{another\_patient.uos} --- 12 entries, 18 views, 3 declared
 extensions, a provenance chain of 3 versions. Every real value quoted in this document is
 read from it. \textbf{It is not distributed with this specification}: it holds one
@@ -2096,15 +2101,16 @@ equivalent stated alongside, because none of this requires that package.
 
 \begin{lstlisting}[style=py]
 from pathlib import Path
-from uos import lee_manifiesto, valida
+from uos import read_manifest, validate
 
-m = lee_manifiesto(Path("case.uos"))       # errors unless manifest.json is entry #0
+m = read_manifest(Path("case.uos"))        # errors unless manifest.json is entry #0
 print(m.case_id, m.uos_version, m.phi_state)
 
-report = valida(Path("case.uos"))          # the algorithm of section 12.3
-print(report.valido, report.niveles)       # e.g. True [UOS-Core, UOS-Vol]
-for e in report.errores: print("ERROR  ", e)
-for w in report.avisos:  print("WARNING", w)
+report = validate(Path("case.uos"))        # the algorithm of section 12.3
+print(report.valid, report.levels)         # e.g. True [UOS-Core, UOS-Vol]
+print(report.distributable)                # may it leave the issuing organisation?
+for e in report.errors:   print("ERROR  ", e)
+for w in report.warnings: print("WARNING", w)
 \end{lstlisting}
 
 Without the package: open the ZIP, assert entry 0 is \code{manifest.json}, parse it,
@@ -2238,6 +2244,12 @@ meta = descriptor(pos, caras, rgb, medido, fdi,
                   origen="asset.scene", sha256_malla=sha, piezas_con_color=piezas)
 escribe_ply(ruta.with_suffix(".ply"), pos, caras, rgb, fdi, meta["comentarios"], medido)
 \end{lstlisting}
+
+\paragraph{A note on that snippet.} It reaches into \code{export\_agents}, which is the
+\emph{project's} pipeline and not this format's reference implementation --- which is why
+its names are not English like the \code{uos} package's. Nothing here requires that
+package: the recipe above states what a reader has to do, and the code is one way of doing
+it.
 
 \paragraph{Normative: the colour \MUST{} come from the Gaussian layer.} Not from any
 intermediate painted mesh the producing pipeline happened to hold. That distinction is the

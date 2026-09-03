@@ -60,7 +60,7 @@ _MARCADORES = ("anonymous", "anonymized", "anonimo", "removed", "none", "unknown
 PRESETS = ("cbct_bone", "cbct_soft", "cbct_metal_suppress")
 
 
-def describe_serie(
+def describe_series(
     carpeta: Path, *, frame: str, rango_pixeles: list | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """`(sidecar, avisos)` de la serie en `carpeta`, leyendo sus cabeceras.

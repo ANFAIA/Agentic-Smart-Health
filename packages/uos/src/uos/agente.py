@@ -27,14 +27,14 @@ from core_schemas import ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
 from export_agents.field import esquema_de_propiedades
 
-from uos.clinico import OBSERVACIONES, capa_clinica
+from uos.clinico import OBSERVATIONS, clinical_layer
 from uos.contenedor import (
     asset_de,
     asset_de_bytes,
     asset_de_directorio,
-    escribe_uos,
     json_de,
     partes_y_rango,
+    write_uos,
 )
 from uos.derivados import (
     SEG_GAUSSIANAS,
@@ -46,33 +46,33 @@ from uos.derivados import (
     separa_region_id,
     sha256_de_fichero,
 )
-from uos.escena import MEDIA_GLB, NodoGS, construye_glb, lee_stl_binario
+from uos.escena import MEDIA_GLB, GSNode, build_glb, lee_stl_binario
 from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
-    Adquisicion,
-    Aptitud,
-    Autorizacion,
-    Clase,
-    Desidentificacion,
-    EstadoPHI,
-    EstadoRegulatorio,
+    Acquisition,
+    AssetKind,
+    Clearance,
+    ClearanceStatus,
+    Deidentification,
     Extension,
+    FHIRResource,
     Frame,
-    Herramienta,
-    Manifiesto,
-    Oclusion,
-    Procedencia,
-    Proyeccion,
-    RecursoFHIR,
-    Registro,
-    Regulatorio,
-    Sujeto,
-    Visita,
+    Manifest,
+    OcclusionRecord,
+    PHIState,
+    Projection,
+    Provenance,
+    Registration,
+    RegistrationFitness,
+    Regulatory,
+    Subject,
+    Tool,
+    Visit,
 )
-from uos.procedencia import CADENA, encadena, lee_version_previa
-from uos.vistas import VISTAS, Vista, construye_vistas
-from uos.volumen import SIDECAR, describe_serie, identificables_en
+from uos.procedencia import CHAIN, encadena, lee_version_previa
+from uos.vistas import VIEWS, View, build_views
+from uos.volumen import SIDECAR, describe_series, identificables_en
 
 # A que recurso FHIR R4 corresponde cada clase de asset (§9). El conector con el PMS
 # —Open Dental primero— necesita saber QUE crear, y eso se puede decir sin servidor.
@@ -83,16 +83,16 @@ from uos.volumen import SIDECAR, describe_serie, identificables_en
 # resolverlo. Se afirma el tipo, que es verdad hoy, y se deja `resource` vacio.
 _RECURSO = {
     # El spec lo fija: el `.uos` entero se publica como adjunto con su media type (§9).
-    Clase.IMAGE2D: ("Media", "foto clinica; `Media` es el recurso de imagen no-DICOM"),
-    Clase.VOLUME: ("ImagingStudy", "serie DICOM intacta"),
-    Clase.MESH_GS_SCENE: (
+    AssetKind.IMAGE2D: ("Media", "foto clinica; `Media` es el recurso de imagen no-DICOM"),
+    AssetKind.VOLUME: ("ImagingStudy", "serie DICOM intacta"),
+    AssetKind.MESH_GS_SCENE: (
         "DocumentReference",
         "malla y apariencia 3D: FHIR R4 no tiene recurso para geometria dental, y `Media` "
         "es para foto, video y audio. `DocumentReference` es el sobre generico de binarios "
         "clinicos, que es lo que son",
     ),
-    Clase.DOCUMENT: ("DocumentReference", "informe u otro documento del caso"),
-    Clase.DERIVED_SEG: (
+    AssetKind.DOCUMENT: ("DocumentReference", "informe u otro documento del caso"),
+    AssetKind.DERIVED_SEG: (
         "Observation",
         "salida de inferencia: no es una adquisicion, es una lectura sobre ella",
     ),
@@ -233,7 +233,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.13.0"
+    version = "0.14.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -340,7 +340,7 @@ class UOSExportAgent(BaseExportAgent):
                 format="uos",
             )
 
-        visita = Visita(id="v1", date=snapshot.timestamp.date().isoformat(),
+        visita = Visit(id="v1", date=snapshot.timestamp.date().isoformat(),
                         label="Baseline")
         ficheros: dict[str, Path] = {}
         extras_escena: dict[str, bytes | str] = {}
@@ -356,9 +356,9 @@ class UOSExportAgent(BaseExportAgent):
         # STL original «PUEDE incluirse como asset document para trazabilidad». Declararlo
         # escena haria que un visor viera dos escenas y no supiera cual montar.
         assets.append(asset_de(
-            malla, uri, id_="asset.ios", kind=Clase.DOCUMENT, visit=visita.id,
+            malla, uri, id_="asset.ios", kind=AssetKind.DOCUMENT, visit=visita.id,
             frame=FRAME_IOS, media_type=_MEDIA.get(malla.suffix.lower(), "model/stl"),
-            acquisition=Adquisicion(time=snapshot.timestamp),
+            acquisition=Acquisition(time=snapshot.timestamp),
             external=True,
         ))
         # ⚠️ **La ESCENA, ademas del STL.** El §3.1 dibuja `scene/scene.glb` como «STL
@@ -373,7 +373,7 @@ class UOSExportAgent(BaseExportAgent):
         # construir la escena, solo un `.glb` con la malla suelta.
         registros = self._registros(snapshot, registrador)
         al_canonico = registros[0].transform_4x4_row_major if registros else None
-        nodos_gs: list[NodoGS] = []
+        nodos_gs: list[GSNode] = []
 
         # Las capas de gaussianas. Son tres cosas distintas con el mismo `kind`, asi que
         # cada una lleva su descriptor: el campo es densidad MEDIDA, el compuesto es medida
@@ -440,11 +440,11 @@ class UOSExportAgent(BaseExportAgent):
                 # relectura: es la forma que tendria una fuga.
                 assets.append(asset_de_bytes(
                     crudo_seg, uri_seg, id_=f"asset.seg_{corto}",
-                    kind=Clase.DERIVED_SEG, visit=visita.id, frame=marco,
+                    kind=AssetKind.DERIVED_SEG, visit=visita.id, frame=marco,
                     media_type="application/octet-stream",
-                    regulatory=Regulatorio(layer=3, clearances=[Autorizacion(
+                    regulatory=Regulatory(layer=3, clearances=[Clearance(
                         jurisdiction="EU", regime="MDR",
-                        status=EstadoRegulatorio.INVESTIGACION,
+                        status=ClearanceStatus.INVESTIGACION,
                     )]),
                     sidecar_uri=meta_seg,
                     derived_from=[id_],
@@ -483,20 +483,20 @@ class UOSExportAgent(BaseExportAgent):
                 else partial(asset_de_bytes, sin_region)
             )
             assets.append(declara(
-                uri, id_=id_, kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                uri, id_=id_, kind=AssetKind.MESH_GS_SCENE, visit=visita.id,
                 frame=marco, media_type="application/octet-stream",
                 # El orden de carga del §4.1: malla 10 -> fotos 20 -> GS 25 -> volumen 30.
                 load_priority=25, sidecar_uri=descriptor,
-                # ⚠️ **Capa 2, y antes decia `layer=1, status="derived"` (B-5).** Es
+                # ⚠️ **LayerState 2, y antes decia `layer=1, status="derived"` (B-5).** Es
                 # 3DGS ajustado contra renders de la malla: computo reproducible a partir
                 # de un asset de capa 1, sin modelo entrenado. No es adquisicion —nadie
                 # midio esto— y tampoco es inferencia clinica, asi que no va a `derived/`.
                 # El `status="derived"` era esa idea dicha en un campo de texto libre que
                 # ningun lector podia interpretar; ahora es la capa, que si se comprueba.
-                **({"regulatory": Regulatorio(layer=2), "derived_from": ["asset.ios"]}
+                **({"regulatory": Regulatory(layer=2), "derived_from": ["asset.ios"]}
                    if id_ == "asset.gs" else {}),
             ))
-            nodos_gs.append(NodoGS(
+            nodos_gs.append(GSNode(
                 uri=uri, nombre=papel,
                 # Lo que esta en el marco del CBCT necesita la transformada al canonico;
                 # la apariencia ya vive en el del escaner, que ES el canonico.
@@ -528,11 +528,11 @@ class UOSExportAgent(BaseExportAgent):
                 assets.append(asset_de(
                     destination / uri_fit, uri_fit,
                     id_="asset.field_fit",
-                    kind=Clase.MESH_GS_SCENE, visit=visita.id,
+                    kind=AssetKind.MESH_GS_SCENE, visit=visita.id,
                     frame=FRAME_CBCT, media_type="application/octet-stream",
                     load_priority=25, sidecar_uri=descriptor_fit,
                 ))
-                nodos_gs.append(NodoGS(
+                nodos_gs.append(GSNode(
                     uri=uri_fit,
                     nombre="campo ajustado contra densidad medida",
                     matriz_fila=al_canonico,
@@ -617,7 +617,7 @@ class UOSExportAgent(BaseExportAgent):
                     n_primitives_override=(_n_ap or len(datos_ap["means"])),
                     unidades_override=_u_ap,
                 ))
-                # ⚠️ **No hay `asset.apariencia` ni `NodoGS`: la capa ES la primitiva.**
+                # ⚠️ **No hay `asset.apariencia` ni `GSNode`: la capa ES la primitiva.**
                 # Habia las dos cosas —un `.ply` de 12,5 MB declarado como asset y un nodo
                 # con `extras.uos_gs_uri` apuntandolo— porque era el fallback que el
                 # borrador admite mientras `KHR_gaussian_splatting` no este ratificada. Con
@@ -662,7 +662,7 @@ class UOSExportAgent(BaseExportAgent):
                     f"UOS-Core: {e}"
                 )
         if malla_ingerida is not None:
-            glb = construye_glb(
+            glb = build_glb(
                 malla_ingerida["positions"], malla_ingerida["faces"],
                 malla_ingerida.get("normals"), nombre="scan",
                 generador=f"{self.name}@{self.version}",
@@ -696,7 +696,7 @@ class UOSExportAgent(BaseExportAgent):
             if not sin_malla:
                 extras_escena["scene/scene.glb"] = glb
                 assets.append(asset_de_bytes(
-                    glb, "scene/scene.glb", id_="asset.scene", kind=Clase.MESH_GS_SCENE,
+                    glb, "scene/scene.glb", id_="asset.scene", kind=AssetKind.MESH_GS_SCENE,
                     visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
                     load_priority=10,
                     # El descriptor de las columnas de la capa 3DGS que va DENTRO de este
@@ -745,11 +745,11 @@ class UOSExportAgent(BaseExportAgent):
                     extras_escena[SEGMENTACION_META] = json_de(meta)
                     assets.append(asset_de_bytes(
                         crudo, SEGMENTACION, id_="asset.seg_teeth",
-                        kind=Clase.DERIVED_SEG, visit=visita.id, frame=FRAME_IOS,
+                        kind=AssetKind.DERIVED_SEG, visit=visita.id, frame=FRAME_IOS,
                         media_type="application/octet-stream",
-                        regulatory=Regulatorio(layer=3, clearances=[Autorizacion(
+                        regulatory=Regulatory(layer=3, clearances=[Clearance(
                             jurisdiction="EU", regime="MDR",
-                            status=EstadoRegulatorio.INVESTIGACION,
+                            status=ClearanceStatus.INVESTIGACION,
                         )]),
                         sidecar_uri=SEGMENTACION_META,
                     ))
@@ -771,7 +771,7 @@ class UOSExportAgent(BaseExportAgent):
             # fotografias del paciente dentro. Es el mismo criterio para las tres cosas: lo
             # que viaja es la direccion de contenido, no el fichero.
             assets.append(asset_de(
-                foto, uri, id_=f"asset.img_{i:03d}", kind=Clase.IMAGE2D, visit=visita.id,
+                foto, uri, id_=f"asset.img_{i:03d}", kind=AssetKind.IMAGE2D, visit=visita.id,
                 external=True,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(foto.suffix.lower(), "image/jpeg"),
@@ -779,7 +779,7 @@ class UOSExportAgent(BaseExportAgent):
                 # `fdi_targets` va vacio porque nadie anoto a que diente apunta cada una,
                 # y vacio significa «no consta» — deducirlo de los pixeles exige la fusion
                 # foto↔malla, que esta medida y no converge barata sin calibracion.
-                projection=Proyeccion(type="intraoral_photo"),
+                projection=Projection(type="intraoral_photo"),
             ))
 
         for i, doc in enumerate(informes or []):
@@ -794,14 +794,14 @@ class UOSExportAgent(BaseExportAgent):
             # direccion de contenido —`sha256:<hex>`— igual que el resto, y es el mismo
             # hash con el que el gate nombra el que nadie pudo leer.
             assets.append(asset_de(
-                doc, uri, id_=f"asset.doc_{i:03d}", kind=Clase.DOCUMENT, visit=visita.id,
+                doc, uri, id_=f"asset.doc_{i:03d}", kind=AssetKind.DOCUMENT, visit=visita.id,
                 external=True,
                 frame=FRAME_IOS,
                 media_type=_MEDIA.get(doc.suffix.lower(), "application/pdf"),
                 # §5.1 Layer 1: es el registro que firmo una persona, no salida de un
                 # modelo. La TRANSCRIPCION de lo que dice vive aparte, en
                 # `clinical/observations.json`, y declara su propia `derivation`.
-                regulatory=Regulatorio(layer=1),
+                regulatory=Regulatory(layer=1),
             ))
 
         # La capa clinica: lo que el informe dice de cada pieza, las medidas que no caben
@@ -816,13 +816,13 @@ class UOSExportAgent(BaseExportAgent):
             motivos = [*(motivos or []), _aviso_cadena]
 
         # en una pieza, y los motivos del gate. Ver `clinico.py` — es EXTENSION nuestra.
-        clinico = capa_clinica(snapshot, list(motivos or []))
+        clinico = clinical_layer(snapshot, list(motivos or []))
         if clinico["teeth"] or clinico["measurements"]:
             crudo_clinico = json_de(clinico)
-            extras_escena[OBSERVACIONES] = crudo_clinico
+            extras_escena[OBSERVATIONS] = crudo_clinico
             assets.append(asset_de_bytes(
-                crudo_clinico.encode("utf-8"), OBSERVACIONES, id_="asset.clinical",
-                kind=Clase.DOCUMENT, visit=visita.id, frame=FRAME_IOS,
+                crudo_clinico.encode("utf-8"), OBSERVATIONS, id_="asset.clinical",
+                kind=AssetKind.DOCUMENT, visit=visita.id, frame=FRAME_IOS,
                 media_type="application/json", load_priority=15,
             ))
 
@@ -866,13 +866,13 @@ class UOSExportAgent(BaseExportAgent):
             # Una sola pasada sobre la serie: de ella salen las partes con su identidad
             # DICOM (D-3) y el rango de pixeles (T-2), y las dos cosas se reparten.
             partes_cbct, rango_cbct = partes_y_rango(cbct)
-            sidecar, aviso_volumen = describe_serie(
+            sidecar, aviso_volumen = describe_series(
                 cbct, frame=FRAME_CBCT, rango_pixeles=rango_cbct,
             )
             # D-1/D-2 · el frame del volumen se ancla al UID que DICOM ya define y declara
             # su convencion anatomica. Se LEE del sidecar, que a su vez lo leyo de la
             # serie: aqui no se inventa ninguno de los dos.
-            # ⚠️ Se reconstruye en vez de `model_copy(update=...)`: ese camino NO valida,
+            # ⚠️ Se reconstruye en vez de `model_copy(update=...)`: ese camino NO validate,
             # y dejaba `anatomical` como `str` donde el contrato declara un enum. Pydantic
             # solo avisa al serializar, asi que el fallo salia en un warning y no aqui.
             frame_cbct = Frame(**{
@@ -886,10 +886,10 @@ class UOSExportAgent(BaseExportAgent):
             # (§5.2). Sin el, el contenedor no podria ni situar el volumen que referencia.
             extras[sidecar_uri] = json_de(sidecar)
             assets.append(asset_de_directorio(
-                cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
+                cbct, uri, id_="asset.ct_001", kind=AssetKind.VOLUME, visit=visita.id,
                 partes=partes_cbct,
                 frame=FRAME_CBCT, media_type="application/dicom",
-                acquisition=Adquisicion(time=snapshot.timestamp),
+                acquisition=Acquisition(time=snapshot.timestamp),
                 sidecar_uri=sidecar_uri,
                 external=True,
             ))
@@ -903,7 +903,7 @@ class UOSExportAgent(BaseExportAgent):
             # Los controles de volumen del §7 —`mpr`, `clip_planes`, la capa `volume`—
             # solo se escriben si el volumen VIAJA. En un contenedor sin el darian a
             # entender que hay un plano que cortar.
-            con_volumen=any(a.kind is Clase.VOLUME for a in assets),
+            con_volumen=any(a.kind is AssetKind.VOLUME for a in assets),
         )
         salida = destination.with_suffix(".uos")
         # La version anterior del caso, si la hay: de ella salen `prev_manifest_sha256` y
@@ -912,15 +912,15 @@ class UOSExportAgent(BaseExportAgent):
         # ── PHI: que se hizo, y que se puede afirmar con eso (B-3, B-4) ──────
         # `applied_to` es la lista de assets sobre los que se ejecuto de verdad. No estar
         # en ella significa «no se le aplico nada», no «no hacia falta».
-        desident = Desidentificacion(
+        desident = Deidentification(
             profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
             # ⚠️ Lo que este pipeline hace HOY, y nada mas. Anadir aqui una opcion que no
             # se ejecuta seria la peor clase de mentira: la que un auditor lee como
             # garantia. El defacing NO esta implementado.
             options=[],
             applied_to=[a.id for a in assets
-                        if a.kind in (Clase.VOLUME, Clase.IMAGE2D)],
-            tool=Herramienta(name="agentic-smart-health", version=self.version),
+                        if a.kind in (AssetKind.VOLUME, AssetKind.IMAGE2D)],
+            tool=Tool(name="agentic-smart-health", version=self.version),
             note=("el identificador de paciente se sustituye por un HMAC-SHA256 truncado "
                   "con sal por emisor (`ASH_PSEUDONYM_SALT`), estable entre adquisiciones "
                   "y no invertible sin la sal. NO se limpian descriptores ni rasgos "
@@ -928,13 +928,13 @@ class UOSExportAgent(BaseExportAgent):
         )
         _medidas_de_volumen = [
             a.id for a in assets
-            if a.kind == Clase.MESH_GS_SCENE
+            if a.kind == AssetKind.MESH_GS_SCENE
             and isinstance(extras_escena.get(a.sidecar_uri or ""), str)
             and '"measured": true' in extras_escena[a.sidecar_uri or ""].lower()
         ]
-        phi = EstadoPHI.PSEUDONYMIZED
+        phi = PHIState.PSEUDONYMIZED
         if _medidas_de_volumen:
-            phi = EstadoPHI.IDENTIFIED
+            phi = PHIState.IDENTIFIED
             motivos = list(motivos or []) + [
                 "phi_state: identified — el contenedor lleva "
                 f"{', '.join(_medidas_de_volumen)}, capa(s) de densidad MEDIDA con tejido "
@@ -950,7 +950,7 @@ class UOSExportAgent(BaseExportAgent):
         consentimiento = None
 
         previo_sha, cadena_previa = _prev_sha, _prev_cadena
-        manifiesto = Manifiesto(
+        manifiesto = Manifest(
             uos_version=UOS_VERSION,
             case_id=f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, snapshot.acquisition_id)}",
             generator={"name": "agentic-smart-health", "version": self.version},
@@ -965,7 +965,7 @@ class UOSExportAgent(BaseExportAgent):
             phi_state=phi,
             deidentification=desident,
             purpose_of_use=proposito,
-            subject=Sujeto(pseudonym=pseudonimo, consent=consentimiento),
+            subject=Subject(pseudonym=pseudonimo, consent=consentimiento),
             canonical_frame=Frame(
                 id=FRAME_IOS,
                 description="Escaner intraoral, hub geometrico del caso",
@@ -978,14 +978,14 @@ class UOSExportAgent(BaseExportAgent):
             # hay relacion entre arcadas que registrar. Callarlo dejaria al lector sin
             # saber si es que no se registro o si es que no habia dos arcadas, y son
             # cosas distintas: la primera es una falta y la segunda no.
-            occlusion=Oclusion.NO_APLICA,
+            occlusion=OcclusionRecord.NO_APLICA,
             fhir_map=fhir,
             # ⚠️ Nada nuestro va en `extensions_required`. Todo lo que anadimos SUMA
             # informacion; un visor conforme tiene que poder abrir el caso sin
             # entender ninguna de ellas y ensenar la escena, el volumen y las fotos.
             extensions=extensiones,
             extensions_used=sorted(extensiones),
-            provenance=Procedencia(prev_manifest_sha256=previo_sha, chain=CADENA),
+            provenance=Provenance(prev_manifest_sha256=previo_sha, chain=CHAIN),
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         # El manifiesto se serializa UNA vez y se hashea eso mismo: el eslabon de la
@@ -1001,34 +1001,34 @@ class UOSExportAgent(BaseExportAgent):
             assets=len(assets),
             note=f"{len(vistas)} vista(s), {len(registros)} registracion(es)",
         )
-        escribe_uos(salida, manifiesto, ficheros.items(),
+        write_uos(salida, manifiesto, ficheros.items(),
                     directorios=directorios,
                     json_manifiesto=json_manifiesto, extras={
-            VISTAS: json_de({"views": [v.model_dump(mode="json") for v in vistas]}),
-            CADENA: cadena.json_canonico(),
+            VIEWS: json_de({"views": [v.model_dump(mode="json") for v in vistas]}),
+            CHAIN: cadena.json_canonico(),
             **extras_escena,
             **extras,
         })
 
-        # Se RELEE y se valida lo que se acaba de escribir, igual que hace el exportador
+        # Se RELEE y se validate lo que se acaba de escribir, igual que hace el exportador
         # de STL: el sha256 de cada asset se recomputa desde el contenedor. Si cuadra, la
         # desviacion del ciclo es exactamente cero y esta MEDIDA, no afirmada — el
         # contenedor referencia, no transcodifica, y esto lo demuestra fichero a fichero.
-        from uos.validador import valida
+        from uos.validador import validate
 
-        informe = valida(salida)
-        if not informe.valido:
+        informe = validate(salida)
+        if not informe.valid:
             raise ValueError(
-                "el .uos recien escrito no valida contra su propio manifiesto: "
-                + "; ".join(informe.errores[:3])
+                "el .uos recien escrito no validate contra su propio manifiesto: "
+                + "; ".join(informe.errors[:3])
             )
 
         avisos = (list(motivos or []) + aviso_vistas + aviso_volumen
-                  + aviso_derivados + list(informe.avisos))
-        if not informe.distribuible:
+                  + aviso_derivados + list(informe.warnings))
+        if not informe.distributable:
             avisos.append(
                 "NO es UOS-Distributable, asi que no debe salir de la organizacion que lo "
-                "emite: " + "; ".join(informe.no_distribuible_porque)
+                "emite: " + "; ".join(informe.not_distributable_because)
             )
         # Lo estructurado vive en el MANIFIESTO, que es el registro del caso. Meterlo
         # tambien en `ExportOutput` daria dos sitios donde la misma verdad puede divergir,
@@ -1041,10 +1041,10 @@ class UOSExportAgent(BaseExportAgent):
             max_deviation_mm=0.0,
             hitl_reasons=avisos,
             detail=(
-                f"{','.join(n.value for n in informe.niveles)}"
-                f"{' · UOS-Distributable' if informe.distribuible else ''} · "
+                f"{','.join(n.value for n in informe.levels)}"
+                f"{' · UOS-Distributable' if informe.distributable else ''} · "
                 f"{len(assets)} assets "
-                f"byte-identicos, {len(registros)} registracion(es), {informe.vistas} "
+                f"byte-identicos, {len(registros)} registracion(es), {informe.views} "
                 f"vista(s), version {informe.version} de la cadena, frame canonico "
                 f"{FRAME_IOS}"
             ),
@@ -1109,7 +1109,7 @@ class UOSExportAgent(BaseExportAgent):
             fh.write(filas.tobytes())
         return destino
 
-    def _registros(self, snapshot: TwinSnapshot, operador: str | None) -> list[Registro]:
+    def _registros(self, snapshot: TwinSnapshot, operador: str | None) -> list[Registration]:
         """La relacion CBCT ↔ escaner, INVERTIDA al canonico y declarada.
 
         La fusion geometrica registra el escaner SOBRE el CBCT, asi que su transformada va
@@ -1130,7 +1130,7 @@ class UOSExportAgent(BaseExportAgent):
         m = np.eye(4)
         m[:3, :3] = np.asarray(quaternion_to_matrix(t.rotation), dtype=np.float64)
         m[:3, 3] = np.asarray(t.translation, dtype=np.float64)
-        return [Registro(
+        return [Registration(
             id="reg.ct_to_ios",
             source_frame=FRAME_CBCT,
             target_frame=FRAME_IOS,
@@ -1151,19 +1151,19 @@ class UOSExportAgent(BaseExportAgent):
             # llevaba `default_factory` y toda registracion salia con `layer: 1`, de modo
             # que una transformada calculada por una maquina era, sobre el papel, tan
             # adquirida como el CBCT del que salio.
-            regulatory=Regulatorio(layer=2),
+            regulatory=Regulatory(layer=2),
             # ⚠️ **Solo visualizacion, y es una afirmacion medida (D-9).** El residuo que
             # tenemos es el RMS sobre la poblacion solapada; no hay TRE ni error maximo
             # local, y sin ellos no se puede declarar apto para medir ni para planificar
             # una cirugia. Declarar la lista corta es lo que impide que un lector suponga
             # el resto — vacia significaria «no declarado» y seria peor.
-            fit_for=[Aptitud.VISUALIZACION],
+            fit_for=[RegistrationFitness.VISUALIZACION],
         )]
 
     def _vistas(
-        self, snapshot: TwinSnapshot, visita: Visita, etiquetas: Any | None,
+        self, snapshot: TwinSnapshot, visita: Visit, etiquetas: Any | None,
         *, con_apariencia: bool, con_volumen: bool = False,
-    ) -> tuple[list[Vista], list[str]]:
+    ) -> tuple[list[View], list[str]]:
         """Las vistas del caso (§7), medidas sobre la malla EN EL FRAME CANONICO.
 
         Las posiciones salen del almacen, no del STL: son las mismas que ingirio el
@@ -1177,12 +1177,12 @@ class UOSExportAgent(BaseExportAgent):
         """
         if etiquetas is None or snapshot.surface_ref is None:
             return [], [
-                f"el .uos no lleva vistas ({VISTAS} va vacio): sin las etiquetas FDI del "
+                f"el .uos no lleva vistas ({VIEWS} va vacio): sin las etiquetas FDI del "
                 "escaner no hay con que medir los ejes anatomicos, y bautizar los ejes "
                 "principales de la nube produce nombres plausibles y a veces invertidos"
             ]
         malla = self.store.load(snapshot.surface_ref)
-        return construye_vistas(
+        return build_views(
             np.asarray(malla["positions"], dtype=np.float64),
             np.asarray(etiquetas),
             visita=visita.id,
@@ -1191,7 +1191,7 @@ class UOSExportAgent(BaseExportAgent):
             con_volumen=con_volumen,
         )
 
-    def _fhir(self, assets: list) -> dict[str, RecursoFHIR]:
+    def _fhir(self, assets: list) -> dict[str, FHIRResource]:
         """El mapeo a FHIR R4 (§9): un TIPO de recurso por asset, y el caso entero.
 
         `case` no es un asset: es el `.uos` completo, que el spec publica como
@@ -1199,7 +1199,7 @@ class UOSExportAgent(BaseExportAgent):
         clave que usa el ejemplo del spec para no inventarse una.
         """
         fuera = {
-            "case": RecursoFHIR(
+            "case": FHIRResource(
                 resource_type="DocumentReference",
                 note=f"el .uos entero como adjunto, content_type {MEDIA_TYPE}",
             )
@@ -1210,14 +1210,14 @@ class UOSExportAgent(BaseExportAgent):
                 # medidas por diente, y el recurso de FHIR para una medida clinica es
                 # `Observation`. Mapearlo como adjunto lo dejaria fuera del alcance de
                 # cualquier consulta del PMS, que es el punto del §9.
-                fuera[a.id] = RecursoFHIR(
+                fuera[a.id] = FHIRResource(
                     resource_type="Observation",
                     note="una Observation por pieza y por medida, con su `subject` y su "
                          "`bodySite` en FDI",
                 )
                 continue
             tipo, nota = _RECURSO[a.kind]
-            fuera[a.id] = RecursoFHIR(resource_type=tipo, note=nota)
+            fuera[a.id] = FHIRResource(resource_type=tipo, note=nota)
         return fuera
 
     def _malla_ingerida(self, snapshot: TwinSnapshot) -> dict | None:

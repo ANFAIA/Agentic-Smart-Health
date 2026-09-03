@@ -242,7 +242,7 @@ def write_dicom_series(
 
 
 # --------------------------------------------------------------------------- #
-# Informe clínico
+# Report clínico
 # --------------------------------------------------------------------------- #
 def write_report(
     path: Path, ph_by_fdi: dict[str, float] | None = None, *, date: datetime | None = None

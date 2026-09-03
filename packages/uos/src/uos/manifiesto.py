@@ -1,4 +1,4 @@
-"""El manifiesto: `manifest.json`. Es el contrato del contenedor, y se valida como tal.
+"""El manifiesto: `manifest.json`. Es el contrato del contenedor, y se validate como tal.
 
 Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
 `.uos`, que es justo el punto: un lector tiene que poder negarse en vez de adivinar.
@@ -21,7 +21,7 @@ UOS_VERSION = "0.2"
 MEDIA_TYPE = "application/vnd.histora.uos"
 
 
-class EstadoPHI(StrEnum):
+class PHIState(StrEnum):
     """Anonimizacion como ESTADO EXPLICITO (§2.6), no como suposicion.
 
     Un `.uos` dice en que estado esta y los visores lo respetan —banner, politicas de
@@ -35,7 +35,7 @@ class EstadoPHI(StrEnum):
     QUARANTINED = "quarantined"
 
 
-class Clase(StrEnum):
+class AssetKind(StrEnum):
     """`kind` de un asset (§4.1). El nivel UOS-Core solo exige los tres primeros."""
 
     VOLUME = "volume"
@@ -49,16 +49,16 @@ class Clase(StrEnum):
 # Orden de carga progresiva (§4.1): menor = antes. La escena de malla primero porque es
 # lo que permite ensenar algo util habiendo leido solo el manifiesto y el asset mas ligero.
 PRIORIDAD = {
-    Clase.MESH_GS_SCENE: 10,
-    Clase.IMAGE2D: 20,
-    Clase.VOLUME: 30,
-    Clase.SIGNAL: 30,
-    Clase.DERIVED_SEG: 40,
-    Clase.DOCUMENT: 50,
+    AssetKind.MESH_GS_SCENE: 10,
+    AssetKind.IMAGE2D: 20,
+    AssetKind.VOLUME: 30,
+    AssetKind.SIGNAL: 30,
+    AssetKind.DERIVED_SEG: 40,
+    AssetKind.DOCUMENT: 50,
 }
 
 
-class Autorizacion(BaseModel):
+class Clearance(BaseModel):
     """Que dice UNA jurisdiccion sobre este asset (B-5).
 
     Sustituye al par `status` + `jurisdictions`, que no se podia leer: `status` era texto
@@ -71,13 +71,13 @@ class Autorizacion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     jurisdiction: str
     regime: str
-    status: EstadoRegulatorio
+    status: ClearanceStatus
     #: El numero de expediente o de autorizacion, cuando existe. `None` NO es "no hay":
     #: es "no consta aqui", igual que `weights_sha256` en el sidecar de `derived/`.
     reference: str | None = None
 
 
-class EstadoRegulatorio(StrEnum):
+class ClearanceStatus(StrEnum):
     """Vocabulario CERRADO. `status` era `str | None` y por tanto texto libre: dos
     emisores escribian «investigational» y «Investigational (EU MDR)» y ningun lector
     podia compararlos."""
@@ -89,7 +89,7 @@ class EstadoRegulatorio(StrEnum):
     RETIRADO = "withdrawn"
 
 
-class Regulatorio(BaseModel):
+class Regulatory(BaseModel):
     """La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.
 
     **Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un
@@ -110,10 +110,10 @@ class Regulatorio(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     layer: int = Field(default=1, ge=1, le=3)
-    clearances: list[Autorizacion] = Field(default_factory=list)
+    clearances: list[Clearance] = Field(default_factory=list)
 
 
-class Proposito(StrEnum):
+class PurposeOfUse(StrEnum):
     """Para que se emitio ESTE contenedor (B-4). Vocabulario cerrado.
 
     Un `.uos` que sale hacia un laboratorio protesico, hacia un colega para una segunda
@@ -130,18 +130,18 @@ class Proposito(StrEnum):
     ENTRENAMIENTO = "model_training"
 
 
-class Consentimiento(BaseModel):
+class Consent(BaseModel):
     """Para que consintio el paciente. `scope` es lo que limita `purpose_of_use`."""
 
     model_config = ConfigDict(extra="forbid")
     #: Referencia al recurso `Consent` de FHIR R4 cuando el caso vive en un servidor.
-    #: `None` mientras no exista, misma regla que `RecursoFHIR.resource`.
+    #: `None` mientras no exista, misma regla que `FHIRResource.resource`.
     fhir_consent: str | None = None
-    scope: list[Proposito] = Field(default_factory=list)
+    scope: list[PurposeOfUse] = Field(default_factory=list)
     obtained: datetime | None = None
 
 
-class Herramienta(BaseModel):
+class Tool(BaseModel):
     """Que programa aplico la de-identificacion, para poder repetirla o auditarla."""
 
     model_config = ConfigDict(extra="forbid")
@@ -150,7 +150,7 @@ class Herramienta(BaseModel):
     sha256: str | None = None
 
 
-class Desidentificacion(BaseModel):
+class Deidentification(BaseModel):
     """QUE se hizo para de-identificar, en el vocabulario de DICOM PS3.15 Anexo E (B-3).
 
     ⚠️ **`phi_state` solo no puede sostener lo que afirma.** Trata la de-identificacion
@@ -173,7 +173,7 @@ class Desidentificacion(BaseModel):
     #: Sobre que assets se ejecuto. El validador avisa por cada `volume` o `image2d` que
     #: no aparezca aqui: no estar en la lista significa que no se le aplico nada.
     applied_to: list[str] = Field(default_factory=list)
-    tool: Herramienta | None = None
+    tool: Tool | None = None
     #: ⚠️ **El desplazamiento de fechas es la CLAVE de re-identificacion.** Solo viaja si
     #: el contenedor ya se declara `identified`; en cualquier otro estado va a `null`,
     #: porque publicarlo deshace la medida que dice haber aplicado.
@@ -184,7 +184,7 @@ class Desidentificacion(BaseModel):
     LIMPIA_RASGOS: ClassVar[str] = "CleanRecognizableVisualFeatures"
 
 
-class Dispositivo(BaseModel):
+class Device(BaseModel):
     """El equipo, con claves FIJAS y **sin numero de serie** (B-3).
 
     Era `map str -> str` sin restriccion, y un mapa libre en un contenedor clinico acaba
@@ -199,13 +199,13 @@ class Dispositivo(BaseModel):
     software_version: str | None = None
 
 
-class Adquisicion(BaseModel):
+class Acquisition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     time: datetime | None = None
-    device: Dispositivo = Field(default_factory=lambda: Dispositivo())
+    device: Device = Field(default_factory=lambda: Device())
 
 
-class Proyeccion(BaseModel):
+class Projection(BaseModel):
     """Que clase de imagen 2D es y a que piezas apunta (§5.3).
 
     `fdi_targets` va VACIO cuando no se sabe, que con una foto suelta de una carpeta de
@@ -219,7 +219,7 @@ class Proyeccion(BaseModel):
     fdi_targets: list[str] = Field(default_factory=list)
 
 
-class Parte(BaseModel):
+class Part(BaseModel):
     """Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).
 
     Existe para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que
@@ -269,25 +269,25 @@ class Asset(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     id: str
-    kind: Clase
+    kind: AssetKind
     visit: str
     uri: str
     media_type: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     bytes: int = Field(ge=0)
     frame: str
-    acquisition: Adquisicion = Field(default_factory=lambda: Adquisicion())
+    acquisition: Acquisition = Field(default_factory=lambda: Acquisition())
     load_priority: int = 30
-    regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
-    # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Parte` y
+    regulatory: Regulatory = Field(default_factory=lambda: Regulatory())
+    # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Part` y
     # `digesto_de_partes`.
     # ⚠️ §5.3. `projection` describe QUE tipo de imagen es y a que dientes apunta; `pose`
     # —donde estaba la camara— es explicitamente opcional en el spec y aqui no se emite:
     # una foto intraoral de una carpeta de clinica no trae pose, y calcularla exige la
     # fusion foto↔malla, que esta medida y no converge barata sin calibracion.
-    projection: Proyeccion | None = None
+    projection: Projection | None = None
 
-    parts: list[Parte] = Field(default_factory=list)
+    parts: list[Part] = Field(default_factory=list)
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
     sidecar_uri: str | None = None
@@ -384,7 +384,7 @@ class Asset(BaseModel):
         return self
 
 
-def digesto_de_partes(partes: list[Parte]) -> str:
+def digesto_de_partes(partes: list[Part]) -> str:
     """El `sha256` de un asset-directorio: hash sobre `nombre\0hash\n` ordenado.
 
     El spec da un `sha256` por asset y no dice como se calcula cuando el asset es una serie
@@ -416,7 +416,7 @@ def digesto_de_partes(partes: list[Parte]) -> str:
     return h.hexdigest()
 
 
-class Anatomico(StrEnum):
+class AnatomicalConvention(StrEnum):
     """La convencion de ejes del frame (D-2).
 
     ⚠️ **«Diestro» fija la quiralidad, no la orientacion.** DICOM es LPS; un escaner
@@ -435,7 +435,7 @@ class Anatomico(StrEnum):
     DISPOSITIVO = "device"
 
 
-class Oclusion(StrEnum):
+class OcclusionRecord(StrEnum):
     """Como se registro la relacion entre arcadas (D-9).
 
     ⚠️ **Es la registracion clinicamente mas importante de un caso dental y el formato no
@@ -458,7 +458,7 @@ class Oclusion(StrEnum):
     NO_APLICA = "single_arch"
 
 
-class Aptitud(StrEnum):
+class RegistrationFitness(StrEnum):
     """Para que sirve una registracion, medido y no supuesto (D-9).
 
     ⚠️ **`rms_error_mm` es un promedio global y no decide un uso clinico.** Para cirugia
@@ -473,7 +473,7 @@ class Aptitud(StrEnum):
     CIRUGIA_GUIADA = "guided_surgery"
 
 
-class Sitio(StrEnum):
+class SiteKind(StrEnum):
     """Sitios que NO son un diente (D-9).
 
     `uos_fdi` solo etiqueta dientes, asi que no habia forma de senalar un lecho de
@@ -503,7 +503,7 @@ class Frame(BaseModel):
     units: str = "mm"
     handedness: str = "right"
     #: D-2. `None` es NO DECLARADO y no equivale a `device`.
-    anatomical: Anatomico | None = None
+    anatomical: AnatomicalConvention | None = None
     #: D-1 · el identificador que DICOM ya define para un sistema de coordenadas, etiqueta
     #: `(0020,0052)`. `frame.ct_001` es una cadena que se invento el escritor: un lector
     #: que reciba la serie por otro canal no tiene forma de saber que es ESA serie salvo
@@ -512,7 +512,7 @@ class Frame(BaseModel):
     dicom_frame_of_reference_uid: str | None = None
 
 
-class Registro(BaseModel):
+class Registration(BaseModel):
     """Relacion espacial entre dos frames. **Objeto de primera clase** (§6).
 
     Toda relacion es explicita, auditable y firmable. La transformada lleva puntos de
@@ -540,7 +540,7 @@ class Registro(BaseModel):
     tre_region: str | None = None
     #: ⚠️ Vacio significa NO DECLARADO, y un lector **MUST NOT** suponer aptitud para un
     #: uso que no este aqui. Es la misma regla que `fdi_targets` y `clearances`.
-    fit_for: list[Aptitud] = Field(default_factory=list)
+    fit_for: list[RegistrationFitness] = Field(default_factory=list)
     computed: datetime | None = None
     operator: str | None = None
     verified_by: str | None = None
@@ -548,7 +548,7 @@ class Registro(BaseModel):
     #: llegaba con `layer: 1` puesto y no habia forma de distinguir «se declaro capa 1» de
     #: «nadie lo declaro». Una registracion calculada por una maquina es computo, no
     #: adquisicion, y el validador exige que lo diga cuando `operator` empieza por `auto:`.
-    regulatory: Regulatorio | None = None
+    regulatory: Regulatory | None = None
 
     #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
     #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
@@ -577,14 +577,14 @@ class Registro(BaseModel):
         )
 
 
-class Visita(BaseModel):
+class Visit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     date: str
     label: str = ""
 
 
-class Sujeto(BaseModel):
+class Subject(BaseModel):
     """El paciente, SIEMPRE por seudonimo. El nombre no entra en un `.uos`."""
 
     model_config = ConfigDict(extra="forbid")
@@ -593,10 +593,10 @@ class Sujeto(BaseModel):
     #: diccionario y el seudonimo no seudonimiza nada. Ver `cbct_agent.pseudonymize`.
     pseudonym: str
     fhir_patient: str | None = None
-    consent: Consentimiento | None = None
+    consent: Consent | None = None
 
 
-class RecursoFHIR(BaseModel):
+class FHIRResource(BaseModel):
     """A que recurso FHIR R4 corresponde un asset (§9), para el conector con el PMS.
 
     ⚠️ **`resource` es una referencia y `resource_type` un TIPO, y no son lo mismo.** El
@@ -647,15 +647,15 @@ class Extension(BaseModel):
     description: str = ""
 
 
-class Procedencia(BaseModel):
-    """Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
+class Provenance(BaseModel):
+    """Chain de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
 
     model_config = ConfigDict(extra="forbid")
     prev_manifest_sha256: str | None = None
     chain: str | None = None
 
 
-class Manifiesto(BaseModel):
+class Manifest(BaseModel):
     """`manifest.json`. DEBE ser la primera entrada fisica del ZIP (§3)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -663,29 +663,29 @@ class Manifiesto(BaseModel):
     case_id: str
     created: datetime = Field(default_factory=lambda: datetime.now(UTC))
     generator: dict[str, str]
-    phi_state: EstadoPHI
+    phi_state: PHIState
     #: ⚠️ Obligatorio cuando `phi_state` no es `identified` (B-3): declarar un estado sin
     #: decir que medidas lo produjeron es una afirmacion que nadie puede comprobar.
-    deidentification: Desidentificacion | None = None
+    deidentification: Deidentification | None = None
     #: Para que se emitio ESTE contenedor (B-4). Tiene que estar dentro de
     #: `subject.consent.scope`: no se puede emitir para algo que el paciente no consintio.
-    purpose_of_use: Proposito | None = None
-    subject: Sujeto
+    purpose_of_use: PurposeOfUse | None = None
+    subject: Subject
     canonical_frame: Frame
     frames: list[Frame] = Field(default_factory=list)
-    visits: list[Visita] = Field(default_factory=list)
+    visits: list[Visit] = Field(default_factory=list)
     assets: list[Asset] = Field(default_factory=list)
-    registrations: list[Registro] = Field(default_factory=list)
+    registrations: list[Registration] = Field(default_factory=list)
     #: D-9 · como se registro la relacion entre arcadas. `None` es no declarado y el
     #: validador avisa: en un caso de dos arcadas es la registracion que mas importa.
-    occlusion: Oclusion | None = None
-    fhir_map: dict[str, RecursoFHIR] = Field(default_factory=dict)
+    occlusion: OcclusionRecord | None = None
+    fhir_map: dict[str, FHIRResource] = Field(default_factory=dict)
     # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.2.
     extensions: dict[str, Extension] = Field(default_factory=dict)
     extensions_used: list[str] = Field(default_factory=list)
     # Vacio a proposito en todo lo que emitimos: nada de lo nuestro impide abrir el caso.
     extensions_required: list[str] = Field(default_factory=list)
-    provenance: Procedencia = Field(default_factory=lambda: Procedencia())
+    provenance: Provenance = Field(default_factory=lambda: Provenance())
 
     def json_canonico(self) -> str:
         """JSON estable: mismas claves, mismo orden, misma salida.

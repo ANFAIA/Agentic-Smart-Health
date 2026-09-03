@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from uos.manifiesto import UOS_VERSION, Asset, Manifiesto, Parte, digesto_de_partes
+from uos.manifiesto import UOS_VERSION, Asset, Manifest, Part, digesto_de_partes
 
 MANIFIESTO = "manifest.json"
 
@@ -32,9 +32,9 @@ def sha256(ruta: Path) -> str:
     return h.hexdigest()
 
 
-def escribe_uos(
+def write_uos(
     destino: Path,
-    manifiesto: Manifiesto,
+    manifiesto: Manifest,
     ficheros: Iterable[tuple[str, Path]],
     *,
     directorios: dict[str, Path] | None = None,
@@ -100,7 +100,7 @@ def escribe_uos(
     return destino
 
 
-def lee_manifiesto(ruta: Path) -> Manifiesto:
+def read_manifest(ruta: Path) -> Manifest:
     """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada.
 
     ⚠️ **Y comprobando la VERSION, que es lo primero que el spec pide mirar y no se
@@ -116,12 +116,12 @@ def lee_manifiesto(ruta: Path) -> Manifiesto:
                 f"{ruta.name}: la primera entrada es {nombres[0] if nombres else 'ninguna'!r} "
                 f"y el spec exige {MANIFIESTO!r} — sin eso no hay identificacion positiva."
             )
-        return lee_manifiesto_de(z.read(MANIFIESTO), nombre=ruta.name)[0]
+        return read_manifest_from(z.read(MANIFIESTO), nombre=ruta.name)[0]
 
 
-def lee_manifiesto_de(
+def read_manifest_from(
     crudo: bytes, *, nombre: str = "manifest.json"
-) -> tuple[Manifiesto, list[str]]:
+) -> tuple[Manifest, list[str]]:
     """`(manifiesto, campos ignorados)` aplicando la rama de version que toque (§15)."""
     import json
 
@@ -139,7 +139,7 @@ def lee_manifiesto_de(
     if rama is Lectura.PERMISIVA:
         m, ignorados = lee_permisivo(crudo)
         return m, ignorados
-    return Manifiesto.model_validate_json(crudo), []
+    return Manifest.model_validate_json(crudo), []
 
 
 def asset_de(
@@ -201,7 +201,7 @@ def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None, float | None, 
         return None, None, None, None
 
 
-def partes_y_rango(carpeta: Path) -> tuple[list[Parte], list[float] | None]:
+def partes_y_rango(carpeta: Path) -> tuple[list[Part], list[float] | None]:
     """Las partes de la serie **y el rango de sus pixeles, en la misma pasada** (T-2).
 
     ⚠️ **Por que van juntos.** El §6.1 dejaba `value_range` nulo alegando que barrer los
@@ -214,14 +214,14 @@ def partes_y_rango(carpeta: Path) -> tuple[list[Parte], list[float] | None]:
     El rango va SIN reescalar: `slope`/`intercept` los aplica quien describe la serie,
     que es quien ha leido esas etiquetas.
     """
-    partes: list[Parte] = []
+    partes: list[Part] = []
     bajo = alto = None
     for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
         uid, px, b, a = _identidad_dicom(hijo)
         if b is not None and a is not None:
             bajo = b if bajo is None else min(bajo, b)
             alto = a if alto is None else max(alto, a)
-        partes.append(Parte(
+        partes.append(Part(
             name=hijo.relative_to(carpeta).as_posix(),
             sha256=sha256(hijo),
             bytes=hijo.stat().st_size,
@@ -231,14 +231,14 @@ def partes_y_rango(carpeta: Path) -> tuple[list[Parte], list[float] | None]:
     return partes, (None if bajo is None else [bajo, alto])
 
 
-def partes_de(carpeta: Path) -> list[Parte]:
+def partes_de(carpeta: Path) -> list[Part]:
     """Solo las partes. Para quien no necesita el rango."""
     return partes_y_rango(carpeta)[0]
 
 
 def asset_de_directorio(
     carpeta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
-    media_type: str, partes: list[Parte] | None = None, **extra,
+    media_type: str, partes: list[Part] | None = None, **extra,
 ) -> Asset:
     """El sobre de un asset que es una SERIE entera, midiendo fichero a fichero.
 

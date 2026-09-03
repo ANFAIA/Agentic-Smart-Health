@@ -290,7 +290,7 @@ def test_el_canino_no_se_recorta_con_la_cota_del_incisivo():
 
 
 def test_el_eje_de_la_cota_es_el_GLOBAL_y_esta_medido_que_tiene_que_serlo():
-    """Registro de un negativo, para que no se reintente sin datos nuevos.
+    """Registration de un negativo, para que no se reintente sin datos nuevos.
 
     Un eje por pieza deberia cortar mejor. No se puede sacar de la corona: el escaner ve un
     casquete y sus direcciones principales las manda el contorno, no el eje del diente.

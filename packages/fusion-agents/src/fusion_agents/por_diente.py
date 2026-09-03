@@ -1,4 +1,4 @@
-"""Registro **por diente** entre dos momentos de la misma arcada.
+"""Registration **por diente** entre dos momentos de la misma arcada.
 
 Un registro global entrega una rígida para todo el arco. Esto entrega **una por pieza
 dental**, que es lo que hace falta para decir algo sobre un diente concreto y lo que

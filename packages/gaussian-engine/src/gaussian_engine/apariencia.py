@@ -1325,11 +1325,11 @@ def _eje_oclusal(posiciones: np.ndarray, etiquetas: np.ndarray) -> np.ndarray:
 
     Se usa para repartir los tres tercios a lo largo de la corona. Si no se puede medir
     —hace falta encia y coronas etiquetadas— se cae al eje menor de la nube, que es la
-    misma regla que `marco_anatomico` aplica antes de mirar las etiquetas.
+    misma regla que `anatomical_frame` aplica antes de mirar las etiquetas.
     """
-    from export_agents.anatomia import marco_anatomico
+    from export_agents.anatomia import anatomical_frame
 
-    base, _ = marco_anatomico(posiciones, etiquetas)
+    base, _ = anatomical_frame(posiciones, etiquetas)
     if base is not None:
         return np.asarray(base.oclusal, dtype=np.float64)
     pos = np.asarray(posiciones, dtype=np.float64)

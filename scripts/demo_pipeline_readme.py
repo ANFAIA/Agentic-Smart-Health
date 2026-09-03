@@ -38,7 +38,7 @@ from agent_orchestrator import CaseInput, IngestionPipeline, PipelineResult  # n
 from ingestion_agents import ArtifactStore, synthetic  # noqa: E402
 from ingestion_agents.mesh_agent import parse_obj  # noqa: E402
 from ingestion_agents.ontology import all_fdi_codes  # noqa: E402
-from uos import valida  # noqa: E402
+from uos import validate  # noqa: E402
 from uos.contenedor import MANIFIESTO  # noqa: E402
 
 ASSETS = RAIZ / "docs" / "assets"
@@ -129,7 +129,7 @@ def _etiquetas_ios_sinteticas(mesh: Path) -> np.ndarray | None:
 
     El generador escribe, para cada diente, primero la corona y luego su encia. La etiqueta
     de la corona es el FDI; la de la encia es 0. Si el layout cambia, se devuelve `None` y
-    la demo sigue siendo valida, solo con menos vistas en el `.uos`.
+    la demo sigue siendo validate, solo con menos vistas en el `.uos`.
     """
     n_vertices = len(parse_obj(mesh)["positions"])
     codigos = synthetic.upper_arch_codes()
@@ -327,17 +327,17 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
     views_size = next(info.file_size for info in zip_infos if info.filename == "views.json")
     manifest_path = uos_dir / "manifest.json"
     _json(manifest_path, manifest)
-    validation = valida(public_uos)
+    validation = validate(public_uos)
     validation_path = uos_dir / "validation.txt"
     validation_path.write_text(
         "\n".join(
             [
-                f"valid: {validation.valido}",
-                "levels: " + ", ".join(validation.niveles),
-                f"errors: {len(validation.errores)}",
-                f"warnings: {len(validation.avisos)}",
-                f"views: {validation.vistas}",
-                f"external acquired assets: {validation.externos}",
+                f"valid: {validation.valid}",
+                "levels: " + ", ".join(validation.levels),
+                f"errors: {len(validation.errors)}",
+                f"warnings: {len(validation.warnings)}",
+                f"views: {validation.views}",
+                f"external acquired assets: {validation.external_count}",
             ]
         )
         + "\n",
@@ -357,10 +357,10 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
                 "acq-README.uos/views.json",
             ],
             [
-                "levels " + ", ".join(validation.niveles),
-                f"errors {len(validation.errores)}",
-                f"views {validation.vistas}",
-                f"external acquired assets {validation.externos}",
+                "levels " + ", ".join(validation.levels),
+                f"errors {len(validation.errors)}",
+                f"views {validation.views}",
+                f"external acquired assets {validation.external_count}",
                 f"assets {len(manifest['assets'])}",
                 f"zip_entries {len(zip_infos)}",
                 f"uos_size_kb {public_uos.stat().st_size // 1024}",
@@ -389,12 +389,12 @@ def run_demo(workdir: Path, spacing: float) -> tuple[list[Stage], dict[str, Any]
             "exports": [o.agent for o in exported.exports],
         },
         "validation": {
-            "valid": validation.valido,
-            "levels": list(validation.niveles),
-            "errors": validation.errores,
-            "warnings": validation.avisos,
-            "views": validation.vistas,
-            "external_acquired_assets": validation.externos,
+            "valid": validation.valid,
+            "levels": list(validation.levels),
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+            "views": validation.views,
+            "external_acquired_assets": validation.external_count,
         },
     }
     return stages, summary

@@ -622,7 +622,7 @@ def test_la_matriz_del_nodo_GS_es_la_REGISTRACION_traspuesta(recorrido) -> None:
     import zipfile
 
     import numpy as np
-    from uos import valida
+    from uos import validate
 
     _, salida = recorrido
     uos = next(salida.glob("*.uos"), None)
@@ -652,9 +652,9 @@ def test_la_matriz_del_nodo_GS_es_la_REGISTRACION_traspuesta(recorrido) -> None:
             z.writestr(info, crudo)
 
     assert tocados, "el contenedor del recorrido no trae nodos GS con matriz"
-    inf = valida(girada)
-    assert not inf.valido
-    assert any("traspuesta" in e for e in inf.errores), inf.errores
+    inf = validate(girada)
+    assert not inf.valid
+    assert any("traspuesta" in e for e in inf.errors), inf.errors
 
 
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:

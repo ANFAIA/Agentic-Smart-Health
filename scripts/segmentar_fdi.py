@@ -39,7 +39,7 @@ anatomía—, y dejarle emitirlos es darle libertad para fallar en algo que no e
 duda. Medido sobre `histora`: 23 instancias → 16, y desaparecen los cuadrantes
 imposibles.
 
-## Lo que NO valida esto
+## Lo que NO validate esto
 
 No hay etiquetas de los pacientes propios, así que la comprobación que se imprime es de
 **consistencia, no de acierto**: que los códigos salgan ordenados a lo largo del arco.

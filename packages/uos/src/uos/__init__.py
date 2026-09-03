@@ -39,28 +39,28 @@ no el codigo.
 """
 
 from uos.agente import UOSExportAgent
-from uos.clinico import OBSERVACIONES, capa_clinica
-from uos.contenedor import escribe_uos, lee_manifiesto
-from uos.escena import NodoGS, construye_glb
+from uos.clinico import OBSERVATIONS, clinical_layer
+from uos.contenedor import read_manifest, write_uos
+from uos.escena import GSNode, build_glb
 from uos.manifiesto import (
     UOS_VERSION,
     Asset,
     Extension,
     Frame,
-    Manifiesto,
-    Registro,
-    Sujeto,
-    Visita,
+    Manifest,
+    Registration,
+    Subject,
+    Visit,
 )
-from uos.procedencia import CADENA, Cadena, Eslabon
-from uos.validador import Conformidad, valida
-from uos.vistas import VISTAS, Camara, Vista, construye_vistas, marco_anatomico
-from uos.volumen import describe_serie
+from uos.procedencia import CHAIN, Chain, Link
+from uos.validador import Conformance, validate
+from uos.vistas import VIEWS, Camera, View, anatomical_frame, build_views
+from uos.volumen import describe_series
 
 __all__ = [
-    "CADENA", "UOS_VERSION", "VISTAS", "Asset", "Cadena", "Camara", "Conformidad",
-    "Eslabon", "Frame", "Manifiesto", "Registro", "Sujeto", "UOSExportAgent", "Vista",
-    "Visita", "construye_vistas", "escribe_uos", "lee_manifiesto", "marco_anatomico",
-    "Extension", "NodoGS", "OBSERVACIONES", "capa_clinica", "construye_glb",
-    "describe_serie", "valida",
+    "CHAIN", "UOS_VERSION", "VIEWS", "Asset", "Chain", "Camera", "Conformance",
+    "Link", "Frame", "Manifest", "Registration", "Subject", "UOSExportAgent", "View",
+    "Visit", "build_views", "write_uos", "read_manifest", "anatomical_frame",
+    "Extension", "GSNode", "OBSERVATIONS", "clinical_layer", "build_glb",
+    "describe_series", "validate",
 ]
