@@ -92,8 +92,8 @@ inferred. We describe such a format, UOS (Unified Oral Scene), specified separat
 UOS Format Specification v0.2, and report what building and measuring it taught us.
 
 We give particular attention to 3D Gaussian splatting, the representation the project
-adopted, and to a result that constrains how it should be used: \textbf{splatting adds no
-resolution and cannot}. What it adds is the ability to allocate representational capacity
+adopted, and to a result that constrains how it should be used: \textbf{re-fitting a single
+acquisition recovers no detail below its sampling pitch}. What it adds is the ability to allocate representational capacity
 where the data actually carries information, which pays only when the modalities being
 combined have different resolutions --- which is precisely the dental case. We report a
 photometric ceiling that no amount of budget, resolution or spatial concentration moves,
@@ -706,7 +706,7 @@ that each exists on a different physical support: an occlusal fissure of 0.15\,m
 1.50\,mm under intact enamel (density only). Each modality was simulated through its
 physical chain: Gaussian PSF, sampling at its own pitch, then noise.
 
-\begin{finding}{What we measure today: splatting reallocates capacity, it does not create resolution}
+\begin{finding}{What we measure today: re-fitting one acquisition reallocates capacity, it does not create resolution}
 A finding that exists only as density is invisible to a surface scanner at any
 reconstruction quality, and a fissure below the CBCT's sampling pitch is not recovered by
 fitting Gaussians to the CBCT. What splatting contributes is the ability to \emph{allocate
@@ -719,6 +719,15 @@ representation is worth adopting here. The result is therefore not a limit on th
 much as a statement of what the method is for: composition across heterogeneous sources.
 Any sharpening claim has to come from adding a modality that carries the detail, not from
 re-fitting one that does not.
+
+\textbf{The scope of this negative result, stated precisely.} Each modality here is
+simulated as \emph{one} acquisition at \emph{one} sampling pitch, so what is measured is
+that re-fitting a single acquisition does not recover detail below that pitch. It is not a
+statement about the method in general. Multi-view reconstruction \emph{can} exceed the
+resolution of any single view when the views overlap with sub-pixel displacements, which is
+the mechanism of multi-view super-resolution and the reason a photometric field fitted to
+many photographs resolves structure no one photograph resolves. That regime is not measured
+here, and nothing below should be read as a claim about it.
 \end{finding}
 
 \subsection{The capacity ceiling, and what moves it}
@@ -952,19 +961,31 @@ that was wrong, and it is fixable without any new data.
 34--36\,dB PSNR and still looks soft. The project's sharpness measure is the
 \emph{footprint}, the major axis of the median Gaussian in $\mu$m, with a criterion
 of $<563\,\mu$m fixed \emph{before} running. Across seedings from 113\,000 to 1\,090\,000
-primitives the criterion is not met, and more primitives do not move it.
+primitives the criterion is not met, and more primitives do not move it: the median
+footprint measures 845.9\,$\mu$m, 46.5\,\% of primitives sit more than 1\,mm from the
+surface, and the field is anisotropic by $3.0\times$.
 
-\paragraph{Why, and what follows.} High PSNR with low sharpness is the signature of a fit
-that is faithful to its training views and limited by them: the optimiser has no gradient
-towards detail that the views do not resolve. Consistently with \S\ref{sec:gs}, adding
-primitives cannot manufacture that detail. Three routes follow, and they are ordered by cost
-rather than by promise: raise the resolving power of the input views, which is a capture
-change; regularise the footprint directly, adding a penalty on the median major axis so the
+\paragraph{Why, and what follows.} The cause is measured rather than supposed, and it is
+not a limit of Gaussian splatting. \textbf{The colour supervision is flat albedo}: the
+training views are renders of the mesh painted with the 39 numbers of
+\S\ref{sec:results} --- one measured median per crown per third, plus gingiva --- rather
+than the photographs themselves, because
+projecting the photographs onto the surface needs the camera pose the pipeline does not
+compute (\S\ref{sec:results}). Against a piecewise-constant target the image loss cannot
+distinguish a large diffuse disc from a small sharp one, so haze is the optimum of the
+problem as posed, and the optimiser finds it \emph{whatever} the capacity, the strategy,
+the render resolution or the added supervision. That hypothesis was falsified in three
+formulations, including a run at 2048\,px with 1.09\,M primitives that reached 34.15\,dB
+and still measured a 906\,$\mu$m footprint.
+
+The consequence is that this result does \emph{not} measure what a photometric field can
+resolve from real clinical views; it measures what one can resolve from a target that
+carries no texture. The route that adds information is therefore to recover the camera pose
+and supervise on the photographs' own pixels, which is a prerequisite (\S\ref{sec:results})
+rather than a hyperparameter. Two cheaper routes reallocate existing information rather than
+adding any: regularise the footprint directly, penalising the median major axis so the
 optimiser trades reconstruction error against the quantity we actually care about; or seed
-at a density matched to the view resolution rather than to the mesh, so that capacity is not
-spent below the level the data can support. The first is the only one that adds information;
-the other two allocate existing information better, which is the same conclusion
-\S\ref{sec:gs} reaches for the volumetric case.
+at a density matched to the view resolution rather than to the mesh.
 
 \begin{finding}{Why these three are in the paper}
 Each was expected to work, and reporting only the results that did would describe a pipeline
@@ -1263,7 +1284,8 @@ reported what building it measured.
 
 The representational finding is the one we would most want carried forward: Gaussian
 splatting is worth adopting in dentistry for capacity allocation across modalities of
-different resolution, and not for enhancement, because it adds no resolution and cannot.
+different resolution, and not for enhancement of a single acquisition, which our
+measurements show it does not deliver.
 The photometric ceiling is real, budget does not move it, and specialised decomposition
 does, by up to 7.41\,dB at equal primitive count.
 
