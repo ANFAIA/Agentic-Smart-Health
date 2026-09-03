@@ -1429,6 +1429,19 @@ Verification becomes two levels, reported separately: \textbf{identity} (UID + p
 \textbf{exact bytes} (file hash). A de-identified file that preserves identity passes the
 first and fails the second, and \emph{that is information, not an error}.
 
+\paragraph{\code{value\_range} is measured, not skipped.}
+It \MUST{} be computed \textbf{during the \code{parts[]} hash}, whenever the series is
+available at ingestion --- which is always for the writer, by \S\ref{sec:external}: the
+writer holds it, the recipient is the one who does not. The earlier justification for
+leaving it null was that sweeping every pixel on every export is too expensive, and it does
+not hold: the writer already reads every byte of every slice, for the file hash and for the
+\code{pixel\_data\_sha256} above, so the minimum and maximum come out of a read that was
+already paid for. Computing them anywhere else adds a whole extra pass over the volume for
+a value that is free.
+
+\code{null} is reserved for the one honest case: a container from an issuer that never had
+the pixels.
+
 \paragraph{A CBCT does not measure Hounsfield units.}
 Grey values from a CBCT depend on the device, the field of view and the position inside the
 volume; they are not comparable between scanners and not convertible to HU without a

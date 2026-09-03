@@ -60,7 +60,9 @@ _MARCADORES = ("anonymous", "anonymized", "anonimo", "removed", "none", "unknown
 PRESETS = ("cbct_bone", "cbct_soft", "cbct_metal_suppress")
 
 
-def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[str]]:
+def describe_serie(
+    carpeta: Path, *, frame: str, rango_pixeles: list | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """`(sidecar, avisos)` de la serie en `carpeta`, leyendo sus cabeceras.
 
     No carga los pixeles de los 397 cortes: para las dimensiones y la geometria basta la
@@ -131,7 +133,14 @@ def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[s
         #
         # `null` queda reservado para el caso legitimo: un contenedor de otro emisor que no
         # tuvo acceso a los pixeles. Nosotros los tenemos, siempre.
-        rango = _rango_medido(ficheros, pendiente, corte)
+        # ⚠️ **Del pase del hash, si el llamante lo trae (T-2).** El escritor ya leyo cada
+        # byte de cada corte para `sha256` y para el hash de `PixelData`, asi que el minimo
+        # y el maximo ya estan calculados: pedirselos evita una tercera lectura del volumen
+        # entero. `_rango_medido` se queda como camino para quien llame a esta funcion sola
+        # —describir una serie que no se va a empaquetar es un uso legitimo—, y entonces
+        # si paga la pasada.
+        rango = ([rango_pixeles[0] * pendiente + corte, rango_pixeles[1] * pendiente + corte]
+                 if rango_pixeles else _rango_medido(ficheros, pendiente, corte))
         if rango is None:
             avisos.append(
                 f"la serie de {frame} no declara `Smallest/LargestImagePixelValue` y sus "

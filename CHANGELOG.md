@@ -79,11 +79,15 @@ human-readable and linked to the relevant pull request or issue where applicable
   outside the manifest — no hash, no regulatory layer, nothing linking them to the layer
   they index. Found by the undeclared-entries check above, not by rereading: an omission
   from B-1's second pass.
-- **`value_range` is measured, not left null** (**T-2**). The justification was that
-  sweeping every pixel is too expensive; the writer already reads every byte of every slice
-  for its `sha256`, and since D-3 for the PixelData hash too. So a cost that did not exist
-  was being paid with a defect that did — a viewer with no display window. `null` is now
-  reserved for the honest case: a container from an issuer that never had the pixels.
+- **`value_range` is measured during the `parts[]` hash, not left null** (**T-2**). The
+  justification for leaving it null was that sweeping every pixel on every export is too
+  expensive, and it does not hold: the writer already reads every byte of every slice for
+  the file hash and, since D-3, for the PixelData hash, so the minimum and maximum come out
+  of a read already paid for. A cost that did not exist was being paid with a defect that
+  did — a viewer with no display window. The specification now states where it is computed,
+  and the export walks the series **once** for the parts, their DICOM identity and the
+  range together: three reads per slice down to two. `null` is reserved for the one honest
+  case, an issuer that never had the pixels.
 - **The reversibility argument is corrected** (**T-1**). The specification said converting
   to glTF is lossy because "the ingested mesh is `float64`". A binary STL stores vertices as
   `float32` *by definition of the format*, so the `float64` is the loader's widening and the

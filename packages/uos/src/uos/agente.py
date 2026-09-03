@@ -34,6 +34,7 @@ from uos.contenedor import (
     asset_de_directorio,
     escribe_uos,
     json_de,
+    partes_y_rango,
 )
 from uos.derivados import (
     SEG_GAUSSIANAS,
@@ -862,7 +863,12 @@ class UOSExportAgent(BaseExportAgent):
             # «byte-identico» seria una afirmacion sobre nuestro codec y no sobre el dato.
             uri = "volume/ct_001/"
             sidecar_uri = SIDECAR.format(id="ct_001")
-            sidecar, aviso_volumen = describe_serie(cbct, frame=FRAME_CBCT)
+            # Una sola pasada sobre la serie: de ella salen las partes con su identidad
+            # DICOM (D-3) y el rango de pixeles (T-2), y las dos cosas se reparten.
+            partes_cbct, rango_cbct = partes_y_rango(cbct)
+            sidecar, aviso_volumen = describe_serie(
+                cbct, frame=FRAME_CBCT, rango_pixeles=rango_cbct,
+            )
             # D-1/D-2 · el frame del volumen se ancla al UID que DICOM ya define y declara
             # su convencion anatomica. Se LEE del sidecar, que a su vez lo leyo de la
             # serie: aqui no se inventa ninguno de los dos.
@@ -881,6 +887,7 @@ class UOSExportAgent(BaseExportAgent):
             extras[sidecar_uri] = json_de(sidecar)
             assets.append(asset_de_directorio(
                 cbct, uri, id_="asset.ct_001", kind=Clase.VOLUME, visit=visita.id,
+                partes=partes_cbct,
                 frame=FRAME_CBCT, media_type="application/dicom",
                 acquisition=Adquisicion(time=snapshot.timestamp),
                 sidecar_uri=sidecar_uri,

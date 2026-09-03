@@ -169,7 +169,7 @@ def json_de(obj: object) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False)
 
 
-def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None]:
+def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None, float | None, float | None]:
     """`(sop_instance_uid, sha256 de PixelData)` de un corte, o `(None, None)` (D-3).
 
     ⚠️ **Se hashea el VALOR de `(7FE0,0010)`, no el fichero.** Es la unica parte que la
@@ -179,24 +179,48 @@ def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None]:
     es un anadido, no un requisito para empaquetar.
     """
     try:
+        import numpy as np
         import pydicom
 
         ds = pydicom.dcmread(ruta, stop_before_pixels=False, force=True)
         uid = getattr(ds, "SOPInstanceUID", None)
         px = ds.get(0x7FE00010)
         if uid is None or px is None or px.value is None:
-            return None, None
-        return str(uid), hashlib.sha256(bytes(px.value)).hexdigest()
+            return None, None, None, None
+        # ⚠️ **El rango sale de ESTA lectura y no de otra (T-2).** Los pixeles ya estan
+        # descomprimidos aqui para hashearlos; sacar el minimo y el maximo es aritmetica
+        # sobre un array que ya esta en memoria. Hacerlo en una pasada aparte —que es como
+        # estaba— pagaba una tercera lectura del volumen entero por un dato gratuito.
+        try:
+            arr = ds.pixel_array
+            bajo, alto = float(np.min(arr)), float(np.max(arr))
+        except Exception:  # noqa: BLE001 - hay cortes con pixeles ilegibles
+            bajo = alto = None
+        return str(uid), hashlib.sha256(bytes(px.value)).hexdigest(), bajo, alto
     except Exception:  # noqa: BLE001 - un corte ilegible no debe tumbar el empaquetado
-        return None, None
+        return None, None, None, None
 
 
-def partes_de(carpeta: Path) -> list[Parte]:
-    """Una `Parte` por fichero del directorio, con su nombre RELATIVO, su hash y su
-    identidad DICOM cuando el fichero la trae (D-3)."""
-    partes = []
+def partes_y_rango(carpeta: Path) -> tuple[list[Parte], list[float] | None]:
+    """Las partes de la serie **y el rango de sus pixeles, en la misma pasada** (T-2).
+
+    ⚠️ **Por que van juntos.** El §6.1 dejaba `value_range` nulo alegando que barrer los
+    pixeles en cada exportacion es caro, y la consecuencia era real: un visor sin ventana
+    de visualizacion. Pero el escritor **ya lee cada byte de cada corte** aqui —para el
+    `sha256` del fichero y para el hash de `PixelData`— asi que el minimo y el maximo
+    salen de una lectura que ya estaba pagada. Calcularlos en otro sitio, como se hacia,
+    anadia una tercera pasada sobre el volumen entero por un dato gratuito.
+
+    El rango va SIN reescalar: `slope`/`intercept` los aplica quien describe la serie,
+    que es quien ha leido esas etiquetas.
+    """
+    partes: list[Parte] = []
+    bajo = alto = None
     for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
-        uid, px = _identidad_dicom(hijo)
+        uid, px, b, a = _identidad_dicom(hijo)
+        if b is not None and a is not None:
+            bajo = b if bajo is None else min(bajo, b)
+            alto = a if alto is None else max(alto, a)
         partes.append(Parte(
             name=hijo.relative_to(carpeta).as_posix(),
             sha256=sha256(hijo),
@@ -204,12 +228,17 @@ def partes_de(carpeta: Path) -> list[Parte]:
             sop_instance_uid=uid,
             pixel_data_sha256=px,
         ))
-    return partes
+    return partes, (None if bajo is None else [bajo, alto])
+
+
+def partes_de(carpeta: Path) -> list[Parte]:
+    """Solo las partes. Para quien no necesita el rango."""
+    return partes_y_rango(carpeta)[0]
 
 
 def asset_de_directorio(
     carpeta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
-    media_type: str, **extra,
+    media_type: str, partes: list[Parte] | None = None, **extra,
 ) -> Asset:
     """El sobre de un asset que es una SERIE entera, midiendo fichero a fichero.
 
@@ -222,7 +251,9 @@ def asset_de_directorio(
     """
     from uos.manifiesto import PRIORIDAD, direccion_de_contenido
 
-    partes = partes_de(carpeta)
+    # ⚠️ Si el llamante ya recorrio la serie —para sacar tambien el rango de
+    # pixeles (T-2)— se reusan sus partes en vez de volver a leerla entera.
+    partes = partes_de(carpeta) if partes is None else partes
     if not partes:
         raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
     h = digesto_de_partes(partes)
