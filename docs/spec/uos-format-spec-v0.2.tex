@@ -465,7 +465,11 @@ subsampled density field, all of them shipping as though they had been measured.
 
 \paragraph{Rationale.} The third plane is what makes the format shippable. Distributing
 the same case in a jurisdiction where the AI module is not cleared requires deleting a
-directory, not re-exporting anything. That property only holds if it is enforced --- which
+directory, not re-exporting anything. What the separation buys is the ability to say that
+layers 1 and 2 are \textbf{not Software as a Medical Device} (\textbf{SaMD}) --- software
+whose intended purpose is medical, and which therefore falls under the EU Medical Device
+Regulation or the FDA's --- and that only the layer-3 modules are. A claim like that has to
+be enforceable or it is not worth making. That property only holds if it is enforced --- which
 is why \S\ref{sec:conformance} makes ``layer 3 outside \code{derived/}'' an error in both
 directions.
 
@@ -942,7 +946,8 @@ half of a rehabilitation is about. \code{uos\_site} is reserved with
 decide a clinical use}: for guided implant surgery what matters is the maximum local error
 in the region of interest, and 0.666\,mm RMS is acceptable for viewing and not for
 planning. \code{Registration} therefore carries optional \code{max\_error\_mm},
-\code{target\_registration\_error\_mm} --- measured at points \emph{not} used to compute
+\code{target\_registration\_error\_mm} --- the \textbf{Target Registration Error}
+(\textbf{TRE}), measured at points \emph{not} used to compute
 the registration, unlike the RMS, which is measured on the points that were and is
 therefore systematically optimistic --- with the region it was measured in, and
 \code{fit\_for}. An empty \code{fit\_for} means \textbf{not declared}, and a reader
@@ -954,8 +959,8 @@ them.
 \subsection{Frame identity and anatomical convention}\label{sec:frameid}
 
 A frame id such as \code{frame.ct\_001} is a string the writer invented. DICOM already
-identifies a coordinate system globally and uniquely --- the \textbf{Frame of Reference
-UID}, tag \code{(0020,0052)}, which every CBCT series carries --- and a reader that
+identifies a coordinate system globally and uniquely --- the
+\textbf{Frame of Reference UID}, tag \code{(0020,0052)}, which every CBCT series carries --- and a reader that
 receives the series through another channel has no way to know that \code{frame.ct\_001}
 is \emph{that} series except by trust.
 
@@ -2579,6 +2584,104 @@ container stays valid.\\
 What must I never do? & Invent a hash; put a local path in an external \code{uri}; put a
 patient name anywhere; re-order scene vertices; treat an empty \code{fdi\_targets} as ``no
 teeth''; treat \code{derivation: null} as deterministic.\\
+\bottomrule
+\end{longtable}
+
+\section{Glossary}\label{app:glossary}
+
+This document sits across four worlds --- DICOM, FHIR, glTF and medical-device regulation
+--- and a competent implementer typically knows one of them. Someone arriving from graphics
+knows what a glTF accessor is and has never met a SOP Instance UID; someone arriving from a
+PACS is the other way round. Every term below carries a normative rule somewhere in this
+document, so it is defined here rather than assumed. The section reference is where the
+term does its work.
+
+\begin{longtable}{L{4.3cm} L{11.1cm}}
+\toprule
+\textbf{Term} & \textbf{Meaning}\\
+\midrule
+\endhead
+\textbf{SaMD} & \emph{Software as a Medical Device}: software whose intended purpose is
+medical --- diagnosis, treatment planning --- and which therefore falls under the EU
+Medical Device Regulation or the FDA's. The three-layer separation exists so that layers 1
+and 2 can be said not to be SaMD and only layer-3 modules are. \S\ref{sec:planes}.\\
+\textbf{HIPAA Safe Harbor} & The de-identification method in US health-privacy law that
+lists eighteen identifier types to remove: among them every date relative to the individual
+except the year, device serial numbers, and full-face photographs \emph{``and comparable
+images''}. A three-dimensional reconstruction of a face is a comparable image.
+\S\ref{sec:phi}.\\
+\textbf{GDPR biometric data} & The EU regulation treats biometric data intended to uniquely
+identify a person as a special category, with a reinforced legal basis. Facial geometry and
+dentition fall in it. \S\ref{sec:phi}.\\
+\textbf{DICOM PS3.15 Annex E} & The part of DICOM that defines \emph{how} to de-identify: a
+Basic Application Level Confidentiality Profile plus named \textbf{options} that modify it
+--- retain longitudinal temporal information with modified dates, clean descriptors, clean
+recognizable visual features, retain device identity, retain UIDs. Declaring the profile
+and the options applied is the standard way of saying \emph{what was done} rather than
+\emph{how it ended up}. \S\ref{sec:phi}.\\
+\textbf{Defacing} & Removing or distorting the facial surface in a volume so it cannot be
+reconstructed. It is the practical realisation of PS3.15's \emph{clean recognizable visual
+features} option. \S\ref{sec:phi}.\\
+\textbf{HMAC} & A keyed hash. Unlike a plain hash it cannot be recomputed without the key,
+so an identifier derived through one is not reversible by dictionary --- which a truncated
+hash of a clinical identifier is, because the space of identifiers a clinic issues is
+small. \S\ref{sec:phi}.\\
+\textbf{Frame of Reference UID} & DICOM tag \code{(0020,0052)}. The globally unique
+identifier of the coordinate system a series' positions are expressed in. Two series
+sharing it are in the same space with no registration needed.
+\S\ref{sec:frameid}.\\
+\textbf{SOP / Series / Study Instance UID} & DICOM tags \code{(0008,0018)},
+\code{(0020,000E)} and \code{(0020,000D)}: the globally unique identifiers of one instance
+(a slice), a series and a study. They are what DICOM defines as identity, independently of
+file names or header bytes. \S\ref{sec:volume}.\\
+\textbf{LPS / RAS} & Anatomical axis conventions. LPS: $+X$ toward the patient's left, $+Y$
+posterior, $+Z$ superior --- DICOM's. RAS: $+X$ right, $+Y$ anterior, $+Z$ superior, common
+in neuroimaging. Both are right-handed; they differ in the sense of two axes, which is why
+handedness alone says nothing. \S\ref{sec:frameid}.\\
+\textbf{Hounsfield units (HU)} & The calibrated attenuation scale of conventional CT: water
+$=0$, air $=-1000$. CBCT equipment produces grey values that are \emph{not} on that scale
+and that vary with the device, the field of view and the position inside the volume.
+\S\ref{sec:volume}.\\
+\textbf{Spatial Registration Object} & DICOM SOP class
+\code{1.2.840.10008.5.1.4.1.1.66.1}, which stores a rigid transform between two Frames of
+Reference. It is DICOM's equivalent of an entry in \code{registrations[]}.
+\S\ref{sec:mappings}.\\
+\textbf{Encapsulated STL Storage} & DICOM SOP class
+\code{1.2.840.10008.5.1.4.1.1.104.3} (Supplement 205), which stores an STL inside a PACS
+attached to a study. \S\ref{sec:mappings}.\\
+\textbf{FHIR \code{Consent}} & The R4 resource recording a patient's consent: scope,
+purpose, date, validity. The natural destination of \code{subject.consent}.
+\S\ref{sec:consent}.\\
+\textbf{FHIR \code{Provenance}} & The R4 resource recording who generated or modified a
+resource, when, and from what. It matches a link of \code{provenance/chain.json} field for
+field. \S\ref{sec:mappings}.\\
+\textbf{FHIR \code{ImagingSelection}} & Introduced in R5 to reference a selection inside an
+imaging study --- instances, frames, regions. The destination of
+\code{projection.fdi\_targets}, named here so nobody invents a private extension for it.
+\S\ref{sec:mappings}.\\
+\textbf{SNOMED CT} & The international clinical terminology covering findings, procedures
+and anatomical structures, individual teeth included. The expected terminology for
+\code{Observation.code} and \code{bodySite} in FHIR. Licensed per country, which is why
+this specification ships the structure and leaves the codes unassigned.
+\S\ref{sec:vocab}.\\
+\textbf{ICDAS} & International Caries Detection and Assessment System: a 0--6 severity
+scale per tooth surface, used to code caries comparably between clinicians.
+\S\ref{sec:vocab}.\\
+\textbf{Universal Numbering System} & The tooth numbering predominant in the US: permanent
+1--32, deciduous A--T. It does not agree with FDI/ISO 3950 --- tooth ``27'' is a different
+tooth in each. \S\ref{sec:vocab}.\\
+\textbf{Bite registration} & The capture of the spatial relation between the upper and
+lower arches with the teeth in contact. With an intraoral scanner it comes from an extra
+lateral scan, and it is the registration relating the maxilla's frame to the mandible's.
+\S\ref{sec:dentistry}.\\
+\textbf{Target Registration Error (TRE)} & The error of a registration measured at points
+that were \emph{not} used to compute it --- unlike the fit RMS, which is measured on the
+points that were and is therefore systematically optimistic. It is the metric that decides
+whether a registration serves a given clinical use. \S\ref{sec:dentistry}.\\
+\textbf{JWS / COSE Sign1} & Standard detached-signature formats: JWS (JSON Web Signature,
+RFC 7515) over JSON, COSE over compact binary. Both admit Ed25519, identify the signing key
+by \code{kid}, and allow several signatures over one payload.
+\S\ref{sec:provenance}.\\
 \bottomrule
 \end{longtable}
 

@@ -109,6 +109,18 @@ human-readable and linked to the relevant pull request or issue where applicable
   emitter with a malformed manifest took the validator down rather than being rejected by
   it. A validator that crashes on bad input fails at the one thing it exists for: what
   reaches it is, by definition, data nobody trusts yet.
+- **The specification has a glossary** (Appendix C). It now sits across four worlds —
+  DICOM, FHIR, glTF and medical-device regulation — and a competent implementer typically
+  knows one: someone arriving from graphics knows what an accessor is and has never met a
+  SOP Instance UID, and someone arriving from a PACS is the other way round. Every one of
+  the twenty-two terms carries a normative rule somewhere in the document, so each is
+  defined and cross-referenced to the section where it does its work rather than assumed.
+
+  Three of them were being used without ever being named: **SaMD** — the concept carried
+  the whole three-layer argument while the acronym never appeared — the **Target
+  Registration Error**, present only as a field name, and the full **Frame of Reference
+  UID**, which a `\textbf{}` split across a line break. A term the reader cannot search for
+  is a term the document does not really define.
 - **The document says how it changes** (**G-3**): who maintains it, where changes are
   opened, what a change must carry, who decides and how a version is published. It
   previously referred to "the process of §16", and §16 described no process.
