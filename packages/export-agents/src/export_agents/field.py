@@ -311,7 +311,7 @@ def escribe_inria(
     destino: Path,
     params: dict[str, np.ndarray],
     *,
-    perfil: str = "ash-gs-apariencia/1.0",
+    perfil: str = "histora-gs-apariencia/1.0",
     n_vistas: int = 0,
     iteraciones: int = 0,
     acquisition_id: str = "",

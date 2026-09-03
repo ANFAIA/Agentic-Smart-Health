@@ -611,7 +611,7 @@ class TwinSnapshot(BaseModel):
         "referencia colgante es un error, no un modelo vacío silencioso.",
     )
     perfil_campo: str = Field(
-        default="ash-twin/1.0",
+        default="histora-twin/1.0",
         description="Perfil del campo gaussiano. **No es el PLY de 3DGS de facto** y por "
         "eso se declara: comparte nombres de propiedad con él y no su semántica, así que "
         "un lector tiene que poder NEGARSE en vez de adivinar.",
@@ -641,7 +641,7 @@ class TwinSnapshot(BaseModel):
     apariencia_ref: str | None = Field(
         default=None,
         description="Hash/URI de la capa de apariencia entrenada con gsplat (perfil "
-        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con un degradado de "
+        "'histora-gs-apariencia/1.0'). Es el PLY en formato INRIA con un degradado de "
         "dos tonos tomados de las fotos —NO color medido— del "
         "paciente optimizado contra fotos intraorales. No es el campo de densidad "
         "(medido en HU) ni el visor (decimado para pantalla): es una capa derivada "

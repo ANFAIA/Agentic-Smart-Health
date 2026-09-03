@@ -59,6 +59,43 @@ human-readable and linked to the relevant pull request or issue where applicable
   it is deliberate**: a foreign glTF viewer opens the container, draws the arch, and cannot
   select a tooth. Picking now requires `derived/`, which is what makes the separation true
   rather than merely documented.
+- **BREAKING — the extension prefix is `histora_`.** Every normative identifier renamed:
+  the extensions (`histora_clinical`, `histora_gs_measured`, `histora_reversible`), the
+  profile ids (`histora-twin/1.0`, `histora-twin-ajustado/1.0`, `histora-gs-apariencia/1.0`),
+  the clinical schema (`histora-clinical/2.0`) and the segmentation model id. `ash_` was the
+  summer-grant project's prefix, not anything anybody held, and the specification told
+  writers not to squat on it **without saying who owned it** — which is not a rule that can
+  be followed. Renamed rather than aliased: the format is unpublished, no second
+  implementer has written against it, and this is the cheapest this change will ever be.
+  Raised as **G-2**.
+- **Ownership and licence are stated.** The document's copyright holder is named on the
+  cover, and Apache 2.0 is declared to cover **the document and the reference
+  implementation alike** — the review's point being that a specification whose licence
+  covers only the code is not reusable as a specification. The schema `$id` resolves and is
+  pinned to a tag rather than a branch, because an identifier returning different content
+  depending on the day does not identify; it deliberately names no domain nobody holds, and
+  the media type's `vnd.` registration is noted as naming an organisation rather than
+  requiring a matching domain.
+- **A conformance fixture** (**G-4**): one valid container and seven broken ones, each with
+  a single defect and the expected result written beside it. It exists so a second
+  implementer can check their reader against something other than their own output, which
+  is what checking against your own output amounts to. Built by **running the real writer**
+  over synthetic data — a hand-assembled fixture tests what its author believes the writer
+  emits — and regenerated and verified by the test suite on every run, because a fixture
+  nobody checks is worse than none: a stale case would tell an implementer their reader is
+  wrong when the fixture is.
+
+  It found a bug the first time it ran. `valida()` raised `ValidationError` on a manifest
+  that does not fit the contract, instead of reporting it — so a container from another
+  emitter with a malformed manifest took the validator down rather than being rejected by
+  it. A validator that crashes on bad input fails at the one thing it exists for: what
+  reaches it is, by definition, data nobody trusts yet.
+- **The document says how it changes** (**G-3**): who maintains it, where changes are
+  opened, what a change must carry, who decides and how a version is published. It
+  previously referred to "the process of §16", and §16 described no process.
+- **Signals name their destination before anyone invents one** (**G-5**): when `UOS-Sig` is
+  implemented it must reuse DICOM waveform objects or an existing open biomedical
+  time-series format rather than defining one.
 - **Ten validator checks the specification declared normative and the algorithm never ran**
   (**T-3**). The two that matter most are structural: every ZIP entry must be declared by
   the manifest — the opposite direction was checked and this one was not, and an undeclared

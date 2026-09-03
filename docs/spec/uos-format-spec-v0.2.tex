@@ -127,7 +127,12 @@ and the \emph{relations between them}, in one file.}\\[2.2cm]
 
 \begin{tabular}{@{}rl@{}}
 \textbf{Editor} & Luis Garbayo Fern\'andez\\
-\textbf{Licence} & Apache License 2.0\\
+\textbf{Copyright} & Luis Garbayo Fern\'andez\\
+\textbf{Licence} & Apache License 2.0, covering \textbf{this document and the}\\
+ & \textbf{reference implementation alike}. The licence in the repository\\
+ & root applies to both; neither is more freely reusable.\\
+\textbf{Extension prefix} & \code{histora\_}, the single prefix this specification\\
+ & reserves (\S\ref{sec:extensions}).\\
 \textbf{Produced under} & Version 0.2 was written during the Becas de Verano ANFAIA\\
  & 2026, on a clinical case contributed by Histora.\\
 \textbf{Version} & 0.2 --- last revised \today\\
@@ -335,7 +340,9 @@ we would have had to invent.
 \subsection{Media type and identification}
 
 \begin{itemize}
-  \item \textbf{Media type:} \code{application/vnd.histora.uos} --- \textbf{proposed}. The \code{vnd.} tree is to be registered with IANA when this specification is published. Until then a reader \MUSTNOT{} rely on it and \MUST{} identify by rule 2 above.
+  \item \textbf{Media type:} \code{application/vnd.histora.uos} --- \textbf{proposed}. The \code{vnd.} tree is to be registered with IANA when this specification is published; a vendor-tree registration names an organisation and does not require owning a matching domain. Until it is registered a reader \MUSTNOT{} rely on it and \MUST{} identify by rule 2 above.
+  
+  \item \textbf{Schema \code{\$id}:} it resolves, and it deliberately does not name a domain nobody holds. An earlier draft pointed at \code{histora.dev}, which is unregistered: a \code{\$id} need only be a URI, but writing \code{https://} tells a reader to fetch it, and fetching failed. It now points into the public repository at a \textbf{tag}, not a branch --- an identifier that returns different content depending on the day does not identify. If the format later acquires a domain of its own, moving the \code{\$id} is a major-version change and nothing else.
   
   \item \textbf{Extension:} \code{.uos}
   
@@ -1204,7 +1211,7 @@ resolution.
 is a decision that \textbf{changes which tissue appears}: raising it erases dentine before
 enamel. A descriptor that says \code{measured: true} and stays silent about it is applying
 the silence rule backwards --- it asserts the field \emph{is} the measurement when it is
-the measurement above a cut somebody chose. The \code{ash-twin/1.0} profile therefore
+the measurement above a cut somebody chose. The \code{histora-twin/1.0} profile therefore
 \MUST{} carry \code{occupancy: \{threshold, unit, note\}} and
 \code{subsampling.method} (\code{stride}, \code{mean} or \code{max}). Both are reproducible
 from the referenced DICOM; without them the layer is not.
@@ -1337,7 +1344,7 @@ column by column.
 \code{role} & string & Human-readable role of the layer.\\
 \code{measured} & bool & \textbf{The load-bearing field.} \code{true} = the values are a
 physical measurement; \code{false} = they are a reconstruction.\\
-\code{profile} & string & e.g. \code{ash-twin/1.0}, \code{ash-gs-apariencia/1.0}.\\
+\code{profile} & string & e.g. \code{histora-twin/1.0}, \code{histora-gs-apariencia/1.0}.\\
 \code{frame} & string & The frame the coordinates are in.\\
 \code{units} & string & \code{"mm"}.\\
 \code{n\_primitives} & int & Gaussian count.\\
@@ -1346,7 +1353,7 @@ physical measurement; \code{false} = they are a reconstruction.\\
 \code{vocabulary}.\\
 \code{note} & string & What a consumer would otherwise get wrong.\\
 \multicolumn{3}{@{}p{14.8cm}@{}}{\small A profile \MAY{} add keys of its own ---
-\code{ash-twin/1.0} carries \code{subsampling} with the voxel step and the counts before
+\code{histora-twin/1.0} carries \code{subsampling} with the voxel step and the counts before
 and after. A reader \MUST{} ignore keys it does not know; the fields above are the ones
 every descriptor has.}\\
 \bottomrule
@@ -1364,7 +1371,7 @@ Two real descriptors, abridged:
 
 \begin{lstlisting}[style=js]
 // scene/field.gs.json -- the CBCT density field
-{ "role": "campo gaussiano del twin", "measured": true, "profile": "ash-twin/1.0",
+{ "role": "campo gaussiano del twin", "measured": true, "profile": "histora-twin/1.0",
   "frame": "frame.ct_001", "units": "mm", "n_primitives": 1341990,
   "note": "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and
            the scales are in linear millimetres, NOT logarithms",
@@ -1377,7 +1384,7 @@ Two real descriptors, abridged:
 
 // scene/appearance.gs.json -- the trained appearance embedded in scene.glb
 { "role": "apariencia real entrenada con gsplat", "measured": false,
-  "profile": "ash-gs-apariencia/1.0", "frame": "frame.ios_master", "n_primitives": 113827,
+  "profile": "histora-gs-apariencia/1.0", "frame": "frame.ios_master", "n_primitives": 113827,
   "note": "f_dc_* = colour MEASURED PER TOOTH ... NOT measured=true: the optimiser moved,
            split and pruned the Gaussians, so there is no 1:1 correspondence with what was
            projected" }
@@ -1562,7 +1569,7 @@ reproducible. Silence never gets promoted to an assertion.
 
 \newpage
 \begin{lstlisting}[style=js]
-{ "schema": "ash-clinical/2.0",
+{ "schema": "histora-clinical/2.0",
   "vocabulary": "ISO-3950 (FDI) for teeth; the finding vocabulary is closed",
   "regulatory": {
     "layer": 1, "default": true,
@@ -1663,7 +1670,7 @@ the source asset, in the order the scene declares them. \code{0} = unassigned.\\
 \end{longtable}
 
 \begin{lstlisting}[style=js]
-{ "model": {"name": "ash-seg-teeth", "version": null, "weights_sha256": "ea0060d5..."},
+{ "model": {"name": "histora-seg-teeth", "version": null, "weights_sha256": "ea0060d5..."},
   "source_assets": ["asset.scene"],
   "regulatory": {"layer": 3, "clearances": [
      {"jurisdiction": "EU", "regime": "MDR", "status": "investigational",
@@ -1810,6 +1817,16 @@ rest as present and unverified, exactly as today. This is \MUST{} for v1.0.
 % =============================================================================
 \section{Extensions}\label{sec:extensions}
 
+\paragraph{One prefix, and who owns it.}
+Every extension this specification defines is named \code{histora\_}. It is the
+\textbf{single} reserved prefix: a writer \MUSTNOT{} coin a second one under this format's
+name, and an implementer adding their own extension \MUST{} use a prefix of their own.
+Earlier drafts used \code{ash\_}, which was the summer-grant project's prefix rather than
+anything anybody held --- the specification told writers not to squat on it without saying
+who owned it, which is not a rule that can be followed. It is renamed, not aliased: the
+format is unpublished, no second implementer has written against it, and the cost of this
+change is the lowest it will ever be.
+
 UOS builds on glTF, which has had \code{extensionsUsed} / \code{extensionsRequired} since
 glTF 1.0 and carries them unchanged into 2.0: a reader opens the file, sees which extensions it carries, and
 knows whether it can read it fully, partly, or not at all. v0.2 of the draft did not
@@ -1833,7 +1850,7 @@ being silent about what a reader was missing was.
 \code{uri} & string\,|\,null & --- & The asset that carries it, if any. If non-null it
 \MUST{} be a declared asset \code{uri}.\\
 \code{schema\_id} & string\,|\,null & --- & Identifier of its schema, e.g.
-\code{ash-clinical/1.0}.\\
+\code{histora-clinical/1.0}.\\
 \code{description} & string & --- & What it adds and why the base format needed it.\\
 \bottomrule
 \end{longtable}
@@ -2359,13 +2376,101 @@ discovering the change when their reader breaks. The warning is also the written
 \end{itemize}
 
 % =============================================================================
+\section{The conformance fixture}\label{sec:fixture}
+
+A specification whose only executable definition lives inside its reference implementation
+forces a second implementer to check their reader against \emph{their own output}, which is
+checking nothing. The fixture is what makes that unnecessary.
+
+It ships one \textbf{valid} container and several broken ones, each carrying \emph{a single}
+defect, with the class of result each should produce written beside it in
+\code{esperado.json}. An implementer runs their validator over the directory and compares.
+Accepting one of the broken ones, or rejecting the valid one, tells them precisely what
+they are missing.
+
+\begin{longtable}{L{5.4cm} L{2.2cm} L{7.4cm}}
+\toprule
+\textbf{Case} & \textbf{Expects} & \textbf{What it exercises}\\
+\midrule
+\endhead
+\code{valido.uos} & valid & The reference container.\\
+\code{entrada-no-declarada.uos} & error & A file the manifest does not name: no hash
+accrediting it, no regulatory layer (\S\ref{sec:container}).\\
+\code{hash-que-no-cuadra.uos} & error & A carried asset whose declared \code{sha256} is not
+its bytes'.\\
+\code{manifiesto-no-es-primero.uos} & error & \code{manifest.json} is not the first
+physical entry (\S\ref{sec:container}).\\
+\code{capa-3-fuera-de-derived.uos} & error & Layer 3 outside \code{derived/}
+(\S\ref{sec:derived}).\\
+\code{registro-provisional.uos} & valid, warns & An automatic registration with no
+\code{verified\_by}: the container is valid and a viewer must present it as provisional
+(\S\ref{sec:manifest}).\\
+\code{minor-superior-con-campo-nuevo.uos} & valid, warns & A higher minor with an unknown
+field: it is ignored and \emph{named}, not rejected (\S\ref{sec:versioning}).\\
+\code{comprimido.uos} & error & DEFLATE instead of STORE, so range access does not work
+(\S\ref{sec:container}).\\
+\bottomrule
+\end{longtable}
+
+\paragraph{Two properties it has on purpose.}
+It is built \textbf{by running the real writer}, not by assembling manifests by hand: a
+hand-built fixture tests what its author believes the writer emits, and this one tests what
+the writer emits. And every case that patches the manifest also drops the provenance chain,
+because \S\ref{sec:provenance} hashes the manifest's bytes --- a case that means to
+exercise one rule and fails two exercises neither, since the implementer cannot tell which
+one their reader rejected.
+
+\textbf{All of its data is synthetic}, which is the condition for it being publishable at
+all (\S\ref{sec:phi}). A fixture built on a real case would be useful once and
+distributable never.
+
+The fixture is regenerated and checked against this table on every run of the reference
+implementation's test suite. A fixture nobody verifies is worse than none: if a case
+stopped producing the result it advertises, an implementer would conclude their reader is
+wrong when the fixture is.
+
+\section{How this document changes}\label{sec:process}
+
+A living specification has to say where changes are opened and who decides, or ``the
+process of \S16'' names a process that does not exist --- which is what the previous
+revision did.
+
+\begin{longtable}{L{3.4cm} L{12.0cm}}
+\toprule
+\textbf{Question} & \textbf{Answer}\\
+\midrule
+\endhead
+Who maintains it & The editor named on the cover, who holds the copyright. Version 0.2 was
+written during the ANFAIA summer grant on a clinical case contributed by Histora;
+maintenance is not tied to that term.\\
+Where changes are opened & As issues and pull requests against the public repository that
+hosts the reference implementation and this source. A change to the format and the change
+to the implementation that realises it belong in the same request: the schema is derived
+from the contract, so they cannot diverge silently, and a proposal that does not say how it
+would be validated is not yet a proposal.\\
+What a change must carry & The rule, in \MUST/\SHOULD/\MAY{} terms; where a validator would
+check it and at which severity; and what it does to a container written under the previous
+version (\S\ref{sec:versioning}).\\
+Who decides & The editor, in the open, on the record of the request. This is a proposal
+with one implementation, not a standard with a committee, and \S\ref{sec:limits} says so
+plainly rather than implying otherwise.\\
+When it is published & A version is published by tagging the repository, which is what
+makes the schema's \code{\$id} resolve to that version and not to whatever the branch holds
+today.\\
+\bottomrule
+\end{longtable}
+
 \section{What v0.2 deliberately does not do}\label{sec:limits}
 
 \begin{itemize}
   \item \textbf{It validates nothing clinically.} Everything inferred ships as
   \code{investigational}, on purpose.
   \item \textbf{Signals (\code{UOS-Sig}) are unimplemented.} The \code{kind} exists; no
-  writer emits it and \code{time\_cursor\_s} in views is therefore never populated.
+  writer emits it and \code{time\_cursor\_s} in views is therefore never populated. When it
+  is implemented, UOS \MUSTNOT{} define a time-series format of its own: DICOM already
+  defines waveform objects for signals attached to a study, and outside DICOM there are
+  open, widely supported formats for biomedical time series. Either is preferable to
+  inventing one, and saying so here is what stops the first implementation from doing it.
   \item \textbf{Signatures are unspecified.} \S\ref{sec:provenance} names JWS or COSE
   Sign1 as the destination, so that the first implementation does not invent a scheme; what
   is undecided is which key signs and where it lives.
@@ -2395,11 +2500,9 @@ discovering the change when their reader breaks. The warning is also the written
   individually valid, with nothing in the container declaring which one governs when they
   drift. A writer that has a concrete reader asking for it should emit it; one that does
   not, should not.
-  \item \textbf{There is no distributable example container.} Every figure here was
-  measured on a real patient's case, which the project holds and does not publish. A
-  conformance fixture --- synthetic, or built from an openly licensed dataset --- is what
-  would let an implementer check their reader against something other than their own
-  output, and it does not exist yet.
+  \item \textbf{Every figure here was measured on a real patient's case}, which the project
+  holds and does not publish. What is distributable is the \emph{conformance fixture}
+  (\S\ref{sec:fixture}), built on synthetic data for exactly that reason.
   \item \textbf{The media type is unregistered.} \code{application/vnd.histora.uos}
   awaits an IANA registration in the \code{vnd.} tree, and \code{histora.dev} --- the
   namespace it names --- is not a domain anybody holds. The schema's \code{\$id} therefore

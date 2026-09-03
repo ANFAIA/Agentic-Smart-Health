@@ -169,7 +169,7 @@ def capa_clinica(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
             }
 
     return {
-        "schema": "ash-clinical/2.0",
+        "schema": "histora-clinical/2.0",
         "extension_of": "UOS v0.2 — el borrador no define atributos clinicos por pieza",
         "vocabulary": {
             "body_site": (

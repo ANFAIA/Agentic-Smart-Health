@@ -735,7 +735,7 @@ def _escribe_inria(
     # `UnicodeEncodeError` que no decia nada de PLY. Aqui no se acentua ni se adorna.
     cabecera = [
         "ply", "format binary_little_endian 1.0",
-        "comment perfil INRIA 3DGS grado 0 - DERIVADO de ash-twin/1.0, NO es el twin",
+        "comment perfil INRIA 3DGS grado 0 - DERIVADO de histora-twin/1.0, NO es el twin",
         f"comment acquisition_id {snapshot.acquisition_id}",
         f"comment capa: {capa}",
         f"comment opacity = logit(1 - exp(-{ganancia:.4g} * sigma)) - GANANCIA DE "

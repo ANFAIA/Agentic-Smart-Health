@@ -24,7 +24,7 @@ from gaussian_engine.ajuste import (
     ajusta_por_region,
 )
 
-PERFIL = "ash-twin-ajustado/1.0"
+PERFIL = "histora-twin-ajustado/1.0"
 
 
 class CampoStore(Protocol):

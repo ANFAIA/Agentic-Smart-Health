@@ -51,7 +51,7 @@ for _src in sorted(RAIZ.glob("packages/*/src")):
 
 #: Perfiles de gaussianas que este formato emite. Uno desconocido es un fallo, no un aviso:
 #: las columnas se llaman igual que las del 3DGS de facto y significan otra cosa.
-PERFILES = {"ash-twin/1.0", "ash-twin-ajustado/1.0", "ash-gs-apariencia/1.0"}
+PERFILES = {"histora-twin/1.0", "histora-twin-ajustado/1.0", "histora-gs-apariencia/1.0"}
 
 
 def _cabecera_ply(crudo: bytes) -> tuple[dict[str, str], int, list[str], list[str]]:

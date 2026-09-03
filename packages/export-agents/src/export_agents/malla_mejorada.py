@@ -205,7 +205,7 @@ def descriptor(pos: np.ndarray, caras: np.ndarray, rgb: np.ndarray, medido: np.n
     etiquetadas = sorted({int(f) for f in np.unique(fdi) if f > 0})
     sin_color = [f for f in etiquetadas if f not in set(piezas_con_color)]
     return {
-        "schema": "ash-malla-mejorada/1.0",
+        "schema": "histora-malla-mejorada/1.0",
         "role": "la malla del escaner con las capas que el gemelo mide encima",
         "source": origen,
         "n_vertices": int(len(pos)),

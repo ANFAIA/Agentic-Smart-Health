@@ -233,7 +233,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.12.0"
+    version = "0.13.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -383,8 +383,8 @@ class UOSExportAgent(BaseExportAgent):
         # capa de apariencia la gestiona el bloque `asset.apariencia` más abajo, con
         # el esquema INRIA y el perfil correctos. Si no lo saltamos, el main loop crea
         # `asset.gs` con el esquema de densidad (porque `_descriptor_gs` usa los defaults
-        # del snapshot) y el sidecar queda con `profile: ash-twin/1.0` en vez de
-        # `ash-gs-apariencia/1.0`.
+        # del snapshot) y el sidecar queda con `profile: histora-twin/1.0` en vez de
+        # `histora-gs-apariencia/1.0`.
         _skip_escena_gs = (
             snapshot.apariencia_ref is not None
             and escena_gs is not None
@@ -611,7 +611,7 @@ class UOSExportAgent(BaseExportAgent):
                     # cura: quien describe, pregunta al fichero.
                     nota=self._nota_color_ply(destino_ap),
                     esquema_override=esq_ap,
-                    perfil_override="ash-gs-apariencia/1.0",
+                    perfil_override="histora-gs-apariencia/1.0",
                     # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
                     # el numero de gaussianas escritas no es el de la semilla que se le dio.
                     n_primitives_override=(_n_ap or len(datos_ap["means"])),
@@ -683,7 +683,7 @@ class UOSExportAgent(BaseExportAgent):
                     # del escaner— pero se escribio cuando el STL viajaba dentro, y ahora
                     # se lee como si el contenedor lo custodiara. No lo custodia: lo
                     # nombra. Y la reversibilidad no es devolverlo, es regenerar la malla
-                    # desde esta escena (extension `ash_reversible`).
+                    # desde esta escena (extension `histora_reversible`).
                     "uos_note": (
                         "presentacion en float32. Desde un STL la conversion no "
                         "pierde nada —el STL binario ya es float32— y desde un OBJ "
@@ -721,7 +721,7 @@ class UOSExportAgent(BaseExportAgent):
                     crudo = codifica_etiquetas(etq)
                     meta = meta_segmentacion(
                         etq, asset_origen="asset.scene",
-                        modelo="ash-seg-teeth",
+                        modelo="histora-seg-teeth",
                         # ⚠️ La version del SEGMENTADOR, no la de este agente. Aqui se
                         # escribia `self.version` —la del exportador— en el unico campo
                         # que existe para saber que modelo produjo la inferencia. Es el
@@ -1429,9 +1429,9 @@ class UOSExportAgent(BaseExportAgent):
         ids = {a.id: a.uri for a in assets}
         fuera: dict[str, Extension] = {}
         if "asset.clinical" in ids:
-            fuera["ash_clinical"] = Extension(
-                name="ash_clinical", version="1.0", uri=ids["asset.clinical"],
-                schema_id="ash-clinical/1.0",
+            fuera["histora_clinical"] = Extension(
+                name="histora_clinical", version="1.0", uri=ids["asset.clinical"],
+                schema_id="histora-clinical/1.0",
                 description=(
                     "atributos clinicos por pieza (pH, raices, conductos, hallazgos) y "
                     "medidas no regionales, con la procedencia de cada valor. El borrador "
@@ -1440,8 +1440,8 @@ class UOSExportAgent(BaseExportAgent):
                 ),
             )
         if any(a.id in ("asset.field", "asset.composite") for a in assets):
-            fuera["ash_gs_measured"] = Extension(
-                name="ash_gs_measured", version="1.0",
+            fuera["histora_gs_measured"] = Extension(
+                name="histora_gs_measured", version="1.0",
                 description=(
                     "descriptor `.gs.json` por capa de gaussianas: declara si es MEDIDA o "
                     "reconstruida y el esquema de sus columnas. El borrador trata el 3DGS "
@@ -1463,9 +1463,9 @@ class UOSExportAgent(BaseExportAgent):
         # serian 19 MB para duplicar una geometria que el contenedor sabe reconstruir, y
         # dos verdades sobre la misma superficie que pueden divergir.
         if "asset.scene" in ids:
-            fuera["ash_reversible"] = Extension(
-                name="ash_reversible", version="1.0",
-                schema_id="ash-reversible/1.0",
+            fuera["histora_reversible"] = Extension(
+                name="histora_reversible", version="1.0",
+                schema_id="histora-reversible/1.0",
                 description=(
                     "de `asset.scene` se regenera una malla de arcada con color por "
                     "vertice, codigo FDI y una columna `medido` que dice que vertices "

@@ -101,7 +101,17 @@ def valida(ruta: Path) -> Informe:
         crudo = z.read(MANIFIESTO)
         # ⚠️ La rama de version PRIMERO: si el contenedor declara una mayor superior esto
         # eleva, y es lo correcto — no se valida lo que no se sabe interpretar (§15).
-        m, ignorados = lee_manifiesto_de(crudo, nombre=ruta.name)
+        # ⚠️ **Un manifiesto ilegible es un ERROR, no una excepcion.** Esto reventaba con
+        # `ValidationError` en cuanto el manifiesto no encajaba en el contrato, asi que un
+        # contenedor de otro emisor con un fallo de forma tumbaba al validador en vez de
+        # ser reportado por el. Un validador que revienta con dato malo no sirve para lo
+        # que existe: lo que le llega es, por definicion, dato en el que no se confia.
+        # Lo encontro el banco de conformidad la primera vez que se ejecuto (G-4).
+        try:
+            m, ignorados = lee_manifiesto_de(crudo, nombre=ruta.name)
+        except ValueError as e:
+            inf.errores.append(f"{MANIFIESTO} no encaja en el contrato del formato: {e}")
+            return inf
         if ignorados:
             inf.avisos.append(
                 f"el contenedor declara uos_version {m.uos_version!r} y este validador "

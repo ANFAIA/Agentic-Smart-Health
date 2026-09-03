@@ -188,7 +188,7 @@ def _mesh_splats(
     # ⚠️ Atributos de APLICACION, con guion bajo, que es lo que glTF reserva para lo que su
     # especificacion no define. Un visor conforme los ignora y dibuja igual; el nuestro los
     # usa para el sombreado y para seleccionar una pieza. Que no sean estandar es
-    # exactamente por lo que el sidecar `ash_gs_measured` sigue haciendo falta.
+    # exactamente por lo que el sidecar `histora_gs_measured` sigue haciendo falta.
     if gs.ao is not None:
         atributos["_AO"] = _vec(np.asarray(gs.ao).reshape(n), "SCALAR")
     return {

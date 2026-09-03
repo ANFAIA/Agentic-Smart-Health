@@ -84,7 +84,7 @@ def _snapshot() -> TwinSnapshot:
 def test_usar_una_extension_sin_declararla_INVALIDA(tmp_path, malla):
     """Un lector que ve un nombre en `used` y no lo encuentra en `extensions` no tiene
     forma de saber qué es: ni leerla, ni saltarla a sabiendas."""
-    m = _manifiesto([_asset(malla)], extensions_used=["ash_clinical"])
+    m = _manifiesto([_asset(malla)], extensions_used=["histora_clinical"])
     salida = escribe_uos(tmp_path / "c.uos", m, [("scene/scan.stl", malla)])
 
     inf = valida(salida)
@@ -169,9 +169,9 @@ def test_el_agente_declara_lo_que_anade(tmp_path, malla):
 
     assert salida.ok, salida.detail
     m = lee_manifiesto(salida.path)
-    assert "ash_clinical" in m.extensions_used
-    assert m.extensions["ash_clinical"].uri == "clinical/observations.json"
-    assert "FHIR" in m.extensions["ash_clinical"].description
+    assert "histora_clinical" in m.extensions_used
+    assert m.extensions["histora_clinical"].uri == "clinical/observations.json"
+    assert "FHIR" in m.extensions["histora_clinical"].description
 
 
 def test_NADA_de_lo_nuestro_es_obligatorio(tmp_path, malla):

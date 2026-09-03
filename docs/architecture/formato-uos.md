@@ -94,7 +94,7 @@ Todo lo inferido vive **solo** bajo `derived/`, con `regulatory.layer: 3` y un s
 declara qué modelo lo produjo, con qué versión y con qué hash de pesos:
 
 ```json
-{ "model": {"name": "ash-seg-teeth", "version": "0.4.0", "weights_sha256": "ec455883…"},
+{ "model": {"name": "histora-seg-teeth", "version": "0.4.0", "weights_sha256": "ec455883…"},
   "regulatory": {"layer": 3, "status": "investigational", "jurisdictions": []} }
 ```
 

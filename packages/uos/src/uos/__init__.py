@@ -28,8 +28,8 @@ y los derivados de inferencia (§5.5), con vistas (§7), cadena de procedencia (
 FHIR por tipo de recurso (§9).
 
 **Y tres cosas que el borrador NO tiene**, declaradas como extensiones para que un lector
-ajeno sepa que estan: la capa clinica por pieza (`ash_clinical`), el descriptor que
-distingue gaussianas MEDIDAS de reconstruidas (`ash_gs_measured`), y el propio mecanismo de
+ajeno sepa que estan: la capa clinica por pieza (`histora_clinical`), el descriptor que
+distingue gaussianas MEDIDAS de reconstruidas (`histora_gs_measured`), y el propio mecanismo de
 extensiones —copiado de glTF, sobre el que UOS se apoya—. Ninguna es obligatoria: un visor
 conforme abre el caso sin entender ninguna.
 

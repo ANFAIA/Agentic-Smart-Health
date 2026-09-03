@@ -831,7 +831,7 @@ def test_la_escala_declara_que_son_MILIMETROS_y_no_su_logaritmo(
 
     assert escala.unidad == "mm"
     assert escala.escala == "linear"
-    assert snapshot.perfil_campo == "ash-twin/1.0", "y el perfil se declara, para poder rechazarlo"
+    assert snapshot.perfil_campo == "histora-twin/1.0", "y el perfil se declara para rechazarlo"
 
 
 def test_un_campo_sin_segmentar_no_declara_region_id(
