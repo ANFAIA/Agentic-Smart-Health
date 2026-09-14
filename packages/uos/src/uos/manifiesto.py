@@ -323,6 +323,8 @@ class Asset(BaseModel):
     # El validador lo dice UNA vez por contenedor y no una por asset: si todos los
     # originales son externos siempre, un aviso por cada uno no distingue nada.
     external: bool = Field(False, description="True when the asset is referenced and not carried. Acquired originals MUST be external; their `uri` is then a content address and never a path.")
+    #: Pista de donde vive el original. Vacio es NO DECLARADO, nunca «no hay donde».
+    locators: list[Locator] = Field(default_factory=list, description="Where to find this asset when it is referenced and not carried. Hints, never a contract: a reader verifies by hash and MUST open the container without resolving any of them. An empty list is NOT DECLARED.")
 
     @field_validator("uri")
     @classmethod
@@ -486,6 +488,36 @@ class SiteKind(StrEnum):
     EDENTULO = "edentulous"
     PONTICO = "pontic"
     PILAR = "abutment"
+
+
+class LocatorKind(StrEnum):
+    """Como se dice donde vive un original que no viaja."""
+
+    DICOMWEB = "dicomweb"    # QIDO-RS/WADO-RS por SeriesInstanceUID (DICOM PS3.18)
+    AE_TITLE = "ae_title"    # el Application Entity de un PACS, para DIMSE clasico
+    URL = "url"              # cualquier otro endpoint HTTP
+    OPAQUE = "opaque"        # una referencia que solo significa algo dentro de una institucion
+
+
+class Locator(BaseModel):
+    """Donde ENCONTRAR un original referenciado. Pista, nunca contrato.
+
+    Sin esto, `sha256:<hex>` identifica un fichero que nadie puede ir a buscar: el formato
+    resolvia la verificacion —cualquiera que tenga la serie puede probar que es esa— y
+    dejaba sin resolver la localizacion, que es el paso anterior.
+
+    ⚠️ **Un locator puede ser PHI y por eso `identifying` no tiene defecto.** Una URL con
+    el directorio del paciente, un AE title que nombra la clinica o un host que la
+    identifica llevan identidad aunque el contenedor este de-identificado. Callarlo seria
+    dejar que «no identifica» y «no se ha mirado» se parezcan, que es justo lo que este
+    formato no permite en ningun otro sitio.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    kind: LocatorKind = Field(description="How the location is expressed.")
+    value: str = Field(description="The locator itself: a QIDO-RS query, an AE title, a URL, or an institution-local reference.")
+    identifying: bool = Field(description="Whether the locator itself carries identifying information, such as a patient directory in a URL or an AE title that names the clinic. It has no default on purpose: silence here would be indistinguishable from having checked.")
+    note: str = Field(default="", description="Anything a recipient needs in order to use it, such as which network it is reachable from.")
 
 
 class Frame(BaseModel):

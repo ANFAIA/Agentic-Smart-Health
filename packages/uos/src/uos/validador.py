@@ -200,6 +200,7 @@ def validate(ruta: Path) -> Report:
 
     _valida_frames(m, inf)
     _valida_regulatorio(m, inf)
+    _valida_locators(m, inf)
     _valida_extensiones(m, inf)
     if m.canonical_frame.units != "mm":
         inf.error("20", f"el frame canonico declara unidades {m.canonical_frame.units!r}; "
@@ -247,6 +248,14 @@ def _perfil_distribuible(m: Manifest, inf: Report) -> None:
     # no se manda a nadie, por muy declarado que este todo lo demas.
     if inf.errors:
         faltan.append("no valida contra su propio manifiesto")
+    # ⚠️ **Un locator identificante es una fuga de salida.** El contenedor puede estar
+    # impecablemente de-identificado y aun asi llevar escrito el camino de vuelta.
+    con_ruta = [a.id for a in m.assets for l in a.locators if l.identifying]
+    if con_ruta:
+        faltan.append(
+            f"lleva locators marcados `identifying` en {sorted(set(con_ruta))}: la ruta "
+            "hacia el original identifica aunque el payload no lo haga"
+        )
     inf.not_distributable_because = faltan
     inf.distributable = not faltan
 
@@ -1161,6 +1170,33 @@ def _valida_phi(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
             "una segunda opinion o hacia un entrenamiento son actos distintos y quien lo "
             "reciba tendra que suponerlo"
         )
+
+
+def _valida_locators(m: Manifest, inf: Report) -> None:
+    """Que una pista de localizacion no se convierta en la fuga (17o).
+
+    Un locator resuelve el paso que le faltaba al direccionamiento por contenido —donde
+    esta el original— y abre a cambio una via de escape: la ruta hacia el sitio que SI
+    guarda el original identificado suele identificar al paciente, a la clinica o a las
+    dos. Por eso `identifying` no tiene defecto en el modelo y por eso se comprueba aqui
+    contra lo que el contenedor afirma de si mismo.
+    """
+    for a in m.assets:
+        if not a.locators:
+            continue
+        if not a.external:
+            inf.error("17o", f"asset {a.id}: declara `locators` y no es `external`. Un locator "
+                "dice donde encontrar lo que el contenedor NO lleva; sobre un asset que "
+                "viaja dentro no significa nada", path=f"assets[{a.id}]")
+        identificadores = [l for l in a.locators if l.identifying]
+        if identificadores and m.phi_state in (PHIState.PSEUDONYMIZED, PHIState.ANONYMIZED):
+            inf.error("17o", f"asset {a.id}: el contenedor declara `phi_state` "
+                f"{m.phi_state.value!r} y lleva {len(identificadores)} locator(s) marcados "
+                "`identifying`. La de-identificacion del payload no vale de nada si la "
+                "ruta hacia el original identifica igual", path=f"assets[{a.id}]")
+        inf.warn("17o", f"asset {a.id}: {len(a.locators)} locator(s). Son PISTAS: apuntan "
+            "fuera del contenedor, nadie ha comprobado que respondan, y la identidad del "
+            "fichero la decide el hash y no la ruta", path=f"assets[{a.id}]")
 
 
 def _valida_extensiones(m: Manifest, inf: Report) -> None:

@@ -600,6 +600,33 @@ An asset that is declared but not carried sets \code{external} to \code{true}, a
   "bytes": 11004334, "media_type": "model/stl", "frame": "frame.ios_master" }
 \end{lstlisting}
 
+\paragraph{Locators: where the original lives, as a hint.} A content address says
+\emph{which} file an asset is and proves it when someone holds it. It does not say
+\emph{who} holds it, so \code{sha256:<hex>} names a file nobody can go and fetch. An asset
+\MAY{} therefore carry \code{locators}, each with a \code{kind} --- \code{dicomweb} for a
+QIDO-RS or WADO-RS query by Series Instance UID, \code{ae\_title} for a PACS reachable over
+classic DIMSE, \code{url}, or \code{opaque} for a reference that only means something
+inside one institution.
+
+They are \textbf{hints and never a contract}. A reader \MUST{} open and validate a
+container without resolving any of them, identity is decided by the hash and never by the
+route, and an empty list is \textsc{not declared} rather than ``there is nowhere''. A
+locator on an asset that is not \code{external} is an error: it would describe where to
+find something the container already carries.
+
+\begin{finding}{A locator can be the leak, so it declares whether it is one}
+The route to the system that holds the original usually identifies the patient, the site,
+or both --- a patient directory in a URL, an AE title naming the clinic, a hostname that is
+the practice. A container can be impeccably de-identified and still carry the way back
+written inside it.
+
+So \code{identifying} has \textbf{no default}. A writer states whether the locator itself
+carries identity, because leaving it silent would make ``it does not identify'' and ``nobody
+looked'' indistinguishable, which this format does not permit anywhere else. Check 17o
+makes an \code{identifying} locator an error in a container declaring \code{pseudonymized}
+or \code{anonymized}, and it costs the container \code{UOS-Distributable} in every case.
+\end{finding}
+
 Normative rules, checked in both directions:
 \begin{itemize}
   \item \code{external: true} $\Rightarrow$ \code{uri} matches \code{\^{}sha256:[0-9a-f]\{64\}\$}.
@@ -700,6 +727,7 @@ sprinkling keys.
 \code{series\_instance\_uid} & string & --- & DICOM Series Instance UID \code{(0020,000E)}, so a recipient holding the series by another channel can tell it is this one.\\
 \code{study\_instance\_uid} & string & --- & DICOM Study Instance UID \code{(0020,000D)}.\\
 \code{external} & bool & default \code{False} & True when the asset is referenced and not carried. Acquired originals \MUST{} be external; their \code{uri} is then a content address and never a path.\\
+\code{locators} & string & --- & Where to find this asset when it is referenced and not carried. Hints, never a contract: a reader verifies by hash and \MUST{} open the container without resolving any of them. An empty list is NOT DECLARED.\\
 \bottomrule
 \end{longtable}
 % /generado: tabla-Asset
@@ -2338,6 +2366,10 @@ row-major; confusing them does not fail, it places the cloud rotated and mirrore
 have one; a layer-3 asset with no \code{clearance}; a registration with an empty
 \code{fit\_for}; a canonical frame with no anatomical convention. None of these invalidate
 the container --- each says that something a reader must not guess was left unsaid.\\
+17o & E/W & Locators (\S\ref{sec:external}): one on a non-external asset is an
+error; an \code{identifying} one in a container declaring \code{pseudonymized} or
+\code{anonymized} is an error; and any locator warns, because it points outside the
+container and nobody has checked that it answers.\\
 19 & E/W & Extensions declared but unused; and one warning per required extension, since a
 reader that does not implement it must not open the container.\\
 20 & E & \code{canonical\_frame.units == "mm"}.\\

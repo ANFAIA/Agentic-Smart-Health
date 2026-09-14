@@ -1629,3 +1629,64 @@ def test_dos_caminos_que_discrepan_eligen_el_corto_y_declaran_la_diferencia():
     assert len(caminos_al_canonico(m, "A")) == 2
     assert _tx_al_canonico(m, "A") == 10.0          # el de una sola arista
     assert discrepancia_maxima(m, "A") == 4.0       # 10 frente a 3+3
+
+
+def _asset_referenciado(locators):
+    from uos.manifiesto import Asset, AssetKind
+
+    return Asset(
+        id="asset.ct", kind=AssetKind.VOLUME, visit="v1", uri="sha256:" + "a" * 64,
+        media_type="application/dicom", sha256="a" * 64, bytes=1, frame="C",
+        external=True, locators=locators,
+    )
+
+
+def _manifiesto_con(asset, phi):
+    from uos.manifiesto import Frame, Manifest, Subject
+
+    return Manifest(
+        case_id="urn:uuid:loc", generator={"name": "test"}, phi_state=phi,
+        subject=Subject(pseudonym="p"), canonical_frame=Frame(id="C"), assets=[asset],
+    )
+
+
+def test_un_locator_no_puede_declararse_sin_decir_si_identifica():
+    """`identifying` no tiene defecto: callarlo seria «no se ha mirado» disfrazado de «no»."""
+    import pytest
+    from pydantic import ValidationError
+
+    from uos.manifiesto import Locator
+
+    with pytest.raises(ValidationError):
+        Locator(kind="url", value="https://pacs.example/estudio/1")
+
+
+def test_un_locator_identificante_contradice_un_contenedor_deidentificado():
+    """La de-identificacion del payload no vale si la ruta de vuelta identifica igual."""
+    from uos.manifiesto import Locator, LocatorKind, PHIState
+    from uos.validador import Report, _perfil_distribuible, _valida_locators
+
+    ruta = Locator(kind=LocatorKind.URL, value="https://pacs.clinica/GARCIA_LUIS",
+                   identifying=True)
+    m = _manifiesto_con(_asset_referenciado([ruta]), PHIState.PSEUDONYMIZED)
+    inf = Report()
+    _valida_locators(m, inf)
+    assert any(e.code == "UOS-E-017o" for e in inf.errors), inf.errors
+
+    # Y aunque el contenedor sea valido, deja de poder salir de quien lo emitio.
+    inf2 = Report()
+    _perfil_distribuible(m, inf2)
+    assert any("identifying" in x for x in inf2.not_distributable_because)
+
+
+def test_un_locator_opaco_no_identificante_solo_avisa():
+    """Una pista sin identidad no invalida nada: apunta fuera, y eso se dice."""
+    from uos.manifiesto import Locator, LocatorKind, PHIState
+    from uos.validador import Report, _valida_locators
+
+    opaco = Locator(kind=LocatorKind.DICOMWEB, value="studies/1.2.3/series/4.5.6",
+                    identifying=False)
+    inf = Report()
+    _valida_locators(_manifiesto_con(_asset_referenciado([opaco]), PHIState.PSEUDONYMIZED), inf)
+    assert not inf.errors, inf.errors
+    assert any(a.code == "UOS-W-017o" for a in inf.warnings)

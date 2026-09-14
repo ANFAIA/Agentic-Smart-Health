@@ -167,6 +167,14 @@
           "description": "True when the asset is referenced and not carried. Acquired originals MUST be external; their `uri` is then a content address and never a path.",
           "title": "External",
           "type": "boolean"
+        },
+        "locators": {
+          "description": "Where to find this asset when it is referenced and not carried. Hints, never a contract: a reader verifies by hash and MUST open the container without resolving any of them. An empty list is NOT DECLARED.",
+          "items": {
+            "$ref": "#/$defs/Locator"
+          },
+          "title": "Locators",
+          "type": "array"
         }
       },
       "required": [
@@ -554,6 +562,50 @@
       ],
       "title": "Frame",
       "type": "object"
+    },
+    "Locator": {
+      "additionalProperties": false,
+      "description": "Where to find a referenced original. A hint, never a contract: identity is decided by the hash and not by the route.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LocatorKind",
+          "description": "How the location is expressed."
+        },
+        "value": {
+          "description": "The locator itself: a QIDO-RS query, an AE title, a URL, or an institution-local reference.",
+          "title": "Value",
+          "type": "string"
+        },
+        "identifying": {
+          "description": "Whether the locator itself carries identifying information, such as a patient directory in a URL or an AE title that names the clinic. It has no default on purpose: silence here would be indistinguishable from having checked.",
+          "title": "Identifying",
+          "type": "boolean"
+        },
+        "note": {
+          "default": "",
+          "description": "Anything a recipient needs in order to use it, such as which network it is reachable from.",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value",
+        "identifying"
+      ],
+      "title": "Locator",
+      "type": "object"
+    },
+    "LocatorKind": {
+      "description": "How a locator expresses a location: DICOMweb, an AE title, a URL, or an institution-local reference.",
+      "enum": [
+        "dicomweb",
+        "ae_title",
+        "url",
+        "opaque"
+      ],
+      "title": "LocatorKind",
+      "type": "string"
     },
     "OcclusionRecord": {
       "description": "How the mandible-to-maxilla relation was recorded.",
