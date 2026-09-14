@@ -813,7 +813,7 @@ def test_el_snapshot_dice_QUE_es_cada_columna(pipeline: IngestionPipeline, case_
 
     assert {"x", "scale_0", "rot_0", "density"} <= set(por_nombre)
     assert por_nombre["density"].unidad == "normalised_sigma"
-    assert "NO es opacidad" in por_nombre["density"].significado
+    assert "NOT opacity" in por_nombre["density"].significado
 
 
 def test_la_escala_declara_que_son_MILIMETROS_y_no_su_logaritmo(
