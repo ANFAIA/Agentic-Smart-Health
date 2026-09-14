@@ -932,7 +932,7 @@ reserve it, not to omit it. The id \code{reg.mandible\_to\_maxilla} is reserved,
 registration or \code{occlusion: "not\_recorded"} --- \textbf{silence is never ``there
 is none''}. A single-arch case answers \code{single\_arch}, but it answers.
 
-\paragraph{Sites that are not teeth.} \code{uos\_fdi} labels teeth only, so there was no
+\paragraph{Sites that are not teeth.} An FDI code labels teeth only, so there was no
 way to mark an implant site, an edentulous span or a prosthetic abutment --- which is what
 half of a rehabilitation is about. \code{uos\_site} is reserved with
 \code{implant\_site}, \code{edentulous}, \code{pontic} and \code{abutment}, alongside ISO
@@ -1280,8 +1280,6 @@ extension. See below.\\
 UOS uses the nearest mesh vertex's normal.\\
 \code{\_AO} & SCALAR f32 & \MAY & \textbf{Application attribute} (UOS). Ambient occlusion
 in $[0,1]$, to be multiplied into the colour at draw time.\\
-\code{\_REGION\_ID} & SCALAR i16 & \MAY & \textbf{Application attribute} (UOS). FDI code
-per Gaussian.\\
 \bottomrule
 \end{longtable}
 
@@ -1300,10 +1298,10 @@ without the extension draws the appearance layer as an uncoloured point cloud. W
 same convention the \code{histora\_reversible} extension uses when sampling colour per vertex,
 and it is cited rather than redefined.
 
-\paragraph{Underscore attributes.} \code{\_AO} and \code{\_REGION\_ID} use the underscore
-prefix glTF reserves for what its specification does not define. A conformant viewer
-ignores them and draws correctly; the UOS viewer uses them for shading and for tooth
-selection. That they are non-standard is precisely why the \code{histora\_gs\_measured}
+\paragraph{Underscore attributes.} \code{\_AO} uses the underscore prefix glTF reserves
+for what its specification does not define. A conformant viewer ignores it and draws
+correctly; the UOS viewer uses it for shading. Per-Gaussian tooth identity is \emph{not}
+carried here: it is layer 3 and lives in \code{derived/} (\S\ref{sec:picking}). That they are non-standard is precisely why the \code{histora\_gs\_measured}
 descriptor still exists.
 
 \paragraph{Normative: unit conversions happen \emph{before} this primitive.}
@@ -1385,8 +1383,7 @@ Two real descriptors, abridged:
   "columns": [ {"name":"x","unit":"mm","scale":"lineal","measured":true,  ...},
                {"name":"scale_0","unit":"mm","scale":"lineal","measured":true, ...},
                {"name":"density","unit":"sigma_normalizada","scale":"lineal",
-                "measured":true, ...},
-               {"name":"region_id","unit":"","scale":"lineal","measured":false, ...} ] }
+                "measured":true, ...} ] }
 
 // scene/appearance.gs.json -- the trained appearance embedded in scene.glb
 { "role": "apariencia real entrenada con gsplat", "measured": false,
@@ -1888,7 +1885,7 @@ whether it is \emph{measured} or reconstructed, and the schema of its columns.
 here there are fields fitted to CBCT density, in the patient frame, with error in the field's own unit. \textbf{Not in HU}: a CBCT is not calibrated in Hounsfield units (\S\ref{sec:volume}).\\
 \code{histora\_reversible} & 1.0 & Declares that an arch mesh with per-vertex colour, FDI code
 and a \code{measured} column can be \emph{regenerated} from \code{asset.scene}: geometry
-and FDI from the mesh primitives (\code{extras.uos\_fdi}), colour from the
+and FDI from \code{derived/seg\_teeth.bin}, colour from the
 \code{KHR\_gaussian\_splatting} primitive, taking Gaussians that cover each vertex within
 $3\sigma$ and weighting by alpha. \textbf{The mesh does not travel: it is reconstructed.}\\
 \bottomrule
@@ -2219,8 +2216,9 @@ per-vertex FDI code, neither of which the ingested STL ever had.
 
 \begin{enumerate}
   \item Read \code{scene/scene.glb}. Take \code{POSITION} and the index buffers of the
-  \emph{mesh} primitives; the \code{extras.uos\_fdi} of each primitive gives the code for
-  the vertices its faces touch.
+  \emph{mesh} primitive. The per-vertex FDI code is \emph{not} in the scene: read it from
+  \code{derived/seg\_teeth.bin} (\S\ref{sec:derived}), and if that directory was stripped,
+  the mesh regenerates without it.
   \item From the \code{KHR\_gaussian\_splatting} primitive take \code{POSITION},
   \code{SH\_DEGREE\_0\_COEF\_0}, \code{OPACITY} and \code{SCALE}.
   \item For each mesh vertex, take the Gaussians within $3\sigma$ --- the same cut-off the
@@ -2556,8 +2554,8 @@ Can I trust a payload? & Re-hash it. \code{sha256} + \code{bytes} on every asset
 Where is the geometry? & \code{scene/scene.glb}, stock glTF 2.0. Node 0 = canonical frame.\\
 Where is the colour? & The \code{KHR\_gaussian\_splatting} primitive in that GLB.
 $\mathrm{RGB} = \mathrm{SH}_0 \times 0.282094791 + 0.5$.\\
-Which tooth is this? & Mesh primitive \code{extras.uos\_fdi} (string, FDI/ISO-3950), or
-\code{\_REGION\_ID} per Gaussian, or \code{derived/seg\_teeth.bin} per vertex.\\
+Which tooth is this? & \code{derived/seg\_teeth.bin}, per vertex, FDI/ISO-3950. Layer 3
+only: a stripped container has no tooth identity, and that is correct.\\
 Where is the CBCT? & Directory asset under \code{volume/}, \code{kind: volume}, with a
 \code{.volume.json} sidecar so you need no DICOM parser to inspect it.\\
 How do two frames relate? & \code{registrations[]}, row-major, mm. Transpose for glTF.\\
