@@ -277,8 +277,8 @@ The measured container & \code{another\_patient.uos} --- 12 entries, 18 views, 3
 extensions, a provenance chain of 3 versions. Every real value quoted in this document is
 read from it. \textbf{It is not distributed with this specification}: it holds one
 patient's case, pseudonymised but real, and it is held by the project rather than published.
-A reader should not go looking for a file that does not accompany the document. A
-distributable conformance fixture is listed as pending in \S\ref{sec:limits}.\\
+A reader should not go looking for a file that does not accompany the document. What
+\emph{is} distributable is the synthetic conformance fixture of \S\ref{sec:fixture}.\\
 \bottomrule
 \end{longtable}
 
@@ -524,13 +524,20 @@ it can --- file by file, against these hashes. Referencing gives up custody, not
 traceability.
 
 \vspace{6px}
-The asset's own \code{sha256} is a \textbf{digest over the part names and hashes}, defined
-here because the format needs writer and validator to compute it identically:
+The asset's own \code{sha256} is a \textbf{digest over the parts}, defined here because
+the format needs writer and validator to compute it identically. It runs over
+\emph{clinical identity} when every part declares it, and falls back to names and file
+hashes when they do not, so that a container written before identity was carried still
+verifies. \S\ref{sec:volume} says why identity is the better key:
 
 \begin{lstlisting}[style=py]
 def digest_of_parts(parts):
     h = hashlib.sha256()
-    for p in sorted(parts, key=lambda x: x.name):     # sort by name, byte order
+    if all(p.sop_instance_uid and p.pixel_data_sha256 for p in parts):
+        for p in sorted(parts, key=lambda x: x.sop_instance_uid):
+            h.update(f"{p.sop_instance_uid}\0{p.pixel_data_sha256}\n".encode())
+        return h.hexdigest()                          # identity: the clinical series
+    for p in sorted(parts, key=lambda x: x.name):     # fallback: one serialisation
         h.update(f"{p.name}\0{p.sha256}\n".encode())  # NAME, NUL, HEX HASH, LF
     return h.hexdigest()
 \end{lstlisting}
@@ -1506,11 +1513,11 @@ renders just as well, mirrored.\\
 \code{origin\_mm} & number[3]\,|\,null & \code{ImagePositionPatient} of the first slice;
 \code{null} with a warning if absent.\\
 \code{rescale} & object & \code{\{slope, intercept\}}.\\
-\code{value\_range} & number[2]\,|\,null & Rescaled $[\min,\max]$, from
-\code{Smallest/LargestImagePixelValue} when the series declares them. \textbf{\code{null}
-otherwise}, with a warning: sweeping every pixel of the series on each export is too
-expensive, and inventing a plausible CBCT range would feed a fabricated number straight
-into a viewer's windowing.\\
+\code{value\_range} & number[2]\,|\,null & Rescaled $[\min,\max]$. Taken from
+\code{Smallest/LargestImagePixelValue} when the series declares them, and otherwise
+\MUST{} be measured during the \code{parts[]} hash, which reads every byte anyway.
+\code{null} only when the writer never held the series, with a warning: a fabricated
+CBCT range would feed straight into a viewer's windowing.\\
 \code{pixel\_encoding} & string & e.g. \code{int16-le}. Byte order comes from the transfer
 syntax, not from a convention --- ``almost all modern DICOM is little-endian'' is not
 ``all'', and a viewer that assumes reads good-looking garbage.\\
@@ -2031,7 +2038,7 @@ accrediting it and no regulatory layer, which is the shape a leak would take.\\
 17h & --- & An external asset's \code{uri} is a content address and equals its
 \code{sha256} (\S\ref{sec:external}, ``checked in both directions''). \textbf{This is
 enforced by the schema, not by the algorithm}: it is a model-level rule, so a manifest with
-that inconsistency does not parse at all and check 2 reports it. Listed here because the
+that inconsistency does not parse at all and check 4 reports it. Listed here because the
 rule is real and readers look for it in this table --- adding it to the algorithm as well
 would be code that can never run, which suggests a coverage that comes from somewhere
 else.\\
@@ -2044,16 +2051,16 @@ only its own sidecar; every code in the payload is an ISO 3950 code or 0, read f
 bytes rather than from the sidecar's own list of labels; and where
 \code{source\_positions\_sha256} is declared it matches the source's \code{POSITION}
 accessor.\\
-17m & E & A node carrying \code{extras.uos\_gs\_uri} has a \code{matrix} equal to the
-\textbf{transpose} of the registration taking its frame to the canonical one
-(\S\ref{sec:graph}), within tolerance. glTF stores matrices column-major and the manifest
-row-major; confusing them does not fail, it places the cloud rotated and mirrored.\\
+
 17k & E/W & Views: \code{mpr}/\code{clip\_planes} present iff a \code{volume} asset is
 (E); \code{up} not parallel to the view direction and \code{fov} in a sane range (W).\\
 17l & E & Chain order: \code{links[i].version} equals $i+1$ and \code{created} does not go
 backwards. Checking the hashes without the order lets through a history whose links match
 one by one and tell a different story.\\
-18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
+17m & E & A node carrying \code{extras.uos\_gs\_uri} has a \code{matrix} equal to the
+\textbf{transpose} of the registration taking its frame to the canonical one
+(\S\ref{sec:graph}), within tolerance. glTF stores matrices column-major and the manifest
+row-major; confusing them does not fail, it places the cloud rotated and mirrored.\\18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
 19 & W & Extensions declared but unused; and one warning per required extension, since a
 reader that does not implement it must not open the container.\\
