@@ -394,7 +394,7 @@ class UOSExportAgent(BaseExportAgent):
              "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and "
              "scales are in linear millimetres, NOT logarithms"),
             (compuesto, "asset.composite", "CBCT + scanner composite", True, FRAME_CBCT,
-             "two modalities in one file, with a per-Gaussian `origen` column. Gingiva "
+             "two modalities in one file, with a per-Gaussian `source_modality` column. Gingiva "
              "carries `density = 0` because the scanner does not measure attenuation"),
             (escena_gs, "asset.gs", "scanner appearance", False, FRAME_IOS,
              "reconstructed by training 3DGS against renders of the mesh, NOT measured. Its "
@@ -460,7 +460,7 @@ class UOSExportAgent(BaseExportAgent):
             # descriptor describe lo que tiene delante o no describe nada.
             _u, _n, _props = self._cabecera_ply(ruta)
             # ⚠️ **El esquema tambien sale del fichero, no del snapshot.** `esquema_campo`
-            # describe el campo SEMILLA; el compuesto trae ademas `origen` —de que
+            # describe el campo SEMILLA; el compuesto trae ademas `source_modality` —de que
             # modalidad viene cada gaussiana—, que viajaba en los bytes y no en el
             # descriptor. Un lector ajeno no podia separar el CBCT del escaner dentro de un
             # fichero cuyo unico motivo de existir es mezclar los dos. Es el mismo fallo
@@ -1080,7 +1080,7 @@ class UOSExportAgent(BaseExportAgent):
             "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
             "density": ("density",),
             "region_id": ("region_id",),
-            "origen": ("origen",),
+            "source_modality": ("source_modality",),
         }
         _TIPOS_PLY = {
             "x": ("double", np.float64), "y": ("double", np.float64),
@@ -1091,7 +1091,7 @@ class UOSExportAgent(BaseExportAgent):
             "rot_2": ("float", np.float32), "rot_3": ("float", np.float32),
             "density": ("float", np.float32),
             "region_id": ("short", np.int16),
-            "origen": ("short", np.int16),
+            "source_modality": ("short", np.int16),
         }
 
         cols = []

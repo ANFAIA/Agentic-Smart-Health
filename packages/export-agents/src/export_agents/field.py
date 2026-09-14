@@ -76,7 +76,7 @@ _OPCIONALES: tuple[tuple[str, str], ...] = (
     ("region_id", "short"),
     # De qué modalidad viene cada gaussiana. Solo la escribe el compuesto, porque solo él
     # mezcla dos: un campo de una sola fuente no la necesita. Ver `compuesto.py`.
-    ("origen", "short"),
+    ("source_modality", "short"),
 )
 _TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
@@ -96,7 +96,7 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
     "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
     "density": ("density",),
     "region_id": ("region_id",),
-    "origen": ("origen",),
+    "source_modality": ("source_modality",),
 }
 
 
@@ -129,7 +129,7 @@ ESQUEMA_COLUMNAS: dict[str, dict] = {
         "medido": False,
         "derivado_de": "segmentation-agent",
     },
-    "origen": {
+    "source_modality": {
         "significado": "modality it comes from: 0 = CBCT (measured density), "
         "1 = intraoral scanner (measured shape)",
         "medido": False,
@@ -159,7 +159,7 @@ def esquema_de_propiedades(propiedades: Iterable[str]) -> list[ColumnaCampo]:
 
     ⚠️ **Existe porque el esquema de un fichero se saca del fichero, no del snapshot.**
     El sidecar del compuesto reutilizaba `esquema_campo`, que describe el campo SEMILLA, y
-    el compuesto trae ademas `origen` —de que modalidad viene cada gaussiana—. Esa columna
+    el compuesto trae ademas `source_modality` —de que modalidad viene cada gaussiana—. Esa columna
     viajaba en los bytes y no en el descriptor: un lector ajeno no podia separar el CBCT
     del escaner dentro de un fichero que mezcla los dos, que es justo para lo que existe.
 

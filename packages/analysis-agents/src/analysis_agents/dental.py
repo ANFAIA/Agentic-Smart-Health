@@ -81,7 +81,7 @@ K_CORONAS = 16
 # La justificacion no es de conveniencia: ahi la superficie la **midio un escaner intraoral
 # con exactitud de decenas de micras**, y la opinion de un clasificador sobre un voxel de
 # 0,30 mm es evidencia mas debil que esa medida. El origen del dato no cambia —esas
-# gaussianas siguen siendo del CBCT y su `origen` lo dice— lo que cambia es quien decide
+# gaussianas siguen siendo del CBCT y su `source_modality` lo dice— lo que cambia es quien decide
 # que son diente.
 RADIO_CORONA_MM = 1.0
 
