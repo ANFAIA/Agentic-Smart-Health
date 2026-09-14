@@ -618,79 +618,64 @@ sprinkling keys.
 
 \subsection{Top level}
 
+% generado: tabla-Manifest — no editar a mano
 \begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
 \toprule
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{uos\_version} & string & default \code{"0.2"} & Format version. A reader \MUST{}
-check it before anything else.\\
-\code{case\_id} & string & \MUST & Stable case identifier. Conventionally
-\code{urn:uuid:<v5>}; \MUSTNOT{} encode patient identity.\\
-\code{created} & date-time & --- & RFC 3339, UTC.\\
-\code{generator} & map str$\to$str & \MUST & Who wrote this container, e.g.
-\code{\{"name": "...", "version": "0.4.0"\}}.\\
-\code{phi\_state} & enum & \MUST & \S\ref{sec:phi}.\\
-\code{subject} & \code{Subject} & \MUST & \S\ref{sec:phi}.\\
-\code{canonical\_frame} & \code{Frame} & \MUST & The geometric hub. \code{units} \MUST{}
-be \code{"mm"}.\\
-\code{frames} & \code{Frame[]} & --- & Every \emph{other} frame. The canonical one is not
-repeated here.\\
-\code{visits} & \code{Visit[]} & --- & Temporal axis.\\
-\code{assets} & \code{Asset[]} & --- & The data plane.\\
-\code{registrations} & \code{Registration[]} & --- & The relations. \S\ref{sec:frames}.\\
-\code{fhir\_map} & map str$\to$\code{FhirResource} & --- & Keyed by asset \code{id}, plus
-the reserved key \code{"case"} for the container itself. \S\ref{sec:fhir}.\\
-\code{extensions} & map str$\to$\code{Extension} & --- & \S\ref{sec:extensions}.\\
-\code{extensions\_used} & string[] & --- & \S\ref{sec:extensions}.\\
-\code{extensions\_required} & string[] & --- & \S\ref{sec:extensions}.\\
-\code{provenance} & \code{Provenance} & --- & \S\ref{sec:provenance}.\\
+\code{uos\_version} & string & default \code{0.2} & Format version this container declares. A reader \MUST{} check it before anything else.\\
+\code{case\_id} & string & \MUST{} & Stable case identifier, conventionally \code{urn:uuid:<v5>}. It \MUSTNOT{} encode patient identity.\\
+\code{created} & date-time & --- & When this manifest was written, RFC 3339 in UTC.\\
+\code{generator} & map str$\to$string & \MUST{} & Who wrote this container: name and version of the writer.\\
+\code{phi\_state} & enum & \MUST{} & What identifiable content the container carries. It is a statement about the whole container, and a reader decides what it may do with it from here.\\
+\code{deidentification} & \code{Deidentification} & --- & What de-identification was applied, to which assets, and with what tool. \code{null} means none was declared, which is not the same as none being needed.\\
+\code{purpose\_of\_use} & enum & --- & What this container was assembled for. It bounds what a recipient may do with it, and is checked against the subject's consent.\\
+\code{subject} & \code{Subject} & \MUST{} & The patient, always by pseudonym.\\
+\code{canonical\_frame} & \code{Frame} & \MUST{} & The frame every other frame must be reachable from. It is the geometric hub of the case.\\
+\code{frames} & \code{Frame}[] & --- & Every coordinate frame named in the case, besides the canonical one.\\
+\code{visits} & \code{Visit}[] & --- & The temporal axis: one entry per clinical encounter.\\
+\code{assets} & \code{Asset}[] & --- & The data plane: every file the container carries or references. The manifest is exhaustive, so a reader never walks the ZIP to discover content.\\
+\code{registrations} & \code{Registration}[] & --- & The relations: the transforms that place each frame with respect to another, each with its residual.\\
+\code{occlusion} & enum & --- & How the two arches relate, for a case that has both. Silence is never 'there is none': a two-arch case \MUST{} declare a registration or say why it cannot.\\
+\code{fhir\_map} & map str$\to$\code{FHIRResource} & --- & Which FHIR resource each asset maps to, so a clinical system can ingest the case without knowing this format.\\
+\code{extensions} & map str$\to$\code{Extension} & --- & Extensions this container declares, by name.\\
+\code{extensions\_used} & string[] & --- & Names of extensions present. A reader that does not implement one still opens the case and can say what it left unread.\\
+\code{extensions\_required} & string[] & --- & Names of extensions a reader \MUST{} implement to open the case correctly. Listing one here refuses readers, so it is for cases that would be misread otherwise.\\
+\code{provenance} & \code{Provenance} & --- & The link to the previous version of this case, and to the chain that records every version.\\
 \bottomrule
 \end{longtable}
+% /generado: tabla-Manifest
 
 \subsection{Asset}
 
+% generado: tabla-Asset — no editar a mano
 \begin{longtable}{L{3.2cm} L{2.9cm} C{1.4cm} L{6.8cm}}
 \toprule
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{id} & string & \MUST & Unique within the manifest. Convention \code{asset.<name>};
-this is the key used by \code{fhir\_map}, \code{derived\_from} and sidecars.\\
-\code{kind} & enum & \MUST & \code{volume}, \code{mesh\_gs\_scene}, \code{image2d},
-\code{signal}, \code{derived\_seg}, \code{document}.\\
-\code{visit} & string & \MUST & A \code{visits[].id}.\\
-\code{uri} & string & \MUST & Internal path, or \code{/}-terminated directory, or a
-content address --- which is what every acquired original carries (\S\ref{sec:external}).\\
-\code{media\_type} & string & \MUST & IANA type of the payload, e.g.
-\code{model/gltf-binary}, \code{application/dicom}, \code{model/stl},
-\code{image/jpeg}. Declared for referenced assets too: it says what the file \emph{is},
-which stays true whether or not the container holds it.\\
-\code{sha256} & hex(64) & \MUST & \S\ref{sec:identity}.\\
-\code{bytes} & int $\geq 0$ & \MUST & For a directory asset, the sum over \code{parts}.\\
-\code{frame} & string & \MUST & Must be reachable from the canonical frame.\\
-\code{acquisition} & object & --- & \code{\{time: date-time|null, device: map str->str\}}.\\
-\code{load\_priority} & int & default 30 & Progressive-loading hint; lower loads first.
-See table below.\\
-\code{regulatory} & \code{Regulatory} & --- & \code{\{layer: 1..3, clearances:
-Clearance[]\}}, where a \code{Clearance} is \code{\{jurisdiction, regime, status,
-reference|null\}} and \code{status} is one of \code{not\_a\_device},
-\code{investigational}, \code{submitted}, \code{cleared}, \code{withdrawn}. An empty
-\code{clearances} means \textbf{not declared}, by written definition; a validator \MUST{}
-warn for each layer-3 asset that leaves it empty. \S\ref{sec:planes}, \S\ref{sec:derived}.\\
-\code{projection} & \code{Projection}\,|\,null & --- & 2D imaging only. \S\ref{sec:image2d}.\\
-\code{parts} & \code{Part[]} & --- & Directory assets only, carried or referenced.
-\S\ref{sec:dirasset}.\\
-\code{sidecar\_uri} & string\,|\,null & --- & A description of the asset that spares the
-reader from parsing it. If present it \MUST{} exist in the container --- including when the
-asset it describes does not (\S\ref{sec:volume}).\\
-\code{derived\_from} & string[] & --- & Asset ids this one was produced from. Purely
-additive: a reader that ignores it still opens the case.\\
-\code{external} & bool & default \code{false} & \S\ref{sec:external}. The default is
-\code{false} because it is a property of the envelope, not a recommendation: every acquired
-original sets it to \code{true}.\\
+\code{id} & string & \MUST{} & Stable identifier of the asset within this container, unique across \code{assets[]}.\\
+\code{kind} & enum & \MUST{} & What the asset is, which fixes how a reader should treat it.\\
+\code{visit} & string & \MUST{} & Id of the visit this asset belongs to.\\
+\code{uri} & string & \MUST{} & Path inside the ZIP for a carried asset, or \code{sha256:<hex>} for a referenced one. A referenced original occupies no path at all.\\
+\code{media\_type} & string & \MUST{} & IANA media type of the payload.\\
+\code{sha256} & string & \MUST{} & SHA-256 of the payload, lowercase hex. For a directory asset it is the digest over \code{parts[]}, not over concatenated bytes.\\
+\code{bytes} & integer & \MUST{} & Size of the payload in bytes; the sum over \code{parts[]} for a directory asset.\\
+\code{frame} & string & \MUST{} & Id of the coordinate frame this asset's coordinates are expressed in. It \MUST{} be reachable from the canonical frame.\\
+\code{acquisition} & \code{Acquisition} & --- & When and on what equipment it was captured.\\
+\code{load\_priority} & integer & default \code{30} & Hint for a reader fetching by HTTP range: lower loads first. A hint, never a requirement.\\
+\code{regulatory} & \code{Regulatory} & --- & Regulatory layer and clearances of this asset's content.\\
+\code{projection} & \code{Projection} & --- & Projection geometry, for 2D radiographs only. \code{null} for everything else.\\
+\code{parts} & \code{Part}[] & --- & One entry per file when the asset is a directory, such as a DICOM series. This is what lets a validator say which slice is wrong instead of 'the series does not match'.\\
+\code{sidecar\_uri} & string & --- & Path to a JSON sidecar describing the payload, so a reader can inspect it without a parser for its format.\\
+\code{derived\_from} & string[] & --- & Ids of the assets this one was derived from. Required for anything under \code{derived/}: an inference with no stated input cannot be audited.\\
+\code{series\_instance\_uid} & string & --- & DICOM Series Instance UID \code{(0020,000E)}, so a recipient holding the series by another channel can tell it is this one.\\
+\code{study\_instance\_uid} & string & --- & DICOM Study Instance UID \code{(0020,000D)}.\\
+\code{external} & bool & default \code{False} & True when the asset is referenced and not carried. Acquired originals \MUST{} be external; their \code{uri} is then a content address and never a path.\\
 \bottomrule
 \end{longtable}
+% /generado: tabla-Asset
 
 \paragraph{Default load priorities.} \code{mesh\_gs\_scene} 10, \code{image2d} 20,
 \code{volume} 30, \code{signal} 30, \code{derived\_seg} 40, \code{document} 50. The mesh
@@ -708,28 +693,29 @@ glTF to learn something the manifest states in one line.
 
 \subsection{Registration}
 
-\begin{longtable}{L{4.0cm} L{3.4cm} C{1.3cm} L{5.6cm}}
+% generado: tabla-Registration — no editar a mano
+\begin{longtable}{L{4.2cm} L{2.6cm} C{1.2cm} L{6.3cm}}
 \toprule
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{id} & string & \MUST & e.g. \code{reg.ct\_to\_ios}.\\
-\code{source\_frame} & string & \MUST & Points are mapped \emph{from} here.\\
-\code{target\_frame} & string & \MUST & \ldots{}\emph{to} here.\\
-\code{transform\_4x4\_row\_major} & number[16] & \MUST & Row-major, mm, right-handed.\\
-\code{method} & string & \MUST & How it was computed. Free-form; observed values are
-\code{icp\_surface}, \code{auto\_dl}, \code{manual}, \code{fiducial}. It describes the
-algorithm, \textbf{not} whether a human stood behind it.\\
-\code{rms\_error\_mm} & number\,|\,null & --- & Residual of the fit. \code{null} means
-\emph{not reported}, never \emph{zero}.\\
-\code{computed} & date-time\,|\,null & --- & When.\\
-\code{operator} & string\,|\,null & --- & Who or what produced it. A machine \MUST{} write
-\code{auto:<agent>@<version>}; this prefix is what marks the registration as unattended.\\
-\code{verified\_by} & string\,|\,null & --- & The human who reviewed it. \code{null} means
-\textbf{nobody has}.\\
-\code{regulatory} & \code{Regulatory} & --- & As for assets.\\
+\code{id} & string & \MUST{} & Stable identifier of this registration edge.\\
+\code{source\_frame} & string & \MUST{} & Id of the frame points are taken from.\\
+\code{target\_frame} & string & \MUST{} & Id of the frame points are taken to.\\
+\code{transform\_4x4\_row\_major} & number[] & \MUST{} & The rigid transform as sixteen numbers, row-major, millimetres. glTF expects column-major, so a reader targeting glTF \MUST{} transpose.\\
+\code{method} & string & \MUST{} & How the transform was obtained, e.g. \code{icp\_surface} or \code{manual}.\\
+\code{rms\_error\_mm} & number & --- & Root-mean-square residual of the fit, in millimetres. It is measured on the points that were fitted, so it is systematically optimistic.\\
+\code{max\_error\_mm} & number & --- & Largest residual over the fitted points, in millimetres. An RMS hides a local failure that this exposes.\\
+\code{target\_registration\_error\_mm} & number & --- & Registration error measured at points that did NOT take part in the fit, in millimetres. This is the error a clinical measurement across the seam actually inherits.\\
+\code{tre\_region} & string & --- & Where the target registration error was measured. A TRE without its region is not comparable with another.\\
+\code{fit\_for} & enum[] & --- & What this registration is accurate enough for, declared rather than inferred from the residual. An empty list is 'not assessed'.\\
+\code{computed} & date-time & --- & When the transform was computed, RFC 3339.\\
+\code{operator} & string & --- & Who or what produced the estimate. A machine here with an empty \code{verified\_by} means provisional.\\
+\code{verified\_by} & string & --- & Who checked it. \code{null} means nobody did, and a viewer \MUST{} present the edge as provisional.\\
+\code{regulatory} & \code{Regulatory} & --- & Regulatory layer of the transform itself, when it was produced by a model rather than fitted.\\
 \bottomrule
 \end{longtable}
+% /generado: tabla-Registration
 
 \paragraph{Normative: provisional registrations.} A registration is \textbf{provisional}
 when it was produced without a human, \code{operator} beginning \code{auto:}, and
@@ -754,6 +740,232 @@ question; how, is a separate field.
   "method": "icp_surface", "rms_error_mm": 0.666,
   "operator": "auto:geometric-fusion-agent@0.2.0", "verified_by": null }
 \end{lstlisting}
+
+\subsection{Frame}
+
+A frame is one coordinate system, named. It is \textbf{per acquisition and not per device}: two scans of the same patient on different visits are different frames even off the same scanner, because sharing a frame asserts the two clouds are already in one space, and between visits that is false.
+
+% generado: tabla-Frame — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{id} & string & \MUST{} & Stable identifier of the frame within this container.\\
+\code{description} & string & --- & Human-readable name of the frame. Free text, and never load-bearing.\\
+\code{units} & string & default \code{mm} & Length unit of coordinates in this frame. Millimetres everywhere in this version.\\
+\code{handedness} & string & default \code{right} & Handedness of the axes, \code{right} or \code{left}. A reader that ignores it renders a mirrored case that looks correct.\\
+\code{anatomical} & enum & --- & Anatomical axis convention, such as \code{LPS} or \code{RAS}. \code{null} is NOT DECLARED, and is not the same as a device convention.\\
+\code{dicom\_frame\_of\_reference\_uid} & string & --- & DICOM Frame of Reference UID \code{(0020,0052)}. Read from the series, never invented: it is the only frame identifier that means the same thing outside this container.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Frame
+
+\subsection{Part}
+
+One file inside a directory asset. \code{parts[]} is what lets a validator say \emph{which} slice is wrong instead of reporting that the series does not match, and it travels even when the series itself does not.
+
+% generado: tabla-Part — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{name} & string & \MUST{} & Path of this file inside the directory asset. Names are ordering data for a DICOM series, so they are carried even though identity does not depend on them.\\
+\code{sha256} & string & \MUST{} & SHA-256 over the whole file, lowercase hex. Proves these exact bytes.\\
+\code{bytes} & integer & \MUST{} & Size of the file in bytes.\\
+\code{sop\_instance\_uid} & string & --- & DICOM SOP Instance UID \code{(0008,0018)}. The identity DICOM itself defines, and what survives de-identification when UIDs are retained.\\
+\code{pixel\_data\_sha256} & string & --- & SHA-256 over the value of the PixelData element \code{(7FE0,0010)} alone, without the header. De-identification does not touch it, so it separates 'a different slice' from 'the same slice, cleaned'.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Part
+
+\subsection{Visit}
+
+One clinical encounter. Assets name the visit they belong to, which is what makes a longitudinal question arithmetic rather than a research project.
+
+% generado: tabla-Visit — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{id} & string & \MUST{} & Stable identifier of the visit within this container.\\
+\code{date} & string & \MUST{} & Date of the encounter. Shifted when \code{deidentification.date\_shift\_days} is set.\\
+\code{label} & string & --- & Human-readable name for the encounter. Free text.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Visit
+
+\subsection{Subject}
+
+The patient, and only ever by pseudonym.
+
+% generado: tabla-Subject — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{pseudonym} & string & \MUST{} & The subject's pseudonym. Always a pseudonym: a direct identifier \MUSTNOT{} appear here.\\
+\code{fhir\_patient} & string & --- & Reference to a FHIR \code{Patient} resource held elsewhere. A pointer, never the record.\\
+\code{consent} & \code{Consent} & --- & What the subject consented to, and for which purposes.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Subject
+
+\subsection{Consent}
+
+What the subject agreed to, and for which purposes. The container carries the pointer to the FHIR resource, never the document itself.
+
+% generado: tabla-Consent — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{fhir\_consent} & string & --- & Reference to the FHIR \code{Consent} resource that records it. The container carries the pointer, never the document.\\
+\code{scope} & enum[] & --- & Purposes the subject consented to. An empty list is 'not declared'.\\
+\code{obtained} & date-time & --- & When consent was obtained, RFC 3339.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Consent
+
+\subsection{Regulatory}
+
+The layer of every asset's content, and what each regulator says about it. This is the field the whole inference plane rests on.
+
+% generado: tabla-Regulatory — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{layer} & integer & default \code{1} & Regulatory layer of the content: 1 acquired or transcribed, 2 computed deterministically from layer 1 with no trained model, 3 model output. Layer 3 \MUST{} live under \code{derived/}.\\
+\code{clearances} & \code{Clearance}[] & --- & What each regulator says about this asset. An empty list is 'nothing declared', not 'cleared everywhere'.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Regulatory
+
+\subsection{Clearance}
+
+What \emph{one} jurisdiction says about one asset under one regime. A status with no jurisdiction means nothing: \code{investigational} is a claim before a named regulator, not a property of a file.
+
+% generado: tabla-Clearance — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{jurisdiction} & string & \MUST{} & Regulator the statement is made before, e.g. \code{EU} or \code{US}. A status without a jurisdiction means nothing.\\
+\code{regime} & string & \MUST{} & Regulatory framework under that jurisdiction, e.g. \code{MDR} or \code{FDA-510k}.\\
+\code{status} & string & \MUST{} & What this jurisdiction says about the asset under that regime.\\
+\code{reference} & string & --- & Dossier or clearance number when one exists. \code{null} is 'not recorded here', never 'there is none'.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Clearance
+
+\subsection{Deidentification}
+
+What was done to remove identity, to which assets, and with which tool. Without it \code{phi\_state} is an assertion a recipient has to take on trust.
+
+% generado: tabla-Deidentification — no editar a mano
+\begin{longtable}{L{3.8cm} L{2.7cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{profile} & string & \MUST{} & DICOM PS3.15 Annex E confidentiality profile applied, by its standard name.\\
+\code{options} & string[] & --- & Named options applied on top of the profile, e.g. \code{CleanRecognizableVisualFeatures} for defacing. This is where a reader learns whether the face was removed.\\
+\code{applied\_to} & string[] & --- & Asset ids the de-identification was applied to. Assets not listed were not processed.\\
+\code{tool} & \code{Tool} & --- & Software that performed it, so a recipient can tell a documented pipeline from a manual pass.\\
+\code{date\_shift\_days} & integer & --- & Constant offset applied to every date, in days. Needed to compare two visits after shifting; \code{null} means dates were not shifted.\\
+\code{note} & string & --- & Free text for anything the fields above cannot express. Not machine-readable by design.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Deidentification
+
+\subsection{Tool}
+
+The software that performed an operation, so a recipient can tell a documented pipeline from a manual pass.
+
+% generado: tabla-Tool — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{name} & string & \MUST{} & Name of the software that performed the operation.\\
+\code{version} & string & --- & Its version string, as the tool reports it.\\
+\code{sha256} & string & --- & Digest of the tool binary or image, when the writer can compute it.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Tool
+
+\subsection{Device}
+
+The equipment, with fixed keys. \textbf{No serial number}: it identifies a machine, and through the machine a site.
+
+% generado: tabla-Device — no editar a mano
+\begin{longtable}{L{3.8cm} L{2.7cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{manufacturer} & string & --- & Equipment manufacturer. Fixed key rather than free text so two containers can be compared.\\
+\code{model} & string & --- & Equipment model name.\\
+\code{software\_version} & string & --- & Version of the software running on the equipment. No serial number is carried: it identifies a machine, and through it a site.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Device
+
+\subsection{Acquisition}
+
+When an asset was captured and on what. \code{null} time means the original did not record it, not that it is unknown to us.
+
+% generado: tabla-Acquisition — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{time} & date-time & --- & When the asset was captured, RFC 3339. \code{null} when the original did not record it.\\
+\code{device} & \code{Device} & --- & Equipment that captured it.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Acquisition
+
+\subsection{Projection}
+
+Projection geometry, for 2D radiographs only. A panoramic and a bitewing are different measurements and must not look alike.
+
+% generado: tabla-Projection — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{type} & string & \MUST{} & Projection geometry of a 2D image, e.g. \code{panoramic} or \code{bitewing}.\\
+\code{fdi\_targets} & string[] & --- & Teeth the projection is aimed at, in FDI/ISO-3950. An empty list is 'not declared', never 'no teeth'.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Projection
+
+\subsection{Provenance}
+
+The link to the previous version of this case. A new version is written rather than the old one edited, and the chain is what makes the history verifiable by whoever receives it without trusting the sender.
+
+% generado: tabla-Provenance — no editar a mano
+\begin{longtable}{L{4.5cm} L{2.5cm} C{1.4cm} L{5.9cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
+\midrule
+\endhead
+\code{prev\_manifest\_sha256} & string & --- & SHA-256 of the previous version's manifest. This is what makes the history a chain rather than a claim.\\
+\code{chain} & string & --- & Path to the append-only chain file. Present without \code{prev\_manifest\_sha256} means a history exists that this manifest does not point into.\\
+\bottomrule
+\end{longtable}
+% /generado: tabla-Provenance
 
 \subsection{PHI and subject}\label{sec:phi}
 
@@ -999,19 +1211,18 @@ patient moved, the bite changed, or both.\\
 
 \code{fhir\_map} tells a practice-management connector what to create for each asset.
 
-\begin{longtable}{L{3.4cm} L{2.8cm} C{1.2cm} L{7.4cm}}
+% generado: tabla-FHIRResource — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
 \toprule
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{resource\_type} & string & \MUST & An R4 resource \emph{type}: \code{ImagingStudy},
-\code{DocumentReference}, \code{Media}, \code{Observation}.\\
-\code{resource} & string\,|\,null & --- & A \emph{reference} to a resource that exists on
-a server, e.g. \code{ImagingStudy/is-9911}. \code{null} until the case actually lives in a
-PMS.\\
-\code{note} & string & --- & Why this mapping and not another.\\
+\code{resource\_type} & string & \MUST{} & FHIR resource type this asset maps to, e.g. \code{Observation} or \code{ImagingSelection}.\\
+\code{resource} & string & --- & Reference to the resource instance, when one exists outside the container.\\
+\code{note} & string & --- & Why this mapping was chosen. Free text, for the reader who disagrees with it.\\
 \bottomrule
 \end{longtable}
+% /generado: tabla-FHIRResource
 
 \paragraph{Rationale, type versus reference.} They are not the same thing and conflating
 them is an active hazard: a connector reading a fabricated \code{resource} would try to
@@ -1845,20 +2056,20 @@ below, a reader that does not implement \code{histora\_clinical} still opens the
 renders it, and can say precisely what it left unread. Being open was never the problem;
 being silent about what a reader was missing was.
 
-\begin{longtable}{L{2.9cm} L{2.6cm} C{1.2cm} L{8.1cm}}
+% generado: tabla-Extension — no editar a mano
+\begin{longtable}{L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}}
 \toprule
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{name} & string & \MUST & Registry key; also the map key in \code{extensions}.\\
-\code{version} & string & \MUST & Extension version, independent of \code{uos\_version}.\\
-\code{uri} & string\,|\,null & --- & The asset that carries it, if any. If non-null it
-\MUST{} be a declared asset \code{uri}.\\
-\code{schema\_id} & string\,|\,null & --- & Identifier of its schema, e.g.
-\code{histora-clinical/1.0}.\\
-\code{description} & string & --- & What it adds and why the base format needed it.\\
+\code{name} & string & \MUST{} & Prefixed extension name. This specification reserves \code{histora\_} and defines no other.\\
+\code{version} & string & \MUST{} & Version of the extension, independent of the format version.\\
+\code{uri} & string & --- & Path to the extension's payload inside the container, declared as an asset like any other.\\
+\code{schema\_id} & string & --- & Identifier of the schema its payload validates against.\\
+\code{description} & string & --- & One line on what the extension adds, so a reader that skips it can say what it skipped.\\
 \bottomrule
 \end{longtable}
+% /generado: tabla-Extension
 
 \paragraph{Normative: \code{used} versus \code{required} is the whole mechanism.}
 \begin{itemize}

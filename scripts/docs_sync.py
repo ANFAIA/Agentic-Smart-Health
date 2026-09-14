@@ -94,7 +94,11 @@ def _sincronizar(doc: Path, ident: str, contenido: str, escribir: bool) -> str |
     El bloque es opcional: si el documento no lo declara, no se inventa. Poner las
     marcas es una decision editorial de quien escribe la pagina.
     """
-    inicio, fin = f"<!-- generado: {ident} — no editar a mano -->", f"<!-- /generado: {ident} -->"
+    if doc.suffix == ".tex":
+        inicio, fin = f"% generado: {ident} — no editar a mano", f"% /generado: {ident}"
+    else:
+        inicio = f"<!-- generado: {ident} — no editar a mano -->"
+        fin = f"<!-- /generado: {ident} -->"
     texto = doc.read_text(encoding="utf-8")
     if inicio not in texto:
         return None
@@ -927,6 +931,144 @@ def _seccion_del_readme(nombre: str) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# 12 · Tablas de campos de la especificacion
+# --------------------------------------------------------------------------- #
+SPEC = REPO / "docs" / "spec" / "uos-format-spec-v0.2.tex"
+
+#: Los modelos cuya tabla vive en la spec, y el ancho de sus columnas. El ancho es
+#: decision editorial —depende de que hay alrededor en la pagina— asi que se declara
+#: aqui y no se deduce.
+TABLAS_SPEC: tuple[tuple[str, str], ...] = (
+    ("Manifest", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Asset", "L{3.2cm} L{2.9cm} C{1.4cm} L{6.8cm}"),
+    ("Part", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Frame", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Registration", "L{4.2cm} L{2.6cm} C{1.2cm} L{6.3cm}"),
+    ("Visit", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Subject", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Consent", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Regulatory", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Clearance", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Deidentification", "L{3.8cm} L{2.7cm} C{1.4cm} L{6.4cm}"),
+    ("Tool", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Device", "L{3.8cm} L{2.7cm} C{1.4cm} L{6.4cm}"),
+    ("Acquisition", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Projection", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("Provenance", "L{4.5cm} L{2.5cm} C{1.4cm} L{5.9cm}"),
+    ("Extension", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+    ("FHIRResource", "L{3.5cm} L{3.0cm} C{1.4cm} L{6.4cm}"),
+)
+
+
+def _tex(s: str) -> str:
+    """Prosa llana a LaTeX. Los `acentos graves` marcan codigo, como en Markdown."""
+    fuera, i = [], 0
+    for trozo in re.split(r"(`[^`]+`)", s):
+        if trozo.startswith("`") and trozo.endswith("`") and len(trozo) > 1:
+            fuera.append("\\code{" + trozo[1:-1].replace("_", "\\_") + "}")
+        else:
+            t = trozo
+            for c in ("&", "%", "#"):
+                t = t.replace(c, "\\" + c)
+            t = t.replace("_", "\\_")
+            # `re.sub` interpreta la cadena de reemplazo, y `\M` no es un escape suyo.
+            t = re.sub(r"\bMUST NOT\b", lambda _: "\\MUSTNOT{}", t)
+            t = re.sub(r"\bMUST\b(?!\s*NOT)", lambda _: "\\MUST{}", t)
+            fuera.append(t)
+        i += 1
+    return "".join(fuera)
+
+
+def _tipo_tex(anot: object) -> str:
+    """El tipo como lo escribe la spec, no como lo escribe Python."""
+    import enum as _enum
+    import typing as _t
+
+    from pydantic import BaseModel
+
+    origen = _t.get_origin(anot)
+    if origen is not None:
+        args = [a for a in _t.get_args(anot) if a is not type(None)]
+        if origen in (list, set, tuple):
+            return _tipo_tex(args[0]) + "[]" if args else "array"
+        if origen is dict:
+            return "map str$\\to$" + (_tipo_tex(args[1]) if len(args) > 1 else "str")
+        if len(args) == 1:          # `X | None`
+            return _tipo_tex(args[0])
+        return " $|$ ".join(_tipo_tex(a) for a in args)
+    if isinstance(anot, type):
+        if issubclass(anot, _enum.Enum):
+            return "enum"
+        if issubclass(anot, BaseModel):
+            return "\\code{" + anot.__name__ + "}"
+        if issubclass(anot, bool):
+            return "bool"
+        if issubclass(anot, int):
+            return "integer"
+        if issubclass(anot, float):
+            return "number"
+        if anot.__name__ == "datetime":
+            return "date-time"
+        if issubclass(anot, str):
+            return "string"
+    return "string"
+
+
+def _req_tex(info: object) -> str:
+    """Requerido, con defecto, o ni una cosa ni la otra."""
+    from pydantic_core import PydanticUndefined
+
+    if info.is_required():
+        return "\\MUST{}"
+    if info.default_factory is not None:
+        return "---"
+    d = info.default
+    if d is PydanticUndefined or d is None:
+        return "---"
+    if isinstance(d, str) and not d:
+        return "---"
+    val = d.value if hasattr(d, "value") else d
+    return "default \\code{" + str(val).replace("_", "\\_") + "}"
+
+
+def tabla_campos(nombre: str, columnas: str) -> str:
+    """La tabla de campos de un modelo, generada del propio modelo."""
+    from uos import manifiesto as M
+
+    modelo = getattr(M, nombre)
+    filas = []
+    for campo, info in modelo.model_fields.items():
+        filas.append(
+            "\\code{" + campo.replace("_", "\\_") + "} & "
+            + _tipo_tex(info.annotation) + " & " + _req_tex(info) + " & "
+            + _tex(info.description or "") + "\\\\"
+        )
+    return "\n".join([
+        "\\begin{longtable}{" + columnas + "}",
+        "\\toprule",
+        "\\textbf{Field} & \\textbf{Type} & \\textbf{Req.} & \\textbf{Description}\\\\",
+        "\\midrule",
+        "\\endhead",
+        *filas,
+        "\\bottomrule",
+        "\\end{longtable}",
+    ])
+
+
+def sincronizar_spec(_ficheros: set[str], escribir: bool) -> list[str]:
+    """Las tablas de campos de la spec salen de los tipos, no de la memoria de nadie.
+
+    Sin esto vuelven a divergir: la revision externa encontro ocho tipos sin tabla y
+    nueve campos que solo existian en prosa, con `additionalProperties: false` puesto
+    —o sea, la tabla o el esquema mentian, y no habia forma de saber cual.
+    """
+    bloques = tuple(
+        (SPEC, f"tabla-{n}", tabla_campos(n, cols)) for n, cols in TABLAS_SPEC
+    )
+    return [p for p in (_sincronizar(*b, escribir) for b in bloques) if p]
+
+
 COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ...] = (
     ("env", "variables de entorno", lambda f, _: revisar_env(f)),
     ("rutas", "rutas citadas", lambda f, _: revisar_rutas(f)),
@@ -941,6 +1083,7 @@ COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ..
     ("vacios", "componentes con codigo", lambda f, _: revisar_componentes_vacios(f)),
     ("arbol", "arbol del README", lambda f, _: revisar_arbol(f)),
     ("bloques", "bloques generados", sincronizar_bloques),
+    ("campos", "tablas de campos de la spec", sincronizar_spec),
 )
 
 

@@ -315,6 +315,7 @@ that fixes whatever the new version finds.
 | `inventario` and `arbol` | that what exists is cited, not merely that what is cited exists |
 | `vacios` | a component with a README card ↔ that it has code, or that the card declares it a placeholder |
 | `bloques` | that the generated tables match the code |
+| `campos` | that the specification's field tables match the Pydantic types |
 
 > **Why the guardians are not versioned.** Giving them a `__version__` and comparing it,
 > as is done with the `*Agent` classes, was considered. It was not done, for three

@@ -181,6 +181,7 @@ agentic-smart-health/          ← workspace root
 │   └── 3dgs-engine/           ← placeholder (3DGS reconstruction lives today in notebooks + gsplat)
 ├── data/
 │   └── research-agent/        ← knowledge base of the research agent
+├── fixtures/                  ← conformance bench: 13 synthetic .uos and what each must classify as
 ├── schemas/                   ← published JSON Schema of the UOS manifest, per version (§12)
 ├── docs/                      ← documentation (see the note below)
 ├── notebooks/                 ← experimentation and exploration (01–09)
