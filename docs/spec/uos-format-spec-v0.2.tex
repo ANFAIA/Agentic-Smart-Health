@@ -483,6 +483,33 @@ over the set of frames. Every frame named by any asset \MUST{} be reachable from
 that cannot be related to the hub would be placed somewhere arbitrary, and nothing
 downstream could detect it.
 
+\paragraph{Normative: what traversing the graph means.} A registration
+\code{A}~$\to$~\code{B} states \code{p\_B = T . p\_A} with points as column vectors. The
+graph is walked \emph{undirected}, so three rules are needed and this specification fixes
+them.
+
+\begin{enumerate}
+  \item \textbf{Crossing an edge backwards inverts its matrix.} Using
+  \code{A}~$\to$~\code{B} to place something expressed in \code{B} means applying
+  $T^{-1}$. The transform is rigid, so the inverse always exists.
+  \item \textbf{A path composes right to left.} For \code{F}~$\to$~\code{A}~$\to$~\code{C}
+  the matrix is $T_{AC} \cdot T_{FA}$: the first hop is applied first, so it sits on the
+  right.
+  \item \textbf{When several paths exist, a reader \MUST{} take the one with the fewest
+  edges}, breaking a tie by the ascending sequence of registration ids. Error propagates
+  along the path, so two hops are not worth one, and the choice cannot be left to
+  iteration order --- two readers would place the same asset differently.
+\end{enumerate}
+
+Paths that disagree are \textbf{not} averaged. Averaging would produce a pose that no
+registration claims and hide the disagreement inside it, which is the one thing this format
+exists to prevent. The reader takes the shortest path and check 15b reports the spread,
+which is a measured bound on what a composition across those frames is worth.
+
+The reference implementation resolves this in \code{uos.marcos}:
+\code{resuelve\_al\_canonico} returns the composed transform and
+\code{discrepancia\_maxima} the spread.
+
 \paragraph{Conventions within a container.}
 
 \begin{itemize}
@@ -2249,6 +2276,9 @@ check.\\
 13 & E & Views: each \code{visit} names a declared visit; ids are unique.\\
 14 & W & No \code{views.json}: no stored views.\\
 15 & E & Frame connectivity (\S\ref{sec:frames}).\\
+15b & W & More than one path of registrations reaches the canonical frame
+from a frame an asset uses, and they disagree by more than $10^{-3}$. The reader still gets
+a defined answer; the spread is what a measurement across the seam inherits.\\
 16 & W & Each provisional registration (\S\ref{sec:manifest}).\\
 17 & E & Regulatory: every asset under \code{derived/} has layer 3, and every layer-3 asset
 is under \code{derived/}. This verifies where layer 3 is \emph{declared}.\\

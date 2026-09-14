@@ -523,6 +523,20 @@ def _valida_frames(m: Manifest, inf: Report) -> None:
                 "presentarlo como PROVISIONAL"
             , path=f"registrations[{r.id}]")
 
+    # ⚠️ **Dos caminos al canonico que no coinciden (15b).** El grafo se recorre como no
+    # dirigido, asi que nada impide que haya mas de un camino; lo que no puede es que dos
+    # den poses distintas y el visor elija una en silencio. Se declara, que es lo que el
+    # formato hace con todo lo que no se puede resolver por el.
+    from uos.marcos import TOLERANCIA_MM, discrepancia_maxima
+
+    for marco in sorted({a.frame for a in m.assets} & alcanzables):
+        d = discrepancia_maxima(m, marco)
+        if d is not None and d > TOLERANCIA_MM:
+            inf.warn("15b", f"frame {marco!r}: hay mas de un camino de registraciones hasta el "
+                f"canonico y no coinciden (hasta {d:.4g} de diferencia). El lector usa el mas "
+                "corto; la discrepancia acota el error de la composicion",
+                path=f"frames[{marco}]")
+
 
 def _valida_regulatorio(m: Manifest, inf: Report) -> None:
     """`derived/` implica layer 3 y sidecar `meta.json` (§5.5), y al reves."""

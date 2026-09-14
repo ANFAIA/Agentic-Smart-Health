@@ -1564,3 +1564,68 @@ def test_cada_codigo_del_validador_existe_en_la_tabla_del_algoritmo():
                               re.M))
     sin_fila = emitidos - listados
     assert not sin_fila, f"el validador cita checks que la spec no lista: {sorted(sin_fila)}"
+
+
+def _manifiesto_de_marcos(registros):
+    from uos.manifiesto import Frame, Manifest, PHIState, Subject
+
+    return Manifest(
+        case_id="urn:uuid:marcos", generator={"name": "test"},
+        phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="p"),
+        canonical_frame=Frame(id="C"), frames=[Frame(id="A"), Frame(id="B")],
+        registrations=registros,
+    )
+
+
+def _traslacion(dx: float):
+    import numpy as np
+
+    m = np.eye(4)
+    m[0, 3] = dx
+    return [float(x) for x in m.ravel()]
+
+
+def _tx_al_canonico(m, marco):
+    import numpy as np
+
+    from uos.marcos import resuelve_al_canonico
+
+    return np.array(resuelve_al_canonico(m, marco)).reshape(4, 4)[0, 3]
+
+
+def test_cruzar_una_arista_al_reves_invierte_su_matriz():
+    """`C -> A` coloca A respecto de C invirtiendo, no reutilizando la matriz tal cual.
+
+    Es la regla que el grafo necesitaba y no decia: se recorre como no dirigido, y sin
+    esto un lector aplica la transformada del reves y coloca el asset en el sitio
+    simetrico sin que nada falle.
+    """
+    from uos.manifiesto import Registration
+
+    directa = _manifiesto_de_marcos([Registration(
+        id="r1", source_frame="A", target_frame="C",
+        transform_4x4_row_major=_traslacion(10), method="icp")])
+    assert _tx_al_canonico(directa, "A") == 10.0
+
+    inversa = _manifiesto_de_marcos([Registration(
+        id="r1", source_frame="C", target_frame="A",
+        transform_4x4_row_major=_traslacion(10), method="icp")])
+    assert _tx_al_canonico(inversa, "A") == -10.0
+
+
+def test_dos_caminos_que_discrepan_eligen_el_corto_y_declaran_la_diferencia():
+    """No se promedia: promediar inventa una pose que ninguna registracion afirma."""
+    from uos.manifiesto import Registration
+    from uos.marcos import caminos_al_canonico, discrepancia_maxima
+
+    m = _manifiesto_de_marcos([
+        Registration(id="r1", source_frame="A", target_frame="C",
+                     transform_4x4_row_major=_traslacion(10), method="icp"),
+        Registration(id="r2", source_frame="A", target_frame="B",
+                     transform_4x4_row_major=_traslacion(3), method="icp"),
+        Registration(id="r3", source_frame="B", target_frame="C",
+                     transform_4x4_row_major=_traslacion(3), method="icp"),
+    ])
+    assert len(caminos_al_canonico(m, "A")) == 2
+    assert _tx_al_canonico(m, "A") == 10.0          # el de una sola arista
+    assert discrepancia_maxima(m, "A") == 4.0       # 10 frente a 3+3
