@@ -2937,6 +2937,223 @@ by \code{kid}, and allow several signatures over one payload.
 \end{longtable}
 
 \newpage
+\section{A complete manifest}\label{app:manifest}
+
+Everything above describes the manifest field by field. This is one, whole, so that a
+reader who has to write one can see the shape rather than assemble it from fragments.
+
+It is not an illustration: it is the manifest of \code{valid.uos}, the reference container
+of the conformance fixture (\S\ref{sec:fixture}), lifted verbatim by the documentation
+guardian. The bench is regenerated and validated on every run of the test suite, so this
+example is one a validator actually accepts --- and it cannot quietly fall out of date,
+because the guardian fails when it does.
+
+It carries three assets, one of them referenced rather than held, a single frame, and no
+registrations: a case with one acquisition has nothing to relate. Fields that are
+\code{null} are declared and empty, which is not the same as absent --- that distinction is
+the one the whole format is built on.
+
+% generado: manifiesto-completo — no editar a mano
+\begin{lstlisting}[style=js]
+{
+ "uos_version": "0.2",
+ "case_id": "urn:uuid:f8b5f549-b3a0-5f57-b6cb-dfe16b0bb7f1",
+ "created": "2026-09-14T10:43:55.528795Z",
+ "generator": {
+  "name": "agentic-smart-health",
+  "version": "0.14.0"
+ },
+ "phi_state": "pseudonymized",
+ "deidentification": {
+  "profile": "DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+  "options": [],
+  "applied_to": [],
+  "tool": {
+   "name": "agentic-smart-health",
+   "version": "0.14.0",
+   "sha256": null
+  },
+  "date_shift_days": null,
+  "note": "el identificador de paciente se sustituye por un HMAC-SHA256 truncado con sal por emisor (`ASH_PSEUDONYM_SALT`), estable entre adquisiciones y no invertible sin la sal. NO se limpian descriptores ni rasgos visuales reconocibles"
+ },
+ "purpose_of_use": null,
+ "subject": {
+  "pseudonym": "FIXTURE-0001",
+  "fhir_patient": null,
+  "consent": null
+ },
+ "canonical_frame": {
+  "id": "frame.ios_master",
+  "description": "Escaner intraoral, hub geometrico del caso",
+  "units": "mm",
+  "handedness": "right",
+  "anatomical": null,
+  "dicom_frame_of_reference_uid": null
+ },
+ "frames": [
+  {
+   "id": "frame.ct_001",
+   "description": "Volumen CBCT, centrado",
+   "units": "mm",
+   "handedness": "right",
+   "anatomical": null,
+   "dicom_frame_of_reference_uid": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "v1",
+   "date": "2026-09-14",
+   "label": "Baseline"
+  }
+ ],
+ "assets": [
+  {
+   "id": "asset.ios",
+   "kind": "document",
+   "visit": "v1",
+   "uri": "sha256:af8ea8064a092eb65a578a0085e05b0bd925179072f29c005962604042357d8f",
+   "media_type": "model/stl",
+   "sha256": "af8ea8064a092eb65a578a0085e05b0bd925179072f29c005962604042357d8f",
+   "bytes": 546181,
+   "frame": "frame.ios_master",
+   "acquisition": {
+    "time": "2026-09-14T10:43:55.524386Z",
+    "device": {
+     "manufacturer": null,
+     "model": null,
+     "software_version": null
+    }
+   },
+   "load_priority": 50,
+   "regulatory": {
+    "layer": 1,
+    "clearances": []
+   },
+   "projection": null,
+   "parts": [],
+   "sidecar_uri": null,
+   "derived_from": [],
+   "series_instance_uid": null,
+   "study_instance_uid": null,
+   "external": true
+  },
+  {
+   "id": "asset.scene",
+   "kind": "mesh_gs_scene",
+   "visit": "v1",
+   "uri": "scene/scene.glb",
+   "media_type": "model/gltf-binary",
+   "sha256": "7c2824dfa844a75975bf74da1929765c5560cab648a5d178dff97aa6e97de505",
+   "bytes": 283808,
+   "frame": "frame.ios_master",
+   "acquisition": {
+    "time": null,
+    "device": {
+     "manufacturer": null,
+     "model": null,
+     "software_version": null
+    }
+   },
+   "load_priority": 10,
+   "regulatory": {
+    "layer": 1,
+    "clearances": []
+   },
+   "projection": null,
+   "parts": [],
+   "sidecar_uri": null,
+   "derived_from": [
+    "asset.ios"
+   ],
+   "series_instance_uid": null,
+   "study_instance_uid": null,
+   "external": false
+  },
+  {
+   "id": "asset.clinical",
+   "kind": "document",
+   "visit": "v1",
+   "uri": "clinical/observations.json",
+   "media_type": "application/json",
+   "sha256": "c1df3c80a698c5d123ae74f9985e457c470d33baddfa4b87200bdaf585b28c62",
+   "bytes": 2994,
+   "frame": "frame.ios_master",
+   "acquisition": {
+    "time": null,
+    "device": {
+     "manufacturer": null,
+     "model": null,
+     "software_version": null
+    }
+   },
+   "load_priority": 15,
+   "regulatory": {
+    "layer": 1,
+    "clearances": []
+   },
+   "projection": null,
+   "parts": [],
+   "sidecar_uri": null,
+   "derived_from": [],
+   "series_instance_uid": null,
+   "study_instance_uid": null,
+   "external": false
+  }
+ ],
+ "registrations": [],
+ "occlusion": "single_arch",
+ "fhir_map": {
+  "case": {
+   "resource_type": "DocumentReference",
+   "resource": null,
+   "note": "el .uos entero como adjunto, content_type application/vnd.histora.uos"
+  },
+  "asset.ios": {
+   "resource_type": "DocumentReference",
+   "resource": null,
+   "note": "informe u otro documento del caso"
+  },
+  "asset.scene": {
+   "resource_type": "DocumentReference",
+   "resource": null,
+   "note": "malla y apariencia 3D: FHIR R4 no tiene recurso para geometria dental, y `Media` es para foto, video y audio. `DocumentReference` es el sobre generico de binarios clinicos, que es lo que son"
+  },
+  "asset.clinical": {
+   "resource_type": "Observation",
+   "resource": null,
+   "note": "una Observation por pieza y por medida, con su `subject` y su `bodySite` en FDI"
+  }
+ },
+ "extensions": {
+  "histora_clinical": {
+   "name": "histora_clinical",
+   "version": "1.0",
+   "uri": "clinical/observations.json",
+   "schema_id": "histora-clinical/1.0",
+   "description": "atributos clinicos por pieza (pH, raices, conductos, hallazgos) y medidas no regionales, con la procedencia de cada valor. El borrador los manda a FHIR (§9) y entonces un .uos suelto no puede contestar que dice el informe de una pieza"
+  },
+  "histora_reversible": {
+   "name": "histora_reversible",
+   "version": "1.0",
+   "uri": null,
+   "schema_id": "histora-reversible/1.0",
+   "description": "de `asset.scene` se regenera una malla de arcada con color por vertice, codigo FDI y una columna `medido` que dice que vertices llevan color del paciente y cuales el degradado de respaldo. La geometria y el FDI salen de sus primitivas de malla (`extras.uos_fdi`); el color, de su primitiva `KHR_gaussian_splatting`, tomandolo de las gaussianas que cubren cada vertice dentro de 3 sigmas y ponderandolo por alfa. La malla no viaja: se reconstruye"
+  }
+ },
+ "extensions_used": [
+  "histora_clinical",
+  "histora_reversible"
+ ],
+ "extensions_required": [],
+ "provenance": {
+  "prev_manifest_sha256": null,
+  "chain": "provenance/chain.json"
+ }
+}
+\end{lstlisting}
+% /generado: manifiesto-completo
+
 \section{Measured figures}\label{app:figures}
 
 Every number in this document comes from a real clinical case --- a maxillary arch, an

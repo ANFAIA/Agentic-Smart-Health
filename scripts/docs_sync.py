@@ -1056,6 +1056,27 @@ def tabla_campos(nombre: str, columnas: str) -> str:
     ])
 
 
+
+def manifiesto_completo() -> str:
+    """El manifiesto de `fixtures/uos-0.2/valid.uos`, entero, para el apendice.
+
+    Sale del banco y no de la mano de nadie a proposito: el banco se regenera y se
+    valida en cada corrida, asi que el ejemplo que publica la especificacion es uno que
+    un validador acepta de verdad. Un ejemplo escrito a mano es exactamente lo que se
+    queda rancio, y un ejemplo rancio es peor que ninguno — alguien lo copia.
+    """
+    import json
+    import zipfile
+
+    fixture = REPO / "fixtures" / "uos-0.2" / "valid.uos"
+    if not fixture.exists():
+        return ""
+    with zipfile.ZipFile(fixture) as z:
+        manifiesto = json.loads(z.read("manifest.json"))
+    cuerpo = json.dumps(manifiesto, indent=1, ensure_ascii=False)
+    return "\\begin{lstlisting}[style=js]\n" + cuerpo + "\n\\end{lstlisting}"
+
+
 def sincronizar_spec(_ficheros: set[str], escribir: bool) -> list[str]:
     """Las tablas de campos de la spec salen de los tipos, no de la memoria de nadie.
 
@@ -1065,7 +1086,7 @@ def sincronizar_spec(_ficheros: set[str], escribir: bool) -> list[str]:
     """
     bloques = tuple(
         (SPEC, f"tabla-{n}", tabla_campos(n, cols)) for n, cols in TABLAS_SPEC
-    )
+    ) + ((SPEC, "manifiesto-completo", manifiesto_completo()),)
     return [p for p in (_sincronizar(*b, escribir) for b in bloques) if p]
 
 
