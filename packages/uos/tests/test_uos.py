@@ -1536,3 +1536,31 @@ def test_un_asset_externo_cuyo_uri_no_es_su_hash_NI_SE_PARSEA() -> None:
             external=True,
             uri="sha256:" + "a" * 64, media_type="model/stl", sha256="b" * 64, bytes=1,
         )
+
+
+def test_cada_codigo_del_validador_existe_en_la_tabla_del_algoritmo():
+    """Ningun hallazgo cita un check que la especificacion no liste, ni al reves.
+
+    Es la deriva que la revision externa encontro por todas partes: el documento y la
+    implementacion afirmando cosas distintas sin que nada lo notase. Un codigo estable
+    solo vale si el documento donde se busca lo describe.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    raiz = Path(__file__).resolve().parents[3]
+    fuente = (raiz / "packages/uos/src/uos/validador.py").read_text(encoding="utf-8")
+    emitidos = {
+        n.args[0].value
+        for n in ast.walk(ast.parse(fuente))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr in ("error", "warn") and n.args
+        and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)
+    }
+    tex = (raiz / "docs/spec/uos-format-spec-v0.2.tex").read_text(encoding="utf-8")
+    ini = tex.index(r"\textbf{\#} & \textbf{Cls} & \textbf{Check}")
+    listados = set(re.findall(r"^(\d+[a-z]?) & [EW/-]+ &", tex[ini:tex.index(r"\end{longtable}", ini)],
+                              re.M))
+    sin_fila = emitidos - listados
+    assert not sin_fila, f"el validador cita checks que la spec no lista: {sorted(sin_fila)}"

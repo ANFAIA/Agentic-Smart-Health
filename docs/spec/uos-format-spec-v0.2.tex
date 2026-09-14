@@ -2185,6 +2185,37 @@ say so, and say what is missing, before somebody attaches the file to an email.
 A conforming validator performs these checks in this order. \textbf{E} = error,
 \textbf{W} = warning.
 
+\subsection{The validation report}\label{sec:report}
+
+A validator that only prints prose forces anything downstream to run regular expressions
+over sentences that change between versions. So the report has a shape, published as
+\code{schemas/uos-validation-report-0.2.schema.json} and validated against it by the
+reference implementation on every case of the conformance fixture.
+
+\begin{lstlisting}[style=js]
+{ "uos_validation_report": "0.2",
+  "valid": false,
+  "findings": [
+    { "code": "UOS-E-005", "severity": "error", "check": "5",
+      "path": "assets[asset.scene]",
+      "message": "asset asset.scene: declared sha256 is not the file's" } ],
+  "levels": ["UOS-Core"], "distributable": false,
+  "not_distributable_because": ["phi_state is identified"],
+  "version": 2, "views": 3, "external_count": 1 }
+\end{lstlisting}
+
+\code{path} locates the finding --- a manifest path such as \code{assets[<id>]}, or an
+entry inside the ZIP --- and is \code{null} when the finding is about the container as a
+whole. \code{valid} is \code{true} exactly when no finding has severity \code{error}:
+warnings never invalidate.
+
+\paragraph{Every finding carries a stable code.} A validator \MUST{} report each
+finding with the identifier of the check that produced it, formed as
+\code{UOS-E-<check>} for an error and \code{UOS-W-<check>} for a warning, with the numeric
+part padded to three digits: check 5 reports \code{UOS-E-005}, check 17b reports
+\code{UOS-E-017b}. The message is written for whoever is debugging and \MAY{} change; the
+code is the contract, and is what a program should branch on.
+
 \begin{longtable}{C{0.8cm} C{0.9cm} L{13.4cm}}
 \toprule
 \textbf{\#} & \textbf{Cls} & \textbf{Check}\\
@@ -2273,7 +2304,11 @@ one by one and tell a different story.\\
 (\S\ref{sec:graph}), within tolerance. glTF stores matrices column-major and the manifest
 row-major; confusing them does not fail, it places the cloud rotated and mirrored.\\18 & E & Extensions: \code{used} $\subseteq$ \code{extensions}; \code{required} $\subseteq$
 \code{used}; every non-null extension \code{uri} is a declared asset.\\
-19 & W & Extensions declared but unused; and one warning per required extension, since a
+17n & W & \textbf{Declared, not assumed}: no \code{occlusion} on a case that could
+have one; a layer-3 asset with no \code{clearance}; a registration with an empty
+\code{fit\_for}; a canonical frame with no anatomical convention. None of these invalidate
+the container --- each says that something a reader must not guess was left unsaid.\\
+19 & E/W & Extensions declared but unused; and one warning per required extension, since a
 reader that does not implement it must not open the container.\\
 20 & E & \code{canonical\_frame.units == "mm"}.\\
 21 & --- & Report the conformance levels satisfied, whether the container is
