@@ -2125,14 +2125,21 @@ from uos.contenedor import asset_de, escribe_uos
 from uos.manifiesto import Clase
 
 nuevo = asset_de(                       # hashes and measures the real file
-    Path("/data/photo_09.jpg"), "images/img_009.jpg",
-    id_="asset.img_009", kind=Clase.IMAGE2D, visit="v1",
-    frame="frame.ios_master", media_type="image/jpeg",
+    Path("/data/photo_09.jpg"), uri="",  # discarded: external assets are
+    id_="asset.img_009", kind=Clase.IMAGE2D, visit="v1",   # named by content
+    frame="frame.ios_master", media_type="image/jpeg",     # address, not path
+    external=True,
 )
 m.assets.append(nuevo)
 m.fhir_map["asset.img_009"] = RecursoFHIR(
     resource_type="Media", note="clinical photograph; Media is the non-DICOM image resource")
 \end{lstlisting}
+
+A clinical photograph is an \textbf{acquired original}, so it does not travel
+(\S\ref{sec:external}): \code{external=True} makes the writer discard the path
+you passed and name the asset \code{sha256:<hex>} instead. Writing it to a path
+inside the ZIP --- \code{images/img\_009.jpg} or any other --- is the writer defect
+\S\ref{sec:external} describes, and there is no reserved directory for one.
 
 Checklist for \emph{any} new asset, in order:
 \begin{enumerate}
@@ -2556,8 +2563,10 @@ Where is the colour? & The \code{KHR\_gaussian\_splatting} primitive in that GLB
 $\mathrm{RGB} = \mathrm{SH}_0 \times 0.282094791 + 0.5$.\\
 Which tooth is this? & \code{derived/seg\_teeth.bin}, per vertex, FDI/ISO-3950. Layer 3
 only: a stripped container has no tooth identity, and that is correct.\\
-Where is the CBCT? & Directory asset under \code{volume/}, \code{kind: volume}, with a
-\code{.volume.json} sidecar so you need no DICOM parser to inspect it.\\
+Where is the CBCT? & Not in the container. A \code{kind: volume} directory asset,
+\code{external: true}, named \code{sha256:<hex>}, with \code{parts[]} to verify it
+slice by slice. What \emph{is} in the ZIP is its \code{.volume.json} sidecar under
+\code{volume/}, so you can inspect the geometry with no DICOM parser.\\
 How do two frames relate? & \code{registrations[]}, row-major, mm. Transpose for glTF.\\
 Is this alignment trustworthy? & \code{rms\_error\_mm} + \code{verified\_by}. \code{null}
 means nobody checked.\\
