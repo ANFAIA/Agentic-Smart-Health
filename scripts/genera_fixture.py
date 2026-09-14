@@ -9,7 +9,7 @@ contra su propia salida, que es comprobar nada. La §16 lo listaba como pendient
 revision externa lo declaro bloqueante antes de anunciar el formato (G-4).
 
 **Que produce.** Un contenedor VALIDO y varios rotos a proposito, cada uno con un solo
-defecto y con la clase de error que debe producir escrita al lado, en `esperado.json`. Un
+defecto y con la clase de error que debe producir escrita al lado, en `expected.json`. Un
 lector ajeno corre su validador sobre el directorio y compara: si acepta uno de los rotos,
 o rechaza el valido, sabe exactamente que le falta sin haber leido nuestro codigo.
 
@@ -167,78 +167,78 @@ def genera(destino: Path) -> list[dict]:
     if not salida.ok:
         raise SystemExit(f"no se pudo generar el contenedor base: {salida.detail}")
 
-    valido = destino / "valido.uos"
+    valido = destino / "valid.uos"
     valido.write_bytes(salida.path.read_bytes())
     indice = [{
-        "fichero": "valido.uos",
-        "espera": "valido",
-        "porque": "el contenedor de referencia. Un lector conforme lo acepta sin errores.",
+        "file": "valid.uos",
+        "expects": "valid",
+        "why": "the reference container. A conformant reader accepts it with no errors.",
     }]
 
     def caso_roto(nombre: str, espera: str, porque: str, cambia) -> None:
         _reescribe(valido, destino / nombre, cambia)
-        indice.append({"fichero": nombre, "espera": espera, "porque": porque})
+        indice.append({"file": nombre, "expects": espera, "why": porque})
 
     caso_roto(
-        "entrada-no-declarada.uos", "error",
-        "lleva un fichero que el manifiesto no nombra: sin hash que lo acredite y sin capa "
-        "regulatoria. Es la forma que tendria una fuga (§14.6)",
+        "undeclared-entry.uos", "error",
+        "carries a file the manifest does not name: no hash vouching for it and no regulatory "
+        "layer. This is the shape a leak would have (§14.6)",
         lambda n, c: c,
     )
-    with zipfile.ZipFile(destino / "entrada-no-declarada.uos", "a",
+    with zipfile.ZipFile(destino / "undeclared-entry.uos", "a",
                          zipfile.ZIP_STORED) as z:
         z.writestr("colado.txt", "nadie declara esto")
 
     caso_roto(
-        "hash-que-no-cuadra.uos", "error",
-        "un asset declara un sha256 que no es el de sus bytes",
+        "hash-mismatch.uos", "error",
+        "an asset declares a sha256 that is not the one of its bytes",
         # El de un asset que VIAJA: el de uno externo lo caza el contrato antes de llegar
         # al algoritmo, y este caso existe para probar el check de hashes.
         lambda n, c: _sin_cadena(n, c, _rompe_hash_interno),
     )
     caso_roto(
-        "manifiesto-no-es-primero.uos", "error",
-        "`manifest.json` no es la primera entrada fisica del ZIP, asi que un lector no "
-        "puede leerlo sin recorrer el contenedor entero (§3)",
+        "manifest-not-first.uos", "error",
+        "`manifest.json` is not the first physical entry of the ZIP, so a reader cannot read "
+        "it without walking the whole container (§3)",
         lambda n, c: None if n == "manifest.json" else c,
     )
     with zipfile.ZipFile(valido) as z:
         man = z.read("manifest.json")
-    with zipfile.ZipFile(destino / "manifiesto-no-es-primero.uos", "a",
+    with zipfile.ZipFile(destino / "manifest-not-first.uos", "a",
                          zipfile.ZIP_STORED) as z:
         z.writestr("manifest.json", man)
 
     caso_roto(
-        "capa-3-fuera-de-derived.uos", "error",
-        "un asset declara layer 3 y no vive bajo `derived/`, asi que borrar ese directorio "
-        "no quitaria la inferencia (§9)",
+        "layer-3-outside-derived.uos", "error",
+        "an asset declares layer 3 and does not live under `derived/`, so deleting that "
+        "directory would not remove the inference (§9)",
         lambda n, c: _sin_cadena(n, c, lambda d: d["assets"][0].update(
             {"regulatory": {"layer": 3, "clearances": []}}
         )),
     )
     caso_roto(
-        "registro-provisional.uos", "aviso",
-        "una registracion automatica sin `verified_by`: el contenedor es VALIDO y el visor "
-        "tiene que presentarla como provisional (§6). Un lector que no avise se lo calla",
+        "provisional-registration.uos", "warning",
+        "an automatic registration with no `verified_by`: the container is VALID and the viewer "
+        "must present it as provisional (§6). A reader that does not warn hides it",
         lambda n, c: c,
     )
     caso_roto(
-        "minor-superior-con-campo-nuevo.uos", "valido-con-aviso",
-        "declara una version menor superior y trae un campo que este lector no conoce: "
-        "hay que ignorarlo y NOMBRARLO, no rechazar el contenedor (§15.2)",
+        "higher-minor-new-field.uos", "valid-with-warning",
+        "declares a higher minor version and carries a field this reader does not know: it "
+        "must be ignored and NAMED, not grounds for rejecting the container (§15.2)",
         lambda n, c: _sin_cadena(n, c, lambda d: d.update(
-            {"uos_version": "0.99", "campo_del_futuro": 1}
+            {"uos_version": "0.99", "field_from_the_future": 1}
         )),
     )
     caso_roto(
-        "comprimido.uos", "error",
-        "el ZIP usa DEFLATE en vez de STORE, asi que el acceso por rangos —la razon de ser "
-        "del envoltorio— no funciona (§2)",
+        "compressed.uos", "error",
+        "the ZIP uses DEFLATE instead of STORE, so range access --- the whole point of the "
+        "wrapper --- does not work (§2)",
         lambda n, c: c,
     )
     with zipfile.ZipFile(valido) as z:
         entradas = [(i.filename, z.read(i.filename)) for i in z.infolist()]
-    with zipfile.ZipFile(destino / "comprimido.uos", "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(destino / "compressed.uos", "w", zipfile.ZIP_DEFLATED) as z:
         for nombre, crudo in entradas:
             z.writestr(nombre, crudo)
 
@@ -246,42 +246,42 @@ def genera(destino: Path) -> list[dict]:
     # Sin un contenedor que custodie la serie, el banco no ejercita nada de esto y se
     # queda en UOS-Core. Son los tres desenlaces que el §6 distingue, y distinguirlos es
     # la diferencia entre «esta serie no cuadra» y «el corte 3 esta corrupto».
-    con_serie = _con_la_serie_dentro(destino / "serie-completa.uos",
+    con_serie = _con_la_serie_dentro(destino / "series-complete.uos",
                                      trabajo / "entrada" / "cbct")
     indice.append({
-        "fichero": "serie-completa.uos", "espera": "valido",
-        "porque": "custodia la serie DICOM entera y cada corte cuadra con su hash (§6). "
-                  "Nuestro escritor no emite asi —referencia los originales— y un "
-                  "validador tiene que aceptar al emisor que si lo haga. ⚠️ No alcanza "
-                  "NINGUN nivel de conformidad, y es correcto: UOS-Core exige una escena "
-                  "renderizable y este contenedor solo lleva el volumen",
+        "file": "series-complete.uos", "expects": "valid",
+        "why": "it holds the whole DICOM series and every slice matches its hash (§6). "
+                  "Our writer does not emit this way --- it references the originals --- "
+                  "and a validator has to accept a writer that does. Note it reaches NO "
+                  "conformance level, and that is correct: UOS-Core requires a renderable "
+                  "scene and this container carries only the volume",
     })
 
     def _de_la_serie(nombre: str, espera: str, porque: str, cambia) -> None:
         _reescribe(con_serie, destino / nombre, cambia)
-        indice.append({"fichero": nombre, "espera": espera, "porque": porque})
+        indice.append({"file": nombre, "expects": espera, "why": porque})
 
     cortes = sorted(n for n in zipfile.ZipFile(con_serie).namelist()
                     if n.startswith("volume/ct_001/"))
     _de_la_serie(
-        "serie-corte-faltante.uos", "error",
-        f"falta el corte {cortes[len(cortes) // 2]!r}. Un hash del conjunto diria solo "
-        "que algo cambio; el §6 exige decir CUAL",
+        "series-slice-missing.uos", "error",
+        f"slice {cortes[len(cortes) // 2]!r} is missing. A digest over the set would "
+        "only say that something changed; §6 requires saying WHICH",
         lambda n, c: None if n == cortes[len(cortes) // 2] else c,
     )
     _de_la_serie(
-        "serie-corte-alterado.uos", "error",
-        f"el corte {cortes[0]!r} tiene un byte cambiado: mismo nombre, mismo tamano, "
-        "otro contenido",
+        "series-slice-altered.uos", "error",
+        f"slice {cortes[0]!r} has one byte changed: same name, same size, different "
+        "content",
         lambda n, c: (c[:-1] + bytes([c[-1] ^ 0xFF])) if n == cortes[0] else c,
     )
     _de_la_serie(
-        "serie-corte-sobrante.uos", "error",
-        "hay un corte de mas que el manifiesto no declara en `parts[]`. Sobrar es tan "
-        "grave como faltar: nadie sabe de donde salio",
+        "series-slice-extra.uos", "error",
+        "there is one slice more than the manifest declares in `parts[]`. An extra is as "
+        "serious as a missing one: nobody knows where it came from",
         lambda n, c: c,
     )
-    with zipfile.ZipFile(destino / "serie-corte-sobrante.uos", "a",
+    with zipfile.ZipFile(destino / "series-slice-extra.uos", "a",
                          zipfile.ZIP_STORED) as z:
         z.writestr(cortes[0].rsplit("/", 1)[0] + "/colado.dcm",
                    zipfile.ZipFile(con_serie).read(cortes[0]))
@@ -306,24 +306,25 @@ def genera(destino: Path) -> list[dict]:
         return salida.getvalue()
 
     _de_la_serie(
-        "serie-corte-deidentificado.uos", "aviso",
-        f"al corte {cortes[0]!r} se le han limpiado etiquetas: conserva su SOP Instance "
-        "UID y sus pixeles, y sus bytes ya no son los declarados. Es AVISO y no error — "
-        "es el mismo corte de-identificado, no otro corte (§6)",
+        "series-slice-deidentified.uos", "warning",
+        f"slice {cortes[0]!r} has had tags cleaned: it keeps its SOP Instance UID and "
+        "its pixels, and its bytes are no longer the declared ones. This is a WARNING and "
+        "not an error --- it is the same slice de-identified, not a different slice (§6)",
         _deidentifica,
     )
 
-    (destino / "esperado.json").write_text(
+    (destino / "expected.json").write_text(
         json.dumps({
-            "formato": "UOS",
+            "format": "UOS",
             "version": "0.2",
-            "nota": (
-                "Banco de conformidad. Corre tu validador sobre cada fichero y compara con "
-                "`espera`. `error` significa que el contenedor NO es valido; `aviso` que si "
-                "lo es y hay algo que decir; `valido-con-aviso` que se acepta ignorando lo "
-                "que no se entiende. Todo el dato es sintetico: no hay paciente detras."
+            "note": (
+                "Conformance bench. Run your validator over each file and compare with "
+                "`expects`. `error` means the container is NOT valid; `warning` that it is "
+                "valid and there is something to say; `valid-with-warning` that it is "
+                "accepted while ignoring what it does not understand. Every byte is "
+                "synthetic: there is no patient behind it."
             ),
-            "casos": indice,
+            "cases": indice,
         }, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
@@ -340,8 +341,8 @@ def main() -> int:
     indice = genera(args.destino)
     print(f"banco escrito en {args.destino}", file=sys.stderr)
     for c in indice:
-        tam = (args.destino / c["fichero"]).stat().st_size
-        print(f"  {c['espera']:18} {c['fichero']:34} {tam / 1024:7.1f} KB", file=sys.stderr)
+        tam = (args.destino / c["file"]).stat().st_size
+        print(f"  {c['expects']:18} {c['file']:34} {tam / 1024:7.1f} KB", file=sys.stderr)
     return 0
 
 

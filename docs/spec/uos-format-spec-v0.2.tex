@@ -2404,7 +2404,7 @@ checking nothing. The fixture is what makes that unnecessary.
 
 It ships two \textbf{valid} containers, one that is valid but must warn, and ten broken ones, each carrying \emph{a single}
 defect, with the class of result each should produce written beside it in
-\code{esperado.json}. An implementer runs their validator over the directory and compares.
+\code{expected.json}. An implementer runs their validator over the directory and compares.
 Accepting one of the broken ones, or rejecting the valid one, tells them precisely what
 they are missing.
 
@@ -2413,33 +2413,33 @@ they are missing.
 \textbf{Case} & \textbf{Expects} & \textbf{What it exercises}\\
 \midrule
 \endhead
-\code{valido.uos} & valid & The reference container.\\
-\code{entrada-no-declarada.uos} & error & A file the manifest does not name: no hash
+\code{valid.uos} & \code{valid} & The reference container.\\
+\code{undeclared-entry.uos} & \code{error} & A file the manifest does not name: no hash
 accrediting it, no regulatory layer (\S\ref{sec:container}).\\
-\code{hash-que-no-cuadra.uos} & error & A carried asset whose declared \code{sha256} is not
+\code{hash-mismatch.uos} & \code{error} & A carried asset whose declared \code{sha256} is not
 its bytes'.\\
-\code{manifiesto-no-es-primero.uos} & error & \code{manifest.json} is not the first
+\code{manifest-not-first.uos} & \code{error} & \code{manifest.json} is not the first
 physical entry (\S\ref{sec:container}).\\
-\code{capa-3-fuera-de-derived.uos} & error & Layer 3 outside \code{derived/}
+\code{layer-3-outside-derived.uos} & \code{error} & Layer 3 outside \code{derived/}
 (\S\ref{sec:derived}).\\
-\code{registro-provisional.uos} & valid, warns & An automatic registration with no
+\code{provisional-registration.uos} & \code{warning} & An automatic registration with no
 \code{verified\_by}: the container is valid and a viewer must present it as provisional
 (\S\ref{sec:manifest}).\\
-\code{minor-superior-con-campo-nuevo.uos} & valid, warns & A higher minor with an unknown
+\code{higher-minor-new-field.uos} & \code{valid-with-warning} & A higher minor with an unknown
 field: it is ignored and \emph{named}, not rejected (\S\ref{sec:versioning}).\\
-\code{comprimido.uos} & error & DEFLATE instead of STORE, so range access does not work
+\code{compressed.uos} & \code{error} & DEFLATE instead of STORE, so range access does not work
 (\S\ref{sec:container}).\\
-\code{serie-completa.uos} & valid & A container that \emph{carries} the DICOM series, slice
+\code{series-complete.uos} & \code{valid} & A container that \emph{carries} the DICOM series, slice
 by slice. The reference writer does not emit this --- it references originals --- and a
 validator has to accept an issuer that does. It reaches no conformance level, correctly:
 \code{UOS-Core} requires a renderable scene and this holds only the volume.\\
-\code{serie-corte-faltante.uos} & error & A slice is missing, and the validator must name
+\code{series-slice-missing.uos} & \code{error} & A slice is missing, and the validator must name
 \emph{which} (\S\ref{sec:volume}).\\
-\code{serie-corte-alterado.uos} & error & A slice with the same name and size and one byte
+\code{series-slice-altered.uos} & \code{error} & A slice with the same name and size and one byte
 changed.\\
-\code{serie-corte-sobrante.uos} & error & A slice the manifest does not declare in
+\code{series-slice-extra.uos} & \code{error} & A slice the manifest does not declare in
 \code{parts[]}. Extra is as serious as missing: nobody knows where it came from.\\
-\code{serie-corte-deidentificado.uos} & valid, warns & A slice whose tags were cleaned: it
+\code{series-slice-deidentified.uos} & \code{warning} & A slice whose tags were cleaned: it
 keeps its SOP Instance UID and its pixels and its bytes are no longer the declared ones.
 \textbf{This is the case the two levels exist for} --- a validator comparing only file
 hashes says ``this series is not this case's'', which is false and is the most expensive
