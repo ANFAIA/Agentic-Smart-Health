@@ -80,7 +80,7 @@ human-readable and linked to the relevant pull request or issue where applicable
   are twelve lines of reasoning meant for us, not one line of definition meant for a reader.
 - **BREAKING — the extension prefix is `histora_`.** Every normative identifier renamed:
   the extensions (`histora_clinical`, `histora_gs_measured`, `histora_reversible`), the
-  profile ids (`histora-twin/1.0`, `histora-twin-ajustado/1.0`, `histora-gs-apariencia/1.0`),
+  profile ids (`histora-twin/1.0`, `histora-twin-fitted/1.0`, `histora-gs-appearance/1.0`),
   the clinical schema (`histora-clinical/2.0`) and the segmentation model id. `ash_` was the
   summer-grant project's prefix, not anything anybody held, and the specification told
   writers not to squat on it **without saying who owned it** — which is not a rule that can

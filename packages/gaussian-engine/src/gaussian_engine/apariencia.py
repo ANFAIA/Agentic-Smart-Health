@@ -13,7 +13,7 @@ optimiza contra **imagenes 2D** (renders de Blender) porque el objetivo es la
 anisotropas— pero la funcion de perdida, los datos de entrada y la semantica del
 resultado son distintos.
 
-**Perfil `'histora-gs-apariencia/1.0'`.** Declara que el campo fue entrenado con gsplat
+**Perfil `'histora-gs-appearance/1.0'`.** Declara que el campo fue entrenado con gsplat
 sobre renders EEVEE de una malla pintada con dos tonos de las fotos. Un lector que
 vea este perfil sabe que:
 
@@ -45,8 +45,8 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 # Perfil de este modulo. Distingue este campo del semilla (`histora-twin/1.0`) y del
-# ajustado (`histora-twin-ajustado/1.0`).
-PERFIL = "histora-gs-apariencia/1.0"
+# ajustado (`histora-twin-fitted/1.0`).
+PERFIL = "histora-gs-appearance/1.0"
 
 #: A mas de esto de cualquier vertice del escaneo, una gaussiana NO hereda etiqueta. Dos
 #: milimetros es el orden del grosor de la encia adherida: mas alla, el vecino mas cercano

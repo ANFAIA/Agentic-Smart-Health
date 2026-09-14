@@ -219,7 +219,7 @@ def _splats_khr(ruta_ply: Path, columnas: Any) -> Any:
         ao=(col["ao"].astype(np.float32) if "ao" in col else None),
         normales=(apila("nx", "ny", "nz").astype(np.float32)
                   if all(k in col for k in ("nx", "ny", "nz")) else None),
-        nombre="apariencia real entrenada con gsplat",
+        nombre="real appearance trained with gsplat",
     )
 
 
@@ -384,19 +384,19 @@ class UOSExportAgent(BaseExportAgent):
         # el esquema INRIA y el perfil correctos. Si no lo saltamos, el main loop crea
         # `asset.gs` con el esquema de densidad (porque `_descriptor_gs` usa los defaults
         # del snapshot) y el sidecar queda con `profile: histora-twin/1.0` en vez de
-        # `histora-gs-apariencia/1.0`.
+        # `histora-gs-appearance/1.0`.
         _skip_escena_gs = (
             snapshot.apariencia_ref is not None
             and escena_gs is not None
         )
         for ruta, id_, papel, medido, marco, nota in (
-            (campo, "asset.field", "campo gaussiano del twin", True, FRAME_CBCT,
+            (campo, "asset.field", "twin density field", True, FRAME_CBCT,
              "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
              "las escalas van en milimetros lineales, NO en logaritmo"),
-            (compuesto, "asset.composite", "compuesto CBCT + escaner", True, FRAME_CBCT,
+            (compuesto, "asset.composite", "CBCT + scanner composite", True, FRAME_CBCT,
              "dos modalidades en un fichero, con una columna `origen` por gaussiana. La "
              "encia lleva `density = 0` porque el escaner no mide atenuacion"),
-            (escena_gs, "asset.gs", "apariencia del escaner", False, FRAME_IOS,
+            (escena_gs, "asset.gs", "scanner appearance", False, FRAME_IOS,
              "reconstruida entrenando 3DGS contra renders de la malla, NO medida. Su "
              "color y su opacidad son del modelo, no del paciente"),
         ):
@@ -604,7 +604,7 @@ class UOSExportAgent(BaseExportAgent):
                 def _descriptor(esq):
                     return self._descriptor_gs(
                         snapshot,
-                        papel="apariencia real entrenada con gsplat",
+                        papel="real appearance trained with gsplat",
                         medido=False,
                         marco=FRAME_IOS,
                         # ⚠️ **La nota se LEE del PLY, no se escribe aqui.** Este literal
@@ -616,7 +616,7 @@ class UOSExportAgent(BaseExportAgent):
                         # cura: quien describe, pregunta al fichero.
                         nota=self._nota_color_ply(destino_ap),
                         esquema_override=esq,
-                        perfil_override="histora-gs-apariencia/1.0",
+                        perfil_override="histora-gs-appearance/1.0",
                         # Del FICHERO, no de `datos_ap`: el optimizador divide y poda, asi que
                         # el numero de gaussianas escritas no es el de la semilla que se le dio.
                         n_primitives_override=(_n_ap or len(datos_ap["means"])),

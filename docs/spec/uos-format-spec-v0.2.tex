@@ -1330,7 +1330,7 @@ and 78\,MB --- travel as separate entries inside the container and are reference
 child node:
 
 \begin{lstlisting}[style=js]
-{ "name": "campo gaussiano del twin",
+{ "name": "twin density field",
   "extras": { "uos_gs_uri": "scene/field.ply",
               "uos_descriptor_uri": "scene/field.gs.json",
               "uos_measured": true },
@@ -1355,7 +1355,7 @@ column by column.
 \code{role} & string & Human-readable role of the layer.\\
 \code{measured} & bool & \textbf{The load-bearing field.} \code{true} = the values are a
 physical measurement; \code{false} = they are a reconstruction.\\
-\code{profile} & string & e.g. \code{histora-twin/1.0}, \code{histora-gs-apariencia/1.0}.\\
+\code{profile} & string & e.g. \code{histora-twin/1.0}, \code{histora-gs-appearance/1.0}.\\
 \code{frame} & string & The frame the coordinates are in.\\
 \code{units} & string & \code{"mm"}.\\
 \code{n\_primitives} & int & Gaussian count.\\
@@ -1382,7 +1382,7 @@ Two real descriptors, abridged:
 
 \begin{lstlisting}[style=js]
 // scene/field.gs.json -- the CBCT density field
-{ "role": "campo gaussiano del twin", "measured": true, "profile": "histora-twin/1.0",
+{ "role": "twin density field", "measured": true, "profile": "histora-twin/1.0",
   "frame": "frame.ct_001", "units": "mm", "n_primitives": 1341990,
   "note": "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and
            the scales are in linear millimetres, NOT logarithms",
@@ -1393,8 +1393,8 @@ Two real descriptors, abridged:
                 "measured":true, ...} ] }
 
 // scene/appearance.gs.json -- the trained appearance embedded in scene.glb
-{ "role": "apariencia real entrenada con gsplat", "measured": false,
-  "profile": "histora-gs-apariencia/1.0", "frame": "frame.ios_master", "n_primitives": 113827,
+{ "role": "real appearance trained with gsplat", "measured": false,
+  "profile": "histora-gs-appearance/1.0", "frame": "frame.ios_master", "n_primitives": 113827,
   "note": "f_dc_* = colour MEASURED PER TOOTH ... NOT measured=true: the optimiser moved,
            split and pruned the Gaussians, so there is no 1:1 correspondence with what was
            projected" }

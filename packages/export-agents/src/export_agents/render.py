@@ -1,4 +1,4 @@
-"""Render multivista del campo gaussiano del twin, y las métricas del canal de imagen.
+"""Render multivista del twin density field, y las métricas del canal de imagen.
 
 Tercer canal de la familia de exportación: `gaussian_field_ref` → PNG. El de malla
 materializa lo que midió el escáner; el de campo, el interior que sembró el CBCT; éste
