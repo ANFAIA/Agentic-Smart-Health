@@ -14,10 +14,12 @@
             }
           ],
           "default": null,
+          "description": "When the asset was captured, RFC 3339. `null` when the original did not record it.",
           "title": "Time"
         },
         "device": {
-          "$ref": "#/$defs/Device"
+          "$ref": "#/$defs/Device",
+          "description": "Equipment that captured it."
         }
       },
       "title": "Acquisition",
@@ -39,48 +41,59 @@
       "description": "One file or directory the container carries or references.",
       "properties": {
         "id": {
+          "description": "Stable identifier of the asset within this container, unique across `assets[]`.",
           "title": "Id",
           "type": "string"
         },
         "kind": {
-          "$ref": "#/$defs/AssetKind"
+          "$ref": "#/$defs/AssetKind",
+          "description": "What the asset is, which fixes how a reader should treat it."
         },
         "visit": {
+          "description": "Id of the visit this asset belongs to.",
           "title": "Visit",
           "type": "string"
         },
         "uri": {
+          "description": "Path inside the ZIP for a carried asset, or `sha256:<hex>` for a referenced one. A referenced original occupies no path at all.",
           "title": "Uri",
           "type": "string"
         },
         "media_type": {
+          "description": "IANA media type of the payload.",
           "title": "Media Type",
           "type": "string"
         },
         "sha256": {
+          "description": "SHA-256 of the payload, lowercase hex. For a directory asset it is the digest over `parts[]`, not over concatenated bytes.",
           "pattern": "^[0-9a-f]{64}$",
           "title": "Sha256",
           "type": "string"
         },
         "bytes": {
+          "description": "Size of the payload in bytes; the sum over `parts[]` for a directory asset.",
           "minimum": 0,
           "title": "Bytes",
           "type": "integer"
         },
         "frame": {
+          "description": "Id of the coordinate frame this asset's coordinates are expressed in. It MUST be reachable from the canonical frame.",
           "title": "Frame",
           "type": "string"
         },
         "acquisition": {
-          "$ref": "#/$defs/Acquisition"
+          "$ref": "#/$defs/Acquisition",
+          "description": "When and on what equipment it was captured."
         },
         "load_priority": {
           "default": 30,
+          "description": "Hint for a reader fetching by HTTP range: lower loads first. A hint, never a requirement.",
           "title": "Load Priority",
           "type": "integer"
         },
         "regulatory": {
-          "$ref": "#/$defs/Regulatory"
+          "$ref": "#/$defs/Regulatory",
+          "description": "Regulatory layer and clearances of this asset's content."
         },
         "projection": {
           "anyOf": [
@@ -91,9 +104,11 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Projection geometry, for 2D radiographs only. `null` for everything else."
         },
         "parts": {
+          "description": "One entry per file when the asset is a directory, such as a DICOM series. This is what lets a validator say which slice is wrong instead of 'the series does not match'.",
           "items": {
             "$ref": "#/$defs/Part"
           },
@@ -110,9 +125,11 @@
             }
           ],
           "default": null,
+          "description": "Path to a JSON sidecar describing the payload, so a reader can inspect it without a parser for its format.",
           "title": "Sidecar Uri"
         },
         "derived_from": {
+          "description": "Ids of the assets this one was derived from. Required for anything under `derived/`: an inference with no stated input cannot be audited.",
           "items": {
             "type": "string"
           },
@@ -129,6 +146,7 @@
             }
           ],
           "default": null,
+          "description": "DICOM Series Instance UID `(0020,000E)`, so a recipient holding the series by another channel can tell it is this one.",
           "title": "Series Instance Uid"
         },
         "study_instance_uid": {
@@ -141,10 +159,12 @@
             }
           ],
           "default": null,
+          "description": "DICOM Study Instance UID `(0020,000D)`.",
           "title": "Study Instance Uid"
         },
         "external": {
           "default": false,
+          "description": "True when the asset is referenced and not carried. Acquired originals MUST be external; their `uri` is then a content address and never a path.",
           "title": "External",
           "type": "boolean"
         }
@@ -180,15 +200,18 @@
       "description": "What one jurisdiction says about this asset.",
       "properties": {
         "jurisdiction": {
+          "description": "Regulator the statement is made before, e.g. `EU` or `US`. A status without a jurisdiction means nothing.",
           "title": "Jurisdiction",
           "type": "string"
         },
         "regime": {
+          "description": "Regulatory framework under that jurisdiction, e.g. `MDR` or `FDA-510k`.",
           "title": "Regime",
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/ClearanceStatus"
+          "$ref": "#/$defs/ClearanceStatus",
+          "description": "What this jurisdiction says about the asset under that regime."
         },
         "reference": {
           "anyOf": [
@@ -200,6 +223,7 @@
             }
           ],
           "default": null,
+          "description": "Dossier or clearance number when one exists. `null` is 'not recorded here', never 'there is none'.",
           "title": "Reference"
         }
       },
@@ -237,9 +261,11 @@
             }
           ],
           "default": null,
+          "description": "Reference to the FHIR `Consent` resource that records it. The container carries the pointer, never the document.",
           "title": "Fhir Consent"
         },
         "scope": {
+          "description": "Purposes the subject consented to. An empty list is 'not declared'.",
           "items": {
             "$ref": "#/$defs/PurposeOfUse"
           },
@@ -257,6 +283,7 @@
             }
           ],
           "default": null,
+          "description": "When consent was obtained, RFC 3339.",
           "title": "Obtained"
         }
       },
@@ -268,10 +295,12 @@
       "description": "What was done to de-identify, in the vocabulary of DICOM PS3.15 Annex E.",
       "properties": {
         "profile": {
+          "description": "DICOM PS3.15 Annex E confidentiality profile applied, by its standard name.",
           "title": "Profile",
           "type": "string"
         },
         "options": {
+          "description": "Named options applied on top of the profile, e.g. `CleanRecognizableVisualFeatures` for defacing. This is where a reader learns whether the face was removed.",
           "items": {
             "type": "string"
           },
@@ -279,6 +308,7 @@
           "type": "array"
         },
         "applied_to": {
+          "description": "Asset ids the de-identification was applied to. Assets not listed were not processed.",
           "items": {
             "type": "string"
           },
@@ -294,7 +324,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Software that performed it, so a recipient can tell a documented pipeline from a manual pass."
         },
         "date_shift_days": {
           "anyOf": [
@@ -306,6 +337,7 @@
             }
           ],
           "default": null,
+          "description": "Constant offset applied to every date, in days. Needed to compare two visits after shifting; `null` means dates were not shifted.",
           "title": "Date Shift Days"
         },
         "note": {
@@ -318,6 +350,7 @@
             }
           ],
           "default": null,
+          "description": "Free text for anything the fields above cannot express. Not machine-readable by design.",
           "title": "Note"
         }
       },
@@ -341,6 +374,7 @@
             }
           ],
           "default": null,
+          "description": "Equipment manufacturer. Fixed key rather than free text so two containers can be compared.",
           "title": "Manufacturer"
         },
         "model": {
@@ -353,6 +387,7 @@
             }
           ],
           "default": null,
+          "description": "Equipment model name.",
           "title": "Model"
         },
         "software_version": {
@@ -365,6 +400,7 @@
             }
           ],
           "default": null,
+          "description": "Version of the software running on the equipment. No serial number is carried: it identifies a machine, and through it a site.",
           "title": "Software Version"
         }
       },
@@ -376,10 +412,12 @@
       "description": "A format extension the container declares and may require.",
       "properties": {
         "name": {
+          "description": "Prefixed extension name. This specification reserves `histora_` and defines no other.",
           "title": "Name",
           "type": "string"
         },
         "version": {
+          "description": "Version of the extension, independent of the format version.",
           "title": "Version",
           "type": "string"
         },
@@ -393,6 +431,7 @@
             }
           ],
           "default": null,
+          "description": "Path to the extension's payload inside the container, declared as an asset like any other.",
           "title": "Uri"
         },
         "schema_id": {
@@ -405,10 +444,12 @@
             }
           ],
           "default": null,
+          "description": "Identifier of the schema its payload validates against.",
           "title": "Schema Id"
         },
         "description": {
           "default": "",
+          "description": "One line on what the extension adds, so a reader that skips it can say what it skipped.",
           "title": "Description",
           "type": "string"
         }
@@ -425,6 +466,7 @@
       "description": "Which FHIR R4 resource an asset corresponds to.",
       "properties": {
         "resource_type": {
+          "description": "FHIR resource type this asset maps to, e.g. `Observation` or `ImagingSelection`.",
           "title": "Resource Type",
           "type": "string"
         },
@@ -438,10 +480,12 @@
             }
           ],
           "default": null,
+          "description": "Reference to the resource instance, when one exists outside the container.",
           "title": "Resource"
         },
         "note": {
           "default": "",
+          "description": "Why this mapping was chosen. Free text, for the reader who disagrees with it.",
           "title": "Note",
           "type": "string"
         }
@@ -457,21 +501,25 @@
       "description": "A coordinate system in which asset positions are expressed.",
       "properties": {
         "id": {
+          "description": "Stable identifier of the frame within this container.",
           "title": "Id",
           "type": "string"
         },
         "description": {
           "default": "",
+          "description": "Human-readable name of the frame. Free text, and never load-bearing.",
           "title": "Description",
           "type": "string"
         },
         "units": {
           "default": "mm",
+          "description": "Length unit of coordinates in this frame. Millimetres everywhere in this version.",
           "title": "Units",
           "type": "string"
         },
         "handedness": {
           "default": "right",
+          "description": "Handedness of the axes, `right` or `left`. A reader that ignores it renders a mirrored case that looks correct.",
           "title": "Handedness",
           "type": "string"
         },
@@ -484,7 +532,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Anatomical axis convention, such as `LPS` or `RAS`. `null` is NOT DECLARED, and is not the same as a device convention."
         },
         "dicom_frame_of_reference_uid": {
           "anyOf": [
@@ -496,6 +545,7 @@
             }
           ],
           "default": null,
+          "description": "DICOM Frame of Reference UID `(0020,0052)`. Read from the series, never invented: it is the only frame identifier that means the same thing outside this container.",
           "title": "Dicom Frame Of Reference Uid"
         }
       },
@@ -532,15 +582,18 @@
       "description": "One file inside an asset that is a directory, such as a DICOM slice.",
       "properties": {
         "name": {
+          "description": "Path of this file inside the directory asset. Names are ordering data for a DICOM series, so they are carried even though identity does not depend on them.",
           "title": "Name",
           "type": "string"
         },
         "sha256": {
+          "description": "SHA-256 over the whole file, lowercase hex. Proves these exact bytes.",
           "pattern": "^[0-9a-f]{64}$",
           "title": "Sha256",
           "type": "string"
         },
         "bytes": {
+          "description": "Size of the file in bytes.",
           "minimum": 0,
           "title": "Bytes",
           "type": "integer"
@@ -555,6 +608,7 @@
             }
           ],
           "default": null,
+          "description": "DICOM SOP Instance UID `(0008,0018)`. The identity DICOM itself defines, and what survives de-identification when UIDs are retained.",
           "title": "Sop Instance Uid"
         },
         "pixel_data_sha256": {
@@ -568,6 +622,7 @@
             }
           ],
           "default": null,
+          "description": "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the header. De-identification does not touch it, so it separates 'a different slice' from 'the same slice, cleaned'.",
           "title": "Pixel Data Sha256"
         }
       },
@@ -584,10 +639,12 @@
       "description": "What kind of 2D image an asset is, and which teeth it targets.",
       "properties": {
         "type": {
+          "description": "Projection geometry of a 2D image, e.g. `panoramic` or `bitewing`.",
           "title": "Type",
           "type": "string"
         },
         "fdi_targets": {
+          "description": "Teeth the projection is aimed at, in FDI/ISO-3950. An empty list is 'not declared', never 'no teeth'.",
           "items": {
             "type": "string"
           },
@@ -615,6 +672,7 @@
             }
           ],
           "default": null,
+          "description": "SHA-256 of the previous version's manifest. This is what makes the history a chain rather than a claim.",
           "title": "Prev Manifest Sha256"
         },
         "chain": {
@@ -627,6 +685,7 @@
             }
           ],
           "default": null,
+          "description": "Path to the append-only chain file. Present without `prev_manifest_sha256` means a history exists that this manifest does not point into.",
           "title": "Chain"
         }
       },
@@ -650,18 +709,22 @@
       "description": "A rigid transform taking points from one frame to another.",
       "properties": {
         "id": {
+          "description": "Stable identifier of this registration edge.",
           "title": "Id",
           "type": "string"
         },
         "source_frame": {
+          "description": "Id of the frame points are taken from.",
           "title": "Source Frame",
           "type": "string"
         },
         "target_frame": {
+          "description": "Id of the frame points are taken to.",
           "title": "Target Frame",
           "type": "string"
         },
         "transform_4x4_row_major": {
+          "description": "The rigid transform as sixteen numbers, row-major, millimetres. glTF expects column-major, so a reader targeting glTF MUST transpose.",
           "items": {
             "type": "number"
           },
@@ -671,6 +734,7 @@
           "type": "array"
         },
         "method": {
+          "description": "How the transform was obtained, e.g. `icp_surface` or `manual`.",
           "title": "Method",
           "type": "string"
         },
@@ -684,6 +748,7 @@
             }
           ],
           "default": null,
+          "description": "Root-mean-square residual of the fit, in millimetres. It is measured on the points that were fitted, so it is systematically optimistic.",
           "title": "Rms Error Mm"
         },
         "max_error_mm": {
@@ -696,6 +761,7 @@
             }
           ],
           "default": null,
+          "description": "Largest residual over the fitted points, in millimetres. An RMS hides a local failure that this exposes.",
           "title": "Max Error Mm"
         },
         "target_registration_error_mm": {
@@ -708,6 +774,7 @@
             }
           ],
           "default": null,
+          "description": "Registration error measured at points that did NOT take part in the fit, in millimetres. This is the error a clinical measurement across the seam actually inherits.",
           "title": "Target Registration Error Mm"
         },
         "tre_region": {
@@ -720,9 +787,11 @@
             }
           ],
           "default": null,
+          "description": "Where the target registration error was measured. A TRE without its region is not comparable with another.",
           "title": "Tre Region"
         },
         "fit_for": {
+          "description": "What this registration is accurate enough for, declared rather than inferred from the residual. An empty list is 'not assessed'.",
           "items": {
             "$ref": "#/$defs/RegistrationFitness"
           },
@@ -740,6 +809,7 @@
             }
           ],
           "default": null,
+          "description": "When the transform was computed, RFC 3339.",
           "title": "Computed"
         },
         "operator": {
@@ -752,6 +822,7 @@
             }
           ],
           "default": null,
+          "description": "Who or what produced the estimate. A machine here with an empty `verified_by` means provisional.",
           "title": "Operator"
         },
         "verified_by": {
@@ -764,6 +835,7 @@
             }
           ],
           "default": null,
+          "description": "Who checked it. `null` means nobody did, and a viewer MUST present the edge as provisional.",
           "title": "Verified By"
         },
         "regulatory": {
@@ -775,7 +847,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Regulatory layer of the transform itself, when it was produced by a model rather than fitted."
         }
       },
       "required": [
@@ -804,12 +877,14 @@
       "properties": {
         "layer": {
           "default": 1,
+          "description": "Regulatory layer of the content: 1 acquired or transcribed, 2 computed deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST live under `derived/`.",
           "maximum": 3,
           "minimum": 1,
           "title": "Layer",
           "type": "integer"
         },
         "clearances": {
+          "description": "What each regulator says about this asset. An empty list is 'nothing declared', not 'cleared everywhere'.",
           "items": {
             "$ref": "#/$defs/Clearance"
           },
@@ -825,6 +900,7 @@
       "description": "The patient, always by pseudonym.",
       "properties": {
         "pseudonym": {
+          "description": "The subject's pseudonym. Always a pseudonym: a direct identifier MUST NOT appear here.",
           "title": "Pseudonym",
           "type": "string"
         },
@@ -838,6 +914,7 @@
             }
           ],
           "default": null,
+          "description": "Reference to a FHIR `Patient` resource held elsewhere. A pointer, never the record.",
           "title": "Fhir Patient"
         },
         "consent": {
@@ -849,7 +926,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "What the subject consented to, and for which purposes."
         }
       },
       "required": [
@@ -863,6 +941,7 @@
       "description": "The program that applied the de-identification.",
       "properties": {
         "name": {
+          "description": "Name of the software that performed the operation.",
           "title": "Name",
           "type": "string"
         },
@@ -876,6 +955,7 @@
             }
           ],
           "default": null,
+          "description": "Its version string, as the tool reports it.",
           "title": "Version"
         },
         "sha256": {
@@ -888,6 +968,7 @@
             }
           ],
           "default": null,
+          "description": "Digest of the tool binary or image, when the writer can compute it.",
           "title": "Sha256"
         }
       },
@@ -901,15 +982,18 @@
       "additionalProperties": false,
       "properties": {
         "id": {
+          "description": "Stable identifier of the visit within this container.",
           "title": "Id",
           "type": "string"
         },
         "date": {
+          "description": "Date of the encounter. Shifted when `deidentification.date_shift_days` is set.",
           "title": "Date",
           "type": "string"
         },
         "label": {
           "default": "",
+          "description": "Human-readable name for the encounter. Free text.",
           "title": "Label",
           "type": "string"
         }
@@ -928,14 +1012,17 @@
   "properties": {
     "uos_version": {
       "default": "0.2",
+      "description": "Format version this container declares. A reader MUST check it before anything else.",
       "title": "Uos Version",
       "type": "string"
     },
     "case_id": {
+      "description": "Stable case identifier, conventionally `urn:uuid:<v5>`. It MUST NOT encode patient identity.",
       "title": "Case Id",
       "type": "string"
     },
     "created": {
+      "description": "When this manifest was written, RFC 3339 in UTC.",
       "format": "date-time",
       "title": "Created",
       "type": "string"
@@ -944,11 +1031,13 @@
       "additionalProperties": {
         "type": "string"
       },
+      "description": "Who wrote this container: name and version of the writer.",
       "title": "Generator",
       "type": "object"
     },
     "phi_state": {
-      "$ref": "#/$defs/PHIState"
+      "$ref": "#/$defs/PHIState",
+      "description": "What identifiable content the container carries. It is a statement about the whole container, and a reader decides what it may do with it from here."
     },
     "deidentification": {
       "anyOf": [
@@ -959,7 +1048,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "What de-identification was applied, to which assets, and with what tool. `null` means none was declared, which is not the same as none being needed."
     },
     "purpose_of_use": {
       "anyOf": [
@@ -970,15 +1060,19 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "What this container was assembled for. It bounds what a recipient may do with it, and is checked against the subject's consent."
     },
     "subject": {
-      "$ref": "#/$defs/Subject"
+      "$ref": "#/$defs/Subject",
+      "description": "The patient, always by pseudonym."
     },
     "canonical_frame": {
-      "$ref": "#/$defs/Frame"
+      "$ref": "#/$defs/Frame",
+      "description": "The frame every other frame must be reachable from. It is the geometric hub of the case."
     },
     "frames": {
+      "description": "Every coordinate frame named in the case, besides the canonical one.",
       "items": {
         "$ref": "#/$defs/Frame"
       },
@@ -986,6 +1080,7 @@
       "type": "array"
     },
     "visits": {
+      "description": "The temporal axis: one entry per clinical encounter.",
       "items": {
         "$ref": "#/$defs/Visit"
       },
@@ -993,6 +1088,7 @@
       "type": "array"
     },
     "assets": {
+      "description": "The data plane: every file the container carries or references. The manifest is exhaustive, so a reader never walks the ZIP to discover content.",
       "items": {
         "$ref": "#/$defs/Asset"
       },
@@ -1000,6 +1096,7 @@
       "type": "array"
     },
     "registrations": {
+      "description": "The relations: the transforms that place each frame with respect to another, each with its residual.",
       "items": {
         "$ref": "#/$defs/Registration"
       },
@@ -1015,12 +1112,14 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "How the two arches relate, for a case that has both. Silence is never 'there is none': a two-arch case MUST declare a registration or say why it cannot."
     },
     "fhir_map": {
       "additionalProperties": {
         "$ref": "#/$defs/FHIRResource"
       },
+      "description": "Which FHIR resource each asset maps to, so a clinical system can ingest the case without knowing this format.",
       "title": "Fhir Map",
       "type": "object"
     },
@@ -1028,10 +1127,12 @@
       "additionalProperties": {
         "$ref": "#/$defs/Extension"
       },
+      "description": "Extensions this container declares, by name.",
       "title": "Extensions",
       "type": "object"
     },
     "extensions_used": {
+      "description": "Names of extensions present. A reader that does not implement one still opens the case and can say what it left unread.",
       "items": {
         "type": "string"
       },
@@ -1039,6 +1140,7 @@
       "type": "array"
     },
     "extensions_required": {
+      "description": "Names of extensions a reader MUST implement to open the case correctly. Listing one here refuses readers, so it is for cases that would be misread otherwise.",
       "items": {
         "type": "string"
       },
@@ -1046,7 +1148,8 @@
       "type": "array"
     },
     "provenance": {
-      "$ref": "#/$defs/Provenance"
+      "$ref": "#/$defs/Provenance",
+      "description": "The link to the previous version of this case, and to the chain that records every version."
     }
   },
   "required": [
