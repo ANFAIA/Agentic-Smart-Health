@@ -1005,9 +1005,9 @@ def _comentarios_color(params: dict) -> list[str]:
     piezas = int(np.asarray(params.get("n_piezas_con_tono", 0)).reshape(-1)[0] or 0)
     if int(np.asarray(params.get("color_reutilizado", 0)).reshape(-1)[0] or 0):
         return [
-            "comment f_dc_* = color REUTILIZADO de otra corrida del mismo caso (su",
-            "comment scan_colored.ply), para comparar experimentos con identico color de",
-            "comment entrada. La procedencia del color la declara la corrida origen.",
+            "comment f_dc_* = colour REUSED from another run of the same case (its",
+            "comment scan_colored.ply), to compare experiments with identical input",
+            "comment colour. The provenance of the colour is declared by the source run.",
         ]
     # ⚠️ **Dos mecanismos distintos no caben en un contador.** Antes esta cabecera
     # atribuia TODO a la proyeccion por vertice con PnP; con el color por pieza mandando,
@@ -1015,32 +1015,32 @@ def _comentarios_color(params: dict) -> list[str]:
     # declaraba eran los del camino viejo, que la pieza habia sobrescrito.
     if n and pieza:
         return [
-            f"comment f_dc_* = color MEDIDO POR PIEZA: {piezas} corona(s) con su",
-            "comment mediana de pixeles por tercio (cervical, medio, incisal) tomada de la",
-            "comment foto que mejor ve cada una, mas la encia medida aparte. NO hace falta",
-            "comment pose: la foto se parte en coronas y se alinea con el arco.",
-            f"comment {pieza} de {n} vertices reciben color de SU pieza. De los "
+            f"comment f_dc_* = colour MEASURED PER TOOTH: {piezas} crown(s), each the median",
+            "comment of its pixels per third (cervical, middle, incisal) taken from the",
+            "comment photograph that sees it best, plus the gingiva measured apart. No pose",
+            "comment needed: the photograph is split by crown and aligned to the arch.",
+            f"comment {pieza} of {n} vertices take colour from THEIR own tooth. Of the "
             f"{n - pieza} restantes,",
-            f"comment {med} llevan pixel proyectado, {interp} lo heredan del medido mas "
+            f"comment {med} carry a projected pixel, {interp} inherit it from the nearest "
             f"cercano y {n - pieza - med - interp}",
-            "comment se pintan con el degradado de respaldo, que NO es color del paciente.",
-            "comment NO es measured=true: el optimizador movio, dividio y podo las",
-            "comment gaussianas, asi que no hay correspondencia 1:1 con lo proyectado",
+            "comment measured one, and the rest use the fallback gradient, which is NOT the patient's colour.",
+            "comment NOT measured=true: the optimiser moved, split and pruned the",
+            "comment Gaussians, so there is no 1:1 correspondence with what was projected",
         ]
     if n and med:
         return [
-            "comment f_dc_* = color MEDIDO: el pixel que una foto intraoral ve en cada",
-            "comment vertice, con la pose resuelta por PnP sobre correspondencias por",
-            f"comment diente. {med} de {n} vertices medidos, {interp} interpolados del",
-            "comment medido mas cercano y el resto con el degradado de respaldo.",
-            "comment NO es measured=true: el optimizador movio, dividio y podo las",
-            "comment gaussianas, asi que no hay correspondencia 1:1 con lo proyectado",
+            "comment f_dc_* = colour MEASURED: the pixel an intraoral photograph sees at each",
+            "comment vertex, with the pose solved by PnP over per-tooth",
+            f"comment correspondences. {med} of {n} vertices measured, {interp} interpolated",
+            "comment from the nearest measured one, the rest with the fallback gradient.",
+            "comment NOT measured=true: the optimiser moved, split and pruned the",
+            "comment Gaussians, so there is no 1:1 correspondence with what was projected",
         ]
     return [
-        "comment f_dc_* = DOS tonos muestreados de las fotos (mediana de esmalte y de",
-        "comment encia). NO es color medido por vertice. El limite entre los dos sale",
-        "comment de la segmentacion FDI (Layer 3, ver derived/) si viaja, y si no de un",
-        "comment percentil de altura, que es un apano y no una medida",
+        "comment f_dc_* = TWO tones sampled from the photographs (median enamel and median",
+        "comment gingiva). NOT per-vertex measured colour. The boundary between them comes",
+        "comment from the FDI segmentation (layer 3, see derived/) when it travels, and",
+        "comment otherwise from a height percentile, which is a stopgap and not a measure",
     ]
 
 
@@ -1214,52 +1214,51 @@ def escribe_inria(
     cabecera = [
         "ply",
         "format binary_little_endian 1.0",
-        f"comment generado por gaussian-engine@{perfil}",
+        f"comment written by gaussian-engine@{perfil}",
         f"comment acquisition_id {acquisition_id}",
-        "comment perfil INRIA 3DGS grado 0 - APARIENCIA, no medida",
-        "comment las gaussianas NO son los vertices del escaner: el optimizador las",
-        "comment movio, dividio y podo. No hay correspondencia 1:1 con lo medido.",
+        "comment INRIA 3DGS degree-0 profile - APPEARANCE, not measured",
+        "comment the Gaussians are NOT the scanner vertices: the optimiser moved, split",
+        "comment and pruned them. No 1:1 correspondence with what was measured.",
         # ⚠ NO es el color del paciente, y decirlo asi era el fallo. De las fotos salen
         # exactamente DOS numeros —la mediana de los pixeles claros-calidos y la de los
         # rosados— y la malla se pinta interpolandolos por altura z antes de renderizar.
         # El 3DGS aprende ESO. Ademas ese degradado afirma el margen gingival por percentil
         # de altura, que es justo la frontera que este proyecto tiene medido que no sabe.
         *_comentarios_color(params),
-        *(("comment nx,ny,nz = normal del vertice de malla MAS CERCANO (antes iban a cero",
-           "comment por convencion INRIA). De ahi sale el relieve de abajo.",
-           "comment f_rest_* = SH grado 1 CALCULADO, no entrenado: vale exactamente",
-           f"comment {abs(FUERZA_RELIEVE)}*albedo*(n' . v) con n' la normal girada",
-           f"comment {RASANTE_GRADOS:.0f} grados sobre el eje superior mas un relleno",
-           "comment opuesto: es el mismo rig direccional que iluminaba los renders, que",
-           "comment cabe entero en el grado 1 porque es lineal en la direccion de vista.",
-           "comment Es un realce de forma que este emisor anade;",
-           "comment para que la pieza se lea con volumen. NO es medida y NO toca el color:",
-           "comment f_dc sigue siendo el albedo. Leyendo solo el grado 0 se recupera el",
-           "comment color medido sin nada horneado.")
+        *(("comment nx,ny,nz = normal of the NEAREST mesh vertex (these used to be zero by",
+           "comment INRIA convention). The relief below is derived from them.",
+           "comment f_rest_* = degree-1 SH COMPUTED, not trained: it equals exactly",
+           f"comment {abs(FUERZA_RELIEVE)}*albedo*(n' . v) with n' the normal rotated",
+           f"comment {RASANTE_GRADOS:.0f} degrees about the up axis plus an opposite fill:",
+           "comment it is the same directional rig that lit the renders, and it fits",
+           "comment entirely in degree 1 because it is linear in the view direction.",
+           "comment It is a shape cue this writer adds so the tooth reads with volume.",
+           "comment NOT measured, and it does NOT touch the colour: f_dc is still the",
+           "comment albedo. Reading degree 0 alone recovers the measured colour unbaked.")
           if sh1 is not None else
-          ("comment f_rest_* van a cero: sin malla no hay normales con que calcular el",
-           "comment relieve, asi que el grado 1 es nulo y la escena se dibuja plana.",)),
-        *(("comment ao = oclusion ambiental CALCULADA por el emisor: fraccion de vecinos",
-           f"comment a menos de {RADIO_OCLUSION_MM:.0f} mm que caen por delante del plano",
-           "comment tangente, o sea cuanto se tapa el punto a si mismo. Es un factor de",
-           "comment VISUALIZACION en [0,1] que quien dibuja multiplica por el color; NO",
-           "comment esta metido en f_dc_* a proposito, porque una lectura de tono no debe",
-           "comment oscurecerse porque la pieza tenga una fisura al lado.")
+          ("comment f_rest_* are zero: with no mesh there are no normals to compute the",
+           "comment relief from, so degree 1 is null and the scene draws flat.",)),
+        *(("comment ao = ambient occlusion COMPUTED by the writer: fraction of neighbours",
+           f"comment within {RADIO_OCLUSION_MM:.0f} mm that fall in front of the tangent",
+           "comment plane, that is, how much the point occludes itself. A DISPLAY factor in",
+           "comment [0,1] that the renderer multiplies into the colour; deliberately NOT",
+           "comment folded into f_dc_*, because a shade reading must not darken just",
+           "comment because the tooth has a fissure beside it.")
           if ao is not None else
-          ("comment ao va a 1: sin malla no hay con que calcular la oclusion, y 1 es no",
-           "comment oscurecer. Cero afirmaria que todo esta tapado.")),
-        "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
-        "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
-        "comment rot es cuaternion (w,x,y,z) normalizado",
-        f"comment entrenado contra {n_vistas} renders EEVEE, {iteraciones} iteraciones",
+          ("comment ao is 1: with no mesh there is nothing to compute occlusion from, and 1",
+           "comment means do not darken. Zero would assert that everything is occluded.")),
+        "comment opacity = display opacity (logit), NOT radiological attenuation",
+        "comment scale is logarithmic (INRIA convention), NOT linear mm",
+        "comment rot is a normalised quaternion (w,x,y,z)",
+        f"comment trained against {n_vistas} EEVEE renders, {iteraciones} iterations",
         # ⚠ Las unidades van EN EL FICHERO. Es lo que permite que el descriptor del
         # contenedor las lea en vez de afirmarlas: si algun dia alguien vuelve a escribir
         # sin des-normalizar, el `.gs.json` dira `normalizado` y no `mm`.
-        f"comment unidades {unidades}",
+        f"comment units {unidades}",
         f"element vertex {n}",
         *(f"property float {p}" for p in PROPIEDADES_INRIA),
-        *(["comment region_id es el codigo FDI de la corona MAS CERCANA, no una etiqueta",
-           "comment aprendida: el optimizador no conserva correspondencia con los vertices",
+        *(["comment region_id is the FDI code of the NEAREST crown, not a learned label:",
+           "comment the optimiser preserves no correspondence with the vertices",
            "property short region_id"] if reg is not None else []),
         "end_header",
     ]

@@ -138,10 +138,13 @@ def test_el_ply_no_se_disfraza_de_splat_de_inria(ingerido) -> None:
 
     cabecera = destino.read_bytes().split(b"end_header")[0].decode("ascii")
     assert "property float density" in cabecera
+    # Sobre la DECLARACION de propiedades, no sobre el texto: los `comment` nombran
+    # `opacity` justamente para decir que `density` no lo es.
+    declaradas = {l.split()[-1] for l in cabecera.splitlines() if l.startswith("property ")}
     for inventado in ("opacity", "f_dc_0", "f_rest_0", "red", "green", "blue"):
-        assert inventado not in cabecera, f"el PLY declara `{inventado}`, que el CBCT no mide"
+        assert inventado not in declaradas, f"el PLY declara `{inventado}`, que el CBCT no mide"
     # Y dice qué es `density`, para que nadie la lea como transparencia.
-    assert "Beer-Lambert" in cabecera and "NO opacidad" in cabecera
+    assert "Beer-Lambert" in cabecera and "NOT opacity" in cabecera
 
 
 def test_la_cabecera_lleva_lo_que_hace_falta_para_invertir(ingerido) -> None:
@@ -177,7 +180,7 @@ def test_las_etiquetas_de_diente_sobreviven_al_fichero(ingerido) -> None:
 
     cabecera = destino.read_bytes().split(b"end_header")[0].decode("ascii")
     assert "property short region_id" in cabecera
-    assert "codigo FDI" in cabecera and "2 diente(s)" in cabecera
+    assert "FDI code" in cabecera and "2 tooth/teeth" in cabecera
     assert np.array_equal(lee_ply(destino)["region_id"], region)
 
 
@@ -264,4 +267,4 @@ def test_un_twin_parcial_llega_marcado_al_fichero(ingerido) -> None:
     assert salida.ok, "un twin parcial se exporta; lo que no se hace es callarlo"
     assert salida.hitl_required
     assert any("image" in m for m in salida.hitl_reasons)
-    assert b"PARCIAL" in destino.read_bytes().split(b"end_header")[0]
+    assert b"PARTIAL" in destino.read_bytes().split(b"end_header")[0]

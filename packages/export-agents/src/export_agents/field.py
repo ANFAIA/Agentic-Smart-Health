@@ -345,16 +345,16 @@ def escribe_inria(
     cabecera = [
         "ply",
         "format binary_little_endian 1.0",
-        f"comment generado por gaussian-engine@{perfil}",
+        f"comment written by gaussian-engine@{perfil}",
         f"comment acquisition_id {acquisition_id}",
-        "comment perfil INRIA 3DGS grado 0 — APARIENCIA, no medida",
-        "comment las gaussianas NO son los vertices del escaner: el optimizador las",
-        "comment movio, divodio y podo. No hay correspondencia 1:1 con lo medido.",
-        "comment f_dc_* = color RGB real del paciente (coeficiente DC de SH)",
-        "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
-        "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
-        "comment rot es cuaternion (w,x,y,z) normalizado",
-        f"comment entrenado contra {n_vistas} renders EEVEE, {iteraciones} iteraciones",
+        "comment INRIA 3DGS degree-0 profile - APPEARANCE, not measured",
+        "comment the Gaussians are NOT the scanner vertices: the optimiser moved,",
+        "comment split and pruned them. No 1:1 correspondence with what was measured.",
+        "comment f_dc_* = the patient's real RGB colour (SH DC coefficient)",
+        "comment opacity = display opacity (logit), NOT radiological attenuation",
+        "comment scale is logarithmic (INRIA convention), NOT linear mm",
+        "comment rot is a normalised quaternion (w,x,y,z)",
+        f"comment trained against {n_vistas} EEVEE renders, {iteraciones} iterations",
         f"element vertex {n}",
         *(f"property float {p}" for p in PROPIEDADES_INRIA),
         "end_header",
@@ -440,11 +440,11 @@ class FieldExportAgent(BaseExportAgent):
 
         centers = np.asarray(arrays["centers"], dtype=np.float64)
         comentarios = [
-            f"generado por {self.qualified}",
+            f"written by {self.qualified}",
             f"acquisition_id {snapshot.acquisition_id}",
             f"frame {marco}",
-            "density es sigma_n normalizada en [0,1] (atenuacion Beer-Lambert), NO opacidad",
-            "scale en mm; rot es cuaternion (w,x,y,z)",
+            "density is normalised sigma_n in [0,1] (Beer-Lambert attenuation), NOT opacity",
+            "scale in mm; rot is a quaternion (w,x,y,z)",
         ]
 
         if marco == "cbct":
@@ -464,14 +464,14 @@ class FieldExportAgent(BaseExportAgent):
             comentarios.append(
                 "origin_mm " + " ".join(repr(float(v)) for v in origin)
             )
-            comentarios.append("coordenadas en mm del DICOM (centers + origin)")
+            comentarios.append("coordinates in DICOM mm (centers + origin)")
         else:
-            comentarios.append("coordenadas centradas en el origen; suma `origin` para el CBCT")
+            comentarios.append("coordinates centred on the origin; add `origin` for the CBCT")
 
         if "hu_range" in arrays:
             bajo, alto = np.asarray(arrays["hu_range"], dtype=np.float64)
             comentarios.append(
-                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(alto-bajo)+bajo)"
+                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(high-low)+low)"
             )
 
         escalas = np.asarray(arrays["scales"], dtype=np.float32)
@@ -493,13 +493,13 @@ class FieldExportAgent(BaseExportAgent):
             columnas["region_id"] = region
             dientes = np.unique(region[region > 0])
             comentarios.append(
-                f"region_id es el codigo FDI por gaussiana, 0 = sin asignar "
-                f"({len(dientes)} diente(s) etiquetado(s))"
+                f"region_id is the per-Gaussian FDI code, 0 = unassigned "
+                f"({len(dientes)} tooth/teeth labelled)"
             )
 
         motivos = self._partial_reasons(snapshot)
         if motivos:
-            comentarios.append("PARCIAL: este twin requiere revision humana")
+            comentarios.append("PARTIAL: this twin needs human review")
         escribe_ply(destination, columnas, comentarios=comentarios)
 
         desviacion = self._verify(destination, centers) if self.verify else None
