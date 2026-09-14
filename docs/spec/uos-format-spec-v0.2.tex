@@ -366,12 +366,12 @@ content at them; a reader \MAY{} rely on their meaning.
 \code{scene/} & --- & Mesh scene, Gaussian layers, their descriptors (\S\ref{sec:scenes})\\
 \code{scene/scene.glb} & by convention & The glTF binary scene\\
 \code{scene/*.gs.json} & --- & Gaussian layer descriptors, extension
-\code{ash\_gs\_measured}\\
+\code{histora\_gs\_measured}\\
 \code{volume/<id>.volume.json} & --- & The volume sidecar --- dimensions, spacing,
 orientation, encoding (\S\ref{sec:volume}). The DICOM series it describes is referenced,
 not carried, so this file is normally the only thing under \code{volume/}\\
 \code{clinical/observations.json} & --- & Per-tooth clinical layer, extension
-\code{ash\_clinical} (\S\ref{sec:clinical})\\
+\code{histora\_clinical} (\S\ref{sec:clinical})\\
 \code{derived/} & --- & \textbf{Everything} produced by inference (\S\ref{sec:derived})\\
 \code{views.json} & --- & Stored presentation states (\S\ref{sec:views})\\
 \code{provenance/chain.json} & --- & Version chain (\S\ref{sec:provenance})\\
@@ -584,7 +584,7 @@ container, so ``the DICOM that comes out is byte-identical to the one that went 
 claim this format does not make about a file it does not hold. What it does hold is enough
 to make two weaker, useful claims: \textbf{identity} --- whoever has the file can prove it
 is the one this case was built from, slice by slice (\S\ref{sec:dirasset}) --- and
-\textbf{reconstruction}: the \code{ash\_reversible} extension regenerates an arch mesh from
+\textbf{reconstruction}: the \code{histora\_reversible} extension regenerates an arch mesh from
 the scene itself (\S\ref{sec:extensions}). Reversibility here means producing the mesh
 again from what travels, not handing back the file that was ingested. And what comes back is not the file that went in: the regenerated mesh carries per-vertex
 colour sampled from the patient's own photographs and an FDI code per vertex, neither of
@@ -1045,7 +1045,7 @@ De-facto 3DGS knows only the second kind, and its column names --- \code{density
 \code{scale}, \code{opacity} --- carry that meaning by default. Reading a measured layer
 with those assumptions produces an image that looks right and means nothing. That is why
 every layer travels with a descriptor stating which kind it is (\S\ref{sec:gsjson}), and
-why \code{ash\_gs\_measured} exists at all: it is the part of this format the base draft
+why \code{histora\_gs\_measured} exists at all: it is the part of this format the base draft
 has no vocabulary for.
 
 \paragraph{And what \code{mesh\_gs\_scene} means.} It is the asset \code{kind}
@@ -1297,13 +1297,13 @@ without the extension draws the appearance layer as an uncoloured point cloud. W
 \SHOULD{} emit it; this is expected to become a \MUST{} in v1.0.
 
 \paragraph{Extent.} Splats assume a $3\sigma$ cut-off (Mahalanobis distance 3). This is the
-same convention the \code{ash\_reversible} extension uses when sampling colour per vertex,
+same convention the \code{histora\_reversible} extension uses when sampling colour per vertex,
 and it is cited rather than redefined.
 
 \paragraph{Underscore attributes.} \code{\_AO} and \code{\_REGION\_ID} use the underscore
 prefix glTF reserves for what its specification does not define. A conformant viewer
 ignores them and draws correctly; the UOS viewer uses them for shading and for tooth
-selection. That they are non-standard is precisely why the \code{ash\_gs\_measured}
+selection. That they are non-standard is precisely why the \code{histora\_gs\_measured}
 descriptor still exists.
 
 \paragraph{Normative: unit conversions happen \emph{before} this primitive.}
@@ -1339,7 +1339,7 @@ de-facto 3DGS and \emph{mean something else}.
 
 \subsection{The \code{.gs.json} layer descriptor}\label{sec:gsjson}
 
-Declared by extension \code{ash\_gs\_measured}. One descriptor per Gaussian layer,
+Declared by extension \code{histora\_gs\_measured}. One descriptor per Gaussian layer,
 column by column.
 
 \begin{longtable}{L{3.0cm} L{2.2cm} L{9.8cm}}
@@ -1554,7 +1554,7 @@ part of the renderable scene.
 % =============================================================================
 \section{The clinical layer}\label{sec:clinical}
 
-\code{clinical/observations.json}, declared by extension \code{ash\_clinical}.
+\code{clinical/observations.json}, declared by extension \code{histora\_clinical}.
 
 \paragraph{Why it exists.} v0.2 gives per-tooth clinical attributes no place: the FHIR
 mapping (\S\ref{sec:fhir}) sends them to an \code{Observation} on an external server. The practical consequence is
@@ -1827,11 +1827,6 @@ rest as present and unverified, exactly as today. This is \MUST{} for v1.0.
 Every extension this specification defines is named \code{histora\_}. It is the
 \textbf{single} reserved prefix: a writer \MUSTNOT{} coin a second one under this format's
 name, and an implementer adding their own extension \MUST{} use a prefix of their own.
-Earlier drafts used \code{ash\_}, which was the summer-grant project's prefix rather than
-anything anybody held --- the specification told writers not to squat on it without saying
-who owned it, which is not a rule that can be followed. It is renamed, not aliased: the
-format is unpublished, no second implementer has written against it, and the cost of this
-change is the lowest it will ever be.
 
 UOS builds on glTF, which has had \code{extensionsUsed} / \code{extensionsRequired} since
 glTF 1.0 and carries them unchanged into 2.0: a reader opens the file, sees which extensions it carries, and
@@ -1842,7 +1837,7 @@ ignored them without noticing that it was ignoring them}. That turns an open for
 one only its author reads completely --- exactly what UOS exists to avoid.
 
 \paragraph{And that gap is what the rest of this section closes.} With the mechanism
-below, a reader that does not implement \code{ash\_clinical} still opens the case, still
+below, a reader that does not implement \code{histora\_clinical} still opens the case, still
 renders it, and can say precisely what it left unread. Being open was never the problem;
 being silent about what a reader was missing was.
 
@@ -1884,14 +1879,14 @@ empty, deliberately.
 \textbf{Name} & \textbf{Version} & \textbf{What it adds}\\
 \midrule
 \endhead
-\code{ash\_clinical} & 1.0 & Per-tooth clinical attributes (pH, roots, canals, findings,
+\code{histora\_clinical} & 1.0 & Per-tooth clinical attributes (pH, roots, canals, findings,
 measured colour) with per-value extraction provenance. \S\ref{sec:clinical}. Carried at
 \code{clinical/observations.json}.\\
-\code{ash\_gs\_measured} & 1.0 & The \code{.gs.json} descriptor per Gaussian layer:
+\code{histora\_gs\_measured} & 1.0 & The \code{.gs.json} descriptor per Gaussian layer:
 whether it is \emph{measured} or reconstructed, and the schema of its columns.
 \S\ref{sec:gsjson}. The base format treats 3DGS as appearance in a reconstruction frame;
 here there are fields fitted to CBCT density, in the patient frame, with error in the field's own unit. \textbf{Not in HU}: a CBCT is not calibrated in Hounsfield units (\S\ref{sec:volume}).\\
-\code{ash\_reversible} & 1.0 & Declares that an arch mesh with per-vertex colour, FDI code
+\code{histora\_reversible} & 1.0 & Declares that an arch mesh with per-vertex colour, FDI code
 and a \code{measured} column can be \emph{regenerated} from \code{asset.scene}: geometry
 and FDI from the mesh primitives (\code{extras.uos\_fdi}), colour from the
 \code{KHR\_gaussian\_splatting} primitive, taking Gaussians that cover each vertex within
@@ -1902,7 +1897,7 @@ $3\sigma$ and weighting by alpha. \textbf{The mesh does not travel: it is recons
 \subsection{Defining your own}
 
 \begin{enumerate}
-  \item Pick a prefixed name (\code{<vendor>\_<thing>}); do not squat on \code{ash\_} or
+  \item Pick a prefixed name (\code{<vendor>\_<thing>}); do not squat on \code{histora\_} or
   \code{KHR\_}.
   \item Put its payload at a path of your own, declared as an asset like any other, with
   its hash. Extension payloads are not exempt from verification.
@@ -2217,7 +2212,7 @@ pseudonym exists to prevent.
 
 \subsection{Regenerate the improved mesh}\label{rec:reversible}
 
-This is what \code{ash\_reversible} declares, and the practical answer to ``why keep the
+This is what \code{histora\_reversible} declares, and the practical answer to ``why keep the
 container if I already have the STL''. What comes back is not the file that went in: it is
 that geometry with a per-vertex colour measured from the patient's own photographs and a
 per-vertex FDI code, neither of which the ingested STL ever had.
@@ -2383,7 +2378,7 @@ discovering the change when their reader breaks. The warning is also the written
   \item The manifest schema: \code{uos-manifest-<version>.schema.json}, whose \code{\$id}
   is pinned to a release tag so the identifier always names the same document
   (\S\ref{sec:artifacts}). A published tag \MUSTNOT{} be moved; a correction is a new one.
-  \item Extensions, independently. \code{ash\_clinical} at 1.0 does not become 1.1 because
+  \item Extensions, independently. \code{histora\_clinical} at 1.0 does not become 1.1 because
   UOS did (\S\ref{sec:extensions}).
   \item This document, whose version is on its title page.
 \end{itemize}
