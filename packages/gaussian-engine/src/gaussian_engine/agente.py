@@ -48,22 +48,22 @@ def esquema(rmse: float) -> list[ColumnaCampo]:
     sabe de qué equipo salió.
     """
     forma = (
-        f"semieje del elipsoide en mm — AJUSTADO para reconstruir la densidad "
-        f"(±{rmse:.4f} en sigma normalizada; NO es HU: un CBCT no esta calibrado en "
-        f"unidades Hounsfield), NO medido sobre el tejido"
+        f"ellipsoid semi-axis in mm — FITTED to reconstruct the density "
+        f"(±{rmse:.4f} in normalised sigma; NOT HU: a CBCT is not calibrated in "
+        f"Hounsfield units), NOT measured on the tissue"
     )
     return [
-        *(ColumnaCampo(nombre=n, unidad="mm", significado="centro de la gaussiana")
+        *(ColumnaCampo(nombre=n, unidad="mm", significado="Gaussian centre")
           for n in ("x", "y", "z")),
         *(ColumnaCampo(nombre=f"scale_{i}", unidad="mm", significado=forma)
           for i in range(3)),
         *(ColumnaCampo(
             nombre=f"rot_{i}", unidad="",
-            significado="cuaternion (w, x, y, z) normalizado — orientacion del elipsoide",
+            significado="normalised quaternion (w, x, y, z) — ellipsoid orientation",
         ) for i in range(4)),
         ColumnaCampo(
             nombre="density", unidad="normalised_sigma",
-            significado="amplitud de la gaussiana; sumada con sus vecinas da la densidad",
+            significado="Gaussian amplitude; summed with its neighbours it gives the density",
         ),
     ]
 

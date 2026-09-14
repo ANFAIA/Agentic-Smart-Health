@@ -391,14 +391,14 @@ class UOSExportAgent(BaseExportAgent):
         )
         for ruta, id_, papel, medido, marco, nota in (
             (campo, "asset.field", "twin density field", True, FRAME_CBCT,
-             "densidad MEDIDA por el CBCT: `density` es sigma normalizada, no opacidad, y "
-             "las escalas van en milimetros lineales, NO en logaritmo"),
+             "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and "
+             "scales are in linear millimetres, NOT logarithms"),
             (compuesto, "asset.composite", "CBCT + scanner composite", True, FRAME_CBCT,
-             "dos modalidades en un fichero, con una columna `origen` por gaussiana. La "
-             "encia lleva `density = 0` porque el escaner no mide atenuacion"),
+             "two modalities in one file, with a per-Gaussian `origen` column. Gingiva "
+             "carries `density = 0` because the scanner does not measure attenuation"),
             (escena_gs, "asset.gs", "scanner appearance", False, FRAME_IOS,
-             "reconstruida entrenando 3DGS contra renders de la malla, NO medida. Su "
-             "color y su opacidad son del modelo, no del paciente"),
+             "reconstructed by training 3DGS against renders of the mesh, NOT measured. Its "
+             "colour and opacity are the model's, not the patient's"),
         ):
             if ruta is None or not ruta.exists():
                 continue
@@ -430,7 +430,7 @@ class UOSExportAgent(BaseExportAgent):
                 extras_escena[meta_seg] = json_de(
                     meta_segmentacion(
                         etq_gs, asset_origen=id_, modelo="segmentation-agent",
-                        version=None, unidad="gaussiana",
+                        version=None, unidad="gaussian",
                     )
                 )
                 # ⚠️ **Y se DECLARAN como assets.** Viajaban solo en `extras_escena`, o

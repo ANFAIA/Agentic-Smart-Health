@@ -109,29 +109,29 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
 # nuestros milímetros y renderizaría basura con buen aspecto. Por eso el snapshot declara
 # además `perfil_campo`, para que un lector pueda negarse en vez de adivinar.
 ESQUEMA_COLUMNAS: dict[str, dict] = {
-    "x": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "y": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "z": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "scale_0": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "scale_1": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "scale_2": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "rot_0": {"significado": "cuaternion (w, x, y, z) normalizado — componente w"},
-    "rot_1": {"significado": "cuaternion (w, x, y, z) normalizado — componente x"},
-    "rot_2": {"significado": "cuaternion (w, x, y, z) normalizado — componente y"},
-    "rot_3": {"significado": "cuaternion (w, x, y, z) normalizado — componente z"},
+    "x": {"unidad": "mm", "significado": "Gaussian centre"},
+    "y": {"unidad": "mm", "significado": "Gaussian centre"},
+    "z": {"unidad": "mm", "significado": "Gaussian centre"},
+    "scale_0": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "scale_1": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "scale_2": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "rot_0": {"significado": "normalised quaternion (w, x, y, z) — w component"},
+    "rot_1": {"significado": "normalised quaternion (w, x, y, z) — x component"},
+    "rot_2": {"significado": "normalised quaternion (w, x, y, z) — y component"},
+    "rot_3": {"significado": "normalised quaternion (w, x, y, z) — z component"},
     "density": {
         "unidad": "normalised_sigma",
-        "significado": "atenuacion Beer-Lambert en [0,1] sobre `hu_range`. NO es opacidad",
+        "significado": "Beer-Lambert attenuation in [0,1] over `hu_range`. NOT opacity",
     },
     "region_id": {
-        "significado": "diente al que pertenece la gaussiana; 0 = sin asignar",
+        "significado": "tooth the Gaussian belongs to; 0 = unassigned",
         "vocabulario": "ISO-3950",
         "medido": False,
         "derivado_de": "segmentation-agent",
     },
     "origen": {
-        "significado": "modalidad de la que viene: 0 = CBCT (densidad medida), "
-        "1 = escaner intraoral (forma medida)",
+        "significado": "modality it comes from: 0 = CBCT (measured density), "
+        "1 = intraoral scanner (measured shape)",
         "medido": False,
         "derivado_de": "composite-export-agent",
     },
