@@ -1,6 +1,6 @@
 """`clinical/observations.json`: lo que el contenedor dice de cada pieza.
 
-Ver `uos.clinico`. Es EXTENSION nuestra: el spec v0.2 no da sitio a atributos clínicos
+Ver `uos.clinico`. Es EXTENSION nuestra: el spec v0.3 no da sitio a atributos clínicos
 por diente y los manda a un servidor FHIR externo, que es justo lo que impide que un
 `.uos` suelto responda «qué dice el informe del 24».
 """

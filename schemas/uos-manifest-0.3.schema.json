@@ -1063,7 +1063,7 @@
   "description": "The manifest of a Unified Oral Scene container. Derived from the reference implementation's contract rather than written by hand: a schema copied by hand diverges from the code at the first field somebody adds.",
   "properties": {
     "uos_version": {
-      "default": "0.2",
+      "default": "0.3",
       "description": "Format version this container declares. A reader MUST check it before anything else.",
       "title": "Uos Version",
       "type": "string"
@@ -1211,8 +1211,8 @@
     "subject",
     "canonical_frame"
   ],
-  "title": "UOS manifest v0.2",
+  "title": "UOS manifest v0.3",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json"
+  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-manifest-0.3.schema.json"
 }

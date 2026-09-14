@@ -1558,7 +1558,7 @@ def test_cada_codigo_del_validador_existe_en_la_tabla_del_algoritmo():
         and n.func.attr in ("error", "warn") and n.args
         and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)
     }
-    tex = (raiz / "docs/spec/uos-format-spec-v0.2.tex").read_text(encoding="utf-8")
+    tex = (raiz / "docs/spec/uos-format-spec-v0.3.tex").read_text(encoding="utf-8")
     ini = tex.index(r"\textbf{\#} & \textbf{Cls} & \textbf{Check}")
     listados = set(re.findall(r"^(\d+[a-z]?) & [EW/-]+ &", tex[ini:tex.index(r"\end{longtable}", ini)],
                               re.M))

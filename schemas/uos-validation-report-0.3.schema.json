@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ANFAIA/Agentic-Smart-Health/blob/uos-0.2/schemas/uos-validation-report-0.2.schema.json",
+  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-validation-report-0.3.schema.json",
   "title": "UOS validation report 0.2",
   "description": "What a UOS validator reports, in a shape a program can act on. The message is written for whoever is debugging and may change between versions; the code is the contract.",
   "type": "object",

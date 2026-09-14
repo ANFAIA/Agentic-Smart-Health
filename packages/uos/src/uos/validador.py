@@ -125,7 +125,7 @@ class Report:
         cualquier automatismo a hacer expresiones regulares sobre frases que cambian.
         """
         return {
-            "uos_validation_report": "0.2",
+            "uos_validation_report": "0.3",
             "valid": self.valid,
             "findings": [f.as_dict() for f in (*self.errors, *self.warnings)],
             "levels": [str(n) for n in self.levels],

@@ -301,7 +301,7 @@ the whole case with **the relations between its parts declared**. The rule that 
 up is that **the measured and the inferred do not mix**: inference lives only under
 `derived/`, and a `.uos` with no `derived/` is still valid and complete. Schema in
 [`schemas/`](schemas/), format in
-[`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex).
+[`docs/spec/uos-format-spec-v0.3.tex`](docs/spec/uos-format-spec-v0.3.tex).
 
 ### `fusion-agents`
 
@@ -452,7 +452,7 @@ Technical documentation aimed at developers and contributors stays in this READM
 | Document | Answers |
 |---|---|
 | [`docs/cierre-mvp.md`](docs/cierre-mvp.md) | what is measured, what is unresolved and what is left for later |
-| [`docs/spec/uos-format-spec-v0.2.tex`](docs/spec/uos-format-spec-v0.2.tex) | the format specification: what a `.uos` carries, how it is read, how it is extended |
+| [`docs/spec/uos-format-spec-v0.3.tex`](docs/spec/uos-format-spec-v0.3.tex) | the format specification: what a `.uos` carries, how it is read, how it is extended |
 | [`docs/spec/uos-white-paper.tex`](docs/spec/uos-white-paper.tex) | why a new format is needed, which hypotheses were tested and with what results |
 | [`docs/research/segmentacion-fdi-escaner.md`](docs/research/segmentacion-fdi-escaner.md) | why FDI segmentation is not solved, with the measurement |
 | [`docs/architecture/branching-and-release-workflow.md`](docs/architecture/branching-and-release-workflow.md) | how `develop`, `main`, pull requests, tags and releases are used |

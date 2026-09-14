@@ -1,6 +1,6 @@
 """`clinical/observations.json` — lo que el informe dice de cada pieza.
 
-⚠️ **Esto es una EXTENSIÓN del borrador, no una parte suya.** El spec v0.2 no le da sitio
+⚠️ **Esto es una EXTENSIÓN del borrador, no una parte suya.** El spec v0.3 no le da sitio
 a los atributos clínicos por diente: el §9 los manda a `Observation` de FHIR, o sea a un
 servidor externo. La consecuencia práctica es que un `.uos` suelto no puede responder «qué
 dice el informe del 24», que es justo la pregunta que un clínico hace delante del modelo.
@@ -188,7 +188,7 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
 
     return {
         "schema": "histora-clinical/2.0",
-        "extension_of": "UOS v0.2 — el borrador no define atributos clinicos por pieza",
+        "extension_of": "UOS v0.3 — el borrador no define atributos clinicos por pieza",
         "vocabulary": {
             "body_site": (
                 "ISO-3950 (FDI) para `fdi`. ⚠️ Un lector estadounidense lee «27» en el "

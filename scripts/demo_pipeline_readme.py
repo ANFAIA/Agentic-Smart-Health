@@ -636,7 +636,7 @@ def render_svg(stages: list[Stage]) -> str:
       {_reveal(starts[4] + 2.2, total)}
       <rect x="730" y="588" width="326" height="48" rx="8" fill="#052e2b"
         stroke="#0f766e"/>
-      {_svg_text(754, 617, f"{levels} · v0.2 · {external_assets} external refs",
+      {_svg_text(754, 617, f"{levels} · v0.3 · {external_assets} external refs",
                  size=13, fill="#99f6e4")}
     </g>
   </g>"""

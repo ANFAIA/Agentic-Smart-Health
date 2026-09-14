@@ -1,6 +1,6 @@
 """El manifiesto: `manifest.json`. Es el contrato del contenedor, y se valida como tal.
 
-Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
+Cada campo del spec v0.3 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
 `.uos`, que es justo el punto: un lector tiene que poder negarse en vez de adivinar.
 """
 
@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-UOS_VERSION = "0.2"
+UOS_VERSION = "0.3"
 
 # Media type propuesto (§10). Draft: el arbol `vnd.` se registra en IANA cuando el spec
 # se publique, y hasta entonces la identificacion positiva es que la PRIMERA entrada del
@@ -656,7 +656,7 @@ class Extension(BaseModel):
     **Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /
     `extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre
     el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.
-    UOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
+    UOS v0.3 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
     sobre de asset tienen donde
     decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
 
@@ -712,7 +712,7 @@ class Manifest(BaseModel):
     #: validador avisa: en un caso de dos arcadas es la registracion que mas importa.
     occlusion: OcclusionRecord | None = Field(None, description="How the two arches relate, for a case that has both. Silence is never 'there is none': a two-arch case MUST declare a registration or say why it cannot.")
     fhir_map: dict[str, FHIRResource] = Field(default_factory=dict, description="Which FHIR resource each asset maps to, so a clinical system can ingest the case without knowing this format.")
-    # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.2.
+    # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.3.
     extensions: dict[str, Extension] = Field(default_factory=dict, description="Extensions this container declares, by name.")
     extensions_used: list[str] = Field(default_factory=list, description="Names of extensions present. A reader that does not implement one still opens the case and can say what it left unread.")
     # Vacio a proposito en todo lo que emitimos: nada de lo nuestro impide abrir el caso.

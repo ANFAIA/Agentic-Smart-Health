@@ -934,7 +934,7 @@ def _seccion_del_readme(nombre: str) -> str | None:
 # --------------------------------------------------------------------------- #
 # 12 · Tablas de campos de la especificacion
 # --------------------------------------------------------------------------- #
-SPEC = REPO / "docs" / "spec" / "uos-format-spec-v0.2.tex"
+SPEC = REPO / "docs" / "spec" / "uos-format-spec-v0.3.tex"
 
 #: Los modelos cuya tabla vive en la spec, y el ancho de sus columnas. El ancho es
 #: decision editorial —depende de que hay alrededor en la pagina— asi que se declara
@@ -1058,7 +1058,7 @@ def tabla_campos(nombre: str, columnas: str) -> str:
 
 
 def manifiesto_completo() -> str:
-    """El manifiesto de `fixtures/uos-0.2/valid.uos`, entero, para el apendice.
+    """El manifiesto de `fixtures/uos-0.3/valid.uos`, entero, para el apendice.
 
     Sale del banco y no de la mano de nadie a proposito: el banco se regenera y se
     valida en cada corrida, asi que el ejemplo que publica la especificacion es uno que
@@ -1068,7 +1068,7 @@ def manifiesto_completo() -> str:
     import json
     import zipfile
 
-    fixture = REPO / "fixtures" / "uos-0.2" / "valid.uos"
+    fixture = REPO / "fixtures" / "uos-0.3" / "valid.uos"
     if not fixture.exists():
         return ""
     with zipfile.ZipFile(fixture) as z:

@@ -33,23 +33,23 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
     assert len(indice) >= 13, "el banco tiene que cubrir algo más que el caso feliz"
     # Y en particular los tres desenlaces del check 7, que exigen un contenedor que
     # CUSTODIE la serie — algo que nuestro escritor no emite y un validador debe aceptar.
-    por_corte = [c for c in indice if c["fichero"].startswith("serie-corte-")]
+    por_corte = [c for c in indice if c["file"].startswith("series-slice-")]
     assert len(por_corte) == 4, "faltan casos de la verificación corte a corte"
     # ⚠️ Y uno de ellos NO es un error: un corte de-identificado conserva su identidad
     # clínica y pierde sus bytes. Un validador que lo llame error dice «esta serie no es
     # la de este caso», que es falso y es la conclusión más cara posible.
-    assert any(c["fichero"] == "serie-corte-deidentificado.uos" and c["espera"] == "aviso"
+    assert any(c["file"] == "series-slice-deidentified.uos" and c["expects"] == "warning"
                for c in indice)
 
-    esperado = json.loads((destino / "esperado.json").read_text(encoding="utf-8"))
-    assert [c["fichero"] for c in esperado["casos"]] == [c["fichero"] for c in indice]
+    esperado = json.loads((destino / "expected.json").read_text(encoding="utf-8"))
+    assert [c["file"] for c in esperado["cases"]] == [c["file"] for c in indice]
 
     for caso in indice:
-        inf = validate(destino / caso["fichero"])
-        if caso["espera"] == "error":
-            assert not inf.valid, f"{caso['fichero']} tendría que fallar y pasa"
+        inf = validate(destino / caso["file"])
+        if caso["expects"] == "error":
+            assert not inf.valid, f"{caso['file']} tendría que fallar y pasa"
         else:
-            assert inf.valid, f"{caso['fichero']}: {inf.errors}"
+            assert inf.valid, f"{caso['file']}: {inf.errors}"
 
 
 def test_el_caso_valido_del_banco_no_lleva_dato_de_paciente(tmp_path: Path) -> None:
@@ -65,7 +65,7 @@ def test_el_caso_valido_del_banco_no_lleva_dato_de_paciente(tmp_path: Path) -> N
 
     destino = tmp_path / "banco"
     genera(destino)
-    m = json.loads(zipfile.ZipFile(destino / "valido.uos").read("manifest.json"))
+    m = json.loads(zipfile.ZipFile(destino / "valid.uos").read("manifest.json"))
 
     assert m["subject"]["pseudonym"] == "FIXTURE-0001"
     assert m["subject"].get("fhir_patient") is None

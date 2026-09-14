@@ -1,4 +1,4 @@
-"""El mecanismo de extensiones — propuesta nuestra, no UOS v0.2.
+"""El mecanismo de extensiones — propuesta nuestra, no UOS v0.3.
 
 Lo que se prueba no es que los campos existan, sino que **hagan de puerta**: que usar algo
 sin declararlo invalide, que exigir algo que no se usa invalide, y sobre todo que nada de

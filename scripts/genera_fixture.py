@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """genera_fixture.py — El banco de pruebas de conformidad del formato UOS (G-4).
 
-    uv run python scripts/genera_fixture.py --destino fixtures/uos-0.2
+    uv run python scripts/genera_fixture.py --destino fixtures/uos-0.3
 
 **Por que existe.** Un formato cuya unica definicion ejecutable vive dentro de su
 implementacion de referencia obliga a un segundo implementador a comprobar su lector
@@ -336,7 +336,7 @@ def genera(destino: Path) -> list[dict]:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--destino", type=Path, default=RAIZ / "fixtures" / "uos-0.2")
+    p.add_argument("--destino", type=Path, default=RAIZ / "fixtures" / "uos-0.3")
     args = p.parse_args()
     indice = genera(args.destino)
     print(f"banco escrito en {args.destino}", file=sys.stderr)

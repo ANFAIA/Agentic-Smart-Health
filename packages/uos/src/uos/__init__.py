@@ -22,7 +22,7 @@ nueva del manifiesto que apunta al hash de la anterior (§8). Los assets no se t
 in place. `provenance/chain.json` materializa esa cadena y el validador comprueba que
 cuente la misma historia que los manifiestos.
 
-Implementa los niveles **UOS-Core** y **UOS-Vol** del spec v0.2 (§12): manifiesto, escena
+Implementa los niveles **UOS-Core** y **UOS-Vol** del spec v0.3 (§12): manifiesto, escena
 glTF con las capas de gaussianas colgando (§5.1), `image2d`, el volumen DICOM entero (§5.2)
 y los derivados de inferencia (§5.5), con vistas (§7), cadena de procedencia (§8) y mapeo
 FHIR por tipo de recurso (§9).

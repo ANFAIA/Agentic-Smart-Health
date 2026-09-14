@@ -107,7 +107,7 @@
 \vspace*{2.5cm}
 {\color{uosgrey}\large Format Specification}\\[0.6cm]
 {\color{uosblack}\Huge\bfseries UOS: Unified Oral Scene}\\[0.5cm]
-{\color{uosblack}\LARGE Version 0.2}\\[1.4cm]
+{\color{uosblack}\LARGE Version 0.3}\\[1.4cm]
 {\large An open container for a complete dental case:\\
 geometry, volume, appearance, imaging, clinical findings\\
 and the \emph{relations between them}, in one file.}\\[2.2cm]
@@ -116,7 +116,7 @@ and the \emph{relations between them}, in one file.}\\[2.2cm]
 \textbf{Status} & Draft; reference implementation complete and shipping\\
 \textbf{Container media type} & \code{application/vnd.histora.uos} (proposed, unregistered)\\
 \textbf{File extension} & \code{.uos}\\
-\textbf{Manifest schema} & \code{schemas/uos-manifest-0.2.schema.json}\\
+\textbf{Manifest schema} & \code{schemas/uos-manifest-0.3.schema.json}\\
  & (JSON Schema 2020-12; see \S\ref{sec:artifacts} for its \code{\$id})\\
 \textbf{Dependencies} & glTF 2.0 and \code{KHR\_gaussian\_splatting} (Release Candidate)\\
 \textbf{References} & DICOM PS3.10; FHIR R4; ISO 3950 (FDI)\\
@@ -132,9 +132,9 @@ and the \emph{relations between them}, in one file.}\\[2.2cm]
  & \textbf{this document and the reference implementation}\\
  & \textbf{alike}; neither is more reusable.\\
 \textbf{Extension prefix} & \code{histora\_}, the only prefix this document reserves (\S\ref{sec:extensions})\\
-\textbf{Produced under} & Version 0.2 was written during the Becas de Verano ANFAIA\\
+\textbf{Produced under} & Versions 0.2 and 0.3 were written during the Becas de Verano ANFAIA\\
  & 2026, on a clinical case contributed by Histora.\\
-\textbf{Version} & 0.2 --- last revised \today\\
+\textbf{Version} & 0.3 --- last revised \today\\
 \end{tabular}
 
 \vspace{0.8cm}
@@ -252,9 +252,9 @@ by hash are different guarantees. Where the format cannot enforce the difference
 \midrule
 \endhead
 Manifest JSON Schema & JSON Schema 2020-12, at
-\code{schemas/uos-manifest-0.2.schema.json} in the reference repository and retrievable at
+\code{schemas/uos-manifest-0.3.schema.json} in the reference repository and retrievable at
 its \code{\$id},
-\url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.2/schemas/uos-manifest-0.2.schema.json}
+\url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-manifest-0.3.schema.json}
 --- pinned to a tag, so the identifier always names the same document. It is
 \emph{generated} from the reference implementation's types, never hand-written. \textbf{What it does and does not check.} It is the only artifact a third party needs
 to check a manifest's \emph{shape}. It cannot check truth: not that a \code{sha256} matches
@@ -678,7 +678,7 @@ sprinkling keys.
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{uos\_version} & string & default \code{0.2} & Format version this container declares. A reader \MUST{} check it before anything else.\\
+\code{uos\_version} & string & default \code{0.3} & Format version this container declares. A reader \MUST{} check it before anything else.\\
 \code{case\_id} & string & \MUST{} & Stable case identifier, conventionally \code{urn:uuid:<v5>}. It \MUSTNOT{} encode patient identity.\\
 \code{created} & date-time & --- & When this manifest was written, RFC 3339 in UTC.\\
 \code{generator} & map str$\to$string & \MUST{} & Who wrote this container: name and version of the writer.\\
@@ -2244,11 +2244,11 @@ A conforming validator performs these checks in this order. \textbf{E} = error,
 
 A validator that only prints prose forces anything downstream to run regular expressions
 over sentences that change between versions. So the report has a shape, published as
-\code{schemas/uos-validation-report-0.2.schema.json} and validated against it by the
+\code{schemas/uos-validation-report-0.3.schema.json} and validated against it by the
 reference implementation on every case of the conformance fixture.
 
 \begin{lstlisting}[style=js]
-{ "uos_validation_report": "0.2",
+{ "uos_validation_report": "0.3",
   "valid": false,
   "findings": [
     { "code": "UOS-E-005", "severity": "error", "check": "5",
@@ -2632,10 +2632,16 @@ implementations already written against it.
 \textbf{Change} & \textbf{Guarantee}\\
 \midrule
 \endhead
-\textbf{Minor} (0.2 $\to$ 0.3) & A reader written for the earlier version \MUST{} still be
+\textbf{Minor}, from 1.0 on & A reader written for the earlier version \MUST{} still be
 able to open the container. A minor \MAY{} add optional fields, add extensions, and add
 values to an open vocabulary. It \MUSTNOT{} add a required field, change what an existing
 field means, or remove one.\\
+\textbf{Minor}, before 1.0 & \textbf{No compatibility is promised.} The format is a draft
+with no second implementation to strand, and pretending otherwise would be the more
+dangerous claim: a reader trusting minor compatibility would open a 0.3 container with 0.2
+assumptions and get a plausible wrong answer. A pre-1.0 minor \MAY{} rename a value, change
+what a field means or remove one --- and when it does it \MUST{} say which, case by case,
+in the changelog. Version 0.3 did all three.\\
 \textbf{Major} (0.x $\to$ 1.0) & No compatibility is promised. A reader \MUST{} check
 \code{uos\_version} and refuse what it does not implement rather than guess.\\
 \bottomrule
@@ -3018,9 +3024,9 @@ the one the whole format is built on.
 % generado: manifiesto-completo — no editar a mano
 \begin{lstlisting}[style=js]
 {
- "uos_version": "0.2",
+ "uos_version": "0.3",
  "case_id": "urn:uuid:f8b5f549-b3a0-5f57-b6cb-dfe16b0bb7f1",
- "created": "2026-09-14T10:43:55.528795Z",
+ "created": "2026-09-14T11:35:43.397310Z",
  "generator": {
   "name": "agentic-smart-health",
   "version": "0.14.0"
@@ -3080,7 +3086,7 @@ the one the whole format is built on.
    "bytes": 546181,
    "frame": "frame.ios_master",
    "acquisition": {
-    "time": "2026-09-14T10:43:55.524386Z",
+    "time": "2026-09-14T11:35:43.392292Z",
     "device": {
      "manufacturer": null,
      "model": null,
@@ -3098,7 +3104,8 @@ the one the whole format is built on.
    "derived_from": [],
    "series_instance_uid": null,
    "study_instance_uid": null,
-   "external": true
+   "external": true,
+   "locators": []
   },
   {
    "id": "asset.scene",
@@ -3130,7 +3137,8 @@ the one the whole format is built on.
    ],
    "series_instance_uid": null,
    "study_instance_uid": null,
-   "external": false
+   "external": false,
+   "locators": []
   },
   {
    "id": "asset.clinical",
@@ -3138,7 +3146,7 @@ the one the whole format is built on.
    "visit": "v1",
    "uri": "clinical/observations.json",
    "media_type": "application/json",
-   "sha256": "c1df3c80a698c5d123ae74f9985e457c470d33baddfa4b87200bdaf585b28c62",
+   "sha256": "8bcc252d28f4a6087ed4b17711bcb983ce760f41c1b807e556214d6a7df8294b",
    "bytes": 2994,
    "frame": "frame.ios_master",
    "acquisition": {
@@ -3160,7 +3168,8 @@ the one the whole format is built on.
    "derived_from": [],
    "series_instance_uid": null,
    "study_instance_uid": null,
-   "external": false
+   "external": false,
+   "locators": []
   }
  ],
  "registrations": [],
