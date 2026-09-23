@@ -21,7 +21,7 @@ human-readable and linked to the relevant pull request or issue where applicable
 
 ## [Unreleased]
 
-### UOS format 0.3
+### UOS format 0.3 — released 2026-09-23, tag `uos-spec-v0.3`
 
 Version 0.2 could not stay 0.2. Two external reviews of the specification
 changed what travels inside a container, and under the format's own rules those
