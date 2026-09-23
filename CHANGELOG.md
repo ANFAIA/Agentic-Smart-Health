@@ -45,6 +45,12 @@ assumptions and gets a plausible wrong answer.
   likewise.
 - **`.gs.json` column `meaning`, layer `note` and the unit `gaussiana`** are
   English. `scale` and `unit` values were already English.
+- **The `comment` lines in every PLY header** are English — 37 of them across
+  the field, composite and appearance layers. They are not documentation about
+  the format: they are what makes a `.ply` self-describing, and they carry the
+  warning that the INRIA 3DGS convention uses the same property names with
+  different meaning. A reader that parsed those strings breaks; one that read
+  them to know what it was opening could not, unless it read Spanish.
 - **The FDI code no longer travels in any layer-1 asset**, in any of its three
   forms — `extras.uos_fdi`, `_REGION_ID`, a `region_id` PLY property. Per-tooth
   identity lives in `derived/seg_teeth.bin` and disappears when that directory
