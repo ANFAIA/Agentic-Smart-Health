@@ -485,6 +485,178 @@ def test_el_uos_del_caso_sintetico_no_se_CONTRADICE(recorrido) -> None:
     assert fallos == [], "el contenedor se contradice:\n  · " + "\n  · ".join(fallos)
 
 
+def test_el_uos_del_recorrido_no_lleva_el_FDI_dentro_de_ninguna_capa(recorrido) -> None:
+    """B-1: ninguna capa de `scene/` lleva el código FDI dentro. Sobre los bytes del ZIP.
+
+    ⚠️ **La primera pasada de B-1 se quedó corta y esto es lo que lo destapó.** Se quitó
+    la partición por diente de `scene/scene.glb` y su `_REGION_ID`, que son las dos formas
+    que la revisión externa nombró — porque revisó la especificación, no un contenedor
+    nuestro. Al abrir uno de verdad aparecieron `scene/field.ply` y `scene/composite.ply`
+    con una columna `region_id`: el mismo código FDI, la misma Layer 3, otros dos ficheros
+    declarados Layer 1.
+
+    Este test mira **todas** las capas y no solo la que se arregló, que es la diferencia
+    entre corregir un fallo y corregir su clase.
+    """
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    z = zipfile.ZipFile(uos)
+    con_fdi = []
+    for n in z.namelist():
+        if not n.startswith("scene/"):
+            continue
+        if n.endswith(".ply"):
+            cab = z.read(n).split(b"end_header")[0].decode("ascii", "replace")
+            if any(lin.startswith("property ") and lin.split()[-1] == "region_id"
+                   for lin in cab.splitlines()):
+                con_fdi.append(n)
+        elif n.endswith(".glb"):
+            if b"uos_fdi" in z.read(n) or b"_REGION_ID" in z.read(n):
+                con_fdi.append(n)
+    assert con_fdi == [], (
+        "estas capas de scene/ llevan el codigo FDI dentro y son Layer 1: "
+        + ", ".join(con_fdi)
+    )
+
+    # Y no se ha perdido: sigue viajando, en el plano que SI se puede quitar.
+    assert any(n.startswith("derived/seg_") for n in z.namelist()), (
+        "se quito el FDI de las capas y no quedo en derived/: eso no es relocalizar, "
+        "es borrar"
+    )
+
+
+def test_el_uos_declara_PHI_por_lo_que_lleva_y_no_por_lo_que_hace(recorrido) -> None:
+    """B-3: `phi_state` es una afirmación sobre el contenido, no sobre el pipeline.
+
+    ⚠️ **Seudonimizar el identificador no seudonimiza el contenedor.** El pipeline
+    sustituye el `patient_id` del DICOM por un HMAC, y eso es correcto para las
+    ETIQUETAS. Pero si viaja una capa gaussiana `measured` del CBCT, lleva tejido blando
+    y de ella se reconstruye una superficie facial — «imagen comparable» a una fotografía
+    de cara completa bajo HIPAA Safe Harbor, dato biométrico bajo el RGPD. Declarar
+    `pseudonymized` ahí sería afirmar algo que el propio contenido desmiente.
+
+    Lo que este test fija es que el estado se **calcula** desde lo que se lleva dentro y
+    que el motivo sube al gate, no que valga uno concreto: el día que se implemente el
+    defacing, el mismo contenedor podrá declarar `pseudonymized` con verdad.
+    """
+    import json
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    m = json.loads(zipfile.ZipFile(uos).read("manifest.json"))
+    assert m["deidentification"] is not None, (
+        "declarar un phi_state sin decir qué medidas lo produjeron no se puede comprobar"
+    )
+    assert m["deidentification"]["profile"].startswith("DICOM PS3.15")
+    # Y no se declara una opción que no se ejecuta: eso es lo que un auditor lee como
+    # garantía. El defacing no está implementado, así que la lista va vacía.
+    assert "CleanRecognizableVisualFeatures" not in m["deidentification"]["options"]
+    assert m["phi_state"] == "identified", (
+        "lleva densidad medida del CBCT sin limpiar rasgos y aun así dice estar "
+        "seudonimizado"
+    )
+
+
+def test_el_campo_declara_su_UMBRAL_y_no_finge_unidades_Hounsfield(recorrido) -> None:
+    """D-8 y D-7, sobre los bytes del contenedor.
+
+    ⚠️ **D-8: «una primitiva por vóxel ocupado» esconde una decisión.** Ocupado implica un
+    umbral de densidad, y ese umbral decide QUÉ TEJIDO aparece — subirlo borra dentina
+    antes que esmalte. El descriptor declaraba `measured: true` y el submuestreo, y callaba
+    el umbral: eso es aplicar al revés la regla del silencio, porque afirma que el campo es
+    la medida cuando es la medida por encima de un corte que alguien eligió.
+
+    ⚠️ **D-7: un CBCT no mide unidades Hounsfield.** Sus grises dependen del equipo, del
+    campo de visión y de la posición dentro del volumen. El descriptor publicaba el error
+    del ajuste como «±N HU», que le da al número una autoridad que no tiene.
+    """
+    import json
+    import zipfile
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    z = zipfile.ZipFile(uos)
+    descriptores = [n for n in z.namelist() if n.endswith(".gs.json")]
+    assert descriptores, "el contenedor no lleva ninguna capa gaussiana descrita"
+
+    for n in descriptores:
+        d = json.loads(z.read(n))
+        sub = d.get("subsampling")
+        if sub is not None:
+            assert "method" in sub, f"{n}: submuestrea y no dice con qué método"
+            if "occupancy" in sub:
+                assert sub["occupancy"]["unit"] != "HU", (
+                    f"{n}: llama HU a los grises de un CBCT sin calibrar"
+                )
+        # Y en ningún sitio se declara un error en HU.
+        crudo = json.dumps(d, ensure_ascii=False)
+        assert " HU)" not in crudo, f"{n}: publica un error en unidades Hounsfield"
+
+
+def test_la_matriz_del_nodo_GS_es_la_REGISTRACION_traspuesta(recorrido) -> None:
+    """T-3 punto 12: glTF guarda las matrices por COLUMNAS y el manifiesto por FILAS.
+
+    ⚠️ **Confundirlas no revienta nada.** Coloca la nube girada y espejada, con muy buen
+    aspecto, en el visor de otro — el §5.2 lo llama el error clásico de este sitio. Declara
+    normativo que la `matrix` de un nodo colgado del canónico codifique la registración que
+    lleva su frame allí, y esa afirmación vivía sólo en el código del escritor: al leer no
+    la comprobaba nadie.
+
+    Vive aquí y no en los tests del paquete porque hace falta un contenedor con capas
+    gaussianas en el frame del CBCT, y el del recorrido las tiene.
+    """
+    import json
+    import struct
+    import zipfile
+
+    import numpy as np
+    from uos import validate
+
+    _, salida = recorrido
+    uos = next(salida.glob("*.uos"), None)
+    if uos is None:  # pragma: no cover - el canal de UOS puede no estar disponible
+        pytest.skip("el recorrido no produjo un .uos")
+
+    with zipfile.ZipFile(uos) as z:
+        entradas = [(i, z.read(i.filename)) for i in z.infolist()]
+
+    girada = salida / "girada.uos"
+    tocados = 0
+    with zipfile.ZipFile(girada, "w", zipfile.ZIP_STORED) as z:
+        for info, crudo in entradas:
+            if info.filename == "scene/scene.glb":
+                largo = struct.unpack_from("<I", crudo, 12)[0]
+                doc = json.loads(crudo[20:20 + largo])
+                for nodo in doc.get("nodes", []):
+                    if "matrix" in nodo and (nodo.get("extras") or {}).get("uos_gs_uri"):
+                        mm = np.asarray(nodo["matrix"], dtype=np.float64).reshape(4, 4)
+                        nodo["matrix"] = [float(x) for x in mm.T.ravel()]
+                        tocados += 1
+                cab = json.dumps(doc).encode()
+                cab += b" " * (-len(cab) % 4)
+                binario = crudo[20 + largo:]
+                crudo = (struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(cab) + len(binario))
+                         + struct.pack("<II", len(cab), 0x4E4F534A) + cab + binario)
+            z.writestr(info, crudo)
+
+    assert tocados, "el contenedor del recorrido no trae nodos GS con matriz"
+    inf = validate(girada)
+    assert not inf.valid
+    assert any("traspuesta" in e for e in inf.errors), inf.errors
+
+
 def test_el_uos_del_recorrido_no_lleva_NINGUN_original(recorrido) -> None:
     """Ningún fichero de proveedor viaja dentro del contenedor que emite el orquestador.
 

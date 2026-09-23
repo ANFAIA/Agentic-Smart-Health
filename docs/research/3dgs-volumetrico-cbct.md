@@ -260,7 +260,7 @@ suma reproduce peor que un campo único. El encendido clínico por tejido queda 
 a una segmentación de diente mejor.
 
 ⚠️ Alcance: el campo de densidad que lleva hoy el `.uos` de la demo es la **semilla cruda**
-del `cbct-agent` (perfil `ash-twin/1.0`, submuestreo 3×3×1), sin entrenar — ni DRR ni
+del `cbct-agent` (perfil `histora-twin/1.0`, submuestreo 3×3×1), sin entrenar — ni DRR ni
 `ajusta_campo`. Estos números son de la rama volumétrica y no alteran el contenedor actual
 — dicen cuánto ganaría la demo si adoptara el campo en capas.
 

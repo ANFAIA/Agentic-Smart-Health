@@ -76,7 +76,7 @@ _OPCIONALES: tuple[tuple[str, str], ...] = (
     ("region_id", "short"),
     # De qué modalidad viene cada gaussiana. Solo la escribe el compuesto, porque solo él
     # mezcla dos: un campo de una sola fuente no la necesita. Ver `compuesto.py`.
-    ("origen", "short"),
+    ("source_modality", "short"),
 )
 _TIPOS = {"double": np.float64, "float": np.float32, "short": np.int16}
 
@@ -96,7 +96,7 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
     "rotations": ("rot_0", "rot_1", "rot_2", "rot_3"),
     "density": ("density",),
     "region_id": ("region_id",),
-    "origen": ("origen",),
+    "source_modality": ("source_modality",),
 }
 
 
@@ -109,29 +109,29 @@ COLUMNAS_DE_ARRAY: dict[str, tuple[str, ...]] = {
 # nuestros milímetros y renderizaría basura con buen aspecto. Por eso el snapshot declara
 # además `perfil_campo`, para que un lector pueda negarse en vez de adivinar.
 ESQUEMA_COLUMNAS: dict[str, dict] = {
-    "x": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "y": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "z": {"unidad": "mm", "significado": "centro de la gaussiana"},
-    "scale_0": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "scale_1": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "scale_2": {"unidad": "mm", "significado": "sigma del elipsoide, NO su logaritmo"},
-    "rot_0": {"significado": "cuaternion (w, x, y, z) normalizado — componente w"},
-    "rot_1": {"significado": "cuaternion (w, x, y, z) normalizado — componente x"},
-    "rot_2": {"significado": "cuaternion (w, x, y, z) normalizado — componente y"},
-    "rot_3": {"significado": "cuaternion (w, x, y, z) normalizado — componente z"},
+    "x": {"unidad": "mm", "significado": "Gaussian centre"},
+    "y": {"unidad": "mm", "significado": "Gaussian centre"},
+    "z": {"unidad": "mm", "significado": "Gaussian centre"},
+    "scale_0": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "scale_1": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "scale_2": {"unidad": "mm", "significado": "ellipsoid sigma, NOT its logarithm"},
+    "rot_0": {"significado": "normalised quaternion (w, x, y, z) — w component"},
+    "rot_1": {"significado": "normalised quaternion (w, x, y, z) — x component"},
+    "rot_2": {"significado": "normalised quaternion (w, x, y, z) — y component"},
+    "rot_3": {"significado": "normalised quaternion (w, x, y, z) — z component"},
     "density": {
-        "unidad": "sigma_normalizada",
-        "significado": "atenuacion Beer-Lambert en [0,1] sobre `hu_range`. NO es opacidad",
+        "unidad": "normalised_sigma",
+        "significado": "Beer-Lambert attenuation in [0,1] over `hu_range`. NOT opacity",
     },
     "region_id": {
-        "significado": "diente al que pertenece la gaussiana; 0 = sin asignar",
+        "significado": "tooth the Gaussian belongs to; 0 = unassigned",
         "vocabulario": "ISO-3950",
         "medido": False,
         "derivado_de": "segmentation-agent",
     },
-    "origen": {
-        "significado": "modalidad de la que viene: 0 = CBCT (densidad medida), "
-        "1 = escaner intraoral (forma medida)",
+    "source_modality": {
+        "significado": "modality it comes from: 0 = CBCT (measured density), "
+        "1 = intraoral scanner (measured shape)",
         "medido": False,
         "derivado_de": "composite-export-agent",
     },
@@ -159,7 +159,7 @@ def esquema_de_propiedades(propiedades: Iterable[str]) -> list[ColumnaCampo]:
 
     ⚠️ **Existe porque el esquema de un fichero se saca del fichero, no del snapshot.**
     El sidecar del compuesto reutilizaba `esquema_campo`, que describe el campo SEMILLA, y
-    el compuesto trae ademas `origen` —de que modalidad viene cada gaussiana—. Esa columna
+    el compuesto trae ademas `source_modality` —de que modalidad viene cada gaussiana—. Esa columna
     viajaba en los bytes y no en el descriptor: un lector ajeno no podia separar el CBCT
     del escaner dentro de un fichero que mezcla los dos, que es justo para lo que existe.
 
@@ -311,7 +311,7 @@ def escribe_inria(
     destino: Path,
     params: dict[str, np.ndarray],
     *,
-    perfil: str = "ash-gs-apariencia/1.0",
+    perfil: str = "histora-gs-appearance/1.0",
     n_vistas: int = 0,
     iteraciones: int = 0,
     acquisition_id: str = "",
@@ -345,16 +345,16 @@ def escribe_inria(
     cabecera = [
         "ply",
         "format binary_little_endian 1.0",
-        f"comment generado por gaussian-engine@{perfil}",
+        f"comment written by gaussian-engine@{perfil}",
         f"comment acquisition_id {acquisition_id}",
-        "comment perfil INRIA 3DGS grado 0 — APARIENCIA, no medida",
-        "comment las gaussianas NO son los vertices del escaner: el optimizador las",
-        "comment movio, divodio y podo. No hay correspondencia 1:1 con lo medido.",
-        "comment f_dc_* = color RGB real del paciente (coeficiente DC de SH)",
-        "comment opacity = opacidad de visualizacion (logit), NO es atenuacion radiologica",
-        "comment scale en logaritmo (convencion INRIA), NO en mm lineales",
-        "comment rot es cuaternion (w,x,y,z) normalizado",
-        f"comment entrenado contra {n_vistas} renders EEVEE, {iteraciones} iteraciones",
+        "comment INRIA 3DGS degree-0 profile - APPEARANCE, not measured",
+        "comment the Gaussians are NOT the scanner vertices: the optimiser moved,",
+        "comment split and pruned them. No 1:1 correspondence with what was measured.",
+        "comment f_dc_* = the patient's real RGB colour (SH DC coefficient)",
+        "comment opacity = display opacity (logit), NOT radiological attenuation",
+        "comment scale is logarithmic (INRIA convention), NOT linear mm",
+        "comment rot is a normalised quaternion (w,x,y,z)",
+        f"comment trained against {n_vistas} EEVEE renders, {iteraciones} iterations",
         f"element vertex {n}",
         *(f"property float {p}" for p in PROPIEDADES_INRIA),
         "end_header",
@@ -440,11 +440,11 @@ class FieldExportAgent(BaseExportAgent):
 
         centers = np.asarray(arrays["centers"], dtype=np.float64)
         comentarios = [
-            f"generado por {self.qualified}",
+            f"written by {self.qualified}",
             f"acquisition_id {snapshot.acquisition_id}",
             f"frame {marco}",
-            "density es sigma_n normalizada en [0,1] (atenuacion Beer-Lambert), NO opacidad",
-            "scale en mm; rot es cuaternion (w,x,y,z)",
+            "density is normalised sigma_n in [0,1] (Beer-Lambert attenuation), NOT opacity",
+            "scale in mm; rot is a quaternion (w,x,y,z)",
         ]
 
         if marco == "cbct":
@@ -464,14 +464,14 @@ class FieldExportAgent(BaseExportAgent):
             comentarios.append(
                 "origin_mm " + " ".join(repr(float(v)) for v in origin)
             )
-            comentarios.append("coordenadas en mm del DICOM (centers + origin)")
+            comentarios.append("coordinates in DICOM mm (centers + origin)")
         else:
-            comentarios.append("coordenadas centradas en el origen; suma `origin` para el CBCT")
+            comentarios.append("coordinates centred on the origin; add `origin` for the CBCT")
 
         if "hu_range" in arrays:
             bajo, alto = np.asarray(arrays["hu_range"], dtype=np.float64)
             comentarios.append(
-                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(alto-bajo)+bajo)"
+                f"hu_range {float(bajo)!r} {float(alto)!r}  (hu = density*(high-low)+low)"
             )
 
         escalas = np.asarray(arrays["scales"], dtype=np.float32)
@@ -493,13 +493,13 @@ class FieldExportAgent(BaseExportAgent):
             columnas["region_id"] = region
             dientes = np.unique(region[region > 0])
             comentarios.append(
-                f"region_id es el codigo FDI por gaussiana, 0 = sin asignar "
-                f"({len(dientes)} diente(s) etiquetado(s))"
+                f"region_id is the per-Gaussian FDI code, 0 = unassigned "
+                f"({len(dientes)} tooth/teeth labelled)"
             )
 
         motivos = self._partial_reasons(snapshot)
         if motivos:
-            comentarios.append("PARCIAL: este twin requiere revision humana")
+            comentarios.append("PARTIAL: this twin needs human review")
         escribe_ply(destination, columnas, comentarios=comentarios)
 
         desviacion = self._verify(destination, centers) if self.verify else None

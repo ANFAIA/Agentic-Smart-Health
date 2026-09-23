@@ -22,7 +22,7 @@ la intención y mentira sobre el contenido.
 el IOS mide forma, no densidad. Ponerle una `density` plausible lo haría indistinguible de
 una gaussiana medida en el CBCT, y cualquiera que después proyectara el campo estaría
 integrando un número que nadie midió. Así que la encía entra con `density = 0.0` —declarado
-aquí, no elegido por bonito— y con una columna `origen` que dice, gaussiana a gaussiana, de
+aquí, no elegido por bonito— y con una columna `source_modality` que dice, gaussiana a gaussiana, de
 qué modalidad viene. Un compuesto que no distingue sus dos mitades miente por omisión.
 """
 
@@ -38,7 +38,7 @@ from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
 from export_agents.field import REVERSIBILITY_BUDGET_MM, escribe_ply, lee_ply
 from export_agents.stl import quaternion_to_matrix
 
-# Código de `origen` por gaussiana. No es decoración: es lo que separa una densidad medida
+# Código de `source_modality` por gaussiana. No es decoración: es lo que separa una densidad medida
 # de una forma medida, y sin él las dos mitades del compuesto son indistinguibles.
 ORIGEN_CBCT = 0
 ORIGEN_IOS = 1
@@ -139,7 +139,7 @@ class CompositeExportAgent(BaseExportAgent):
                 [campo["density"], np.full(n_e, DENSIDAD_ENCIA)]
             ),
             "region_id": np.concatenate([region, np.zeros(n_e, dtype=np.int16)]),
-            "origen": np.concatenate([
+            "source_modality": np.concatenate([
                 np.full(n_c, ORIGEN_CBCT, dtype=np.int16),
                 np.full(n_e, ORIGEN_IOS, dtype=np.int16),
             ]),

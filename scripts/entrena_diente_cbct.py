@@ -106,7 +106,7 @@ def parche(caso: Caso, rng: np.random.Generator, *, en_diente: bool) -> tuple:
 
 def lote(casos: list[Caso], n: int, rng: np.random.Generator, dev, *,
          frac_diente: float = 0.5) -> tuple:
-    """Parte de los parches centrados en diente. `frac_diente` gobierna cuántos.
+    """Part de los parches centrados en diente. `frac_diente` gobierna cuántos.
 
     El diente es ~0,5 % de los vóxeles. Muestreando al azar, casi ningún parche lo
     contiene y la red converge a predecir «fondo» siempre — 99,5 % de acierto y F1 cero.

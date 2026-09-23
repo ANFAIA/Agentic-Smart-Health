@@ -16,14 +16,14 @@ from typing import Any
 
 import numpy as np
 from export_agents.anatomia import (
+    anatomical_frame,
     distancia_para_encuadrar,
-    marco_anatomico,
     normaliza,
     ortogonaliza,
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-VISTAS = "views.json"
+VIEWS = "views.json"
 
 # El del ejemplo del spec (§7). Un campo estrecho aplana la arcada y uno ancho la deforma
 # en los bordes; 35 grados es el rango en el que un molar no se ve como un cilindro.
@@ -33,7 +33,7 @@ FOV_GRADOS = 35.0
 # panel de pieza pegados al modelo, y sin holgura salen cortados.
 _MARGEN = 1.35
 
-class Camara(BaseModel):
+class Camera(BaseModel):
     model_config = ConfigDict(extra="forbid")
     position: list[float] = Field(min_length=3, max_length=3)
     target: list[float] = Field(min_length=3, max_length=3)
@@ -41,7 +41,7 @@ class Camara(BaseModel):
     fov: float = FOV_GRADOS
 
 
-class Capa(BaseModel):
+class LayerState(BaseModel):
     """Estado de una capa en una vista. `derived` no aparece: es UOS-Full."""
 
     model_config = ConfigDict(extra="forbid")
@@ -58,12 +58,12 @@ class Mpr(BaseModel):
     window: dict[str, float] | None = None
 
 
-class Vista(BaseModel):
+class View(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     label: str
-    camera: Camara
-    layers: dict[str, Capa] = Field(default_factory=dict)
+    camera: Camera
+    layers: dict[str, LayerState] = Field(default_factory=dict)
     visit: str
 
     # ⚠️ `mpr` y `clip_planes` solo aparecen cuando el contenedor LLEVA volumen, y por eso
@@ -87,16 +87,16 @@ def _distancia(pos: np.ndarray, centro: np.ndarray, direccion: np.ndarray) -> fl
 
 def _camara(
     pos: np.ndarray, objetivo: np.ndarray, direccion: np.ndarray, arriba: np.ndarray
-) -> Camara:
+) -> Camera:
     d = _distancia(pos, objetivo, direccion)
-    return Camara(
+    return Camera(
         position=[round(float(x), 3) for x in objetivo + direccion * d],
         target=[round(float(x), 3) for x in objetivo],
         up=[round(float(x), 3) for x in arriba],
     )
 
 
-def construye_vistas(
+def build_views(
     posiciones: np.ndarray,
     etiquetas: np.ndarray,
     *,
@@ -104,44 +104,44 @@ def construye_vistas(
     piezas: list[str] | None = None,
     con_apariencia: bool = False,
     con_volumen: bool = False,
-) -> tuple[list[Vista], list[str]]:
+) -> tuple[list[View], list[str]]:
     """Las vistas del caso y los motivos por los que falte alguna.
 
     `piezas` son los codigos FDI que merecen su propia vista: los que llevan contenido
     clinico. Una vista por diente etiquetado seria mecanico —catorce entradas que dicen
     lo mismo— y lo que hace util un deep-link es que apunte a algo que alguien anoto.
     """
-    marco, motivo = marco_anatomico(posiciones, etiquetas)
+    marco, motivo = anatomical_frame(posiciones, etiquetas)
     if marco is None:
-        return [], [f"el .uos no lleva vistas ({VISTAS} va vacio): {motivo}"]
+        return [], [f"el .uos no lleva vistas ({VIEWS} va vacio): {motivo}"]
 
     pos = np.asarray(posiciones, dtype=np.float64)
     etq = np.asarray(etiquetas, dtype=np.int64)
-    capas = {"mesh": Capa()}
+    capas = {"mesh": LayerState()}
     if con_apariencia:
         # La apariencia va por DEBAJO de 1.0: es reconstruida contra renders, no medida, y
         # el visor tiene que poder dejar ver la malla por debajo.
-        capas["gs"] = Capa(opacity=0.85)
+        capas["gs"] = LayerState(opacity=0.85)
     if con_volumen:
         # ⚠️ APAGADO por defecto, y no por prudencia: el §11.2 advierte que componer GS
         # translucido con volumen translucido no tiene solucion exacta con dos pasadas
         # independientes. Encender el volumen de entrada dejaria la vista guardada en el
         # unico estado que el propio spec reconoce como mal definido.
-        capas["volume"] = Capa(visible=False, opacity=0.6)
+        capas["volume"] = LayerState(visible=False, opacity=0.6)
     extra: dict[str, Any] = (
         {"mpr": Mpr(enabled=False), "clip_planes": []} if con_volumen else {}
     )
 
     vistas = [
         # Se mira DESDE donde muerde la pieza, o sea contra el eje oclusal.
-        Vista(id="view.oclusal", label="Oclusal", visit=visita, layers=dict(capas), **extra,
+        View(id="view.oclusal", label="Oclusal", visit=visita, layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.oclusal, marco.anterior)),
-        Vista(id="view.frontal", label="Frontal", visit=visita, layers=dict(capas), **extra,
+        View(id="view.frontal", label="Frontal", visit=visita, layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.anterior, marco.superior)),
-        Vista(id="view.vestibular_derecha", label="Vestibular derecha", visit=visita,
+        View(id="view.vestibular_derecha", label="Vestibular derecha", visit=visita,
               layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, marco.derecha, marco.superior)),
-        Vista(id="view.vestibular_izquierda", label="Vestibular izquierda", visit=visita,
+        View(id="view.vestibular_izquierda", label="Vestibular izquierda", visit=visita,
               layers=dict(capas), **extra,
               camera=_camara(pos, marco.centro, -marco.derecha, marco.superior)),
     ]
@@ -159,7 +159,7 @@ def construye_vistas(
         if not fuera.any():
             # Un incisivo puede caer casi sobre el eje: se encuadra desde lo anterior.
             fuera = marco.anterior
-        vistas.append(Vista(
+        vistas.append(View(
             id=f"view.pieza_{codigo}", label=f"Pieza {codigo}", visit=visita,
             layers=dict(capas), **extra,
             camera=_camara(pos[m], objetivo, normaliza(fuera + marco.superior * 0.35),
@@ -172,7 +172,7 @@ def construye_vistas(
     # solo aparecen una vez, que son justo los que hay que leer.
     avisos = [] if not sin_etiquetar else [
         f"el informe habla de {len(sin_etiquetar)} pieza(s) que el escaner no trae "
-        f"etiquetadas, asi que {VISTAS} no lleva vista que apunte a ellas: "
+        f"etiquetadas, asi que {VIEWS} no lleva vista que apunte a ellas: "
         + ", ".join(f"FDI {c}" for c in sin_etiquetar)
     ]
     return vistas, avisos

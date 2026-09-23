@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from uos.manifiesto import UOS_VERSION
 
 if TYPE_CHECKING:
-    from uos.manifiesto import Manifiesto
+    from uos.manifiesto import Manifest
 
 
 class Lectura(StrEnum):
@@ -81,7 +81,7 @@ def puede_reemitir(version: str, *, implementada: str = UOS_VERSION) -> bool:
     return como_leer(version, implementada=implementada) is Lectura.ESTRICTA
 
 
-def lee_permisivo(crudo: bytes | str) -> tuple[Manifiesto, list[str]]:
+def lee_permisivo(crudo: bytes | str) -> tuple[Manifest, list[str]]:
     """`(manifiesto, campos ignorados)` de una menor superior. Solo por esta via.
 
     **Se le pregunta a pydantic que sobra, en vez de mantener una copia del modelo.** La
@@ -98,13 +98,13 @@ def lee_permisivo(crudo: bytes | str) -> tuple[Manifiesto, list[str]]:
 
     from pydantic import ValidationError
 
-    from uos.manifiesto import Manifiesto
+    from uos.manifiesto import Manifest
 
     datos = json.loads(crudo) if isinstance(crudo, str | bytes) else crudo
     ignorados: list[str] = []
     for _ in range(64):   # cota: cada vuelta poda al menos un campo o termina
         try:
-            return Manifiesto.model_validate(datos), sorted(ignorados)
+            return Manifest.model_validate(datos), sorted(ignorados)
         except ValidationError as e:
             sobra = [x["loc"] for x in e.errors() if x["type"] == "extra_forbidden"]
             if not sobra:

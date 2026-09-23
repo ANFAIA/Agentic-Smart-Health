@@ -17,8 +17,9 @@ import json
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
+from typing import BinaryIO
 
-from uos.manifiesto import UOS_VERSION, Asset, Manifiesto, Parte, digesto_de_partes
+from uos.manifiesto import UOS_VERSION, Asset, Manifest, Part, digesto_de_partes
 
 MANIFIESTO = "manifest.json"
 
@@ -32,9 +33,9 @@ def sha256(ruta: Path) -> str:
     return h.hexdigest()
 
 
-def escribe_uos(
+def write_uos(
     destino: Path,
-    manifiesto: Manifiesto,
+    manifiesto: Manifest,
     ficheros: Iterable[tuple[str, Path]],
     *,
     directorios: dict[str, Path] | None = None,
@@ -100,7 +101,7 @@ def escribe_uos(
     return destino
 
 
-def lee_manifiesto(ruta: Path) -> Manifiesto:
+def read_manifest(ruta: Path) -> Manifest:
     """Lee el manifiesto de un `.uos`, comprobando que sea la primera entrada.
 
     ⚠️ **Y comprobando la VERSION, que es lo primero que el spec pide mirar y no se
@@ -116,12 +117,12 @@ def lee_manifiesto(ruta: Path) -> Manifiesto:
                 f"{ruta.name}: la primera entrada es {nombres[0] if nombres else 'ninguna'!r} "
                 f"y el spec exige {MANIFIESTO!r} — sin eso no hay identificacion positiva."
             )
-        return lee_manifiesto_de(z.read(MANIFIESTO), nombre=ruta.name)[0]
+        return read_manifest_from(z.read(MANIFIESTO), nombre=ruta.name)[0]
 
 
-def lee_manifiesto_de(
+def read_manifest_from(
     crudo: bytes, *, nombre: str = "manifest.json"
-) -> tuple[Manifiesto, list[str]]:
+) -> tuple[Manifest, list[str]]:
     """`(manifiesto, campos ignorados)` aplicando la rama de version que toque (§15)."""
     import json
 
@@ -139,7 +140,7 @@ def lee_manifiesto_de(
     if rama is Lectura.PERMISIVA:
         m, ignorados = lee_permisivo(crudo)
         return m, ignorados
-    return Manifiesto.model_validate_json(crudo), []
+    return Manifest.model_validate_json(crudo), []
 
 
 def asset_de(
@@ -169,21 +170,87 @@ def json_de(obj: object) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False)
 
 
-def partes_de(carpeta: Path) -> list[Parte]:
-    """Una `Parte` por fichero del directorio, con su nombre RELATIVO y su hash."""
-    return [
-        Parte(
+def identidad_dicom_de(crudo: bytes) -> tuple[str | None, str | None, float | None, float | None]:
+    """Como `_identidad_dicom` pero sobre BYTES, para quien lee de un ZIP (D-3)."""
+    import io
+
+    return _identidad_dicom(io.BytesIO(crudo))
+
+
+def _identidad_dicom(
+    ruta: Path | BinaryIO,
+) -> tuple[str | None, str | None, float | None, float | None]:
+    """`(sop_instance_uid, sha256 de PixelData)` de un corte, o `(None, None)` (D-3).
+
+    ⚠️ **Se hashea el VALOR de `(7FE0,0010)`, no el fichero.** Es la unica parte que la
+    de-identificacion no toca salvo que se limpie a proposito, asi que sobrevive al paso
+    que rompia la trazabilidad basada en el hash del fichero. Un fichero que no sea DICOM
+    legible devuelve `(None, None)` y el corte se queda con lo que ya tenia: la identidad
+    es un anadido, no un requisito para empaquetar.
+    """
+    try:
+        import numpy as np
+        import pydicom
+
+        ds = pydicom.dcmread(ruta, stop_before_pixels=False, force=True)
+        uid = getattr(ds, "SOPInstanceUID", None)
+        px = ds.get(0x7FE00010)
+        if uid is None or px is None or px.value is None:
+            return None, None, None, None
+        # ⚠️ **El rango sale de ESTA lectura y no de otra (T-2).** Los pixeles ya estan
+        # descomprimidos aqui para hashearlos; sacar el minimo y el maximo es aritmetica
+        # sobre un array que ya esta en memoria. Hacerlo en una pasada aparte —que es como
+        # estaba— pagaba una tercera lectura del volumen entero por un dato gratuito.
+        bajo: float | None
+        alto: float | None
+        try:
+            arr = ds.pixel_array
+            bajo, alto = float(np.min(arr)), float(np.max(arr))
+        except Exception:  # noqa: BLE001 - hay cortes con pixeles ilegibles
+            bajo = alto = None
+        return str(uid), hashlib.sha256(bytes(px.value)).hexdigest(), bajo, alto
+    except Exception:  # noqa: BLE001 - un corte ilegible no debe tumbar el empaquetado
+        return None, None, None, None
+
+
+def partes_y_rango(carpeta: Path) -> tuple[list[Part], list[float] | None]:
+    """Las partes de la serie **y el rango de sus pixeles, en la misma pasada** (T-2).
+
+    ⚠️ **Por que van juntos.** El §6.1 dejaba `value_range` nulo alegando que barrer los
+    pixeles en cada exportacion es caro, y la consecuencia era real: un visor sin ventana
+    de visualizacion. Pero el escritor **ya lee cada byte de cada corte** aqui —para el
+    `sha256` del fichero y para el hash de `PixelData`— asi que el minimo y el maximo
+    salen de una lectura que ya estaba pagada. Calcularlos en otro sitio, como se hacia,
+    anadia una tercera pasada sobre el volumen entero por un dato gratuito.
+
+    El rango va SIN reescalar: `slope`/`intercept` los aplica quien describe la serie,
+    que es quien ha leido esas etiquetas.
+    """
+    partes: list[Part] = []
+    bajo = alto = None
+    for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file()):
+        uid, px, b, a = _identidad_dicom(hijo)
+        if b is not None and a is not None:
+            bajo = b if bajo is None else min(bajo, b)
+            alto = a if alto is None else max(alto, a)
+        partes.append(Part(
             name=hijo.relative_to(carpeta).as_posix(),
             sha256=sha256(hijo),
             bytes=hijo.stat().st_size,
-        )
-        for hijo in sorted(p for p in carpeta.rglob("*") if p.is_file())
-    ]
+            sop_instance_uid=uid,
+            pixel_data_sha256=px,
+        ))
+    return partes, (None if bajo is None or alto is None else [bajo, alto])
+
+
+def partes_de(carpeta: Path) -> list[Part]:
+    """Solo las partes. Para quien no necesita el rango."""
+    return partes_y_rango(carpeta)[0]
 
 
 def asset_de_directorio(
     carpeta: Path, uri: str, *, id_: str, kind, visit: str, frame: str,
-    media_type: str, **extra,
+    media_type: str, partes: list[Part] | None = None, **extra,
 ) -> Asset:
     """El sobre de un asset que es una SERIE entera, midiendo fichero a fichero.
 
@@ -196,7 +263,9 @@ def asset_de_directorio(
     """
     from uos.manifiesto import PRIORIDAD, direccion_de_contenido
 
-    partes = partes_de(carpeta)
+    # ⚠️ Si el llamante ya recorrio la serie —para sacar tambien el rango de
+    # pixeles (T-2)— se reusan sus partes en vez de volver a leerla entera.
+    partes = partes_de(carpeta) if partes is None else partes
     if not partes:
         raise ValueError(f"{carpeta} no tiene ni un fichero: no hay serie que empaquetar.")
     h = digesto_de_partes(partes)

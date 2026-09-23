@@ -1,4 +1,4 @@
-"""Registro por diente: que recupere movimiento real y que declare cuándo no puede."""
+"""Registration por diente: que recupere movimiento real y que declare cuándo no puede."""
 
 from __future__ import annotations
 

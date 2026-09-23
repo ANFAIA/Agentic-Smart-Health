@@ -24,7 +24,7 @@ from gaussian_engine.ajuste import (
     ajusta_por_region,
 )
 
-PERFIL = "ash-twin-ajustado/1.0"
+PERFIL = "histora-twin-fitted/1.0"
 
 
 class CampoStore(Protocol):
@@ -34,28 +34,36 @@ class CampoStore(Protocol):
     def put(self, **arrays: np.ndarray) -> str: ...
 
 
-def esquema(rmse_hu: float) -> list[ColumnaCampo]:
+def esquema(rmse: float) -> list[ColumnaCampo]:
     """Qué es cada columna del campo ajustado, en el formato que ya usa el contrato.
 
     `scale_*` lleva el aviso porque es donde está la trampa: quien mida sobre estas
     escalas está midiendo un ajuste, no un tejido.
+
+    ⚠️ **El error va en la unidad del CAMPO y no en HU (D-7).** Decía `±N HU`, y un CBCT
+    **no mide unidades Hounsfield**: sus grises dependen del equipo, del campo de visión y
+    de la posición dentro del volumen, y no son convertibles a HU sin un fantoma de
+    calibración. El número era el mismo residuo reescalado por `hu_range`, así que
+    nombrarlo HU le daba una autoridad que no tiene — y en un `.uos` la lee alguien que no
+    sabe de qué equipo salió.
     """
     forma = (
-        f"semieje del elipsoide en mm — AJUSTADO para reconstruir la densidad "
-        f"(±{rmse_hu:.0f} HU), NO medido sobre el tejido"
+        f"ellipsoid semi-axis in mm — FITTED to reconstruct the density "
+        f"(±{rmse:.4f} in normalised sigma; NOT HU: a CBCT is not calibrated in "
+        f"Hounsfield units), NOT measured on the tissue"
     )
     return [
-        *(ColumnaCampo(nombre=n, unidad="mm", significado="centro de la gaussiana")
+        *(ColumnaCampo(nombre=n, unidad="mm", significado="Gaussian centre")
           for n in ("x", "y", "z")),
         *(ColumnaCampo(nombre=f"scale_{i}", unidad="mm", significado=forma)
           for i in range(3)),
         *(ColumnaCampo(
             nombre=f"rot_{i}", unidad="",
-            significado="cuaternion (w, x, y, z) normalizado — orientacion del elipsoide",
+            significado="normalised quaternion (w, x, y, z) — ellipsoid orientation",
         ) for i in range(4)),
         ColumnaCampo(
-            nombre="density", unidad="sigma_normalizada",
-            significado="amplitud de la gaussiana; sumada con sus vecinas da la densidad",
+            nombre="density", unidad="normalised_sigma",
+            significado="Gaussian amplitude; summed with its neighbours it gives the density",
         ),
     ]
 

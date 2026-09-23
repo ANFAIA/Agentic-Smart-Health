@@ -317,7 +317,7 @@ def main() -> int:
         "--entrena-apariencia", action="store_true",
         help="Entrena 3DGS contra fotos intraorales para obtener color REAL del paciente "
              "(gsplat + Blender, necesita GPU). El campo resultante viaja como "
-             "`asset.apariencia` en el .uos con perfil 'ash-gs-apariencia/1.0'. "
+             "`asset.apariencia` en el .uos con perfil 'histora-gs-appearance/1.0'. "
              "⚠️ REQUIERE `--gs-apariencia` y fotos en image_refs.",
     )
     ap.add_argument(
@@ -643,7 +643,7 @@ def main() -> int:
                 {"name": c.nombre, "unit": c.unidad, "scale": c.escala,
                  "measured": c.medido, "derived_from": c.derivado_de,
                  "meaning": c.significado, "vocabulary": c.vocabulario}
-                for c in esquema(aj.rmse_hu)
+                for c in esquema(aj.rmse)
             ],
             "reconstruction_error_hu": aj.rmse_hu,
             "compression": aj.compresion,
@@ -656,7 +656,7 @@ def main() -> int:
     # El `--entrena-apariencia` necesita GPU y bloquea el pipeline. Entrena un campo
     # de gaussianas con color REAL del paciente optimizado contra renders de Blender.
     # El resultado viaja como `asset.apariencia` en el `.uos` con perfil
-    # 'ash-gs-apariencia/1.0' y regulatory.layer=1, status="derived".
+    # 'histora-gs-appearance/1.0' y regulatory.layer=1, status="derived".
     if args.entrena_apariencia:
         if args.gs_apariencia is None:
             print("  ⚠ --entrena-apariencia requiere --gs-apariencia")

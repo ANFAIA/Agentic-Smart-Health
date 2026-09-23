@@ -38,7 +38,7 @@ PERFIL_APARIENCIA = PERFIL
 ESQUEMA_INRIA: dict[str, dict] = {
     **{n: {
         "unidad": "mm",
-        "significado": "centro de la gaussiana (movido por optimizador)",
+        "significado": "Gaussian centre (moved by the optimiser)",
         "medido": False,
     } for n in ("x", "y", "z")},
     # ⚠️ Las normales las reserva el perfil INRIA y **antes iban a cero**. Ahora llevan la
@@ -47,8 +47,8 @@ ESQUEMA_INRIA: dict[str, dict] = {
     **{n: {
         "unidad": "",
         "significado": (
-            "normal del vertice de malla mas cercano; 0 si no habia malla con que "
-            "calcularla. Es la que genera el relieve declarado en f_rest_*"
+            "normal of the nearest mesh vertex; 0 when there was no mesh to compute "
+            "it from. It is what generates the relief declared in f_rest_*"
         ),
         "medido": False,
     } for n in ("nx", "ny", "nz")},
@@ -71,55 +71,55 @@ ESQUEMA_INRIA: dict[str, dict] = {
             # 0,5 en toda la superficie y se sustituyera. Un descriptor que se escribe a
             # mano se desincroniza del codigo que describe; uno que se compone de las
             # mismas constantes que el calculo, no puede.
-            "oclusion ambiental CALCULADA por el emisor: media de |sen| del angulo entre "
-            f"la normal y la direccion a cada uno de los {VECINOS_OCLUSION} vecinos a "
-            f"menos de {RADIO_OCLUSION_MM:g} mm, amplificada por {GANANCIA_OCLUSION:g} y "
-            f"acotada por abajo en {OCLUSION_MINIMA:g}. Se calcula SOBRE LA MALLA y "
-            "se transfiere a cada gaussiana por vecino mas cercano, porque el optimizador "
-            "mueve los centros fuera de la superficie. Factor de VISUALIZACION en [0,1] "
-            "que quien dibuja multiplica por el color. No es la oclusion de un trazador de "
-            "rayos y no se declara como tal: coincide en que las hendiduras se oscurecen y "
-            "las cuspides no. 1 = sin malla con que calcularla, o sea no oscurecer"
+            "ambient occlusion COMPUTED by the writer: mean |sin| of the angle between "
+            f"the normal and the direction to each of the {VECINOS_OCLUSION} neighbours "
+            f"within {RADIO_OCLUSION_MM:g} mm, amplified by {GANANCIA_OCLUSION:g} and "
+            f"floored at {OCLUSION_MINIMA:g}. Computed ON THE MESH and transferred to "
+            "each Gaussian by nearest neighbour, because the optimiser moves the centres "
+            "off the surface. A DISPLAY factor in [0,1] that the renderer multiplies into "
+            "the colour. It is not ray-traced occlusion and is not declared as such: it "
+            "agrees only in that crevices darken and cusps do not. 1 = no mesh to compute "
+            "it from, that is, do not darken"
         ),
         "medido": False,
     },
     **{f"f_rest_{i}": {
         "unidad": "",
         "significado": (
-            "coeficiente de SH grado 1 CALCULADO por el emisor, no entrenado: vale "
-            "0.35*albedo*(n . v) con la normal de nx,ny,nz. Es un realce de forma para "
-            "que la pieza se lea con volumen; NO es medida y NO toca el color, que vive "
-            "entero en el grado 0. Leyendo solo f_dc_* se recupera el albedo sin nada "
-            "horneado. Van a cero si no habia malla con que calcular las normales"
+            "degree-1 SH coefficient COMPUTED by the writer, not trained: it equals "
+            "0.35*albedo*(n . v) with the normal from nx,ny,nz. It is a shape cue so the "
+            "tooth reads with volume; NOT measured, and it does NOT touch the colour, "
+            "which lives entirely in degree 0. Reading f_dc_* alone recovers the albedo "
+            "with nothing baked in. Zero when there was no mesh to compute normals from"
         ),
         "medido": False,
     } for i in range(9)},
     **{f"f_dc_{i}": {
         "unidad": "",
         "significado": (
-            "coeficiente DC de SH — color de la foto intraoral proyectado sobre la malla "
-            "con la pose resuelta por PnP, y aprendido por el optimizador desde los "
-            "renders. `medido: false` porque el optimizador movio, dividio y podo las "
-            "gaussianas: no hay correspondencia 1:1 con el vertice que recibio el pixel. "
-            "La cabecera del PLY dice cuantos vertices llevaban pixel medido y cuantos "
-            "el degradado de respaldo"
+            "SH DC coefficient — colour from the intraoral photograph projected onto "
+            "the mesh with the pose solved by PnP, then learned by the optimiser from the "
+            "renders. `measured: false` because the optimiser moved, split and pruned the "
+            "Gaussians: there is no 1:1 correspondence with the vertex that received the "
+            "pixel. The PLY header says how many vertices carried a measured pixel and "
+            "how many the fallback gradient"
         ),
         "medido": False,
-        "derivado_de": "proyeccion de foto intraoral (pose PnP) + optimizacion 3DGS",
+        "derivado_de": "intraoral photograph projection (PnP pose) + 3DGS optimisation",
     } for i in range(3)},
     "opacity": {
         "unidad": "logit",
-        "significado": "opacidad de visualización (logit), NO atenuación radiológica",
+        "significado": "display opacity (logit), NOT radiological attenuation",
         "medido": False,
     },
     **{f"scale_{i}": {
         "unidad": "log(mm)",
-        "significado": "escala del elipsoide (logaritmo, convención INRIA), optimizada",
+        "significado": "ellipsoid scale (logarithm, INRIA convention), optimised",
         "medido": False,
     } for i in range(3)},
     **{f"rot_{i}": {
         "unidad": "",
-        "significado": "cuaternion (w, x, y, z) normalizado — orientación del elipsoide",
+        "significado": "normalised quaternion (w, x, y, z) — ellipsoid orientation",
         "medido": False,
     } for i in range(4)},
     # No sale del optimizador: sale de preguntar, por cada gaussiana, la etiqueta del
@@ -128,12 +128,12 @@ ESQUEMA_INRIA: dict[str, dict] = {
     "region_id": {
         "unidad": "",
         "significado": (
-            "codigo FDI de la corona MAS CERCANA a la gaussiana; 0 = encia o sin asignar. "
-            "No es una etiqueta aprendida: el optimizador no conserva correspondencia"
+            "FDI code of the crown NEAREST to the Gaussian; 0 = gingiva or unassigned. "
+            "Not a learned label: the optimiser preserves no correspondence"
         ),
         "vocabulario": "ISO-3950",
         "medido": False,
-        "derivado_de": "segmentation-agent (vecino mas cercano)",
+        "derivado_de": "segmentation-agent (nearest neighbour)",
     },
 }
 

@@ -1,6 +1,6 @@
 """El manifiesto: `manifest.json`. Es el contrato del contenedor, y se valida como tal.
 
-Cada campo del spec v0.2 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
+Cada campo del spec v0.3 §4 con su tipo. Lo que NO se declara aqui no puede entrar en un
 `.uos`, que es justo el punto: un lector tiene que poder negarse en vez de adivinar.
 """
 
@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-UOS_VERSION = "0.2"
+UOS_VERSION = "0.3"
 
 # Media type propuesto (§10). Draft: el arbol `vnd.` se registra en IANA cuando el spec
 # se publique, y hasta entonces la identificacion positiva es que la PRIMERA entrada del
@@ -21,7 +21,7 @@ UOS_VERSION = "0.2"
 MEDIA_TYPE = "application/vnd.histora.uos"
 
 
-class EstadoPHI(StrEnum):
+class PHIState(StrEnum):
     """Anonimizacion como ESTADO EXPLICITO (§2.6), no como suposicion.
 
     Un `.uos` dice en que estado esta y los visores lo respetan —banner, politicas de
@@ -35,7 +35,7 @@ class EstadoPHI(StrEnum):
     QUARANTINED = "quarantined"
 
 
-class Clase(StrEnum):
+class AssetKind(StrEnum):
     """`kind` de un asset (§4.1). El nivel UOS-Core solo exige los tres primeros."""
 
     VOLUME = "volume"
@@ -49,31 +49,278 @@ class Clase(StrEnum):
 # Orden de carga progresiva (§4.1): menor = antes. La escena de malla primero porque es
 # lo que permite ensenar algo util habiendo leido solo el manifiesto y el asset mas ligero.
 PRIORIDAD = {
-    Clase.MESH_GS_SCENE: 10,
-    Clase.IMAGE2D: 20,
-    Clase.VOLUME: 30,
-    Clase.SIGNAL: 30,
-    Clase.DERIVED_SEG: 40,
-    Clase.DOCUMENT: 50,
+    AssetKind.MESH_GS_SCENE: 10,
+    AssetKind.IMAGE2D: 20,
+    AssetKind.VOLUME: 30,
+    AssetKind.SIGNAL: 30,
+    AssetKind.DERIVED_SEG: 40,
+    AssetKind.DOCUMENT: 50,
 }
 
 
-class Regulatorio(BaseModel):
-    """La capa regulatoria del asset (§1.1). Layer 3 es SaMD y se puede desmontar."""
+class Clearance(BaseModel):
+    """Que dice UNA jurisdiccion sobre este asset (B-5).
+
+    Sustituye al par `status` + `jurisdictions`, que no se podia leer: `status` era texto
+    libre y `jurisdictions: []` era ambiguo —¿ninguna, o no declarado?—, que es justo la
+    ambiguedad que el formato prohibe en `fdi_targets` y en `derivation`. Un estado sin
+    jurisdiccion no significa nada: «investigational» es una afirmacion frente a UN
+    regulador, no una propiedad del fichero.
+    """
 
     model_config = ConfigDict(extra="forbid")
-    layer: int = Field(default=1, ge=1, le=3)
-    status: str | None = None
-    jurisdictions: list[str] = Field(default_factory=list)
+    jurisdiction: str = Field(
+        description=(
+            "Regulator the statement is made before, e.g. `EU` or `US`. A status without a "
+            "jurisdiction means nothing."
+        ),
+    )
+    regime: str = Field(
+        description=(
+            "Regulatory framework under that jurisdiction, e.g. `MDR` or `FDA-510k`."
+        ),
+    )
+    status: ClearanceStatus = Field(
+        description=(
+            "What this jurisdiction says about the asset under that regime."
+        ),
+    )
+    #: El numero de expediente o de autorizacion, cuando existe. `None` NO es "no hay":
+    #: es "no consta aqui", igual que `weights_sha256` en el sidecar de `derived/`.
+    reference: str | None = Field(
+        default=None,
+        description=(
+            "Dossier or clearance number when one exists. `null` is 'not recorded here', never "
+            "'there is none'."
+        ),
+    )
 
 
-class Adquisicion(BaseModel):
+class ClearanceStatus(StrEnum):
+    """Vocabulario CERRADO. `status` era `str | None` y por tanto texto libre: dos
+    emisores escribian «investigational» y «Investigational (EU MDR)» y ningun lector
+    podia compararlos."""
+
+    NO_ES_PRODUCTO = "not_a_device"
+    INVESTIGACION = "investigational"
+    PRESENTADO = "submitted"
+    AUTORIZADO = "cleared"
+    RETIRADO = "withdrawn"
+
+
+class Regulatory(BaseModel):
+    """La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.
+
+    **Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un
+    procedimiento determinista y reproducible a partir de capa 1, sin modelo entrenado —
+    registraciones automaticas, conversiones de formato, submuestreos, color medido por
+    pieza—; 3 es salida de modelo. El 2 no existia: el documento admitia `1..3` y solo
+    definia el 1 y el 3, asi que todo el computo determinista viajaba como capa 1 sin que
+    nadie lo dijera (B-5).
+
+    **La 2 no se desmonta y la 3 si.** La 3 vive solo bajo `derived/` porque borrar ese
+    directorio tiene que quitar toda la inferencia. La 2 puede vivir fuera, pero **tiene
+    que declarar `derived_from`**: si es reproducible, se tiene que poder decir a partir
+    de que, o la afirmacion no se puede comprobar.
+
+    ⚠️ **`clearances: []` significa NO DECLARADO**, por definicion escrita y no por
+    convencion. El validador avisa por cada asset de capa 3 que llegue vacio.
+    """
+
     model_config = ConfigDict(extra="forbid")
-    time: datetime | None = None
-    device: dict[str, str] = Field(default_factory=dict)
+    layer: int = Field(
+        default=1,
+        ge=1,
+        le=3,
+        description=(
+            "Regulatory layer of the content: 1 acquired or transcribed, 2 computed "
+            "deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST "
+            "live under `derived/`."
+        ),
+    )
+    clearances: list[Clearance] = Field(
+        default_factory=list,
+        description=(
+            "What each regulator says about this asset. An empty list is 'nothing declared', not "
+            "'cleared everywhere'."
+        ),
+    )
 
 
-class Proyeccion(BaseModel):
+class PurposeOfUse(StrEnum):
+    """Para que se emitio ESTE contenedor (B-4). Vocabulario cerrado.
+
+    Un `.uos` que sale hacia un laboratorio protesico, hacia un colega para una segunda
+    opinion y hacia un pipeline de entrenamiento son **tres actos juridicos distintos**, y
+    el contenedor no distinguia ninguno. El proposito es lo primero que pregunta cualquier
+    revision de proteccion de datos y es lo que decide que capas pueden viajar; sin el,
+    cada receptor tiene que suponerlo.
+    """
+
+    TRATAMIENTO = "treatment"
+    FABRICACION = "lab_manufacturing"
+    SEGUNDA_OPINION = "second_opinion"
+    INVESTIGACION = "research"
+    ENTRENAMIENTO = "model_training"
+
+
+class Consent(BaseModel):
+    """Para que consintio el paciente. `scope` es lo que limita `purpose_of_use`."""
+
+    model_config = ConfigDict(extra="forbid")
+    #: Referencia al recurso `Consent` de FHIR R4 cuando el caso vive en un servidor.
+    #: `None` mientras no exista, misma regla que `FHIRResource.resource`.
+    fhir_consent: str | None = Field(
+        default=None,
+        description=(
+            "Reference to the FHIR `Consent` resource that records it. The container carries the "
+            "pointer, never the document."
+        ),
+    )
+    scope: list[PurposeOfUse] = Field(
+        default_factory=list,
+        description=(
+            "Purposes the subject consented to. An empty list is 'not declared'."
+        ),
+    )
+    obtained: datetime | None = Field(
+        default=None,
+        description=(
+            "When consent was obtained, RFC 3339."
+        ),
+    )
+
+
+class Tool(BaseModel):
+    """Que programa aplico la de-identificacion, para poder repetirla o auditarla."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(description="Name of the software that performed the operation.")
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Its version string, as the tool reports it."
+        ),
+    )
+    sha256: str | None = Field(
+        default=None,
+        description=(
+            "Digest of the tool binary or image, when the writer can compute it."
+        ),
+    )
+
+
+class Deidentification(BaseModel):
+    """QUE se hizo para de-identificar, en el vocabulario de DICOM PS3.15 Anexo E (B-3).
+
+    ⚠️ **`phi_state` solo no puede sostener lo que afirma.** Trata la de-identificacion
+    como una propiedad de las etiquetas DICOM, y el contenedor lleva cosas que identifican
+    a una persona sin ninguna etiqueta: `scene/field.ply` es la densidad del CBCT con
+    tejido blando incluido, y de ahi se reconstruye una **superficie facial** —«imagen
+    comparable» a una fotografia de cara completa bajo HIPAA Safe Harbor, y dato biometrico
+    bajo el RGPD—. La denticion identifica por si sola: de eso vive la odontologia forense.
+
+    Por eso `pseudonymized` y `anonymized` exigen este bloque. No cambia lo que el
+    contenedor lleva; cambia que diga **que se hizo** en lugar de **como quedo**, que es la
+    unica de las dos afirmaciones que alguien puede comprobar.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    profile: str = Field(
+        description=(
+            "DICOM PS3.15 Annex E confidentiality profile applied, by its standard name."
+        ),
+    )
+    #: Las opciones con nombre del Anexo E: `CleanDescriptors`,
+    #: `CleanRecognizableVisualFeatures`, `RetainLongitudinalTemporalInformationModifiedDates`...
+    options: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Named options applied on top of the profile, e.g. `CleanRecognizableVisualFeatures` "
+            "for defacing. This is where a reader learns whether the face was removed."
+        ),
+    )
+    #: Sobre que assets se ejecuto. El validador avisa por cada `volume` o `image2d` que
+    #: no aparezca aqui: no estar en la lista significa que no se le aplico nada.
+    applied_to: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Asset ids the de-identification was applied to. Assets not listed were not processed."
+        ),
+    )
+    tool: Tool | None = Field(
+        default=None,
+        description=(
+            "Software that performed it, so a recipient can tell a documented pipeline from a "
+            "manual pass."
+        ),
+    )
+    #: ⚠️ **El desplazamiento de fechas es la CLAVE de re-identificacion.** Solo viaja si
+    #: el contenedor ya se declara `identified`; en cualquier otro estado va a `null`,
+    #: porque publicarlo deshace la medida que dice haber aplicado.
+    date_shift_days: int | None = Field(
+        default=None,
+        description=(
+            "Constant offset applied to every date, in days. Needed to compare two visits after "
+            "shifting; `null` means dates were not shifted."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description=(
+            "Free text for anything the fields above cannot express. Not machine-readable by "
+            "design."
+        ),
+    )
+
+    #: La opcion de PS3.15 que quita la superficie facial reconstruible (el «defacing»).
+    LIMPIA_RASGOS: ClassVar[str] = "CleanRecognizableVisualFeatures"
+
+
+class Device(BaseModel):
+    """El equipo, con claves FIJAS y **sin numero de serie** (B-3).
+
+    Era `map str -> str` sin restriccion, y un mapa libre en un contenedor clinico acaba
+    conteniendo el serial del equipo — que bajo HIPAA Safe Harbor es identificador
+    directo, en la misma lista que el nombre. Si un flujo lo necesita, va en
+    `deidentification.note` y el contenedor se declara `identified`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    manufacturer: str | None = Field(
+        default=None,
+        description=(
+            "Equipment manufacturer. Fixed key rather than free text so two containers can be "
+            "compared."
+        ),
+    )
+    model: str | None = Field(default=None, description="Equipment model name.")
+    software_version: str | None = Field(
+        default=None,
+        description=(
+            "Version of the software running on the equipment. No serial number is carried: it "
+            "identifies a machine, and through it a site."
+        ),
+    )
+
+
+class Acquisition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    time: datetime | None = Field(
+        default=None,
+        description=(
+            "When the asset was captured, RFC 3339. `null` when the original did not record it."
+        ),
+    )
+    device: Device = Field(
+        default_factory=lambda: Device(),
+        description=(
+            "Equipment that captured it."
+        ),
+    )
+
+
+class Projection(BaseModel):
     """Que clase de imagen 2D es y a que piezas apunta (§5.3).
 
     `fdi_targets` va VACIO cuando no se sabe, que con una foto suelta de una carpeta de
@@ -83,22 +330,74 @@ class Proyeccion(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    type: str
-    fdi_targets: list[str] = Field(default_factory=list)
+    type: str = Field(
+        description=(
+            "Projection geometry of a 2D image, e.g. `panoramic` or `bitewing`."
+        ),
+    )
+    fdi_targets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Teeth the projection is aimed at, in FDI/ISO-3950. An empty list is 'not declared', "
+            "never 'no teeth'."
+        ),
+    )
 
 
-class Parte(BaseModel):
+class Part(BaseModel):
     """Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).
 
     Existe para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que
     algo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie
     no cuadra» y «el corte 214 esta corrupto».
+
+    ⚠️ **Y el hash del FICHERO no es la identidad del corte (D-3).** `sha256` cubre la
+    cabecera entera, asi que cualquier de-identificacion —el paso que todo flujo clinico da,
+    y que B-3 ademas exige— reescribe etiquetas y cambia el hash. La trazabilidad que el
+    §3.4.2 promete («quien tenga la serie puede probar que es la de este caso, corte a
+    corte») se rompia exactamente en el paso mas comun.
+
+    DICOM ya resolvio que identifica una instancia: el **SOP Instance UID** `(0008,0018)`,
+    que sobrevive a la de-identificacion cuando se elige retener UIDs, y el contenido de
+    pixeles `(7FE0,0010)`, que la de-identificacion no toca salvo que se limpie a proposito.
+    Los dos viajan al lado del hash del fichero, y la verificacion pasa a tener dos niveles
+    que se reportan por separado: **identidad** (UID + pixeles) y **bytes exactos** (hash
+    del fichero). Un corte de-identificado que conserva identidad pasa el primero y falla el
+    segundo, y eso es informacion, no un error.
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    bytes: int = Field(ge=0)
+    name: str = Field(
+        description=(
+            "Path of this file inside the directory asset. Names are ordering data for a DICOM "
+            "series, so they are carried even though identity does not depend on them."
+        ),
+    )
+    sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 over the whole file, lowercase hex. Proves these exact bytes."
+        ),
+    )
+    bytes: int = Field(ge=0, description="Size of the file in bytes.")
+    #: `(0008,0018)`. La identidad clinica del corte, estable a traves de la de-identificacion.
+    sop_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM SOP Instance UID `(0008,0018)`. The identity DICOM itself defines, and what "
+            "survives de-identification when UIDs are retained."
+        ),
+    )
+    #: SHA-256 sobre el VALOR del elemento PixelData, sin cabecera.
+    pixel_data_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the "
+            "header. De-identification does not touch it, so it separates 'a different slice' from "
+            "'the same slice, cleaned'."
+        ),
+    )
 
 
 #: Una uri que no es una ruta sino la identidad del fichero. Ver `Asset._direccion_y_custodia`.
@@ -118,29 +417,91 @@ class Asset(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    id: str
-    kind: Clase
-    visit: str
-    uri: str
-    media_type: str
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    bytes: int = Field(ge=0)
-    frame: str
-    acquisition: Adquisicion = Field(default_factory=lambda: Adquisicion())
-    load_priority: int = 30
-    regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
-    # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Parte` y
+    id: str = Field(
+        description=(
+            "Stable identifier of the asset within this container, unique across `assets[]`."
+        ),
+    )
+    kind: AssetKind = Field(
+        description=(
+            "What the asset is, which fixes how a reader should treat it."
+        ),
+    )
+    visit: str = Field(description="Id of the visit this asset belongs to.")
+    uri: str = Field(
+        description=(
+            "Path inside the ZIP for a carried asset, or `sha256:<hex>` for a referenced one. A "
+            "referenced original occupies no path at all."
+        ),
+    )
+    media_type: str = Field(description="IANA media type of the payload.")
+    sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 of the payload, lowercase hex. For a directory asset it is the digest over "
+            "`parts[]`, not over concatenated bytes."
+        ),
+    )
+    bytes: int = Field(
+        ge=0,
+        description=(
+            "Size of the payload in bytes; the sum over `parts[]` for a directory asset."
+        ),
+    )
+    frame: str = Field(
+        description=(
+            "Id of the coordinate frame this asset's coordinates are expressed in. It MUST be "
+            "reachable from the canonical frame."
+        ),
+    )
+    acquisition: Acquisition = Field(
+        default_factory=lambda: Acquisition(),
+        description=(
+            "When and on what equipment it was captured."
+        ),
+    )
+    load_priority: int = Field(
+        default=30,
+        description=(
+            "Hint for a reader fetching by HTTP range: lower loads first. A hint, never a "
+            "requirement."
+        ),
+    )
+    regulatory: Regulatory = Field(
+        default_factory=lambda: Regulatory(),
+        description=(
+            "Regulatory layer and clearances of this asset's content."
+        ),
+    )
+    # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Part` y
     # `digesto_de_partes`.
     # ⚠️ §5.3. `projection` describe QUE tipo de imagen es y a que dientes apunta; `pose`
     # —donde estaba la camara— es explicitamente opcional en el spec y aqui no se emite:
     # una foto intraoral de una carpeta de clinica no trae pose, y calcularla exige la
     # fusion foto↔malla, que esta medida y no converge barata sin calibracion.
-    projection: Proyeccion | None = None
+    projection: Projection | None = Field(
+        default=None,
+        description=(
+            "Projection geometry, for 2D radiographs only. `null` for everything else."
+        ),
+    )
 
-    parts: list[Parte] = Field(default_factory=list)
+    parts: list[Part] = Field(
+        default_factory=list,
+        description=(
+            "One entry per file when the asset is a directory, such as a DICOM series. This is "
+            "what lets a validator say which slice is wrong instead of 'the series does not match'."
+        ),
+    )
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
-    sidecar_uri: str | None = None
+    sidecar_uri: str | None = Field(
+        default=None,
+        description=(
+            "Path to a JSON sidecar describing the payload, so a reader can inspect it without a "
+            "parser for its format."
+        ),
+    )
     # ⚠️ **De que otros assets sale este. No hay § que lo defina, y hace falta.**
     #
     # `scene/scene.glb` es la malla del escaner reindexada a glTF: MISMA geometria,
@@ -154,7 +515,28 @@ class Asset(BaseModel):
     #
     # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
     # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
-    derived_from: list[str] = Field(default_factory=list)
+    derived_from: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ids of the assets this one was derived from. Required for anything under `derived/`: "
+            "an inference with no stated input cannot be audited."
+        ),
+    )
+    #: D-3 · `(0020,000E)` y `(0020,000D)`. Lo que DICOM define como identidad de la serie
+    #: y del estudio, para que un PACS pueda casar este asset con lo que ya tiene.
+    series_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Series Instance UID `(0020,000E)`, so a recipient holding the series by another "
+            "channel can tell it is this one."
+        ),
+    )
+    study_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Study Instance UID `(0020,000D)`."
+        ),
+    )
     # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es lo que hace
     # TODO original adquirido —DICOM, STL, fotos, informes—: se referencia por su direccion
     # de contenido y se acredita por `sha256`. No es un perfil ni una variante; es el
@@ -168,7 +550,22 @@ class Asset(BaseModel):
     #
     # El validador lo dice UNA vez por contenedor y no una por asset: si todos los
     # originales son externos siempre, un aviso por cada uno no distingue nada.
-    external: bool = False
+    external: bool = Field(
+        default=False,
+        description=(
+            "True when the asset is referenced and not carried. Acquired originals MUST be "
+            "external; their `uri` is then a content address and never a path."
+        ),
+    )
+    #: Pista de donde vive el original. Vacio es NO DECLARADO, nunca «no hay donde».
+    locators: list[Locator] = Field(
+        default_factory=list,
+        description=(
+            "Where to find this asset when it is referenced and not carried. Hints, never a "
+            "contract: a reader verifies by hash and MUST open the container without resolving any "
+            "of them. An empty list is NOT DECLARED."
+        ),
+    )
 
     @field_validator("uri")
     @classmethod
@@ -230,7 +627,7 @@ class Asset(BaseModel):
         return self
 
 
-def digesto_de_partes(partes: list[Parte]) -> str:
+def digesto_de_partes(partes: list[Part]) -> str:
     """El `sha256` de un asset-directorio: hash sobre `nombre\0hash\n` ordenado.
 
     El spec da un `sha256` por asset y no dice como se calcula cuando el asset es una serie
@@ -238,29 +635,202 @@ def digesto_de_partes(partes: list[Parte]) -> str:
     validador lo calculara de otra forma, un contenedor valido daria invalido y nadie
     sabria cual de los dos tiene razon.
 
-    Va sobre los NOMBRES y los hashes, no sobre los bytes concatenados: asi renombrar un
-    corte cambia el digesto —que es lo correcto, el orden de una serie es dato— y no hace
-    falta releer 259 MB para comprobarlo.
+    ⚠️ **Sobre la IDENTIDAD de la serie, no sobre una serializacion suya (D-3).** Iba sobre
+    el nombre y el hash del fichero, y los dos cambian al de-identificar: reescribir
+    cabeceras cambia el hash, y el paso de de-identificacion es el mas comun de un flujo
+    clinico. Un digesto asi identificaba «esta copia concreta de esta serie», no la serie.
+
+    Cuando los cortes declaran su `sop_instance_uid` y su `pixel_data_sha256` se usan esos:
+    el UID es la identidad que DICOM define y el hash de pixeles es lo que la
+    de-identificacion no toca. Cuando no los declaran se cae al nombre y al hash del
+    fichero, que es lo que habia — un contenedor antiguo sigue verificando, y el que trae
+    identidad la usa. Los nombres siguen en `parts[]` como dato de ordenacion.
     """
     import hashlib
 
     h = hashlib.sha256()
+    identidad = all(p.sop_instance_uid and p.pixel_data_sha256 for p in partes)
+    if identidad:
+        for p in sorted(partes, key=lambda x: x.sop_instance_uid or ""):
+            h.update(f"{p.sop_instance_uid}\0{p.pixel_data_sha256}\n".encode())
+        return h.hexdigest()
     for p in sorted(partes, key=lambda x: x.name):
         h.update(f"{p.name}\0{p.sha256}\n".encode())
     return h.hexdigest()
 
 
-class Frame(BaseModel):
-    """Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2)."""
+class AnatomicalConvention(StrEnum):
+    """La convencion de ejes del frame (D-2).
+
+    ⚠️ **«Diestro» fija la quiralidad, no la orientacion.** DICOM es LPS; un escaner
+    intraoral usa un sistema arbitrario del aparato; glTF es Y-arriba sin significado
+    anatomico. Los tres pueden ser diestros y no coincidir en nada util: un lector que
+    reciba el frame del escaner no sabe cual de sus direcciones es anterior, superior o
+    derecha del paciente. Cualquier medida clinica sobre el modelo —un angulo, una
+    distancia a una estructura— necesita saberlo, y hasta ahora habia que mirar la imagen.
+    """
+
+    #: +X izquierda del paciente, +Y posterior, +Z superior. Es lo que DICOM impone.
+    LPS = "LPS"
+    #: +X derecha, +Y anterior, +Z superior. Frecuente en neuroimagen.
+    RAS = "RAS"
+    #: Sistema propio del aparato, sin significado anatomico declarado.
+    DISPOSITIVO = "device"
+
+
+class OcclusionRecord(StrEnum):
+    """Como se registro la relacion entre arcadas (D-9).
+
+    ⚠️ **Es la registracion clinicamente mas importante de un caso dental y el formato no
+    la nombraba.** Mandibula<->maxila —el registro de mordida— es lo que decide si dos
+    arcadas se pueden mirar juntas, y un formato dental que no le da nombre invita a que
+    cada escritor la llame distinto. El caso de referencia es solo maxilar y por eso no
+    aparecia; eso es una razon para reservarla, no para omitirla.
+
+    Y **el silencio no es «no hay»**: un caso con dos arcadas declara como la registro o
+    declara `not_recorded`, que es una afirmacion distinta de no decir nada.
+    """
+
+    #: Escaneo lateral adicional con los dientes en contacto.
+    ESCANEO_MORDIDA = "bite_scan"
+    #: Articulador o registro fisico llevado a digital.
+    ARTICULADOR = "articulator"
+    #: No se registro. Dicho, no callado.
+    NO_REGISTRADA = "not_recorded"
+    #: El caso trae una sola arcada, asi que no hay relacion que registrar.
+    NO_APLICA = "single_arch"
+
+
+class RegistrationFitness(StrEnum):
+    """Para que sirve una registracion, medido y no supuesto (D-9).
+
+    ⚠️ **`rms_error_mm` es un promedio global y no decide un uso clinico.** Para cirugia
+    guiada de implantes lo que importa es el error maximo local en la zona de interes:
+    0,666 mm de RMS es aceptable para visualizar y no para planificar. Un lector
+    **MUST NOT** suponer aptitud para un uso que no este en la lista, y la lista vacia
+    significa NO DECLARADO.
+    """
+
+    VISUALIZACION = "visualization"
+    MEDICION = "measurement"
+    CIRUGIA_GUIADA = "guided_surgery"
+
+
+class SiteKind(StrEnum):
+    """Sitios que NO son un diente (D-9).
+
+    `uos_fdi` solo etiqueta dientes, asi que no habia forma de senalar un lecho de
+    implante, una zona edentula ni un pilar protesico — que es de lo que trata media
+    rehabilitacion. Se declara el vocabulario aunque este emisor todavia no los produzca:
+    reservarlo es lo que evita que cada escritor invente el suyo.
+    """
+
+    LECHO_IMPLANTE = "implant_site"
+    EDENTULO = "edentulous"
+    PONTICO = "pontic"
+    PILAR = "abutment"
+
+
+class LocatorKind(StrEnum):
+    """Como se dice donde vive un original que no viaja."""
+
+    DICOMWEB = "dicomweb"    # QIDO-RS/WADO-RS por SeriesInstanceUID (DICOM PS3.18)
+    AE_TITLE = "ae_title"    # el Application Entity de un PACS, para DIMSE clasico
+    URL = "url"              # cualquier otro endpoint HTTP
+    OPAQUE = "opaque"        # una referencia que solo significa algo dentro de una institucion
+
+
+class Locator(BaseModel):
+    """Donde ENCONTRAR un original referenciado. Pista, nunca contrato.
+
+    Sin esto, `sha256:<hex>` identifica un fichero que nadie puede ir a buscar: el formato
+    resolvia la verificacion —cualquiera que tenga la serie puede probar que es esa— y
+    dejaba sin resolver la localizacion, que es el paso anterior.
+
+    ⚠️ **Un locator puede ser PHI y por eso `identifying` no tiene defecto.** Una URL con
+    el directorio del paciente, un AE title que nombra la clinica o un host que la
+    identifica llevan identidad aunque el contenedor este de-identificado. Callarlo seria
+    dejar que «no identifica» y «no se ha mirado» se parezcan, que es justo lo que este
+    formato no permite en ningun otro sitio.
+    """
 
     model_config = ConfigDict(extra="forbid")
-    id: str
-    description: str = ""
-    units: str = "mm"
-    handedness: str = "right"
+    kind: LocatorKind = Field(description="How the location is expressed.")
+    value: str = Field(
+        description=(
+            "The locator itself: a QIDO-RS query, an AE title, a URL, or an institution-local "
+            "reference."
+        ),
+    )
+    identifying: bool = Field(
+        description=(
+            "Whether the locator itself carries identifying information, such as a patient "
+            "directory in a URL or an AE title that names the clinic. It has no default on "
+            "purpose: silence here would be indistinguishable from having checked."
+        ),
+    )
+    note: str = Field(
+        default="",
+        description=(
+            "Anything a recipient needs in order to use it, such as which network it is reachable "
+            "from."
+        ),
+    )
 
 
-class Registro(BaseModel):
+class Frame(BaseModel):
+    """Un sistema de coordenadas con nombre. El canonico es el hub geometrico (§2.2).
+
+    ⚠️ **Un frame es POR ADQUISICION, no por aparato (D-2).** Dos escaneos del mismo
+    paciente en visitas distintas son frames distintos aunque salgan del mismo escaner.
+    Compartir frame equivale a afirmar que las dos nubes ya estan en el mismo espacio, y
+    entre dos visitas eso es falso: el paciente se movio, la mordida cambio, o las dos.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(description="Stable identifier of the frame within this container.")
+    description: str = Field(
+        default="",
+        description=(
+            "Human-readable name of the frame. Free text, and never load-bearing."
+        ),
+    )
+    units: str = Field(
+        default="mm",
+        description=(
+            "Length unit of coordinates in this frame. Millimetres everywhere in this version."
+        ),
+    )
+    handedness: str = Field(
+        default="right",
+        description=(
+            "Handedness of the axes, `right` or `left`. A reader that ignores it renders a "
+            "mirrored case that looks correct."
+        ),
+    )
+    #: D-2. `None` es NO DECLARADO y no equivale a `device`.
+    anatomical: AnatomicalConvention | None = Field(
+        default=None,
+        description=(
+            "Anatomical axis convention, such as `LPS` or `RAS`. `null` is NOT DECLARED, and is "
+            "not the same as a device convention."
+        ),
+    )
+    #: D-1 · el identificador que DICOM ya define para un sistema de coordenadas, etiqueta
+    #: `(0020,0052)`. `frame.ct_001` es una cadena que se invento el escritor: un lector
+    #: que reciba la serie por otro canal no tiene forma de saber que es ESA serie salvo
+    #: por confianza. El UID es global y unico, y **se LEE de la serie, nunca se inventa**
+    #: (misma regla que ya rige para `orientation` en el sidecar del volumen).
+    dicom_frame_of_reference_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Frame of Reference UID `(0020,0052)`. Read from the series, never invented: it "
+            "is the only frame identifier that means the same thing outside this container."
+        ),
+    )
+
+
+class Registration(BaseModel):
     """Relacion espacial entre dos frames. **Objeto de primera clase** (§6).
 
     Toda relacion es explicita, auditable y firmable. La transformada lleva puntos de
@@ -272,20 +842,104 @@ class Registro(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    id: str
-    source_frame: str
-    target_frame: str
-    transform_4x4_row_major: list[float] = Field(min_length=16, max_length=16)
-    method: str
-    rms_error_mm: float | None = None
-    computed: datetime | None = None
-    operator: str | None = None
-    verified_by: str | None = None
-    regulatory: Regulatorio = Field(default_factory=lambda: Regulatorio())
+    id: str = Field(description="Stable identifier of this registration edge.")
+    source_frame: str = Field(description="Id of the frame points are taken from.")
+    target_frame: str = Field(description="Id of the frame points are taken to.")
+    transform_4x4_row_major: list[float] = Field(
+        min_length=16,
+        max_length=16,
+        description=(
+            "The rigid transform as sixteen numbers, row-major, millimetres. glTF expects "
+            "column-major, so a reader targeting glTF MUST transpose."
+        ),
+    )
+    method: str = Field(
+        description=(
+            "How the transform was obtained, e.g. `icp_surface` or `manual`."
+        ),
+    )
+    rms_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Root-mean-square residual of the fit, in millimetres. It is measured on the points "
+            "that were fitted, so it is systematically optimistic."
+        ),
+    )
+    #: D-9 · el error MAXIMO local, que es el que decide un uso clinico. El RMS es un
+    #: promedio y se reparte: puede ser bueno y esconder una zona mala.
+    max_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Largest residual over the fitted points, in millimetres. An RMS hides a local failure "
+            "that this exposes."
+        ),
+    )
+    #: Error medido en puntos que NO se usaron para calcular la registracion (TRE). El RMS
+    #: se mide sobre los puntos que si se usaron y por tanto es sistematicamente optimista.
+    target_registration_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Registration error measured at points that did NOT take part in the fit, in "
+            "millimetres. This is the error a clinical measurement across the seam actually "
+            "inherits."
+        ),
+    )
+    #: La region donde se midio el TRE, porque un TRE sin region no dice nada.
+    tre_region: str | None = Field(
+        default=None,
+        description=(
+            "Where the target registration error was measured. A TRE without its region is not "
+            "comparable with another."
+        ),
+    )
+    #: ⚠️ Vacio significa NO DECLARADO, y un lector **MUST NOT** suponer aptitud para un
+    #: uso que no este aqui. Es la misma regla que `fdi_targets` y `clearances`.
+    fit_for: list[RegistrationFitness] = Field(
+        default_factory=list,
+        description=(
+            "What this registration is accurate enough for, declared rather than inferred from the "
+            "residual. An empty list is 'not assessed'."
+        ),
+    )
+    computed: datetime | None = Field(
+        default=None,
+        description=(
+            "When the transform was computed, RFC 3339."
+        ),
+    )
+    operator: str | None = Field(
+        default=None,
+        description=(
+            "Who or what produced the estimate. A machine here with an empty `verified_by` means "
+            "provisional."
+        ),
+    )
+    verified_by: str | None = Field(
+        default=None,
+        description=(
+            "Who checked it. `null` means nobody did, and a viewer MUST present the edge as "
+            "provisional."
+        ),
+    )
+    #: ⚠️ **Sin defecto a proposito (B-5).** Con `default_factory` toda registracion
+    #: llegaba con `layer: 1` puesto y no habia forma de distinguir «se declaro capa 1» de
+    #: «nadie lo declaro». Una registracion calculada por una maquina es computo, no
+    #: adquisicion, y el validador exige que lo diga cuando `operator` empieza por `auto:`.
+    regulatory: Regulatory | None = Field(
+        default=None,
+        description=(
+            "Regulatory layer of the transform itself, when it was produced by a model rather than "
+            "fitted."
+        ),
+    )
 
     #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
     #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
     AUTO: ClassVar[str] = "auto:"
+
+    #: D-9 · el id RESERVADO del registro de mordida. Reservarlo es lo que evita que cada
+    #: escritor lo llame distinto y que dos contenedores no se puedan comparar.
+    OCLUSION: ClassVar[str] = "reg.mandible_to_maxilla"
 
     @property
     def provisional(self) -> bool:
@@ -306,22 +960,44 @@ class Registro(BaseModel):
         )
 
 
-class Visita(BaseModel):
+class Visit(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str
-    date: str
-    label: str = ""
+    id: str = Field(description="Stable identifier of the visit within this container.")
+    date: str = Field(
+        description=(
+            "Date of the encounter. Shifted when `deidentification.date_shift_days` is set."
+        ),
+    )
+    label: str = Field(default="", description="Human-readable name for the encounter. Free text.")
 
 
-class Sujeto(BaseModel):
+class Subject(BaseModel):
     """El paciente, SIEMPRE por seudonimo. El nombre no entra en un `.uos`."""
 
     model_config = ConfigDict(extra="forbid")
-    pseudonym: str
-    fhir_patient: str | None = None
+    #: ⚠️ **HMAC con clave, NUNCA un hash simple del identificador clinico.** El espacio de
+    #: identificadores de una clinica es pequeno, asi que un hash sin clave se invierte por
+    #: diccionario y el seudonimo no seudonimiza nada. Ver `cbct_agent.pseudonymize`.
+    pseudonym: str = Field(
+        description=(
+            "The subject's pseudonym. Always a pseudonym: a direct identifier MUST NOT appear here."
+        ),
+    )
+    fhir_patient: str | None = Field(
+        default=None,
+        description=(
+            "Reference to a FHIR `Patient` resource held elsewhere. A pointer, never the record."
+        ),
+    )
+    consent: Consent | None = Field(
+        default=None,
+        description=(
+            "What the subject consented to, and for which purposes."
+        ),
+    )
 
 
-class RecursoFHIR(BaseModel):
+class FHIRResource(BaseModel):
     """A que recurso FHIR R4 corresponde un asset (§9), para el conector con el PMS.
 
     ⚠️ **`resource` es una referencia y `resource_type` un TIPO, y no son lo mismo.** El
@@ -338,9 +1014,23 @@ class RecursoFHIR(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    resource_type: str
-    resource: str | None = None
-    note: str = ""
+    resource_type: str = Field(
+        description=(
+            "FHIR resource type this asset maps to, e.g. `Observation` or `ImagingSelection`."
+        ),
+    )
+    resource: str | None = Field(
+        default=None,
+        description=(
+            "Reference to the resource instance, when one exists outside the container."
+        ),
+    )
+    note: str = Field(
+        default="",
+        description=(
+            "Why this mapping was chosen. Free text, for the reader who disagrees with it."
+        ),
+    )
 
 
 class Extension(BaseModel):
@@ -349,7 +1039,7 @@ class Extension(BaseModel):
     **Por que hace falta.** UOS se apoya en glTF, que trae `extensionsUsed` /
     `extensionsRequired` desde la 1.0 y los mantiene sin cambios en la 2.0: un lector abre
     el fichero, ve que extensiones trae, y sabe si puede leerlo entero, en parte o nada.
-    UOS v0.2 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
+    UOS v0.3 **no hereda ese mecanismo a nivel de contenedor**: ni el manifiesto ni el
     sobre de asset tienen donde
     decir «esto es una extension, se llama asi, y si no la entiendes ignorala».
 
@@ -365,43 +1055,183 @@ class Extension(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str
-    version: str
-    uri: str | None = None
-    schema_id: str | None = None
-    description: str = ""
+    name: str = Field(
+        description=(
+            "Prefixed extension name. This specification reserves `histora_` and defines no other."
+        ),
+    )
+    version: str = Field(description="Version of the extension, independent of the format version.")
+    uri: str | None = Field(
+        default=None,
+        description=(
+            "Path to the extension's payload inside the container, declared as an asset like any "
+            "other."
+        ),
+    )
+    schema_id: str | None = Field(
+        default=None,
+        description=(
+            "Identifier of the schema its payload validates against."
+        ),
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "One line on what the extension adds, so a reader that skips it can say what it "
+            "skipped."
+        ),
+    )
 
 
-class Procedencia(BaseModel):
-    """Cadena de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
+class Provenance(BaseModel):
+    """Chain de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
 
     model_config = ConfigDict(extra="forbid")
-    prev_manifest_sha256: str | None = None
-    chain: str | None = None
+    prev_manifest_sha256: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 of the previous version's manifest. This is what makes the history a chain "
+            "rather than a claim."
+        ),
+    )
+    chain: str | None = Field(
+        default=None,
+        description=(
+            "Path to the append-only chain file. Present without `prev_manifest_sha256` means a "
+            "history exists that this manifest does not point into."
+        ),
+    )
 
 
-class Manifiesto(BaseModel):
+class Manifest(BaseModel):
     """`manifest.json`. DEBE ser la primera entrada fisica del ZIP (§3)."""
 
     model_config = ConfigDict(extra="forbid")
-    uos_version: str = UOS_VERSION
-    case_id: str
-    created: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    generator: dict[str, str]
-    phi_state: EstadoPHI
-    subject: Sujeto
-    canonical_frame: Frame
-    frames: list[Frame] = Field(default_factory=list)
-    visits: list[Visita] = Field(default_factory=list)
-    assets: list[Asset] = Field(default_factory=list)
-    registrations: list[Registro] = Field(default_factory=list)
-    fhir_map: dict[str, RecursoFHIR] = Field(default_factory=dict)
-    # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.2.
-    extensions: dict[str, Extension] = Field(default_factory=dict)
-    extensions_used: list[str] = Field(default_factory=list)
+    uos_version: str = Field(
+        default=UOS_VERSION,
+        description=(
+            "Format version this container declares. A reader MUST check it before anything else."
+        ),
+    )
+    case_id: str = Field(
+        description=(
+            "Stable case identifier, conventionally `urn:uuid:<v5>`. It MUST NOT encode patient "
+            "identity."
+        ),
+    )
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description=(
+            "When this manifest was written, RFC 3339 in UTC."
+        ),
+    )
+    generator: dict[str, str] = Field(
+        description=(
+            "Who wrote this container: name and version of the writer."
+        ),
+    )
+    phi_state: PHIState = Field(
+        description=(
+            "What identifiable content the container carries. It is a statement about the whole "
+            "container, and a reader decides what it may do with it from here."
+        ),
+    )
+    #: ⚠️ Obligatorio cuando `phi_state` no es `identified` (B-3): declarar un estado sin
+    #: decir que medidas lo produjeron es una afirmacion que nadie puede comprobar.
+    deidentification: Deidentification | None = Field(
+        default=None,
+        description=(
+            "What de-identification was applied, to which assets, and with what tool. `null` means "
+            "none was declared, which is not the same as none being needed."
+        ),
+    )
+    #: Para que se emitio ESTE contenedor (B-4). Tiene que estar dentro de
+    #: `subject.consent.scope`: no se puede emitir para algo que el paciente no consintio.
+    purpose_of_use: PurposeOfUse | None = Field(
+        default=None,
+        description=(
+            "What this container was assembled for. It bounds what a recipient may do with it, and "
+            "is checked against the subject's consent."
+        ),
+    )
+    subject: Subject = Field(description="The patient, always by pseudonym.")
+    canonical_frame: Frame = Field(
+        description=(
+            "The frame every other frame must be reachable from. It is the geometric hub of the "
+            "case."
+        ),
+    )
+    frames: list[Frame] = Field(
+        default_factory=list,
+        description=(
+            "Every coordinate frame named in the case, besides the canonical one."
+        ),
+    )
+    visits: list[Visit] = Field(
+        default_factory=list,
+        description=(
+            "The temporal axis: one entry per clinical encounter."
+        ),
+    )
+    assets: list[Asset] = Field(
+        default_factory=list,
+        description=(
+            "The data plane: every file the container carries or references. The manifest is "
+            "exhaustive, so a reader never walks the ZIP to discover content."
+        ),
+    )
+    registrations: list[Registration] = Field(
+        default_factory=list,
+        description=(
+            "The relations: the transforms that place each frame with respect to another, each "
+            "with its residual."
+        ),
+    )
+    #: D-9 · como se registro la relacion entre arcadas. `None` es no declarado y el
+    #: validador avisa: en un caso de dos arcadas es la registracion que mas importa.
+    occlusion: OcclusionRecord | None = Field(
+        default=None,
+        description=(
+            "How the two arches relate, for a case that has both. Silence is never 'there is "
+            "none': a two-arch case MUST declare a registration or say why it cannot."
+        ),
+    )
+    fhir_map: dict[str, FHIRResource] = Field(
+        default_factory=dict,
+        description=(
+            "Which FHIR resource each asset maps to, so a clinical system can ingest the case "
+            "without knowing this format."
+        ),
+    )
+    # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.3.
+    extensions: dict[str, Extension] = Field(
+        default_factory=dict,
+        description=(
+            "Extensions this container declares, by name."
+        ),
+    )
+    extensions_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of extensions present. A reader that does not implement one still opens the "
+            "case and can say what it left unread."
+        ),
+    )
     # Vacio a proposito en todo lo que emitimos: nada de lo nuestro impide abrir el caso.
-    extensions_required: list[str] = Field(default_factory=list)
-    provenance: Procedencia = Field(default_factory=lambda: Procedencia())
+    extensions_required: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of extensions a reader MUST implement to open the case correctly. Listing one "
+            "here refuses readers, so it is for cases that would be misread otherwise."
+        ),
+    )
+    provenance: Provenance = Field(
+        default_factory=lambda: Provenance(),
+        description=(
+            "The link to the previous version of this case, and to the chain that records every "
+            "version."
+        ),
+    )
 
     def json_canonico(self) -> str:
         """JSON estable: mismas claves, mismo orden, misma salida.

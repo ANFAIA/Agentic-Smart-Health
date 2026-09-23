@@ -1,0 +1,72 @@
+{
+  "format": "UOS",
+  "version": "0.2",
+  "note": "Conformance bench. Run your validator over each file and compare with `expects`. `error` means the container is NOT valid; `warning` that it is valid and there is something to say; `valid-with-warning` that it is accepted while ignoring what it does not understand. Every byte is synthetic: there is no patient behind it.",
+  "cases": [
+    {
+      "file": "valid.uos",
+      "expects": "valid",
+      "why": "the reference container. A conformant reader accepts it with no errors."
+    },
+    {
+      "file": "undeclared-entry.uos",
+      "expects": "error",
+      "why": "carries a file the manifest does not name: no hash vouching for it and no regulatory layer. This is the shape a leak would have (§14.6)"
+    },
+    {
+      "file": "hash-mismatch.uos",
+      "expects": "error",
+      "why": "an asset declares a sha256 that is not the one of its bytes"
+    },
+    {
+      "file": "manifest-not-first.uos",
+      "expects": "error",
+      "why": "`manifest.json` is not the first physical entry of the ZIP, so a reader cannot read it without walking the whole container (§3)"
+    },
+    {
+      "file": "layer-3-outside-derived.uos",
+      "expects": "error",
+      "why": "an asset declares layer 3 and does not live under `derived/`, so deleting that directory would not remove the inference (§9)"
+    },
+    {
+      "file": "provisional-registration.uos",
+      "expects": "warning",
+      "why": "an automatic registration with no `verified_by`: the container is VALID and the viewer must present it as provisional (§6). A reader that does not warn hides it"
+    },
+    {
+      "file": "higher-minor-new-field.uos",
+      "expects": "valid-with-warning",
+      "why": "declares a higher minor version and carries a field this reader does not know: it must be ignored and NAMED, not grounds for rejecting the container (§15.2)"
+    },
+    {
+      "file": "compressed.uos",
+      "expects": "error",
+      "why": "the ZIP uses DEFLATE instead of STORE, so range access --- the whole point of the wrapper --- does not work (§2)"
+    },
+    {
+      "file": "series-complete.uos",
+      "expects": "valid",
+      "why": "it holds the whole DICOM series and every slice matches its hash (§6). Our writer does not emit this way --- it references the originals --- and a validator has to accept a writer that does. Note it reaches NO conformance level, and that is correct: UOS-Core requires a renderable scene and this container carries only the volume"
+    },
+    {
+      "file": "series-slice-missing.uos",
+      "expects": "error",
+      "why": "slice 'volume/ct_001/slice_0022.dcm' is missing. A digest over the set would only say that something changed; §6 requires saying WHICH"
+    },
+    {
+      "file": "series-slice-altered.uos",
+      "expects": "error",
+      "why": "slice 'volume/ct_001/slice_0000.dcm' has one byte changed: same name, same size, different content"
+    },
+    {
+      "file": "series-slice-extra.uos",
+      "expects": "error",
+      "why": "there is one slice more than the manifest declares in `parts[]`. An extra is as serious as a missing one: nobody knows where it came from"
+    },
+    {
+      "file": "series-slice-deidentified.uos",
+      "expects": "warning",
+      "why": "slice 'volume/ct_001/slice_0000.dcm' has had tags cleaned: it keeps its SOP Instance UID and its pixels, and its bytes are no longer the declared ones. This is a WARNING and not an error --- it is the same slice de-identified, not a different slice (§6)"
+    }
+  ]
+}

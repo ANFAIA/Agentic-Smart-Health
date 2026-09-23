@@ -281,7 +281,7 @@ that fixes whatever the new version finds.
 | Field | Value |
 |---|---|
 | **Name** | `docs-guardian` |
-| **Version** | `0.6.0` |
+| **Version** | `0.14.0` |
 | **Location** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Status** | `active` |
 | **Trigger** | `pre-commit` hook (**does not block**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -315,6 +315,7 @@ that fixes whatever the new version finds.
 | `inventario` and `arbol` | that what exists is cited, not merely that what is cited exists |
 | `vacios` | a component with a README card ↔ that it has code, or that the card declares it a placeholder |
 | `bloques` | that the generated tables match the code |
+| `campos` | that the specification's field tables match the Pydantic types |
 
 > **Why the guardians are not versioned.** Giving them a `__version__` and comparing it,
 > as is done with the `*Agent` classes, was considered. It was not done, for three
@@ -1274,7 +1275,7 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.4.0` |
+| **Version** | `0.6.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
@@ -1361,14 +1362,24 @@ wrote.
   row-major: confusing them does not blow up, it places the cloud rotated and mirrored. The
   payloads are pointed at with `extras.uos_gs_uri`, which is the declared fallback while
   `KHR_gaussian_splatting` is not ratified — §13 says it is withdrawn in v1.0.
-- **The original STL travels as a `document`, not as a scene.** §5.1 says so. Converting to
-  glTF loses information — `float32` from `float64` — so the original stays: the converted
-  one is presentation and the reversible one is the scanner's file, byte for byte.
-- ⚠️ **`extras.uos_fdi` is NOT emitted**, even though §5.1 allows for it "if the mesh comes
-  segmented". Ours does not come segmented: we segment it with a model, and that is Layer
-  3. Baked into the scene, removing `derived/` would stop removing the inference and §5.5's
-  hard rule breaks. The labels go in `derived/`, indexed by vertex — exact because the scene
-  preserves the ingested mesh's ordering.
+- **The original STL travels as a `document`, not as a scene.** §5.1 says so. It stays
+  declared for **provenance and layer**, not for resolution: a binary STL stores vertices as
+  `float32` by definition, so converting back to `float32` for glTF loses *nothing* — the
+  `float64` in `mesh-agent` is a widening of the data, not precision that was there. From an
+  **OBJ**, which is decimal text with ~8 digits, the loss is real. The claim used to be that
+  the conversion is lossy full stop, which was false for half the inputs (T-1).
+- ⚠️ **Neither `extras.uos_fdi` nor `_REGION_ID` is emitted**, even though §5.1 allows the
+  first "if the mesh comes segmented". Ours does not come segmented: we segment it with a
+  model, and that is Layer 3. Baked into the scene, removing `derived/` would stop removing
+  the inference and §5.5's hard rule breaks. The labels go in `derived/`, indexed by vertex
+  — exact because the scene preserves the ingested mesh's ordering.
+
+  This was violated between 0.4.0 and 0.5.0: the scene shipped split into one *primitive*
+  per tooth, so that a third-party viewer could do §11.3's picking, and the manifest kept
+  declaring it Layer 1. An external review of the specification flagged it as blocking
+  (B-1) and it is reverted. **The price is real**: a foreign glTF viewer opens the
+  container, draws the arch, and cannot select a tooth. Picking now requires `derived/`,
+  which is the only way the three-plane separation is true rather than documented.
 - ⚠️ **The DICOM series travels WHOLE and is verified slice by slice.** The volume asset is
   a directory (`volume/ct_001/`) and the manifest declares one `Parte` per file, with its
   name and its hash. A hash of the whole set is not enough: that one says "this series does
@@ -1411,11 +1422,21 @@ wrote.
   define per-tooth clinical attributes: its §9 sends them to FHIR's `Observation`, i.e. to a
   server, and then a standalone `.uos` cannot answer "what does the report say about the
   24?". It goes in `clinical/observations.json` with the 32 observations, the measurements
-  that do not fit on a single tooth and the gate's reasons. **Layer 1, not `derived/`**: it
-  is the transcription of a report a person signed, and putting it in `derived/` would make
-  it detachable. How each value was extracted is stated by its `derivation` —
+  that do not fit on a single tooth and the gate's reasons. **Layer 1 is the file's
+  default, not a claim about its content**: it is the transcription of a report a person
+  signed, and putting it in `derived/` would make it detachable — but the `color` block is
+  Layer 2, computed by the pipeline from the photographs, and says so in its own entry.
+  Every value carries its own `regulatory`, `derivation` and `confidence`; nothing floats
+  over the tooth any more. How each value was extracted is stated by its `derivation` —
   `deterministic`, `inferred`, or `null`, which means **not declared** and is not the same
   as deterministic.
+
+  ⚠️ **`confidence` is not how sure the extractor was.** It is the weakest link in the
+  chain that attached a value to *this* tooth, and the segmenter's confidence in the FDI
+  code dominates it — which is why a `deterministic` value legitimately arrives at 0.745.
+  The file says so in its own `regulatory` block, because every reader that does not know
+  reads it as a contradiction. `color` carries none: that number is about the
+  report-to-tooth chain and says nothing about a colour measurement.
 - **The manifest declares its extensions** (`extensions`, `extensions_used`,
   `extensions_required`), and this **is not in v0.2**: it is our proposal, copied from glTF,
   which UOS leans on. Without it, an outside reader ignores what we added **without
@@ -1449,6 +1470,16 @@ wrote.
 | Date | Version | Change |
 |---|---|---|
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
+| 2026-09-03 | 0.14.0 | **G-1, the public API.** Everything an integrator types is now English: `read_manifest`, `validate`, `write_uos`, `Manifest`, `Registration`, `Subject`, `report.valid`, `report.errors`, `report.levels`. The eleven module **files** keep their Spanish names on purpose — nobody imports them, `__init__.py` re-exports everything, and renaming a listing nobody types is a breaking change bought for nothing. The payoff is that `esquema.py`'s title mapping collapses: the classes are already called what the schema should call them, so only the one-line English descriptions remain. |
+| 2026-09-03 | 0.13.0 | **The G items.** The extension prefix is `histora_`, one prefix, renamed from the summer-grant project's `ash_` — the specification told writers not to squat on it without saying who owned it, which is not a rule anyone can follow. Copyright and the Apache 2.0 licence are stated on the cover as covering the document and the reference implementation alike. The schema `$id` resolves, pinned to a tag rather than a branch, and deliberately names no domain nobody holds. There is a **conformance fixture**: one valid container and seven broken ones, each with a single defect and the expected result beside it, built by running the real writer over synthetic data and verified by the test suite on every run. And the document says how it changes and who decides, where before it referred to "the process of §16" and §16 described no process. |
+| 2026-09-03 | 0.12.0 | **T-1 to T-7.** Ten checks the text declared normative and the algorithm never ran: undeclared ZIP entries, `derived/` self-description, `derived_from` resolving, the `KHR_gaussian_splatting` invariants and complete SH degrees, the segmentation join by count and by a hash of the source `POSITION` accessor (T-4), view/volume coherence, and chain ordering. `value_range` is measured instead of left null "because sweeping the series is expensive" — the writer already reads every byte. And the reversibility argument is corrected: a binary STL is `float32` by definition, so the conversion loses nothing from an STL and does lose from an OBJ; the original stays declared for provenance and layer, not resolution. |
+| 2026-09-03 | 0.11.0 | **D-4, D-5, D-6, D-9.** Findings travel coded — `{system, code, display}` with the issuer's closed vocabulary demoted to `display`, where it belongs — and the SNOMED `code` is deliberately `null`: assigning one is clinical terminology, and a guessed code is indistinguishable from a right one to the connector that resolves it. Occlusion gets a reserved id and must be declared even when the answer is `single_arch`; registrations declare what they were measured **fit for**, because an RMS average does not license guided surgery; sites that are not teeth get a vocabulary. Normative enum values that were Spanish (`"lineal"`, `"sigma_normalizada"`) are now English, since a reader branches on them. The specification names where UOS maps onto DICOM's Spatial Registration Object, Encapsulated STL, FHIR `Provenance` and R5's `ImagingSelection` rather than reinventing them. |
+| 2026-09-03 | 0.10.0 | **D-1, D-2, D-3, D-7, D-8.** Frames anchor to the DICOM Frame of Reference UID and declare their anatomical convention — "right-handed" fixes chirality, not which direction is the patient's anterior. A slice's identity stops being its file's hash, which any de-identification changes, and becomes the SOP Instance UID plus a hash of PixelData; verification splits into identity and exact bytes, reported separately. A `measured` layer must declare the occupancy threshold that decides which tissue appears. And the container stops calling CBCT grey values Hounsfield units: it published `±N HU` for a scanner that is not calibrated in them, and the volume sidecar now declares `calibrated_hu`. |
+| 2026-09-02 | 0.9.0 | **B-6 and part of G-1.** `UOS-Distributable`, a profile orthogonal to the conformance levels and derived the same way: the levels say whether a reader can *open* a container, and nothing said whether it is in a condition to *leave* the organisation that issued it — the question asked immediately before attaching a case to an email. It is B-1, B-3 and B-4's conditions at once, because separately they decide nothing. Not being distributable is not an error; it is the normal state of a case inside the clinic, and it now reaches the human gate with what is missing. Separately: the published JSON Schema is now entirely in English. Field names were already the wire format, but `title` and `description` were generated by pydantic from Spanish class names and docstrings, so the one artifact that exists for an outside implementer had an unreadable half. |
+| 2026-09-02 | 0.8.0 | **B-3 and B-4.** `phi_state` alone could not sustain what it claims: it is a statement about DICOM tags, and the container identifies a person without any — `scene/field.ply` is CBCT density including soft tissue, and a facial surface reconstructs from it. `pseudonymized` and `anonymized` now require a `deidentification` block in the vocabulary of DICOM PS3.15 Annex E, and the agent **computes** `phi_state` from what it actually ships: carrying a `measured` volume-derived layer without cleaning recognisable features, it declares `identified` and sends the reason to the human gate rather than overclaiming. `acquisition.device` loses its free-form map (and with it any chance of shipping a serial number); `date_shift_days` may only travel in an already-identified container. B-4 adds `subject.consent` and `purpose_of_use` from one closed vocabulary, the second required to be contained in the first — a container cannot be issued for a use the patient did not consent to — and neither is ever defaulted. |
+| 2026-09-02 | 0.7.0 | **B-2 and B-5.** Regulatory layer **per value** in `clinical/observations.json` (`histora-clinical/2.0`): the file declared Layer 1 for everything, and the `color` block — CIELAB per crown third, flash falloff regressed out — is computed by the pipeline, not transcribed from a signed report. It is now Layer 2 with its `derived_from`. **Layer 2 is defined for the first time**: computed by a deterministic, reproducible procedure from Layer 1, with no trained model. It existed in fact — the ICP transform, the STL converted to glTF, the trained appearance — and all of it shipped as Layer 1 because the document defined only 1 and 3. `status` + `jurisdictions` are replaced by `clearances[]` with a closed status vocabulary; an empty array means *not declared*, by written definition, and the validator warns. `Registro.regulatory` loses its default so that an automatic registration has to declare its layer instead of inheriting one. |
+| 2026-09-02 | 0.6.0 | **B-1, second pass.** The first pass removed the FDI code from `scene/scene.glb`, which is what the external review named — it reviewed the specification, not one of our containers. Opening a real one showed the same violation in two more files: `scene/field.ply` and `scene/composite.ply` shipped a `region_id` column, the same code from the same segmenter, in two more assets declared Layer 1. The column is now extracted on the way into the container and rewritten as `derived/seg_gaussians.<layer>.bin`, the per-Gaussian sibling of `derived/seg_teeth.bin`. The working files on disk are untouched: what is regulated is the container. Check 17b extended to PLY headers, and an end-to-end test now walks **every** layer of `scene/` rather than the one that was fixed. |
+| 2026-09-02 | 0.5.0 | **B-1 of the external review**: `scene/scene.glb` stops being split by tooth and stops carrying `extras.uos_fdi`, and the `KHR_gaussian_splatting` primitive stops carrying `_REGION_ID`. Both are FDI codes, both come from a segmenter, and both were baked into an asset the manifest declared Layer 1 — so deleting `derived/` no longer removed the inference that §3.1 promises can be removed. The labels keep travelling whole in `derived/seg_teeth`; picking is rebuilt in the reader by vertex index. A new validator check parses every non-Layer-3 GLB and rejects both attributes, because the previous check verified where Layer 3 is **declared**, not where its content **is**. |
 | 2026-08-24 | 0.4.0 | Conformance with the draft: the registration stops writing `rms_error_mm: null` while holding the measured residual — a naming bug `getattr` was covering — and stops crediting the ICP to the wrong agent; the scene is split into one *primitive* per tooth with `extras.uos_fdi` (§5.1), which is what enables §11.3's picking in a third-party viewer; the photos declare `projection` (§5.3); the views carry `mpr` and `clip_planes` when the volume travels (§7); and the **per-version JSON Schema** §12 requires is published, checked by the validator itself. |
 | 2026-08-24 | 0.3.0 | The container carries the **twin** and not only the inputs: a glTF scene with the GS nodes hanging off it and their registration as a `matrix`, field and composite with a descriptor declaring whether they are **measured**, segmentation in `derived/`, the clinical layer, and an **extension mechanism** proposed to the draft. |
 | 2026-08-24 | 0.2.0 | **UOS-Vol** level: the whole DICOM series as a directory asset, verified slice by slice, with its §5.2 sidecar read from the headers that travel, and rejected if those headers contradict the `phi_state`. And the `fhir_map` populated by resource type. |

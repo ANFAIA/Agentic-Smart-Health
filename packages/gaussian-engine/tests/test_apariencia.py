@@ -116,7 +116,7 @@ def test_el_PLY_puede_llevar_el_FDI_por_gaussiana(tmp_path):
     b = ruta.read_bytes()
     cab = b[: b.index(b"end_header")].decode("utf-8", "replace")
     assert "property short region_id" in cab
-    assert "MAS CERCANA" in cab, "tiene que decir de dónde sale la etiqueta"
+    assert "NEAREST crown" in cab, "tiene que decir de dónde sale la etiqueta"
     i = b.index(b"end_header") + len(b"end_header") + 1
     dt = _dtype_de(cab)
     assert "region_id" in dt.names
@@ -375,9 +375,9 @@ def test_la_cabecera_nombra_el_color_POR_PIEZA_cuando_es_el_que_manda() -> None:
         "n_piezas_con_tono": np.asarray(13),
     })
     junto = " ".join(por_pieza)
-    assert "POR PIEZA" in junto
-    assert "13 corona" in junto and "108922" in junto
-    assert "NO hace falta" in junto and "pose" in junto
+    assert "MEASURED PER TOOTH" in junto
+    assert "13 crown" in junto and "108922" in junto
+    assert "No pose" in junto and "needed" in junto
     # ⚠️ Los tres cubos tienen que sumar. La primera version decia «el resto lo hereda de
     # la proyeccion por vertice (7 medidos, 97 interpolados)» y dejaba 3.041 vertices sin
     # nombrar — los que se pintan con el degradado de respaldo, que es justo el unico
@@ -397,7 +397,7 @@ def test_la_cabecera_nombra_el_color_POR_PIEZA_cuando_es_el_que_manda() -> None:
     assert "POR PIEZA" not in " ".join(por_vertice)
 
     # Y sin nada medido, los dos tonos siguen declarandose como lo que son.
-    assert "DOS tonos" in " ".join(_comentarios_color({}))
+    assert "TWO tones" in " ".join(_comentarios_color({}))
 
 
 def test_el_relieve_SH1_vale_EXACTAMENTE_n_por_v() -> None:
@@ -625,6 +625,6 @@ def test_la_cabecera_declara_el_color_REUTILIZADO():
     from gaussian_engine.apariencia import _comentarios_color
 
     junto = " ".join(_comentarios_color({"color_reutilizado": np.asarray(1)}))
-    assert "REUTILIZADO" in junto
+    assert "REUSED" in junto
     assert "DOS tonos" not in junto
     assert "MEDIDO" not in junto

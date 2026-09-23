@@ -1,4 +1,4 @@
-"""Registro rígido de dos nubes de puntos (ADR 004 §2.6).
+"""Registration rígido de dos nubes de puntos (ADR 004 §2.6).
 
 El algoritmo vive **detrás de un `Protocol`** y no dentro del agente, por tres
 motivos: se puede sustituir sin tocar el contrato, se puede testear el agente con
@@ -289,7 +289,7 @@ def icp_global(
     overlap_mm: float = DEFAULT_OVERLAP_MM,
     seed: int = 0,
 ) -> RegistrationResult:
-    """Registro **con etapa gruesa**: barre SO(3) al azar y refina las mejores poses.
+    """Registration **con etapa gruesa**: barre SO(3) al azar y refina las mejores poses.
 
     Es el hueco que el ADR 004 dejaba para RANSAC-FPFH, resuelto por fuerza bruta.
     Basta, y no arrastra Open3D: la traslación la resuelve el propio ICP alineando

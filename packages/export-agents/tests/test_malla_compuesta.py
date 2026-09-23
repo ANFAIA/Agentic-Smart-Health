@@ -92,7 +92,7 @@ def _en_arcada(fdi: int) -> np.ndarray:
 
     Hace falta para el marco anatómico y no es decorado. Con los dientes en línea, el eje
     derecha-izquierda y el antero-posterior caen los dos sobre la misma dirección y no se
-    separan — `marco_anatomico` lo detecta y se niega a medir, con razón.
+    separan — `anatomical_frame` lo detecta y se niega a medir, con razón.
     """
     cuadrante, numero = divmod(fdi, 10)
     lado = -1.0 if cuadrante in (1, 4, 5, 8) else 1.0
@@ -530,7 +530,7 @@ def test_la_base_cae_al_lado_CONTRARIO_de_las_coronas(tmp_path):
     cm³ contra los 11,9 correctos. Un modelo se apoya por donde estaba el hueso y muerde
     por el otro lado, y eso no lo dice la topología.
     """
-    from export_agents.anatomia import marco_anatomico
+    from export_agents.anatomia import anatomical_frame
     from export_agents.stl import read_stl_triangles
 
     almacen = _almacen(piezas=(11, 16, 21, 26), en_arcada=True)
@@ -538,7 +538,7 @@ def test_la_base_cae_al_lado_CONTRARIO_de_las_coronas(tmp_path):
         _snapshot(), tmp_path / "c.stl", etiquetas_ios=almacen.etiquetas_ios
     )
     malla = almacen.load(REF_MALLA)
-    marco, motivo = marco_anatomico(malla["positions"], almacen.etiquetas_ios)
+    marco, motivo = anatomical_frame(malla["positions"], almacen.etiquetas_ios)
     assert marco is not None, motivo
     oclusal = marco.oclusal / np.linalg.norm(marco.oclusal)
 

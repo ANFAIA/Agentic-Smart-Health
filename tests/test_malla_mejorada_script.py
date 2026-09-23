@@ -221,16 +221,21 @@ def test_la_geometria_sale_del_GEMELO_y_no_del_escaner_original() -> None:
     `scene/scene.glb` **es** la escena del gemelo, no una copia del fichero de entrada.
     """
     pos = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]])
-    glb = _glb(pos, [(np.array([[0, 1, 2]]), None), (np.array([[1, 3, 2]]), "26")])
-    v, caras, fdi = mm.lee_glb(glb)
+    glb = _glb(pos, [(np.array([[0, 1, 2]]), None), (np.array([[1, 3, 2]]), None)])
+    v, caras = mm.lee_glb(glb)
     assert len(v) == 4 and caras.shape == (2, 3)
     assert np.allclose(v, pos)
-    # El código FDI viaja en la primitiva, que es lo que el borrador define para el picking.
-    assert fdi[3] == 26 and fdi[0] == 0
 
 
-def test_una_primitiva_sin_fdi_no_inventa_codigo() -> None:
-    """La encía es una primitiva más y no tiene código: se queda en 0, «sin asignar»."""
-    pos = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
-    v, caras, fdi = mm.lee_glb(_glb(pos, [(np.array([[0, 1, 2]]), None)]))
-    assert (fdi == 0).all()
+def test_el_lector_IGNORA_un_uos_fdi_horneado_en_la_escena() -> None:
+    """B-1: el código FDI se cruza desde `derived/`, nunca desde la geometría.
+
+    Un `.uos` emitido por la 0.4.0 —o por otro escritor que aún parta la malla— sigue
+    abriéndose, pero su `extras.uos_fdi` no se lee: hacerlo devolvería al lector la
+    inferencia por la puerta de atrás justo en el contenedor al que le han quitado
+    `derived/` para poder distribuirlo.
+    """
+    pos = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]])
+    v, caras = mm.lee_glb(_glb(pos, [(np.array([[0, 1, 2]]), None),
+                                     (np.array([[1, 3, 2]]), "26")]))
+    assert len(v) == 4 and caras.shape == (2, 3)

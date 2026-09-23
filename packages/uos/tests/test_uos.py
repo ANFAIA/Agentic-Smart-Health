@@ -9,33 +9,39 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from uos import Asset, Frame, Manifiesto, Registro, Sujeto, Visita, escribe_uos, valida
-from uos.contenedor import MANIFIESTO, lee_manifiesto
-from uos.manifiesto import Clase, EstadoPHI, Regulatorio
-from uos.validador import Conformidad
+from uos import Asset, Frame, Manifest, Registration, Subject, Visit, validate, write_uos
+from uos.contenedor import MANIFIESTO, read_manifest
+from uos.manifiesto import AssetKind, Deidentification, PHIState, Regulatory
+from uos.validador import Conformance
 
 
 def _asset(ruta: Path, **kw) -> Asset:
     crudo = ruta.read_bytes()
     base = dict(
-        id="asset.ios", kind=Clase.MESH_GS_SCENE, visit="v1", uri="scene/scan.stl",
+        id="asset.ios", kind=AssetKind.MESH_GS_SCENE, visit="v1", uri="scene/scan.stl",
         media_type="model/stl", sha256=hashlib.sha256(crudo).hexdigest(),
         bytes=len(crudo), frame="frame.ios_master",
     )
     return Asset(**{**base, **kw})
 
 
-def _manifiesto(assets: list[Asset], **kw) -> Manifiesto:
+def _manifiesto(assets: list[Asset], **kw) -> Manifest:
     base = dict(
         case_id="urn:uuid:0",
         generator={"name": "test", "version": "0"},
-        phi_state=EstadoPHI.PSEUDONYMIZED,
-        subject=Sujeto(pseudonym="P-1"),
+        phi_state=PHIState.PSEUDONYMIZED,
+        # B-3: declarar el estado sin decir que medidas lo produjeron es una afirmacion
+        # que nadie puede comprobar, asi que el bloque es obligatorio fuera de
+        # `identified`. Aqui va el minimo: perfil y herramienta, sin opciones aplicadas.
+        deidentification=Deidentification(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        ),
+        subject=Subject(pseudonym="P-1"),
         canonical_frame=Frame(id="frame.ios_master"),
-        visits=[Visita(id="v1", date="2026-08-23")],
+        visits=[Visit(id="v1", date="2026-08-23")],
         assets=assets,
     )
-    return Manifiesto(**{**base, **kw})
+    return Manifest(**{**base, **kw})
 
 
 @pytest.fixture
@@ -50,7 +56,7 @@ def malla(tmp_path) -> Path:
 def test_el_manifiesto_es_la_PRIMERA_entrada_del_zip(tmp_path, malla):
     """Es la identificacion positiva del formato: un lector abre los primeros bytes y ya
     sabe que tiene delante, sin adivinar por la extension."""
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                          [("scene/scan.stl", malla)])
 
     with zipfile.ZipFile(salida) as z:
@@ -60,7 +66,7 @@ def test_el_manifiesto_es_la_PRIMERA_entrada_del_zip(tmp_path, malla):
 def test_nada_va_comprimido(tmp_path, malla):
     """STORE porque los payloads ya vienen comprimidos y comprimir el ZIP solo rompe el
     acceso aleatorio por rangos, que es lo que permite bajar un asset suelto."""
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                          [("scene/scan.stl", malla)])
 
     with zipfile.ZipFile(salida) as z:
@@ -71,7 +77,7 @@ def test_lo_que_sale_es_BYTE_IDENTICO_a_lo_que_entro(tmp_path, malla):
     """Referencia, no transcodificacion (§2.1). Es lo que permite afirmar que el
     contenedor no degrada nada, y lo que hace la trazabilidad forense posible."""
     original = malla.read_bytes()
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                          [("scene/scan.stl", malla)])
 
     with zipfile.ZipFile(salida) as z:
@@ -82,7 +88,7 @@ def test_un_asset_declarado_y_no_aportado_se_declara(tmp_path, malla):
     """Una referencia colgante es un error, no un hueco — igual que en el resto del
     sistema. Un manifiesto que promete algo que no esta es peor que uno que no lo promete."""
     with pytest.raises(ValueError, match="no se aportaron"):
-        escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]), [])
+        write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]), [])
 
 
 def test_un_fichero_aportado_y_no_declarado_se_declara(tmp_path, malla):
@@ -91,7 +97,7 @@ def test_un_fichero_aportado_y_no_declarado_se_declara(tmp_path, malla):
     otro = tmp_path / "suelto.bin"
     otro.write_bytes(b"x")
     with pytest.raises(ValueError, match="no declara"):
-        escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+        write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                     [("scene/scan.stl", malla), ("suelto.bin", otro)])
 
 
@@ -100,7 +106,7 @@ def test_las_rutas_internas_no_pueden_escapar():
     resuelva ingenuamente escribe FUERA del destino."""
     for mala in ("../fuera.stl", "/absoluta.stl", "scene/../../x.stl"):
         with pytest.raises(ValueError, match="relativas"):
-            Asset(id="a", kind=Clase.MESH_GS_SCENE, visit="v1", uri=mala,
+            Asset(id="a", kind=AssetKind.MESH_GS_SCENE, visit="v1", uri=mala,
                   media_type="model/stl", sha256="0" * 64, bytes=1,
                   frame="frame.ios_master")
 
@@ -110,54 +116,55 @@ def test_un_hash_que_no_cuadra_invalida(tmp_path, malla):
     """Verificar es la politica en ingesta (§8): si el sha256 no cuadra, el asset no es el
     que el manifiesto dice, y eso invalida el caso entero."""
     a = _asset(malla, sha256="f" * 64)
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([a]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([a]),
                          [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert not inf.valido
-    assert any("sha256" in e for e in inf.errores)
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("sha256" in e for e in inf.errors)
 
 
 def test_un_frame_desconectado_del_canonico_invalida(tmp_path, malla):
     """§6: el grafo DEBE ser conexo hacia el canonico. Si no, un asset queda sin forma de
     alinearse y el visor lo colocaria en el sitio equivocado sin poder detectarlo."""
     a = _asset(malla, frame="frame.huerfano")
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([a]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([a]),
                          [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert not inf.valido
-    assert any("no conecta con el canonico" in e for e in inf.errores)
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("no conecta con el canonico" in e for e in inf.errors)
 
 
 def test_una_registracion_lo_conecta(tmp_path, malla):
     """Y con la registracion declarada, el mismo caso es valido."""
     a = _asset(malla, frame="frame.ct_001")
-    m = _manifiesto([a], registrations=[Registro(
+    m = _manifiesto([a], registrations=[Registration(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="icp_surface", verified_by="user:pedro",
     )])
-    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert inf.valido, inf.errores
+    inf = validate(salida)
+    assert inf.valid, inf.errors
 
 
 def test_un_registro_automatico_sin_verificar_es_un_AVISO_no_un_error(tmp_path, malla):
     """No invalida el fichero, pero el visor tiene que presentarlo como PROVISIONAL: un
     alineamiento que nadie ha mirado no es lo mismo que uno firmado."""
     a = _asset(malla, frame="frame.ct_001")
-    m = _manifiesto([a], registrations=[Registro(
+    m = _manifiesto([a], registrations=[Registration(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="auto_dl", operator="auto:un-agente@0.1.0",
+        regulatory=Regulatory(layer=2),
     )])
-    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert inf.valido
-    assert any("PROVISIONAL" in a_ for a_ in inf.avisos)
+    inf = validate(salida)
+    assert inf.valid
+    assert any("PROVISIONAL" in a_ for a_ in inf.warnings)
 
 
 def test_provisional_mira_QUIEN_lo_calculo_y_no_con_que_algoritmo(tmp_path, malla):
@@ -173,17 +180,40 @@ def test_provisional_mira_QUIEN_lo_calculo_y_no_con_que_algoritmo(tmp_path, mall
     describe la técnica y es otro dato.
     """
     a = _asset(malla, frame="frame.ct_001")
-    m = _manifiesto([a], registrations=[Registro(
+    m = _manifiesto([a], registrations=[Registration(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="icp_surface", rms_error_mm=0.666,
         operator="auto:geometric-fusion-agent@0.2.0",
+        regulatory=Regulatory(layer=2),
     )])
-    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert inf.valido, inf.errores
-    assert any("PROVISIONAL" in a_ and "reg.ct_to_ios" in a_ for a_ in inf.avisos), inf.avisos
+    inf = validate(salida)
+    assert inf.valid, inf.errors
+    assert any("PROVISIONAL" in a_ and "reg.ct_to_ios" in a_ for a_ in inf.warnings), inf.warnings
+
+
+def test_una_registracion_automatica_TIENE_que_declarar_su_capa(tmp_path, malla):
+    """B-5: `regulatory` no tiene defecto, y una maquina que calcula tiene que decirlo.
+
+    Antes el campo llevaba `default_factory`, asi que toda registracion salia con
+    `layer: 1` puesto sin que nadie lo escribiera: una transformada calculada por un ICP
+    quedaba declarada tan adquirida como el CBCT del que salio, y no habia forma de
+    distinguir «se declaro capa 1» de «nadie lo declaro». Un ICP es computo determinista
+    sobre dos nubes: capa 2.
+    """
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], registrations=[Registration(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", operator="auto:geometric-fusion-agent@0.2.0",
+    )])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("no declara `regulatory`" in e for e in inf.errors), inf.errors
 
 
 def test_un_registro_de_una_PERSONA_sin_verificar_no_es_provisional(tmp_path, malla):
@@ -194,47 +224,47 @@ def test_un_registro_de_una_PERSONA_sin_verificar_no_es_provisional(tmp_path, ma
     y le quitaría valor a la que importa.
     """
     a = _asset(malla, frame="frame.ct_001")
-    m = _manifiesto([a], registrations=[Registro(
+    m = _manifiesto([a], registrations=[Registration(
         id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
         transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
         method="manual", operator="user:pedro",
     )])
-    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
-    assert not any("PROVISIONAL" in a_ for a_ in valida(salida).avisos)
+    assert not any("PROVISIONAL" in a_ for a_ in validate(salida).warnings)
 
 
 def test_layer_3_tiene_que_vivir_en_derived(tmp_path, malla):
     """La regla que hace que `derived/` sea DESMONTABLE (§5.5): si un asset de inferencia
     vive fuera, borrar el directorio no lo quita y el caso deja de ser distribuible donde
     el modulo no esta habilitado."""
-    a = _asset(malla, regulatory=Regulatorio(layer=3))
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([a]),
+    a = _asset(malla, regulatory=Regulatory(layer=3))
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([a]),
                          [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert not inf.valido
-    assert any("desmontar" in e for e in inf.errores)
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("desmontar" in e for e in inf.errors)
 
 
 def test_el_nivel_de_conformidad_sale_de_lo_que_hay(tmp_path, malla):
     """UOS-Core es manifiesto + mesh_gs_scene + image2d (§12). Sin volumen no se puede
     declarar UOS-Vol, y decirlo mal haria que un implementador no pudiera fiarse."""
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                          [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert Conformidad.CORE in inf.niveles
-    assert Conformidad.VOL not in inf.niveles
+    inf = validate(salida)
+    assert Conformance.CORE in inf.levels
+    assert Conformance.VOL not in inf.levels
 
 
 def test_el_manifiesto_se_relee_igual(tmp_path, malla):
     """Ida y vuelta exacta: el manifiesto es el contrato, y un contrato que cambia al
     releerse no sirve para encadenar hashes entre versiones (§8)."""
     m = _manifiesto([_asset(malla)], created=datetime(2026, 8, 23, tzinfo=UTC))
-    salida = escribe_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
 
-    assert lee_manifiesto(salida).json_canonico() == m.json_canonico()
+    assert read_manifest(salida).json_canonico() == m.json_canonico()
 
 
 def test_un_zip_sin_manifiesto_primero_se_rechaza(tmp_path):
@@ -245,8 +275,8 @@ def test_un_zip_sin_manifiesto_primero_se_rechaza(tmp_path):
         z.writestr(MANIFIESTO, json.dumps({"uos_version": "0.2"}))
 
     with pytest.raises(ValueError, match="primera entrada"):
-        lee_manifiesto(falso)
-    assert not valida(falso).valido
+        read_manifest(falso)
+    assert not validate(falso).valid
 
 
 # --- el agente --------------------------------------------------------------- #
@@ -306,7 +336,7 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
     from datetime import datetime
 
     from core_schemas import Modality, Provenance, TwinSnapshot
-    from uos import UOSExportAgent, lee_manifiesto
+    from uos import UOSExportAgent, read_manifest
 
     foto = tmp_path / "0000144500014386_PEREZ.jpg"
     foto.write_bytes(b"\xff\xd8\xff" + bytes(50))
@@ -320,7 +350,7 @@ def test_ningun_nombre_de_fichero_del_proveedor_viaja(tmp_path, malla):
     )
 
     assert salida.ok, salida.detail
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     uris = " ".join(a.uri for a in m.assets)
     assert "PEREZ" not in uris and "0000144500014386" not in uris
     assert any(a.uri.startswith("sha256:") for a in m.assets if a.id == "asset.img_000")
@@ -348,7 +378,7 @@ def test_un_informe_ilegible_QUEDA_DECLARADO_en_el_manifiesto(tmp_path, malla):
     from datetime import datetime
 
     from core_schemas import Modality, Provenance, TwinSnapshot
-    from uos import UOSExportAgent, lee_manifiesto
+    from uos import UOSExportAgent, read_manifest
 
     doc = tmp_path / "APELLIDOS_NOMBRE_Informe.pdf"
     doc.write_bytes(b"%PDF-1.4 escaneado sin texto")
@@ -362,7 +392,7 @@ def test_un_informe_ilegible_QUEDA_DECLARADO_en_el_manifiesto(tmp_path, malla):
     )
 
     assert salida.ok, salida.detail
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     docs = [a for a in m.assets if a.id.startswith("asset.doc_")]
     assert len(docs) == 1, "el informe ilegible no existe en el manifiesto"
     # Declarado por su contenido, no por una ruta: no viaja y no lleva el nombre de nadie.
@@ -432,7 +462,7 @@ def test_el_agente_escribe_vistas_y_solo_de_las_piezas_ANOTADAS(tmp_path, malla)
         RegionalObservation,
     )
     from uos import UOSExportAgent
-    from uos.vistas import VISTAS
+    from uos.vistas import VIEWS
 
     pos, etq = _arcada_de_juguete()
     obs = RegionalObservation(
@@ -448,7 +478,7 @@ def test_el_agente_escribe_vistas_y_solo_de_las_piezas_ANOTADAS(tmp_path, malla)
 
     assert salida.ok, salida.detail
     with zipfile.ZipFile(salida.path) as z:
-        vistas = json.loads(z.read(VISTAS))["views"]
+        vistas = json.loads(z.read(VIEWS))["views"]
     ids = {v["id"] for v in vistas}
     assert "view.oclusal" in ids and "view.vestibular_derecha" in ids
     assert "view.pieza_16" in ids
@@ -460,7 +490,7 @@ def test_el_agente_escribe_vistas_y_solo_de_las_piezas_ANOTADAS(tmp_path, malla)
 def test_sin_etiquetas_el_agente_no_inventa_vistas_y_lo_dice_en_los_motivos(tmp_path, malla):
     """El aviso llega al gate, no se queda en el fichero: es un hueco que alguien decide."""
     from uos import UOSExportAgent
-    from uos.vistas import VISTAS
+    from uos.vistas import VIEWS
 
     salida = UOSExportAgent(None).export(
         _snapshot(), tmp_path / "caso", pseudonimo="P-1", malla=malla
@@ -468,14 +498,14 @@ def test_sin_etiquetas_el_agente_no_inventa_vistas_y_lo_dice_en_los_motivos(tmp_
 
     assert salida.ok, salida.detail
     with zipfile.ZipFile(salida.path) as z:
-        assert json.loads(z.read(VISTAS))["views"] == []
+        assert json.loads(z.read(VIEWS))["views"] == []
     assert any("no lleva vistas" in m for m in salida.hitl_reasons)
 
 
 def test_reexportar_encima_produce_la_version_2_y_no_un_borrado(tmp_path, malla):
     """Un `.uos` es append-only logico: modificar es encadenar, no sobrescribir."""
     from uos import UOSExportAgent
-    from uos.procedencia import CADENA, Cadena
+    from uos.procedencia import CHAIN, Chain
 
     destino = tmp_path / "caso"
     agente = UOSExportAgent(None)
@@ -484,48 +514,48 @@ def test_reexportar_encima_produce_la_version_2_y_no_un_borrado(tmp_path, malla)
 
     assert primera.path == segunda.path
     with zipfile.ZipFile(segunda.path) as z:
-        cadena = Cadena.model_validate_json(z.read(CADENA))
+        cadena = Chain.model_validate_json(z.read(CHAIN))
     assert [e.version for e in cadena.links] == [1, 2]
     assert cadena.links[1].prev_manifest_sha256 == cadena.links[0].manifest_sha256
-    assert valida(segunda.path).version == 2
+    assert validate(segunda.path).version == 2
 
 
 def test_una_vista_que_apunta_a_una_visita_inexistente_invalida(tmp_path, malla):
     """Un deep-link a una visita que el manifiesto no declara abre en ninguna parte."""
-    from uos.vistas import VISTAS
+    from uos.vistas import VIEWS
 
     m = _manifiesto([_asset(malla)])
-    salida = escribe_uos(
+    salida = write_uos(
         tmp_path / "caso.uos", m, [("scene/scan.stl", malla)],
-        extras={VISTAS: json.dumps({"views": [{
+        extras={VIEWS: json.dumps({"views": [{
             "id": "view.x", "label": "X", "visit": "v9",
             "camera": {"position": [0, 0, 1], "target": [0, 0, 0], "up": [0, 1, 0]},
         }]})},
     )
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("que el manifiesto no declara" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("que el manifiesto no declara" in e for e in inf.errors)
 
 
 def test_dos_vistas_con_el_mismo_id_invalidan(tmp_path, malla):
     """El id es la ancla del deep-link: repetido, `#view=…` es ambiguo."""
-    from uos.vistas import VISTAS
+    from uos.vistas import VIEWS
 
     vista = {
         "id": "view.x", "label": "X", "visit": "v1",
         "camera": {"position": [0, 0, 1], "target": [0, 0, 0], "up": [0, 1, 0]},
     }
-    salida = escribe_uos(
+    salida = write_uos(
         tmp_path / "caso.uos", _manifiesto([_asset(malla)]), [("scene/scan.stl", malla)],
-        extras={VISTAS: json.dumps({"views": [vista, vista]})},
+        extras={VIEWS: json.dumps({"views": [vista, vista]})},
     )
 
-    inf = valida(salida)
+    inf = validate(salida)
 
-    assert not inf.valido
-    assert any("repetido" in e for e in inf.errores)
+    assert not inf.valid
+    assert any("repetido" in e for e in inf.errors)
 
 
 def _stl_binario(triangulos: int = 4) -> bytes:
@@ -638,16 +668,21 @@ def _gltf_de(ruta) -> dict:
 
 
 
-def test_la_escena_lleva_el_FDI_por_sub_mesh(tmp_path, malla):
-    """§5.1 pide `extras.uos_fdi` por sub-mesh, y no es decoracion: el picking semantico
-    del §11.3 esta definido SOBRE ese campo.
+def test_la_escena_NO_lleva_el_FDI_ni_por_sub_mesh_ni_por_gaussiana(tmp_path, malla):
+    """B-1: `scene/scene.glb` es Layer 1 y el codigo FDI sale de un segmentador.
 
-    Sin el, un visor ajeno abre nuestro contenedor y no puede seleccionar un diente por
-    mucho que las etiquetas viajen en `derived/seg_teeth` — eso lo lee el NUESTRO porque
-    sabe que existe, no un lector cualquiera.
+    Se emitia (0.4.0) para que el picking del §11.3 funcionase en un visor ajeno, y el
+    precio era que quitar `derived/` dejaba de quitar la inferencia: la malla seguia
+    partida en catorce trozos con su codigo. La revision externa lo declaro bloqueante.
+
+    Un solo primitive, sin `extras`, y la primitiva de gaussianas sin `_REGION_ID`. Las
+    etiquetas siguen viajando enteras en `derived/seg_teeth`, que es lo que el segundo
+    assert comprueba: la regla no es «se pierde el dato», es «el dato vive en su plano».
     """
-    import numpy as np
+    import zipfile
+
     from uos.agente import UOSExportAgent
+    from uos.derivados import SEGMENTACION
 
     pos, etq = _arcada_de_juguete()
     salida = UOSExportAgent(_Almacen(pos)).export(
@@ -656,19 +691,68 @@ def test_la_escena_lleva_el_FDI_por_sub_mesh(tmp_path, malla):
     )
     assert salida.ok, salida.detail
 
-    prims = _gltf_de(salida.path)["meshes"][0]["primitives"]
-    con_fdi = {p["extras"]["uos_fdi"] for p in prims if "extras" in p}
-    assert con_fdi == {str(int(f)) for f in np.unique(etq) if f > 0}
-    # Y queda un primitive SIN codigo: la encia y las caras que cruzan de un diente a
-    # otro. Ni se reparten ni se descartan — descartarlas dejaria agujeros en la malla.
-    assert any("extras" not in p for p in prims)
+    g = _gltf_de(salida.path)
+    prims = g["meshes"][0]["primitives"]
+    assert len(prims) == 1, "la malla viaja partida: eso es Layer 3 horneada en Layer 1"
+    assert "extras" not in prims[0]
+    for m in g["meshes"]:
+        for pr in m["primitives"]:
+            assert "uos_fdi" not in (pr.get("extras") or {})
+            assert "_REGION_ID" not in pr["attributes"]
+
+    with zipfile.ZipFile(salida.path) as z:
+        assert SEGMENTACION in z.namelist(), "las etiquetas tienen que seguir viajando"
 
 
-def test_partir_por_FDI_no_toca_el_orden_de_los_vertices(tmp_path, malla):
+def test_el_validador_CAZA_el_FDI_horneado_en_una_escena_de_layer_1(tmp_path, malla):
+    """B-1: el check de `derived/` mira donde se DECLARA la capa 3, no donde esta.
+
+    Durante la 0.4.0 el manifiesto declaraba `asset.scene` como Layer 1 y el validador
+    pasaba, mientras la escena viajaba partida por diente con `extras.uos_fdi` dentro.
+    Este test reconstruye ese contenedor —un GLB parcheado a mano— y exige que ahora
+    falle. Sin el, revertir la particion es una decision que nada protege de volver.
+    """
+    import struct
+
+    from uos.agente import UOSExportAgent
+    from uos.validador import validate
+
+    pos, etq = _arcada_de_juguete()
+    salida = UOSExportAgent(_Almacen(pos)).export(
+        _snapshot(surface_ref="sha256:malla"), tmp_path / "c",
+        pseudonimo="P-1", malla=malla, etiquetas_ios=etq,
+    )
+    assert validate(salida.path).valid, "el contenedor limpio tiene que pasar"
+
+    # El mismo contenedor con el FDI horneado en la escena, como lo emitia la 0.4.0.
+    with zipfile.ZipFile(salida.path) as z:
+        entradas = [(i, z.read(i.filename)) for i in z.infolist()]
+    parcheado = tmp_path / "con-fdi.uos"
+    with zipfile.ZipFile(parcheado, "w", zipfile.ZIP_STORED) as z:
+        for info, crudo in entradas:
+            if info.filename == "scene/scene.glb":
+                largo = struct.unpack_from("<I", crudo, 12)[0]
+                doc = json.loads(crudo[20:20 + largo])
+                doc["meshes"][0]["primitives"][0]["extras"] = {"uos_fdi": "16"}
+                cab = json.dumps(doc).encode()
+                cab += b" " * (-len(cab) % 4)
+                binario = crudo[20 + largo:]
+                crudo = (
+                    struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(cab) + len(binario))
+                    + struct.pack("<II", len(cab), 0x4E4F534A) + cab + binario
+                )
+            z.writestr(info, crudo)
+
+    inf = validate(parcheado)
+    assert not inf.valid
+    assert any("uos_fdi" in e for e in inf.errors), inf.errors
+
+
+def test_la_escena_conserva_el_orden_de_los_vertices(tmp_path, malla):
     """La union entre `derived/seg_teeth` y la escena es POSICIONAL: el codigo `i` es del
-    vertice `i`. Lo que se parte es el indice, nunca las posiciones, y todos los
-    primitives comparten el mismo accesor de POSITION. Si eso cambia, la segmentacion se
-    pinta sobre los dientes equivocados y nada protesta."""
+    vertice `i`. Con la escena sin partir (B-1) esa union es lo UNICO que queda para
+    reconstruir el picking, asi que importa mas que antes: si el orden cambia, la
+    segmentacion se pinta sobre los dientes equivocados y nada protesta."""
 
     from uos.agente import UOSExportAgent
 
@@ -748,13 +832,13 @@ def test_sin_originales_el_STL_se_DECLARA_y_no_viaja(tmp_path, malla):
     import hashlib
     import zipfile
 
-    from uos import UOSExportAgent, lee_manifiesto
+    from uos import UOSExportAgent, read_manifest
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
     )
     assert salida.ok, salida.detail
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     ios = next(a for a in m.assets if a.id == "asset.ios")
 
     assert ios.external is True
@@ -778,17 +862,17 @@ def test_sin_originales_el_validador_AVISA_y_no_falla(tmp_path, malla):
     Lo comprueba `test_los_originales_referenciados_producen_UN_solo_aviso`.
     """
     from uos import UOSExportAgent
-    from uos.validador import valida
+    from uos.validador import validate
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
     )
-    inf = valida(salida.path)
-    assert inf.errores == [], inf.errores
-    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
-    assert len(referencias) == 1, inf.avisos
+    inf = validate(salida.path)
+    assert inf.errors == [], inf.errors
+    referencias = [a for a in inf.warnings if "REFERENCIA" in a]
+    assert len(referencias) == 1, inf.warnings
     assert "asset.ios" in referencias[0], referencias
-    assert inf.externos >= 1
+    assert inf.external_count >= 1
 
 
 def test_sin_assets_externos_NO_se_dice_nada(tmp_path, malla):
@@ -801,15 +885,15 @@ def test_sin_assets_externos_NO_se_dice_nada(tmp_path, malla):
     contrario sería mantener en producción un camino que la especificación prohíbe. Lo que
     se prueba aquí es el VALIDADOR, y un validador corre sobre lo que escribió otro.
     """
-    from uos.validador import valida
+    from uos.validador import validate
 
-    salida = escribe_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
+    salida = write_uos(tmp_path / "caso.uos", _manifiesto([_asset(malla)]),
                          [("scene/scan.stl", malla)])
 
-    inf = valida(salida)
-    assert inf.errores == [], inf.errores
-    assert not any("REFERENCIA" in a for a in inf.avisos), inf.avisos
-    assert inf.externos == 0
+    inf = validate(salida)
+    assert inf.errors == [], inf.errors
+    assert not any("REFERENCIA" in a for a in inf.warnings), inf.warnings
+    assert inf.external_count == 0
 
 
 def test_los_originales_referenciados_producen_UN_solo_aviso(tmp_path, malla):
@@ -826,23 +910,23 @@ def test_los_originales_referenciados_producen_UN_solo_aviso(tmp_path, malla):
     Lo que sí merece decirse una vez, y por eso el aviso no desaparece del todo, es que de
     esos assets el validador no puede comprobar nada.
     """
-    from uos.validador import valida
+    from uos.validador import validate
 
     externos = [
         _asset(malla, id=f"asset.ext_{i}", external=True,
                uri=f"sha256:{hashlib.sha256(malla.read_bytes()).hexdigest()}")
         for i in range(4)
     ]
-    salida = escribe_uos(
+    salida = write_uos(
         tmp_path / "caso.uos",
         _manifiesto([_asset(malla), *externos]), [("scene/scan.stl", malla)],
     )
 
-    inf = valida(salida)
-    assert inf.errores == [], inf.errores
-    referencias = [a for a in inf.avisos if "REFERENCIA" in a]
+    inf = validate(salida)
+    assert inf.errors == [], inf.errors
+    referencias = [a for a in inf.warnings if "REFERENCIA" in a]
     assert len(referencias) == 1, f"un aviso por asset otra vez: {referencias}"
-    assert inf.externos == 4
+    assert inf.external_count == 4
     # Y los nombra, porque «hay cuatro» sin decir cuáles no se puede accionar.
     assert all(f"asset.ext_{i}" in referencias[0] for i in range(4)), referencias[0]
 
@@ -859,12 +943,12 @@ def test_un_asset_externo_se_nombra_por_su_CONTENIDO(tmp_path, malla):
     """
     import hashlib
 
-    from uos import UOSExportAgent, lee_manifiesto
+    from uos import UOSExportAgent, read_manifest
 
     salida = UOSExportAgent(None).export(
         _snap_min(), tmp_path / "caso", pseudonimo="P-1", malla=malla,
     )
-    m = lee_manifiesto(salida.path)
+    m = read_manifest(salida.path)
     ios = next(a for a in m.assets if a.id == "asset.ios")
 
     esperado = hashlib.sha256(malla.read_bytes()).hexdigest()
@@ -881,20 +965,20 @@ def test_una_direccion_de_contenido_en_un_asset_que_SI_viaja_se_rechaza():
     localizar en el ZIP: el lector buscaría una entrada llamada `sha256:…`.
     """
     from uos import Asset
-    from uos.manifiesto import Clase
+    from uos.manifiesto import AssetKind
 
     with pytest.raises(ValueError, match="viaja dentro"):
-        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+        Asset(id="a", kind=AssetKind.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
               media_type="model/stl", sha256="a" * 64, bytes=1, frame="frame.ios_master")
 
 
 def test_un_asset_externo_con_RUTA_se_rechaza():
     """Y el otro sentido: externo obliga a dirección de contenido."""
     from uos import Asset
-    from uos.manifiesto import Clase
+    from uos.manifiesto import AssetKind
 
     with pytest.raises(ValueError, match="es una ruta"):
-        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="scene/scan.stl",
+        Asset(id="a", kind=AssetKind.DOCUMENT, visit="v1", uri="scene/scan.stl",
               media_type="model/stl", sha256="a" * 64, bytes=1,
               frame="frame.ios_master", external=True)
 
@@ -902,10 +986,10 @@ def test_un_asset_externo_con_RUTA_se_rechaza():
 def test_la_direccion_tiene_que_ser_el_MISMO_hash_que_el_campo_del_contrato():
     """Dos sitios con el mismo dato se separan. Que no puedan es el punto."""
     from uos import Asset
-    from uos.manifiesto import Clase
+    from uos.manifiesto import AssetKind
 
     with pytest.raises(ValueError, match="no.*son el mismo hash"):
-        Asset(id="a", kind=Clase.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
+        Asset(id="a", kind=AssetKind.DOCUMENT, visit="v1", uri="sha256:" + "a" * 64,
               media_type="model/stl", sha256="b" * 64, bytes=1,
               frame="frame.ios_master", external=True)
 
@@ -1067,7 +1151,7 @@ def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_pat
 
     import numpy as np
     from uos.agente import _splats_khr
-    from uos.escena import construye_glb
+    from uos.escena import build_glb
 
     crudo, columnas = _campo_apariencia()
     ply = tmp_path / "appearance.ply"
@@ -1075,7 +1159,7 @@ def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_pat
     gs = _splats_khr(ply, columnas)
 
     pos, etq = _arcada_de_juguete()
-    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    glb = build_glb(pos, np.array([[0, 1, 2]]), splats=gs)
     largo = int.from_bytes(glb[12:16], "little")
     doc = _json.loads(glb[20:20 + largo])
 
@@ -1102,8 +1186,8 @@ def test_la_apariencia_viaja_DENTRO_del_gltf_con_la_extension_de_Khronos(tmp_pat
 
     # Grado 1 entero o nada: la extensión exige que si va un grado superior estén todos.
     assert all(f"KHR_gaussian_splatting:SH_DEGREE_1_COEF_{k}" in a for k in range(3))
-    # El FDI por gaussiana no es de la extensión: va como atributo de aplicación.
-    assert "_REGION_ID" in a
+    # El FDI por gaussiana NO viaja: es Layer 3 y esta escena es Layer 1 (B-1).
+    assert "_REGION_ID" not in a
 
     # Y la apariencia cuelga del nodo de la malla, que ES el marco canónico (§5.1).
     assert doc["nodes"][0]["children"] == [1]
@@ -1161,17 +1245,468 @@ def test_sin_grado_1_la_apariencia_sigue_siendo_valida(tmp_path):
 
     import numpy as np
     from uos.agente import _splats_khr
-    from uos.escena import construye_glb
+    from uos.escena import build_glb
 
     crudo, columnas = _campo_apariencia(n=16, con_sh1=False, con_region=False)
     ply = tmp_path / "appearance.ply"
     ply.write_bytes(crudo)
     gs = _splats_khr(ply, columnas)
-    assert gs.sh1 is None and gs.region_id is None
+    assert gs.sh1 is None
 
     pos, etq = _arcada_de_juguete()
-    glb = construye_glb(pos, np.array([[0, 1, 2]]), etiquetas=etq, splats=gs)
+    glb = build_glb(pos, np.array([[0, 1, 2]]), splats=gs)
     largo = int.from_bytes(glb[12:16], "little")
     a = _json.loads(glb[20:20 + largo])["meshes"][1]["primitives"][0]["attributes"]
     assert not any(k.startswith("KHR_gaussian_splatting:SH_DEGREE_1") for k in a)
     assert "_REGION_ID" not in a
+
+
+# --- B-3 y B-4: PHI y proposito de uso ---------------------------------------- #
+def test_el_proposito_TIENE_que_caber_en_lo_que_se_consintio(tmp_path, malla) -> None:
+    """B-4: salir hacia un laboratorio, una segunda opinion o un entrenamiento son tres
+    actos juridicos distintos, y el contenedor no distinguia ninguno.
+
+    Emitir para `model_training` un caso cuyo consentimiento solo cubre `treatment` no es
+    un matiz administrativo: es el uso para el que el paciente NO dio permiso, y es la
+    primera pregunta de cualquier revision de proteccion de datos.
+    """
+    from uos.manifiesto import Consent, PurposeOfUse
+
+    a = _asset(malla)
+    m = _manifiesto(
+        [a], purpose_of_use=PurposeOfUse.ENTRENAMIENTO,
+        subject=Subject(pseudonym="P-1",
+                       consent=Consent(scope=[PurposeOfUse.TRATAMIENTO])),
+    )
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("model_training" in e for e in inf.errors), inf.errors
+
+
+def test_el_desplazamiento_de_fechas_NO_viaja_si_no_esta_identificado(tmp_path, malla) -> None:
+    """B-3: `date_shift_days` es la CLAVE de re-identificacion.
+
+    Desplazar todas las fechas del caso por igual conserva la longitudinalidad y es la
+    opcion recomendada de PS3.15. Publicar cuantos dias se desplazaron deshace exactamente
+    la medida que se dice haber aplicado: con el numero, cualquiera vuelve a las fechas
+    reales. Solo puede viajar en un contenedor que ya se declara `identified`, donde no
+    protege nada porque no hay nada que proteger.
+    """
+    from uos.manifiesto import Deidentification as D
+
+    a = _asset(malla)
+    m = _manifiesto([a], deidentification=D(
+        profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+        options=["RetainLongitudinalTemporalInformationModifiedDates"],
+        date_shift_days=137,
+    ))
+    salida = write_uos(tmp_path / "caso.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("date_shift_days" in e for e in inf.errors), inf.errors
+
+
+def test_el_esquema_publicado_esta_ENTERO_en_ingles() -> None:
+    """G-1: el esquema es el unico artefacto que un ajeno usa sin leernos el codigo.
+
+    ⚠️ **Salia bilingue sin que nadie lo decidiera.** Los nombres de campo y los valores de
+    enumeracion son ingleses porque son el formato de cable; `title` y `description` los
+    generaba pydantic del nombre de la clase y del docstring, que estan en castellano
+    porque el contrato lo leemos nosotros. El resultado era un esquema cuya mitad legible
+    no la puede leer su destinatario — y este fichero existe justo para que alguien
+    compruebe su lector contra algo que no sea su propia salida.
+
+    Se comprueba sobre el fichero PUBLICADO y no sobre el generado: lo que viaja es aquel.
+    """
+    import json as _json
+    import re
+
+    from uos.esquema import RUTA
+
+    publicado = Path(__file__).resolve().parents[3] / RUTA
+    crudo = publicado.read_text(encoding="utf-8")
+    castellano = re.compile(
+        r"[áéíóúñ¿¡]|\b(que|para|los|las|con|una|del|por|como|cada|sobre|este|segun)\b"
+    )
+    culpables = [
+        f"{ruta}: {texto}"
+        for ruta, texto in _recorre_textos(_json.loads(crudo))
+        if castellano.search(texto)
+    ]
+    assert culpables == [], "el esquema publicado lleva castellano:\n" + "\n".join(culpables)
+
+
+def _recorre_textos(nodo, ruta=""):
+    """Los `title` y `description` del esquema, con su ruta, para poder senalar cual."""
+    if isinstance(nodo, dict):
+        for k, v in nodo.items():
+            if k in ("title", "description") and isinstance(v, str):
+                yield f"{ruta}.{k}", v
+            else:
+                yield from _recorre_textos(v, f"{ruta}.{k}")
+    elif isinstance(nodo, list):
+        for i, v in enumerate(nodo):
+            yield from _recorre_textos(v, f"{ruta}[{i}]")
+
+
+def test_UOS_Distributable_separa_abrible_de_enviable(tmp_path, malla) -> None:
+    """B-6: los niveles dicen si un lector puede ABRIR el contenedor, no si puede SALIR.
+
+    Core/Vol/Sig/Full describen que tipos de asset hay dentro. Ninguno responde a la
+    pregunta que se hace justo antes de adjuntar un caso a un correo. Son las condiciones
+    de B-1, B-3 y B-4 a la vez, y a la vez porque de una en una no deciden: un contenedor
+    con el proposito declarado y la cara dentro no se puede mandar igual.
+
+    Que NO sea distribuible no es un error — es lo normal mientras el caso vive dentro de
+    la clinica. Lo que no puede pasar es que nadie lo sepa hasta despues.
+    """
+    from uos.manifiesto import Consent, PurposeOfUse
+    from uos.manifiesto import Deidentification as D
+
+    a = _asset(malla)
+    # Le falta el proposito: valido, abrible, y no enviable.
+    m = _manifiesto([a])
+    salida = write_uos(tmp_path / "sin-proposito.uos", m, [("scene/scan.stl", malla)])
+    inf = validate(salida)
+    assert inf.valid, inf.errors
+    assert not inf.distributable
+    assert any("purpose_of_use" in r for r in inf.not_distributable_because)
+
+    # Con todo declarado, si.
+    completo = _manifiesto(
+        [a], purpose_of_use=PurposeOfUse.FABRICACION,
+        subject=Subject(pseudonym="P-1",
+                       consent=Consent(scope=[PurposeOfUse.FABRICACION])),
+        deidentification=D(
+            profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
+            options=["CleanDescriptors", "CleanRecognizableVisualFeatures"],
+        ),
+    )
+    salida2 = write_uos(tmp_path / "listo.uos", completo, [("scene/scan.stl", malla)])
+    inf2 = validate(salida2)
+    assert inf2.distributable, inf2.not_distributable_because
+
+
+def test_un_contenedor_identificado_NUNCA_es_distribuible(tmp_path, malla) -> None:
+    """El caso que importa: todo lo demas declarado y dato identificable dentro.
+
+    Es exactamente el estado en el que sale hoy nuestro pipeline —lleva densidad medida
+    del CBCT sin limpiar rasgos reconocibles (B-3)— y el perfil tiene que decirlo aunque
+    el consentimiento, el proposito y la de-identificacion esten todos rellenos.
+    """
+    from uos.manifiesto import Consent, PurposeOfUse
+    from uos.manifiesto import Deidentification as D
+
+    a = _asset(malla)
+    m = _manifiesto(
+        [a], phi_state=PHIState.IDENTIFIED, purpose_of_use=PurposeOfUse.TRATAMIENTO,
+        subject=Subject(pseudonym="P-1",
+                       consent=Consent(scope=[PurposeOfUse.TRATAMIENTO])),
+        deidentification=D(profile="DICOM PS3.15 E.1"),
+    )
+    salida = write_uos(tmp_path / "identificado.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert inf.valid, inf.errors
+    assert not inf.distributable
+    assert any("identified" in r for r in inf.not_distributable_because)
+
+
+def test_el_frame_de_un_volumen_se_ancla_al_UID_de_DICOM(tmp_path, malla) -> None:
+    """D-1 y D-2: `frame.ct_001` es una cadena que se invento el escritor.
+
+    DICOM ya identifica un sistema de coordenadas de forma global y unica —el Frame of
+    Reference UID, `(0020,0052)`, que toda serie CBCT lleva—. Un lector que reciba la serie
+    por otro canal no tiene forma de saber que `frame.ct_001` es ESA serie salvo por
+    confianza. Y «diestro» fija la quiralidad, no la orientacion: sin declarar LPS, nadie
+    sabe cual de las direcciones es anterior o superior del paciente, que es lo que hace
+    falta para medir un angulo o una distancia a una estructura.
+    """
+    from uos.manifiesto import AnatomicalConvention
+
+    a = _asset(malla, frame="frame.ct_001")
+    a = a.model_copy(update={"kind": AssetKind.VOLUME})
+    m = _manifiesto([a], frames=[Frame(id="frame.ct_001")], registrations=[Registration(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="manual", operator="user:pedro",
+    )])
+    salida = write_uos(tmp_path / "sin-uid.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("dicom_frame_of_reference_uid" in e for e in inf.errors), inf.errors
+    assert any("LPS" in e for e in inf.errors), inf.errors
+
+    # Con las dos cosas declaradas, el mismo caso vale.
+    bien = _manifiesto([a], registrations=m.registrations, frames=[Frame(
+        id="frame.ct_001", anatomical=AnatomicalConvention.LPS,
+        dicom_frame_of_reference_uid="1.2.826.0.1.3680043.8.498.1",
+    )])
+    salida2 = write_uos(tmp_path / "con-uid.uos", bien, [("scene/scan.stl", malla)])
+    assert validate(salida2).valid, validate(salida2).errors
+
+
+def test_una_registracion_no_se_declara_apta_para_lo_que_no_se_ha_medido(tmp_path, malla):
+    """D-9: `rms_error_mm` es un PROMEDIO y no decide un uso clinico.
+
+    Para cirugia guiada de implantes el error que importa es el maximo local en la zona de
+    interes: 0,666 mm de RMS es aceptable para visualizar y no para planificar. Un lector
+    que solo vea el promedio no puede distinguirlo, asi que supondra — y suponer aptitud
+    es exactamente lo que `fit_for` existe para impedir.
+    """
+    from uos.manifiesto import RegistrationFitness
+
+    a = _asset(malla, frame="frame.ct_001")
+    m = _manifiesto([a], occlusion="single_arch", registrations=[Registration(
+        id="reg.ct_to_ios", source_frame="frame.ct_001", target_frame="frame.ios_master",
+        transform_4x4_row_major=[1.0 if i % 5 == 0 else 0.0 for i in range(16)],
+        method="icp_surface", rms_error_mm=0.666, operator="user:pedro",
+        fit_for=[RegistrationFitness.CIRUGIA_GUIADA],
+    )])
+    salida = write_uos(tmp_path / "apto.uos", m, [("scene/scan.stl", malla)])
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("cirugia guiada" in e for e in inf.errors), inf.errors
+
+
+def test_el_contenedor_dice_si_hubo_registro_de_MORDIDA(tmp_path, malla) -> None:
+    """D-9: mandibula<->maxila es la registracion clinicamente mas importante.
+
+    El caso de referencia es solo maxilar y por eso no aparecia — que es razon para
+    reservarla, no para omitirla. Y el silencio no es «no hay»: un caso de una arcada
+    responde `single_arch`, pero responde.
+    """
+    a = _asset(malla)
+    inf = validate(write_uos(tmp_path / "muda.uos", _manifiesto([a]),
+                             [("scene/scan.stl", malla)]))
+    assert any("occlusion" in av for av in inf.warnings), inf.warnings
+
+    dicha = _manifiesto([a], occlusion="single_arch")
+    inf2 = validate(write_uos(tmp_path / "dicha.uos", dicha,
+                              [("scene/scan.stl", malla)]))
+    assert not any("occlusion" in av for av in inf2.warnings)
+
+
+# --- T-3: los checks que el texto declaraba y el algoritmo no hacia ----------- #
+def test_un_fichero_que_el_manifiesto_no_declara_INVALIDA(tmp_path, malla) -> None:
+    """T-3: se comprobaba que todo lo declarado estuviera, no que todo lo que esta lo este.
+
+    Un fichero de mas en el ZIP viaja sin hash que lo acredite, sin capa regulatoria y sin
+    que nadie lo nombre. Es exactamente la forma que tendria una fuga, y el §14.6 lo
+    prohibe desde el principio — solo que nadie lo comprobaba.
+    """
+    import zipfile
+
+    a = _asset(malla)
+    salida = write_uos(tmp_path / "c.uos", _manifiesto([a], occlusion="single_arch"),
+                         [("scene/scan.stl", malla)])
+    assert validate(salida).valid
+
+    with zipfile.ZipFile(salida, "a") as z:
+        z.writestr("colado.txt", "esto no lo declara nadie")
+
+    inf = validate(salida)
+    assert not inf.valid
+    assert any("colado.txt" in e for e in inf.errors), inf.errors
+
+
+def test_un_asset_externo_cuyo_uri_no_es_su_hash_NI_SE_PARSEA() -> None:
+    """T-3 pedia este check en el algoritmo, y ya existe una capa antes.
+
+    El §3.4.3 dice que un externo se nombra por su direccion de contenido y que la relacion
+    se verifica «en las dos direcciones». La revision no lo vio porque miro el algoritmo del
+    validador, y la regla vive en el CONTRATO: `Asset._direccion_y_custodia` es un validador
+    de modelo, asi que un manifiesto incoherente ni llega a parsearse.
+
+    Este test fija donde vive la regla. Anadirla tambien al algoritmo habria sido codigo
+    inalcanzable, que aparenta una cobertura que en realidad viene de otro sitio.
+    """
+    import pytest
+    from pydantic import ValidationError
+    from uos.manifiesto import Asset, AssetKind
+
+    with pytest.raises(ValidationError, match="no son el mismo hash"):
+        Asset(
+            id="asset.ios", kind=AssetKind.DOCUMENT, visit="v1", frame="frame.ios_master",
+            external=True,
+            uri="sha256:" + "a" * 64, media_type="model/stl", sha256="b" * 64, bytes=1,
+        )
+
+
+def test_cada_codigo_del_validador_existe_en_la_tabla_del_algoritmo():
+    """Ningun hallazgo cita un check que la especificacion no liste, ni al reves.
+
+    Es la deriva que la revision externa encontro por todas partes: el documento y la
+    implementacion afirmando cosas distintas sin que nada lo notase. Un codigo estable
+    solo vale si el documento donde se busca lo describe.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    raiz = Path(__file__).resolve().parents[3]
+    fuente = (raiz / "packages/uos/src/uos/validador.py").read_text(encoding="utf-8")
+    emitidos = {
+        n.args[0].value
+        for n in ast.walk(ast.parse(fuente))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr in ("error", "warn") and n.args
+        and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)
+    }
+    tex = (raiz / "docs/spec/uos-format-spec-v0.3.tex").read_text(encoding="utf-8")
+    ini = tex.index(r"\textbf{\#} & \textbf{Cls} & \textbf{Check}")
+    tabla = tex[ini : tex.index(r"\end{longtable}", ini)]
+    listados = set(re.findall(r"^(\d+[a-z]?) & [EW/-]+ &", tabla, re.M))
+    sin_fila = emitidos - listados
+    assert not sin_fila, f"el validador cita checks que la spec no lista: {sorted(sin_fila)}"
+
+
+def _manifiesto_de_marcos(registros):
+    from uos.manifiesto import Frame, Manifest, PHIState, Subject
+
+    return Manifest(
+        case_id="urn:uuid:marcos", generator={"name": "test"},
+        phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="p"),
+        canonical_frame=Frame(id="C"), frames=[Frame(id="A"), Frame(id="B")],
+        registrations=registros,
+    )
+
+
+def _traslacion(dx: float):
+    import numpy as np
+
+    m = np.eye(4)
+    m[0, 3] = dx
+    return [float(x) for x in m.ravel()]
+
+
+def _tx_al_canonico(m, marco):
+    import numpy as np
+    from uos.marcos import resuelve_al_canonico
+
+    return np.array(resuelve_al_canonico(m, marco)).reshape(4, 4)[0, 3]
+
+
+def test_cruzar_una_arista_al_reves_invierte_su_matriz():
+    """`C -> A` coloca A respecto de C invirtiendo, no reutilizando la matriz tal cual.
+
+    Es la regla que el grafo necesitaba y no decia: se recorre como no dirigido, y sin
+    esto un lector aplica la transformada del reves y coloca el asset en el sitio
+    simetrico sin que nada falle.
+    """
+    from uos.manifiesto import Registration
+
+    directa = _manifiesto_de_marcos([Registration(
+        id="r1", source_frame="A", target_frame="C",
+        transform_4x4_row_major=_traslacion(10), method="icp")])
+    assert _tx_al_canonico(directa, "A") == 10.0
+
+    inversa = _manifiesto_de_marcos([Registration(
+        id="r1", source_frame="C", target_frame="A",
+        transform_4x4_row_major=_traslacion(10), method="icp")])
+    assert _tx_al_canonico(inversa, "A") == -10.0
+
+
+def test_dos_caminos_que_discrepan_eligen_el_corto_y_declaran_la_diferencia():
+    """No se promedia: promediar inventa una pose que ninguna registracion afirma."""
+    from uos.manifiesto import Registration
+    from uos.marcos import caminos_al_canonico, discrepancia_maxima
+
+    m = _manifiesto_de_marcos([
+        Registration(id="r1", source_frame="A", target_frame="C",
+                     transform_4x4_row_major=_traslacion(10), method="icp"),
+        Registration(id="r2", source_frame="A", target_frame="B",
+                     transform_4x4_row_major=_traslacion(3), method="icp"),
+        Registration(id="r3", source_frame="B", target_frame="C",
+                     transform_4x4_row_major=_traslacion(3), method="icp"),
+    ])
+    assert len(caminos_al_canonico(m, "A")) == 2
+    assert _tx_al_canonico(m, "A") == 10.0          # el de una sola arista
+    assert discrepancia_maxima(m, "A") == 4.0       # 10 frente a 3+3
+
+
+def _asset_referenciado(locators):
+    from uos.manifiesto import Asset, AssetKind
+
+    return Asset(
+        id="asset.ct", kind=AssetKind.VOLUME, visit="v1", uri="sha256:" + "a" * 64,
+        media_type="application/dicom", sha256="a" * 64, bytes=1, frame="C",
+        external=True, locators=locators,
+    )
+
+
+def _manifiesto_con(asset, phi):
+    from uos.manifiesto import Frame, Manifest, Subject
+
+    return Manifest(
+        case_id="urn:uuid:loc", generator={"name": "test"}, phi_state=phi,
+        subject=Subject(pseudonym="p"), canonical_frame=Frame(id="C"), assets=[asset],
+    )
+
+
+def test_un_locator_no_puede_declararse_sin_decir_si_identifica():
+    """`identifying` no tiene defecto: callarlo seria «no se ha mirado» disfrazado de «no»."""
+    import pytest
+    from pydantic import ValidationError
+    from uos.manifiesto import Locator
+
+    with pytest.raises(ValidationError):
+        Locator(kind="url", value="https://pacs.example/estudio/1")
+
+
+def test_un_locator_identificante_contradice_un_contenedor_deidentificado():
+    """La de-identificacion del payload no vale si la ruta de vuelta identifica igual."""
+    from uos.manifiesto import Locator, LocatorKind, PHIState
+    from uos.validador import Report, _perfil_distribuible, _valida_locators
+
+    ruta = Locator(kind=LocatorKind.URL, value="https://pacs.clinica/GARCIA_LUIS",
+                   identifying=True)
+    m = _manifiesto_con(_asset_referenciado([ruta]), PHIState.PSEUDONYMIZED)
+    inf = Report()
+    _valida_locators(m, inf)
+    assert any(e.code == "UOS-E-017o" for e in inf.errors), inf.errors
+
+    # Y aunque el contenedor sea valido, deja de poder salir de quien lo emitio.
+    inf2 = Report()
+    _perfil_distribuible(m, inf2)
+    assert any("identifying" in x for x in inf2.not_distributable_because)
+
+
+def test_un_locator_opaco_no_identificante_solo_avisa():
+    """Una pista sin identidad no invalida nada: apunta fuera, y eso se dice."""
+    from uos.manifiesto import Locator, LocatorKind, PHIState
+    from uos.validador import Report, _valida_locators
+
+    opaco = Locator(kind=LocatorKind.DICOMWEB, value="studies/1.2.3/series/4.5.6",
+                    identifying=False)
+    inf = Report()
+    _valida_locators(_manifiesto_con(_asset_referenciado([opaco]), PHIState.PSEUDONYMIZED), inf)
+    assert not inf.errors, inf.errors
+    assert any(a.code == "UOS-W-017o" for a in inf.warnings)
+
+
+def test_los_fallos_de_la_cadena_llevan_codigo_como_todos_los_demas():
+    """`revisa_cadena` devuelve frases, y el informe promete un codigo por hallazgo.
+
+    Metidas crudas en `Report.errors` se quedaban sin `code`, sin `severity` y sin
+    `path`, y `as_dict()` —que existe justamente para quien procesa el informe en vez
+    de leerlo— reventaba con `AttributeError` al llegar a la primera. Un contenedor con
+    la cadena de procedencia rota es el caso en que MAS falta hace poder procesarlo.
+    """
+    from uos.validador import Report
+
+    inf = Report()
+    inf.error("9", "provenance/chain.json es de otro caso", path="provenance/chain.json")
+
+    (fallo,) = inf.errors
+    assert fallo.code == "UOS-E-009"
+    assert fallo.severity == "error"
+    assert fallo.path == "provenance/chain.json"
+    # Y el informe entero se serializa, que es lo que antes no ocurria.
+    d = inf.as_dict()
+    assert d["findings"][0]["code"] == "UOS-E-009"

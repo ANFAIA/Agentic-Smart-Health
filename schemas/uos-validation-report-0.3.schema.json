@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-validation-report-0.3.schema.json",
+  "title": "UOS validation report 0.2",
+  "description": "What a UOS validator reports, in a shape a program can act on. The message is written for whoever is debugging and may change between versions; the code is the contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["uos_validation_report", "valid", "findings"],
+  "properties": {
+    "uos_validation_report": {
+      "const": "0.2",
+      "description": "Version of this report format, not of the container that was validated."
+    },
+    "valid": {
+      "type": "boolean",
+      "description": "True when no finding has severity `error`. Warnings do not invalidate a container."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every error and warning, errors first.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "check", "message"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^UOS-[EW]-[0-9]{3}[a-z]?$",
+            "description": "Stable identifier of the finding: UOS-E-<check> for an error, UOS-W-<check> for a warning, numeric part padded to three digits. This is what a program branches on."
+          },
+          "severity": {
+            "enum": ["error", "warning"],
+            "description": "An error invalidates the container; a warning does not."
+          },
+          "check": {
+            "type": "string",
+            "pattern": "^[0-9]+[a-z]?$",
+            "description": "Row of the validation algorithm table that produced it, as the specification numbers them."
+          },
+          "path": {
+            "type": ["string", "null"],
+            "description": "Where in the container the finding is: a manifest path such as `assets[3].uri`, or an entry path inside the ZIP. Null when the finding is about the container as a whole."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable explanation. Written for whoever is debugging, and not a stable interface."
+          }
+        }
+      }
+    },
+    "levels": {
+      "type": "array",
+      "items": {"enum": ["UOS-Core", "UOS-Vol", "UOS-Sig", "UOS-Full"]},
+      "description": "Conformance levels the container satisfies. Derived, never declared by the writer."
+    },
+    "distributable": {
+      "type": "boolean",
+      "description": "Whether the container is fit to leave the organisation that issued it. Orthogonal to the conformance levels."
+    },
+    "not_distributable_because": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "What is missing for it to be distributable. Empty when `distributable` is true."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many versions of the case are chained. Zero means no chain is declared, which is not the same as being the first version."
+    },
+    "views": {"type": "integer", "minimum": 0, "description": "How many stored views the container carries."},
+    "external_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many acquired originals the container references without holding. A count and not one warning per asset, because referencing is the definition of the format rather than an exception."
+    }
+  }
+}

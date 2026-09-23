@@ -84,7 +84,7 @@ def test_cada_gaussiana_dice_de_donde_viene(almacen, tmp_path):
     """Un compuesto que no distingue sus dos mitades miente por omisión: una densidad
     medida en el CBCT y una forma medida por el escáner no son la misma clase de dato."""
     salida = CompositeExportAgent(almacen).export(_snapshot(), tmp_path / "c.ply")
-    origen = lee_ply(salida.path)["origen"]
+    origen = lee_ply(salida.path)["source_modality"]
 
     assert int((origen == ORIGEN_CBCT).sum()) == 40
     assert int((origen == ORIGEN_IOS).sum()) == 25
@@ -96,8 +96,8 @@ def test_la_encia_no_trae_densidad_inventada(almacen, tmp_path):
     que nadie midió."""
     salida = CompositeExportAgent(almacen).export(_snapshot(), tmp_path / "c.ply")
     ply = lee_ply(salida.path)
-    assert np.all(ply["density"][ply["origen"] == ORIGEN_IOS] == 0.0)
-    assert np.any(ply["density"][ply["origen"] == ORIGEN_CBCT] > 0.0)
+    assert np.all(ply["density"][ply["source_modality"] == ORIGEN_IOS] == 0.0)
+    assert np.any(ply["density"][ply["source_modality"] == ORIGEN_CBCT] > 0.0)
 
 
 def test_el_fdi_sobrevive_al_compuesto(almacen, tmp_path):
@@ -106,7 +106,7 @@ def test_el_fdi_sobrevive_al_compuesto(almacen, tmp_path):
     salida = CompositeExportAgent(almacen).export(_snapshot(), tmp_path / "c.ply")
     ply = lee_ply(salida.path)
     assert int((ply["region_id"] == 36).sum()) == 12
-    assert np.all(ply["region_id"][ply["origen"] == ORIGEN_IOS] == 0)
+    assert np.all(ply["region_id"][ply["source_modality"] == ORIGEN_IOS] == 0)
 
 
 def test_mide_lo_que_escribe(almacen, tmp_path):

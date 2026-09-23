@@ -60,7 +60,9 @@ _MARCADORES = ("anonymous", "anonymized", "anonimo", "removed", "none", "unknown
 PRESETS = ("cbct_bone", "cbct_soft", "cbct_metal_suppress")
 
 
-def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[str]]:
+def describe_series(
+    carpeta: Path, *, frame: str, rango_pixeles: list | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """`(sidecar, avisos)` de la serie en `carpeta`, leyendo sus cabeceras.
 
     No carga los pixeles de los 397 cortes: para las dimensiones y la geometria basta la
@@ -123,33 +125,101 @@ def describe_serie(carpeta: Path, *, frame: str) -> tuple[dict[str, Any], list[s
     pendiente = float(getattr(primera, "RescaleSlope", 1.0))
     corte = float(getattr(primera, "RescaleIntercept", 0.0))
     if bajo is None or alto is None:
-        # ⚠️ Se deja NULO. La alternativa —barrer los pixeles de la serie entera— cuesta
-        # leer 259 MB en cada exportacion, y la otra —poner el rango tipico de un CBCT—
-        # seria inventarse un dato que un visor usaria para su ventana.
-        rango = None
-        avisos.append(
-            f"la serie de {frame} no declara `Smallest/LargestImagePixelValue`: el "
-            "sidecar deja `value_range` nulo, y un visor tendra que calcular su ventana"
-        )
+        # ⚠️ **Se MIDE, y antes se dejaba nulo «porque barrer la serie es caro» (T-2).**
+        # El argumento no se sostenia: el escritor ya lee cada byte de cada corte para
+        # calcular su `sha256`, asi que sacar el minimo y el maximo en la misma pasada es
+        # gratis. Y la consecuencia de dejarlo nulo era real —un visor sin ventana de
+        # visualizacion—, o sea que se pagaba un coste que no existia con un defecto que si.
+        #
+        # `null` queda reservado para el caso legitimo: un contenedor de otro emisor que no
+        # tuvo acceso a los pixeles. Nosotros los tenemos, siempre.
+        # ⚠️ **Del pase del hash, si el llamante lo trae (T-2).** El escritor ya leyo cada
+        # byte de cada corte para `sha256` y para el hash de `PixelData`, asi que el minimo
+        # y el maximo ya estan calculados: pedirselos evita una tercera lectura del volumen
+        # entero. `_rango_medido` se queda como camino para quien llame a esta funcion sola
+        # —describir una serie que no se va a empaquetar es un uso legitimo—, y entonces
+        # si paga la pasada.
+        rango = ([rango_pixeles[0] * pendiente + corte, rango_pixeles[1] * pendiente + corte]
+                 if rango_pixeles else _rango_medido(ficheros, pendiente, corte))
+        if rango is None:
+            avisos.append(
+                f"la serie de {frame} no declara `Smallest/LargestImagePixelValue` y sus "
+                "pixeles no se han podido leer: `value_range` se queda nulo y un visor "
+                "tendra que calcular su ventana"
+            )
     else:
         rango = [float(bajo) * pendiente + corte, float(alto) * pendiente + corte]
 
+    # D-1 · el identificador que DICOM ya define para este sistema de coordenadas. Se LEE,
+    # nunca se inventa: es lo unico que permite a un lector que reciba la serie por otro
+    # canal saber que es ESA serie, en vez de fiarse de que `frame.ct_001` signifique algo.
+    for_uid = getattr(primera, "FrameOfReferenceUID", None)
+    if for_uid is None:
+        avisos.append(
+            f"la serie de {frame} no trae `FrameOfReferenceUID` (0020,0052): el sidecar lo "
+            "deja nulo y el frame queda identificado solo por un nombre que se invento el "
+            "escritor"
+        )
     return {
         "frame": frame,
+        "dicom_frame_of_reference_uid": None if for_uid is None else str(for_uid),
+        "series_instance_uid": str(getattr(primera, "SeriesInstanceUID", "") or "") or None,
+        "study_instance_uid": str(getattr(primera, "StudyInstanceUID", "") or "") or None,
+        # D-2 · DICOM impone LPS. No es una eleccion nuestra y por eso va fijo: declarar
+        # otra cosa aqui seria describir mal el dato que se esta empaquetando.
+        "anatomical": "LPS",
         "dimensions": [int(primera.Columns), int(primera.Rows), len(cabeceras)],
         "spacing_mm": [px[1], px[0], dz],
         "orientation": [[round(float(x), 9) for x in fila] for fila in orientacion],
         "origin_mm": origen,
         "rescale": {"slope": pendiente, "intercept": corte},
+        # ⚠️ **Que `rescale` exista NO significa que el resultado sean HU (D-7).** Un CBCT
+        # trae las etiquetas y sus grises **no estan calibrados**: dependen del equipo, del
+        # campo de vision y de la posicion dentro del volumen, y no son comparables entre
+        # escaneres ni convertibles a Hounsfield sin un fantoma. Una TC convencional si.
+        # Sin este campo, un lector aplica `slope`/`intercept` y cree tener HU.
+        "calibrated_hu": str(getattr(primera, "Modality", "") or "").upper() == "CT",
         "value_range": rango,
         "pixel_encoding": _codificacion(primera),
         "modality": str(getattr(primera, "Modality", "") or ""),
         "transfer_function_presets": list(PRESETS),
         "nota": (
             "leido de las cabeceras de la serie que viaja en este contenedor. La "
-            "transformada al frame canonico NO esta aqui: vive en `registrations`."
+            "transformada al frame canonico NO esta aqui: vive en `registrations`. "
+            "`calibrated_hu` distingue una TC (grises en Hounsfield) de un CBCT (grises "
+            "del equipo): aplicar `rescale` a un CBCT NO da unidades Hounsfield."
         ),
     }, avisos
+
+
+
+def _rango_medido(ficheros: list, pendiente: float, corte: float) -> list[float] | None:
+    """El minimo y el maximo REALES de la serie, midiendo los pixeles (T-2).
+
+    ⚠️ **La justificacion para dejarlo nulo era el coste, y el coste no es el que decia.**
+    El escritor ya lee cada byte de cada corte —para el `sha256` del fichero y, desde D-3,
+    para el hash de `PixelData`—, asi que los pixeles ya pasan por memoria. Y la
+    consecuencia de dejarlo nulo es concreta: un visor sin ventana de visualizacion, que
+    tiene que barrer la serie el mismo o inventarse un rango.
+
+    Devuelve `None` solo cuando los pixeles no se pueden leer, que es el unico caso en el
+    que `value_range: null` es una afirmacion honesta y no una excusa.
+    """
+    import numpy as np
+    import pydicom
+
+    bajo = alto = None
+    for f in ficheros:
+        try:
+            px = pydicom.dcmread(str(f)).pixel_array
+        except Exception:  # noqa: BLE001 - un fichero ilegible no es un corte
+            continue
+        b, a = float(np.min(px)), float(np.max(px))
+        bajo = b if bajo is None else min(bajo, b)
+        alto = a if alto is None else max(alto, a)
+    if bajo is None or alto is None:
+        return None
+    return [bajo * pendiente + corte, alto * pendiente + corte]
 
 
 def _codificacion(cabecera: object) -> str:

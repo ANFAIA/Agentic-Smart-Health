@@ -71,7 +71,7 @@ from export_agents.malla_compuesta import (
 from export_agents.render import (
     VISTAS_POR_DEFECTO,
     RenderExportAgent,
-    Vista,
+    View,
     beer_lambert,
     escribe_png,
     lee_png,
@@ -114,7 +114,7 @@ __all__ = [
     "Frame",
     "RenderExportAgent",
     "SurfaceStore",
-    "Vista",
+    "View",
     "beer_lambert",
     "densidad_a_hu",
     "esquema_del_campo",

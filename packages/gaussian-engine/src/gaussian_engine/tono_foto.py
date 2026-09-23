@@ -209,7 +209,7 @@ def banda_superior(mascara: np.ndarray, costura: np.ndarray,
 
 
 def coronas(banda: np.ndarray, esperadas: int = 8) -> tuple[np.ndarray, list[int]]:
-    """Parte una banda en coronas y las devuelve ORDENADAS a lo largo de la foto.
+    """Part una banda en coronas y las devuelve ORDENADAS a lo largo de la foto.
 
     El watershed es el de `pose_foto`: parte por los cuellos interproximales sin encoger
     las piezas, que es lo que hace falta cuando son de tamanos muy distintos. Lo que anade

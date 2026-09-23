@@ -218,7 +218,7 @@ def _rotar(
 
 
 class Provenance(BaseModel):
-    """Procedencia de un valor: qué fichero, qué agente, cómo lo obtuvo y con qué confianza.
+    """Provenance de un valor: qué fichero, qué agente, cómo lo obtuvo y con qué confianza.
 
     Se adjunta a cada observación para garantizar la explicabilidad exigida:
     "qué dato se ingirió, qué transformación se aplicó y por qué".
@@ -537,9 +537,11 @@ class ColumnaCampo(BaseModel):
         description="Unidad física. Vacío para lo adimensional (un cuaternión, un código).",
     )
     escala: str = Field(
-        default="lineal",
-        description="`lineal` o `log`. Es lo que separa nuestros milímetros del logaritmo "
-        "que guarda el PLY de 3DGS bajo el mismo nombre.",
+        default="linear",
+        description="`linear` o `log`. Es lo que separa nuestros milímetros del logaritmo "
+        "que guarda el PLY de 3DGS bajo el mismo nombre. ⚠️ El VALOR va en inglés y no en "
+        "castellano (D-5): un lector bifurca sobre esta cadena, así que es formato de "
+        "cable y no una etiqueta para nosotros. `significado` y `role` sí pueden quedarse.",
     )
     significado: str = Field(default="", description="Qué es, en una línea.")
     vocabulario: str | None = Field(
@@ -609,7 +611,7 @@ class TwinSnapshot(BaseModel):
         "referencia colgante es un error, no un modelo vacío silencioso.",
     )
     perfil_campo: str = Field(
-        default="ash-twin/1.0",
+        default="histora-twin/1.0",
         description="Perfil del campo gaussiano. **No es el PLY de 3DGS de facto** y por "
         "eso se declara: comparte nombres de propiedad con él y no su semántica, así que "
         "un lector tiene que poder NEGARSE en vez de adivinar.",
@@ -639,7 +641,7 @@ class TwinSnapshot(BaseModel):
     apariencia_ref: str | None = Field(
         default=None,
         description="Hash/URI de la capa de apariencia entrenada con gsplat (perfil "
-        "'ash-gs-apariencia/1.0'). Es el PLY en formato INRIA con un degradado de "
+        "'histora-gs-appearance/1.0'). Es el PLY en formato INRIA con un degradado de "
         "dos tonos tomados de las fotos —NO color medido— del "
         "paciente optimizado contra fotos intraorales. No es el campo de densidad "
         "(medido en HU) ni el visor (decimado para pantalla): es una capa derivada "

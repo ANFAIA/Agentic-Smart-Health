@@ -5,12 +5,21 @@ tiene indices, ni atributos, ni un solo campo de metadatos. El §11.3 hace el pi
 `raycast al mesh -> extras.uos_fdi`, o sea que la escena tiene que poder **llevar cosas
 colgadas**, y un STL no puede llevar ninguna. glTF si.
 
-⚠️ **La conversion es con perdida, y por eso el STL original SIGUE viajando.** glTF exige
-`float32` y nuestras posiciones son `float64`: a ±100 mm eso deja unos 10 nanometros de
-resolucion, irrelevante para mirar y no para afirmar reversibilidad. El §1.1 dice que UOS
-no re-encodea datos fuente y el §3.1 dibuja la malla como «STL convertido»; las dos cosas
-solo son compatibles si el convertido es **presentacion** y el original se queda. Asi que
-el contenedor lleva los dos: `asset.ios` byte-identico y `asset.scene` para mirar.
+⚠️ **Por que el original SIGUE declarado, dicho con precision (T-1).** Aqui ponia «la
+conversion es con perdida: glTF exige float32 y nuestras posiciones son float64». Eso es
+falso para un STL y cierto para un OBJ, y mezclarlo apoyaba la regla en una perdida que
+segun el fichero de entrada no existe:
+
+* **STL binario**: el formato guarda los vertices en `float32` **por definicion**. El
+  `float64` de `mesh_agent` es un ensanchamiento del dato, no precision que hubiera. Volver
+  a `float32` aqui no pierde **nada**: el residuo es el `float32` del propio STL.
+* **OBJ**: es texto decimal y escribe ~8 cifras, que `float64` representa exactamente y
+  `float32` no. Ahi la perdida **si** es real.
+
+Asi que la razon por la que `asset.ios` se queda declarado no es la resolucion: es
+**procedencia y capa**. El §1.1 dice que UOS no re-encodea datos fuente y el §3.1 dibuja la
+malla como «STL convertido»; las dos cosas solo son compatibles si el convertido es
+presentacion y el original se nombra. El contenedor declara los dos.
 
 **Se construye desde la malla INGERIDA, no desde el fichero STL.** El `mesh-agent` guarda
 vertices deduplicados con sus caras, y las etiquetas FDI indexan ESE orden. Convertir el
@@ -26,20 +35,23 @@ es release candidate de Khronos y el §13 dice que en v1.0, tras ratificarse, es
 retira. Hasta entonces el payload va como fichero aparte DENTRO del contenedor y el nodo
 apunta a el.
 
-⚠️ **`extras.uos_fdi` SI se emite, y tiene un precio que hay que decir.** El §11.3 define el
-picking semantico SOBRE ese campo, asi que sin el un visor ajeno abre el contenedor y no
-puede seleccionar un diente por mucho que las etiquetas viajen en `derived/` — el nuestro
-sabe que existen, el de otro no tiene por que. Interoperar exige emitirlo.
+⚠️ **`extras.uos_fdi` NO se emite, y `_REGION_ID` tampoco.** Las dos cosas son el codigo
+FDI, y el codigo FDI sale de un segmentador: es Layer 3. Metido aqui quedaria horneado en
+una escena de Layer 1, y entonces quitar `derived/` dejaria de quitar la inferencia — que
+es justo lo que el §3.1 promete que se puede hacer para distribuir el caso donde el modulo
+de IA no esta autorizado. Un contenedor asi sigue llevando salida de modelo, y ningun
+«compromiso documentado» sostiene esa afirmacion delante de un auditor.
 
-El precio es que la particion en *primitives* sale de un modelo, o sea de Layer 3, y queda
-horneada en una escena de Layer 1: **quitar `derived/` ya no borra todo rastro de la
-inferencia**, deja la malla partida en catorce trozos con su codigo. Lo que si borra es la
-etiqueta POR VERTICE, que es la que tiene resolucion para pintar y para medir; lo que
-queda es la granularidad de un *primitive*, que solo sirve para seleccionar.
+Esto fue un compromiso durante la 0.4.0 —la escena viajaba partida en un *primitive* por
+diente— y la revision externa de la spec (B-1) lo declaro bloqueante. Se revierte: la
+escena es Layer 1 pura, un solo *primitive* y un solo indice.
 
-Es un compromiso, no una regla limpia, y se documenta como tal. Si algun dia hay que
-cerrarlo del todo, la salida es emitir la escena sin partir cuando no haya etiquetas y
-declarar en el manifiesto que el picking exige `derived/`.
+**Lo que se pierde, dicho claro.** Un visor glTF ajeno abre el contenedor, dibuja la arcada
+y NO puede seleccionar un diente. El picking del §11.3 exige `derived/`: las etiquetas
+viajan ahi, por vertice, y quien las quiera las cruza por indice — que es exacto porque
+esta escena conserva el orden de vertices. Para las gaussianas el cruce es el mismo que
+las produjo: vertice de corona mas cercano. Es mas trabajo para el lector y es la unica
+forma de que la separacion en planos sea verdad.
 """
 
 from __future__ import annotations
@@ -52,13 +64,14 @@ import numpy as np
 
 MEDIA_GLB = "model/gltf-binary"
 
+
+
 _MAGIA = 0x46546C67          # 'glTF'
 _JSON = 0x4E4F534A           # 'JSON'
 _BIN = 0x004E4942            # 'BIN\0'
 
 _FLOAT = 5126
 _UINT32 = 5125
-_SHORT = 5122
 _ARRAY_BUFFER = 34962
 _ELEMENT_ARRAY_BUFFER = 34963
 
@@ -68,7 +81,7 @@ def _alinea(b: bytes, relleno: bytes = b"\x00") -> bytes:
     return b + relleno * (-len(b) % 4)
 
 
-class NodoGS(NamedTuple):
+class GSNode(NamedTuple):
     """Una capa de gaussianas colgada de la malla.
 
     `matriz_fila` es la transformada 4x4 en orden de FILAS —como la escribe el manifiesto—
@@ -92,9 +105,10 @@ class SplatsKHR(NamedTuple):
     esconder tres transformaciones en un constructor: quien las hace es quien ha leido el
     descriptor que las declara, y este modulo solo escribe bytes.
 
-    `region_id` no es de la extension. Va como atributo de aplicacion `_REGION_ID`, que es
-    lo que glTF reserva con el guion bajo — es el codigo FDI por gaussiana, y sin el un
-    visor conforme dibuja la arcada pero no puede seleccionar un diente.
+    ⚠️ **No lleva `_REGION_ID`.** El codigo FDI por gaussiana sale del segmentador (por
+    vecino mas cercano, ver `apariencia.py`), asi que es Layer 3 y no puede viajar en un
+    asset de Layer 1 — misma regla que `extras.uos_fdi`, ver el docstring del modulo. Un
+    visor conforme dibuja la arcada y no puede seleccionar un diente sin `derived/`.
     """
 
     posiciones: np.ndarray          # (n,3) float32, mm, en el marco canonico
@@ -103,7 +117,6 @@ class SplatsKHR(NamedTuple):
     opacidad: np.ndarray            # (n,)  float32, lineal en [0,1]
     sh0: np.ndarray                 # (n,3) float32, coeficiente DC
     sh1: np.ndarray | None = None   # (n,3,3) float32, grado 1 (tres coeficientes VEC3)
-    region_id: np.ndarray | None = None   # (n,) int16, FDI por gaussiana
     # ⚠️ **La oclusion ambiental NO es de la extension y sin ella la arcada se ve PLANA.**
     # Es un factor de visualizacion en [0,1] que quien dibuja multiplica por el color;
     # esta fuera de `f_dc` a proposito, porque una lectura de tono no debe oscurecerse
@@ -120,6 +133,28 @@ class SplatsKHR(NamedTuple):
     # del entrenamiento contra renders sRGB.
     color_space: str = "srgb_rec709_display"
     extras: dict | None = None
+
+
+def columnas_de(gs: SplatsKHR) -> list[str]:
+    """Los nombres de columna que la primitiva LLEVA de verdad.
+
+    ⚠️ **Existe porque el descriptor estaba anclado al fichero equivocado.** Se derivaba
+    del PLY intermedio —que se escribe y no viaja— y describia lo que ESE tenia, no lo que
+    lleva la primitiva que si viaja. Coincidian mientras la primitiva era copia fiel del
+    PLY, y dejaron de coincidir en cuanto `region_id` se quedo fuera (B-1): el descriptor
+    habria declarado una columna que el contenedor no contiene. Se parcheo con un filtro y
+    esto es el arreglo: preguntarle a la primitiva, que es lo que se describe.
+    """
+    cols = ["x", "y", "z", *(f"scale_{i}" for i in range(3)),
+            *(f"rot_{i}" for i in range(4)), "opacity",
+            *(f"f_dc_{i}" for i in range(3))]
+    if gs.sh1 is not None:
+        cols += [f"f_rest_{i}" for i in range(9)]
+    if gs.ao is not None:
+        cols.append("ao")
+    if getattr(gs, "normales", None) is not None:
+        cols += ["nx", "ny", "nz"]
+    return cols
 
 
 def _mesh_splats(
@@ -177,17 +212,9 @@ def _mesh_splats(
     # ⚠️ Atributos de APLICACION, con guion bajo, que es lo que glTF reserva para lo que su
     # especificacion no define. Un visor conforme los ignora y dibuja igual; el nuestro los
     # usa para el sombreado y para seleccionar una pieza. Que no sean estandar es
-    # exactamente por lo que el sidecar `ash_gs_measured` sigue haciendo falta.
+    # exactamente por lo que el sidecar `histora_gs_measured` sigue haciendo falta.
     if gs.ao is not None:
         atributos["_AO"] = _vec(np.asarray(gs.ao).reshape(n), "SCALAR")
-    if gs.region_id is not None:
-        r = np.ascontiguousarray(gs.region_id, dtype=np.int16).reshape(n)
-        accesos.append({
-            "bufferView": _anade(r, _ARRAY_BUFFER), "componentType": _SHORT,
-            "count": n, "type": "SCALAR",
-        })
-        atributos["_REGION_ID"] = len(accesos) - 1
-
     return {
         "name": gs.nombre,
         "primitives": [{
@@ -206,67 +233,7 @@ def _mesh_splats(
     }
 
 
-def _primitivas(
-    idx: np.ndarray,
-    atributos: dict[str, int],
-    etiquetas: np.ndarray | None,
-    n_vertices: int,
-    _anade: Any,
-    accesos: list[dict],
-) -> list[dict]:
-    """Un *primitive* por diente, mas uno con el resto. Comparten POSITION y NORMAL.
-
-    Una cara pertenece a una pieza cuando sus **tres** vertices lo son. Con dos bastaria
-    para no perder el borde, pero arrastraria triangulos que cruzan al diente vecino y la
-    corona saldria con rebabas hacia los lados — mismo criterio que el exportador de la
-    malla compuesta, y por la misma razon.
-
-    Las caras que no son de ninguna pieza —encia, y las que cruzan de un diente a otro—
-    van a un primitive SIN `uos_fdi`. No se reparten ni se descartan: repartirlas
-    inventaria frontera y descartarlas dejaria agujeros en la malla que un visor pintaria
-    como perforaciones del escaneo.
-    """
-    def _accesor(indices: np.ndarray) -> int:
-        datos = np.ascontiguousarray(indices, dtype=np.uint32)
-        accesos.append({
-            "bufferView": _anade(datos, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
-            "count": int(datos.size), "type": "SCALAR",
-        })
-        return len(accesos) - 1
-
-    if etiquetas is None or len(etiquetas) != n_vertices or idx.size == 0:
-        return [{"attributes": atributos, "indices": _accesor(idx), "mode": 4}]
-
-    etq = np.asarray(etiquetas, dtype=np.int64)
-    caras = idx.reshape(-1, 3)
-    por_cara = etq[caras]
-    misma = (
-        (por_cara[:, 0] > 0)
-        & (por_cara[:, 0] == por_cara[:, 1])
-        & (por_cara[:, 1] == por_cara[:, 2])
-    )
-    suya = np.where(misma, por_cara[:, 0], 0)
-
-    primitivas: list[dict] = []
-    resto = caras[suya == 0]
-    if len(resto):
-        primitivas.append(
-            {"attributes": atributos, "indices": _accesor(resto.reshape(-1)), "mode": 4}
-        )
-    for fdi in sorted({int(x) for x in suya if x > 0}):
-        trozo = caras[suya == fdi].reshape(-1)
-        primitivas.append({
-            "attributes": atributos,
-            "indices": _accesor(trozo),
-            "mode": 4,   # TRIANGLES
-            # El codigo va como CADENA, igual que en el ejemplo del §5.1 (`"16"`): un FDI
-            # no es una cantidad y escribirlo como numero invita a sumarlo.
-            "extras": {"uos_fdi": str(fdi)},
-        })
-    return primitivas
-
-
-def construye_glb(
+def build_glb(
     posiciones: np.ndarray,
     caras: np.ndarray,
     normales: np.ndarray | None = None,
@@ -274,8 +241,7 @@ def construye_glb(
     nombre: str = "scan",
     generador: str = "agentic-smart-health",
     extras: dict | None = None,
-    nodos_gs: list[NodoGS] | None = None,
-    etiquetas: np.ndarray | None = None,
+    nodos_gs: list[GSNode] | None = None,
     splats: SplatsKHR | None = None,
 ) -> bytes:
     """La escena en un solo `bytes`. Indexada: el orden de vertices se conserva.
@@ -284,16 +250,10 @@ def construye_glb(
     `derived/seg_teeth` sea una lista de codigos indexada por vertice y que el visor los
     case sin nada mas. Reordenar aqui romperia esa union en silencio.
 
-    **`etiquetas`** (codigo FDI por vertice) parte la malla en un *primitive* por diente,
-    cada uno con `extras.uos_fdi`, que es lo que §5.1 llama «metadata odontologica por
-    sub-mesh». No es decoracion: el picking semantico de §11.3 esta definido SOBRE ese
-    campo, asi que sin el un visor ajeno abre el contenedor y no puede seleccionar un
-    diente por mucho que las etiquetas viajen en `derived/`. Nuestro visor las lee de
-    ahi; el de otro no tiene por que saber que existen.
-
-    ⚠️ **Lo que se parte es el indice, nunca las posiciones.** Todos los primitives
-    comparten el mismo accesor de POSITION y el mismo de NORMAL, asi que el orden de
-    vertices —y con el la union con `derived/seg_teeth`— se queda exactamente igual.
+    ⚠️ **Un solo *primitive*, y NO acepta etiquetas.** La malla no se parte por diente:
+    partirla exige el codigo FDI, que sale del segmentador, y hornear Layer 3 en una
+    escena de Layer 1 rompe la removibilidad de `derived/` (B-1, ver el docstring del
+    modulo). Quien quiera geometria por pieza cruza `derived/seg_teeth` por indice.
     """
     pos = np.ascontiguousarray(posiciones, dtype=np.float32)
     idx = np.ascontiguousarray(caras, dtype=np.uint32).reshape(-1)
@@ -343,8 +303,15 @@ def construye_glb(
         })
         atributos["NORMAL"] = len(accesos) - 1
 
-    primitivas = _primitivas(idx, atributos, etiquetas, len(pos), _anade, accesos)
-    mallas: list[dict] = [{"name": nombre, "primitives": primitivas}]
+    # Un unico primitive y un unico index buffer: Layer 1 pura (B-1).
+    accesos.append({
+        "bufferView": _anade(idx, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
+        "count": int(idx.size), "type": "SCALAR",
+    })
+    mallas: list[dict] = [{
+        "name": nombre,
+        "primitives": [{"attributes": atributos, "indices": len(accesos) - 1, "mode": 4}],
+    }]
 
     # El nodo 0 es la malla y ES el marco canonico (§5.1). Los GS van de hijos suyos.
     nodos: list[dict] = [{"mesh": 0, "name": nombre}]

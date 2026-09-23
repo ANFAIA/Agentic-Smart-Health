@@ -63,7 +63,7 @@ from analysis_agents.dental import LONGITUD_MM
 from core_schemas import ModalityStatus, TwinSnapshot
 from ingestion_agents.ontology import describe
 
-from export_agents.anatomia import anchos_de_corona, marco_anatomico
+from export_agents.anatomia import anatomical_frame, anchos_de_corona
 from export_agents.base import BaseExportAgent, ExportOutput, SurfaceStore
 from export_agents.compuesto import _al_marco_del_twin, espaciado_de_malla
 from export_agents.solido import cierra_en_solido
@@ -475,7 +475,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 "está la coronilla, y una base perpendicular al eje del fichero saldría "
                 "inclinada",
             }
-        marco, motivo = marco_anatomico(superficie, np.asarray(etiquetas_ios))
+        marco, motivo = anatomical_frame(superficie, np.asarray(etiquetas_ios))
         if marco is None:
             return superficie, caras, {"estanca": False, "motivo": motivo}
         return cierra_en_solido(superficie, caras, hacia_las_coronas=marco.oclusal)

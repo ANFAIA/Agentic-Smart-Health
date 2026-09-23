@@ -1,6 +1,6 @@
 """Render multivista de una malla intraoral con **Blender** (headless).
 
-Parte del experimento `notebooks/07`: escáner intraoral (STL/OBJ) → **Blender**
+Part del experimento `notebooks/07`: escáner intraoral (STL/OBJ) → **Blender**
 renderiza N vistas con pose de cámara conocida → paquete listo para 3D Gaussian
 Splatting. Sustituye al render por VTK de los notebooks 03/05: aquí el motor es
 Blender (EEVEE), que da sombreado e iluminación reales en vez de un splatting

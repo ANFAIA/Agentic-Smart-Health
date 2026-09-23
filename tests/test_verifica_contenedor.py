@@ -37,7 +37,7 @@ def _ply(n: int, *, unidades: str | None = "mm", tilde: bool = False,
 
 def _caso(tmp: Path, *, n_ply: int = 10, n_declara: int = 10,
           unidades_ply: str | None = "mm", unidades_sc: str = "mm",
-          perfil: str = "ash-twin/1.0", tilde: bool = False,
+          perfil: str = "histora-twin/1.0", tilde: bool = False,
           propiedades: tuple[str, ...] = ("x",),
           columnas: tuple[str, ...] | None = None) -> Path:
     crudo = _ply(n_ply, unidades=unidades_ply, tilde=tilde, propiedades=propiedades)
