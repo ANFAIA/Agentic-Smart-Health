@@ -69,12 +69,31 @@ class Clearance(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    jurisdiction: str = Field(description="Regulator the statement is made before, e.g. `EU` or `US`. A status without a jurisdiction means nothing.")
-    regime: str = Field(description="Regulatory framework under that jurisdiction, e.g. `MDR` or `FDA-510k`.")
-    status: ClearanceStatus = Field(description="What this jurisdiction says about the asset under that regime.")
+    jurisdiction: str = Field(
+        description=(
+            "Regulator the statement is made before, e.g. `EU` or `US`. A status without a "
+            "jurisdiction means nothing."
+        ),
+    )
+    regime: str = Field(
+        description=(
+            "Regulatory framework under that jurisdiction, e.g. `MDR` or `FDA-510k`."
+        ),
+    )
+    status: ClearanceStatus = Field(
+        description=(
+            "What this jurisdiction says about the asset under that regime."
+        ),
+    )
     #: El numero de expediente o de autorizacion, cuando existe. `None` NO es "no hay":
     #: es "no consta aqui", igual que `weights_sha256` en el sidecar de `derived/`.
-    reference: str | None = Field(None, description="Dossier or clearance number when one exists. `null` is 'not recorded here', never 'there is none'.")
+    reference: str | None = Field(
+        default=None,
+        description=(
+            "Dossier or clearance number when one exists. `null` is 'not recorded here', never "
+            "'there is none'."
+        ),
+    )
 
 
 class ClearanceStatus(StrEnum):
@@ -109,8 +128,23 @@ class Regulatory(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    layer: int = Field(default=1, ge=1, le=3, description="Regulatory layer of the content: 1 acquired or transcribed, 2 computed deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST live under `derived/`.")
-    clearances: list[Clearance] = Field(default_factory=list, description="What each regulator says about this asset. An empty list is 'nothing declared', not 'cleared everywhere'.")
+    layer: int = Field(
+        default=1,
+        ge=1,
+        le=3,
+        description=(
+            "Regulatory layer of the content: 1 acquired or transcribed, 2 computed "
+            "deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST "
+            "live under `derived/`."
+        ),
+    )
+    clearances: list[Clearance] = Field(
+        default_factory=list,
+        description=(
+            "What each regulator says about this asset. An empty list is 'nothing declared', not "
+            "'cleared everywhere'."
+        ),
+    )
 
 
 class PurposeOfUse(StrEnum):
@@ -136,9 +170,25 @@ class Consent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     #: Referencia al recurso `Consent` de FHIR R4 cuando el caso vive en un servidor.
     #: `None` mientras no exista, misma regla que `FHIRResource.resource`.
-    fhir_consent: str | None = Field(None, description="Reference to the FHIR `Consent` resource that records it. The container carries the pointer, never the document.")
-    scope: list[PurposeOfUse] = Field(default_factory=list, description="Purposes the subject consented to. An empty list is 'not declared'.")
-    obtained: datetime | None = Field(None, description="When consent was obtained, RFC 3339.")
+    fhir_consent: str | None = Field(
+        default=None,
+        description=(
+            "Reference to the FHIR `Consent` resource that records it. The container carries the "
+            "pointer, never the document."
+        ),
+    )
+    scope: list[PurposeOfUse] = Field(
+        default_factory=list,
+        description=(
+            "Purposes the subject consented to. An empty list is 'not declared'."
+        ),
+    )
+    obtained: datetime | None = Field(
+        default=None,
+        description=(
+            "When consent was obtained, RFC 3339."
+        ),
+    )
 
 
 class Tool(BaseModel):
@@ -146,8 +196,18 @@ class Tool(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(description="Name of the software that performed the operation.")
-    version: str | None = Field(None, description="Its version string, as the tool reports it.")
-    sha256: str | None = Field(None, description="Digest of the tool binary or image, when the writer can compute it.")
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Its version string, as the tool reports it."
+        ),
+    )
+    sha256: str | None = Field(
+        default=None,
+        description=(
+            "Digest of the tool binary or image, when the writer can compute it."
+        ),
+    )
 
 
 class Deidentification(BaseModel):
@@ -166,19 +226,52 @@ class Deidentification(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    profile: str = Field(description="DICOM PS3.15 Annex E confidentiality profile applied, by its standard name.")
+    profile: str = Field(
+        description=(
+            "DICOM PS3.15 Annex E confidentiality profile applied, by its standard name."
+        ),
+    )
     #: Las opciones con nombre del Anexo E: `CleanDescriptors`,
     #: `CleanRecognizableVisualFeatures`, `RetainLongitudinalTemporalInformationModifiedDates`...
-    options: list[str] = Field(default_factory=list, description="Named options applied on top of the profile, e.g. `CleanRecognizableVisualFeatures` for defacing. This is where a reader learns whether the face was removed.")
+    options: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Named options applied on top of the profile, e.g. `CleanRecognizableVisualFeatures` "
+            "for defacing. This is where a reader learns whether the face was removed."
+        ),
+    )
     #: Sobre que assets se ejecuto. El validador avisa por cada `volume` o `image2d` que
     #: no aparezca aqui: no estar en la lista significa que no se le aplico nada.
-    applied_to: list[str] = Field(default_factory=list, description="Asset ids the de-identification was applied to. Assets not listed were not processed.")
-    tool: Tool | None = Field(None, description="Software that performed it, so a recipient can tell a documented pipeline from a manual pass.")
+    applied_to: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Asset ids the de-identification was applied to. Assets not listed were not processed."
+        ),
+    )
+    tool: Tool | None = Field(
+        default=None,
+        description=(
+            "Software that performed it, so a recipient can tell a documented pipeline from a "
+            "manual pass."
+        ),
+    )
     #: ⚠️ **El desplazamiento de fechas es la CLAVE de re-identificacion.** Solo viaja si
     #: el contenedor ya se declara `identified`; en cualquier otro estado va a `null`,
     #: porque publicarlo deshace la medida que dice haber aplicado.
-    date_shift_days: int | None = Field(None, description="Constant offset applied to every date, in days. Needed to compare two visits after shifting; `null` means dates were not shifted.")
-    note: str | None = Field(None, description="Free text for anything the fields above cannot express. Not machine-readable by design.")
+    date_shift_days: int | None = Field(
+        default=None,
+        description=(
+            "Constant offset applied to every date, in days. Needed to compare two visits after "
+            "shifting; `null` means dates were not shifted."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description=(
+            "Free text for anything the fields above cannot express. Not machine-readable by "
+            "design."
+        ),
+    )
 
     #: La opcion de PS3.15 que quita la superficie facial reconstruible (el «defacing»).
     LIMPIA_RASGOS: ClassVar[str] = "CleanRecognizableVisualFeatures"
@@ -194,15 +287,37 @@ class Device(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    manufacturer: str | None = Field(None, description="Equipment manufacturer. Fixed key rather than free text so two containers can be compared.")
-    model: str | None = Field(None, description="Equipment model name.")
-    software_version: str | None = Field(None, description="Version of the software running on the equipment. No serial number is carried: it identifies a machine, and through it a site.")
+    manufacturer: str | None = Field(
+        default=None,
+        description=(
+            "Equipment manufacturer. Fixed key rather than free text so two containers can be "
+            "compared."
+        ),
+    )
+    model: str | None = Field(default=None, description="Equipment model name.")
+    software_version: str | None = Field(
+        default=None,
+        description=(
+            "Version of the software running on the equipment. No serial number is carried: it "
+            "identifies a machine, and through it a site."
+        ),
+    )
 
 
 class Acquisition(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    time: datetime | None = Field(None, description="When the asset was captured, RFC 3339. `null` when the original did not record it.")
-    device: Device = Field(default_factory=lambda: Device(), description="Equipment that captured it.")
+    time: datetime | None = Field(
+        default=None,
+        description=(
+            "When the asset was captured, RFC 3339. `null` when the original did not record it."
+        ),
+    )
+    device: Device = Field(
+        default_factory=lambda: Device(),
+        description=(
+            "Equipment that captured it."
+        ),
+    )
 
 
 class Projection(BaseModel):
@@ -215,8 +330,18 @@ class Projection(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    type: str = Field(description="Projection geometry of a 2D image, e.g. `panoramic` or `bitewing`.")
-    fdi_targets: list[str] = Field(default_factory=list, description="Teeth the projection is aimed at, in FDI/ISO-3950. An empty list is 'not declared', never 'no teeth'.")
+    type: str = Field(
+        description=(
+            "Projection geometry of a 2D image, e.g. `panoramic` or `bitewing`."
+        ),
+    )
+    fdi_targets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Teeth the projection is aimed at, in FDI/ISO-3950. An empty list is 'not declared', "
+            "never 'no teeth'."
+        ),
+    )
 
 
 class Part(BaseModel):
@@ -242,13 +367,37 @@ class Part(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(description="Path of this file inside the directory asset. Names are ordering data for a DICOM series, so they are carried even though identity does not depend on them.")
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 over the whole file, lowercase hex. Proves these exact bytes.")
+    name: str = Field(
+        description=(
+            "Path of this file inside the directory asset. Names are ordering data for a DICOM "
+            "series, so they are carried even though identity does not depend on them."
+        ),
+    )
+    sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 over the whole file, lowercase hex. Proves these exact bytes."
+        ),
+    )
     bytes: int = Field(ge=0, description="Size of the file in bytes.")
     #: `(0008,0018)`. La identidad clinica del corte, estable a traves de la de-identificacion.
-    sop_instance_uid: str | None = Field(None, description="DICOM SOP Instance UID `(0008,0018)`. The identity DICOM itself defines, and what survives de-identification when UIDs are retained.")
+    sop_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM SOP Instance UID `(0008,0018)`. The identity DICOM itself defines, and what "
+            "survives de-identification when UIDs are retained."
+        ),
+    )
     #: SHA-256 sobre el VALOR del elemento PixelData, sin cabecera.
-    pixel_data_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", description="SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the header. De-identification does not touch it, so it separates 'a different slice' from 'the same slice, cleaned'.")
+    pixel_data_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the "
+            "header. De-identification does not touch it, so it separates 'a different slice' from "
+            "'the same slice, cleaned'."
+        ),
+    )
 
 
 #: Una uri que no es una ruta sino la identidad del fichero. Ver `Asset._direccion_y_custodia`.
@@ -268,29 +417,91 @@ class Asset(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    id: str = Field(description="Stable identifier of the asset within this container, unique across `assets[]`.")
-    kind: AssetKind = Field(description="What the asset is, which fixes how a reader should treat it.")
+    id: str = Field(
+        description=(
+            "Stable identifier of the asset within this container, unique across `assets[]`."
+        ),
+    )
+    kind: AssetKind = Field(
+        description=(
+            "What the asset is, which fixes how a reader should treat it."
+        ),
+    )
     visit: str = Field(description="Id of the visit this asset belongs to.")
-    uri: str = Field(description="Path inside the ZIP for a carried asset, or `sha256:<hex>` for a referenced one. A referenced original occupies no path at all.")
+    uri: str = Field(
+        description=(
+            "Path inside the ZIP for a carried asset, or `sha256:<hex>` for a referenced one. A "
+            "referenced original occupies no path at all."
+        ),
+    )
     media_type: str = Field(description="IANA media type of the payload.")
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 of the payload, lowercase hex. For a directory asset it is the digest over `parts[]`, not over concatenated bytes.")
-    bytes: int = Field(ge=0, description="Size of the payload in bytes; the sum over `parts[]` for a directory asset.")
-    frame: str = Field(description="Id of the coordinate frame this asset's coordinates are expressed in. It MUST be reachable from the canonical frame.")
-    acquisition: Acquisition = Field(default_factory=lambda: Acquisition(), description="When and on what equipment it was captured.")
-    load_priority: int = Field(30, description="Hint for a reader fetching by HTTP range: lower loads first. A hint, never a requirement.")
-    regulatory: Regulatory = Field(default_factory=lambda: Regulatory(), description="Regulatory layer and clearances of this asset's content.")
+    sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "SHA-256 of the payload, lowercase hex. For a directory asset it is the digest over "
+            "`parts[]`, not over concatenated bytes."
+        ),
+    )
+    bytes: int = Field(
+        ge=0,
+        description=(
+            "Size of the payload in bytes; the sum over `parts[]` for a directory asset."
+        ),
+    )
+    frame: str = Field(
+        description=(
+            "Id of the coordinate frame this asset's coordinates are expressed in. It MUST be "
+            "reachable from the canonical frame."
+        ),
+    )
+    acquisition: Acquisition = Field(
+        default_factory=lambda: Acquisition(),
+        description=(
+            "When and on what equipment it was captured."
+        ),
+    )
+    load_priority: int = Field(
+        default=30,
+        description=(
+            "Hint for a reader fetching by HTTP range: lower loads first. A hint, never a "
+            "requirement."
+        ),
+    )
+    regulatory: Regulatory = Field(
+        default_factory=lambda: Regulatory(),
+        description=(
+            "Regulatory layer and clearances of this asset's content."
+        ),
+    )
     # Solo en assets que son un directorio (`uri` acabada en `/`). Ver `Part` y
     # `digesto_de_partes`.
     # ⚠️ §5.3. `projection` describe QUE tipo de imagen es y a que dientes apunta; `pose`
     # —donde estaba la camara— es explicitamente opcional en el spec y aqui no se emite:
     # una foto intraoral de una carpeta de clinica no trae pose, y calcularla exige la
     # fusion foto↔malla, que esta medida y no converge barata sin calibracion.
-    projection: Projection | None = Field(None, description="Projection geometry, for 2D radiographs only. `null` for everything else.")
+    projection: Projection | None = Field(
+        default=None,
+        description=(
+            "Projection geometry, for 2D radiographs only. `null` for everything else."
+        ),
+    )
 
-    parts: list[Part] = Field(default_factory=list, description="One entry per file when the asset is a directory, such as a DICOM series. This is what lets a validator say which slice is wrong instead of 'the series does not match'.")
+    parts: list[Part] = Field(
+        default_factory=list,
+        description=(
+            "One entry per file when the asset is a directory, such as a DICOM series. This is "
+            "what lets a validator say which slice is wrong instead of 'the series does not match'."
+        ),
+    )
     # Sidecar que describe el asset sin obligar a parsearlo. Lo pide §5.2 para el volumen:
     # un visor web no deberia necesitar un parser DICOM completo para saber que le llega.
-    sidecar_uri: str | None = Field(None, description="Path to a JSON sidecar describing the payload, so a reader can inspect it without a parser for its format.")
+    sidecar_uri: str | None = Field(
+        default=None,
+        description=(
+            "Path to a JSON sidecar describing the payload, so a reader can inspect it without a "
+            "parser for its format."
+        ),
+    )
     # ⚠️ **De que otros assets sale este. No hay § que lo defina, y hace falta.**
     #
     # `scene/scene.glb` es la malla del escaner reindexada a glTF: MISMA geometria,
@@ -304,11 +515,28 @@ class Asset(BaseModel):
     #
     # Es informacion que SUMA: un lector que no conozca el campo lo ignora y abre el caso
     # igual. Por eso va en `extensions_used` y nunca en `extensions_required`.
-    derived_from: list[str] = Field(default_factory=list, description="Ids of the assets this one was derived from. Required for anything under `derived/`: an inference with no stated input cannot be audited.")
+    derived_from: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ids of the assets this one was derived from. Required for anything under `derived/`: "
+            "an inference with no stated input cannot be audited."
+        ),
+    )
     #: D-3 · `(0020,000E)` y `(0020,000D)`. Lo que DICOM define como identidad de la serie
     #: y del estudio, para que un PACS pueda casar este asset con lo que ya tiene.
-    series_instance_uid: str | None = Field(None, description="DICOM Series Instance UID `(0020,000E)`, so a recipient holding the series by another channel can tell it is this one.")
-    study_instance_uid: str | None = Field(None, description="DICOM Study Instance UID `(0020,000D)`.")
+    series_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Series Instance UID `(0020,000E)`, so a recipient holding the series by another "
+            "channel can tell it is this one."
+        ),
+    )
+    study_instance_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Study Instance UID `(0020,000D)`."
+        ),
+    )
     # ⚠️ **El asset NO viaja dentro del contenedor: solo su identidad.** Es lo que hace
     # TODO original adquirido —DICOM, STL, fotos, informes—: se referencia por su direccion
     # de contenido y se acredita por `sha256`. No es un perfil ni una variante; es el
@@ -322,9 +550,22 @@ class Asset(BaseModel):
     #
     # El validador lo dice UNA vez por contenedor y no una por asset: si todos los
     # originales son externos siempre, un aviso por cada uno no distingue nada.
-    external: bool = Field(False, description="True when the asset is referenced and not carried. Acquired originals MUST be external; their `uri` is then a content address and never a path.")
+    external: bool = Field(
+        default=False,
+        description=(
+            "True when the asset is referenced and not carried. Acquired originals MUST be "
+            "external; their `uri` is then a content address and never a path."
+        ),
+    )
     #: Pista de donde vive el original. Vacio es NO DECLARADO, nunca «no hay donde».
-    locators: list[Locator] = Field(default_factory=list, description="Where to find this asset when it is referenced and not carried. Hints, never a contract: a reader verifies by hash and MUST open the container without resolving any of them. An empty list is NOT DECLARED.")
+    locators: list[Locator] = Field(
+        default_factory=list,
+        description=(
+            "Where to find this asset when it is referenced and not carried. Hints, never a "
+            "contract: a reader verifies by hash and MUST open the container without resolving any "
+            "of them. An empty list is NOT DECLARED."
+        ),
+    )
 
     @field_validator("uri")
     @classmethod
@@ -515,9 +756,26 @@ class Locator(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     kind: LocatorKind = Field(description="How the location is expressed.")
-    value: str = Field(description="The locator itself: a QIDO-RS query, an AE title, a URL, or an institution-local reference.")
-    identifying: bool = Field(description="Whether the locator itself carries identifying information, such as a patient directory in a URL or an AE title that names the clinic. It has no default on purpose: silence here would be indistinguishable from having checked.")
-    note: str = Field(default="", description="Anything a recipient needs in order to use it, such as which network it is reachable from.")
+    value: str = Field(
+        description=(
+            "The locator itself: a QIDO-RS query, an AE title, a URL, or an institution-local "
+            "reference."
+        ),
+    )
+    identifying: bool = Field(
+        description=(
+            "Whether the locator itself carries identifying information, such as a patient "
+            "directory in a URL or an AE title that names the clinic. It has no default on "
+            "purpose: silence here would be indistinguishable from having checked."
+        ),
+    )
+    note: str = Field(
+        default="",
+        description=(
+            "Anything a recipient needs in order to use it, such as which network it is reachable "
+            "from."
+        ),
+    )
 
 
 class Frame(BaseModel):
@@ -531,17 +789,45 @@ class Frame(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     id: str = Field(description="Stable identifier of the frame within this container.")
-    description: str = Field("", description="Human-readable name of the frame. Free text, and never load-bearing.")
-    units: str = Field("mm", description="Length unit of coordinates in this frame. Millimetres everywhere in this version.")
-    handedness: str = Field("right", description="Handedness of the axes, `right` or `left`. A reader that ignores it renders a mirrored case that looks correct.")
+    description: str = Field(
+        default="",
+        description=(
+            "Human-readable name of the frame. Free text, and never load-bearing."
+        ),
+    )
+    units: str = Field(
+        default="mm",
+        description=(
+            "Length unit of coordinates in this frame. Millimetres everywhere in this version."
+        ),
+    )
+    handedness: str = Field(
+        default="right",
+        description=(
+            "Handedness of the axes, `right` or `left`. A reader that ignores it renders a "
+            "mirrored case that looks correct."
+        ),
+    )
     #: D-2. `None` es NO DECLARADO y no equivale a `device`.
-    anatomical: AnatomicalConvention | None = Field(None, description="Anatomical axis convention, such as `LPS` or `RAS`. `null` is NOT DECLARED, and is not the same as a device convention.")
+    anatomical: AnatomicalConvention | None = Field(
+        default=None,
+        description=(
+            "Anatomical axis convention, such as `LPS` or `RAS`. `null` is NOT DECLARED, and is "
+            "not the same as a device convention."
+        ),
+    )
     #: D-1 · el identificador que DICOM ya define para un sistema de coordenadas, etiqueta
     #: `(0020,0052)`. `frame.ct_001` es una cadena que se invento el escritor: un lector
     #: que reciba la serie por otro canal no tiene forma de saber que es ESA serie salvo
     #: por confianza. El UID es global y unico, y **se LEE de la serie, nunca se inventa**
     #: (misma regla que ya rige para `orientation` en el sidecar del volumen).
-    dicom_frame_of_reference_uid: str | None = Field(None, description="DICOM Frame of Reference UID `(0020,0052)`. Read from the series, never invented: it is the only frame identifier that means the same thing outside this container.")
+    dicom_frame_of_reference_uid: str | None = Field(
+        default=None,
+        description=(
+            "DICOM Frame of Reference UID `(0020,0052)`. Read from the series, never invented: it "
+            "is the only frame identifier that means the same thing outside this container."
+        ),
+    )
 
 
 class Registration(BaseModel):
@@ -559,28 +845,93 @@ class Registration(BaseModel):
     id: str = Field(description="Stable identifier of this registration edge.")
     source_frame: str = Field(description="Id of the frame points are taken from.")
     target_frame: str = Field(description="Id of the frame points are taken to.")
-    transform_4x4_row_major: list[float] = Field(min_length=16, max_length=16, description="The rigid transform as sixteen numbers, row-major, millimetres. glTF expects column-major, so a reader targeting glTF MUST transpose.")
-    method: str = Field(description="How the transform was obtained, e.g. `icp_surface` or `manual`.")
-    rms_error_mm: float | None = Field(None, description="Root-mean-square residual of the fit, in millimetres. It is measured on the points that were fitted, so it is systematically optimistic.")
+    transform_4x4_row_major: list[float] = Field(
+        min_length=16,
+        max_length=16,
+        description=(
+            "The rigid transform as sixteen numbers, row-major, millimetres. glTF expects "
+            "column-major, so a reader targeting glTF MUST transpose."
+        ),
+    )
+    method: str = Field(
+        description=(
+            "How the transform was obtained, e.g. `icp_surface` or `manual`."
+        ),
+    )
+    rms_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Root-mean-square residual of the fit, in millimetres. It is measured on the points "
+            "that were fitted, so it is systematically optimistic."
+        ),
+    )
     #: D-9 · el error MAXIMO local, que es el que decide un uso clinico. El RMS es un
     #: promedio y se reparte: puede ser bueno y esconder una zona mala.
-    max_error_mm: float | None = Field(None, description="Largest residual over the fitted points, in millimetres. An RMS hides a local failure that this exposes.")
+    max_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Largest residual over the fitted points, in millimetres. An RMS hides a local failure "
+            "that this exposes."
+        ),
+    )
     #: Error medido en puntos que NO se usaron para calcular la registracion (TRE). El RMS
     #: se mide sobre los puntos que si se usaron y por tanto es sistematicamente optimista.
-    target_registration_error_mm: float | None = Field(None, description="Registration error measured at points that did NOT take part in the fit, in millimetres. This is the error a clinical measurement across the seam actually inherits.")
+    target_registration_error_mm: float | None = Field(
+        default=None,
+        description=(
+            "Registration error measured at points that did NOT take part in the fit, in "
+            "millimetres. This is the error a clinical measurement across the seam actually "
+            "inherits."
+        ),
+    )
     #: La region donde se midio el TRE, porque un TRE sin region no dice nada.
-    tre_region: str | None = Field(None, description="Where the target registration error was measured. A TRE without its region is not comparable with another.")
+    tre_region: str | None = Field(
+        default=None,
+        description=(
+            "Where the target registration error was measured. A TRE without its region is not "
+            "comparable with another."
+        ),
+    )
     #: ⚠️ Vacio significa NO DECLARADO, y un lector **MUST NOT** suponer aptitud para un
     #: uso que no este aqui. Es la misma regla que `fdi_targets` y `clearances`.
-    fit_for: list[RegistrationFitness] = Field(default_factory=list, description="What this registration is accurate enough for, declared rather than inferred from the residual. An empty list is 'not assessed'.")
-    computed: datetime | None = Field(None, description="When the transform was computed, RFC 3339.")
-    operator: str | None = Field(None, description="Who or what produced the estimate. A machine here with an empty `verified_by` means provisional.")
-    verified_by: str | None = Field(None, description="Who checked it. `null` means nobody did, and a viewer MUST present the edge as provisional.")
+    fit_for: list[RegistrationFitness] = Field(
+        default_factory=list,
+        description=(
+            "What this registration is accurate enough for, declared rather than inferred from the "
+            "residual. An empty list is 'not assessed'."
+        ),
+    )
+    computed: datetime | None = Field(
+        default=None,
+        description=(
+            "When the transform was computed, RFC 3339."
+        ),
+    )
+    operator: str | None = Field(
+        default=None,
+        description=(
+            "Who or what produced the estimate. A machine here with an empty `verified_by` means "
+            "provisional."
+        ),
+    )
+    verified_by: str | None = Field(
+        default=None,
+        description=(
+            "Who checked it. `null` means nobody did, and a viewer MUST present the edge as "
+            "provisional."
+        ),
+    )
     #: ⚠️ **Sin defecto a proposito (B-5).** Con `default_factory` toda registracion
     #: llegaba con `layer: 1` puesto y no habia forma de distinguir «se declaro capa 1» de
     #: «nadie lo declaro». Una registracion calculada por una maquina es computo, no
     #: adquisicion, y el validador exige que lo diga cuando `operator` empieza por `auto:`.
-    regulatory: Regulatory | None = Field(None, description="Regulatory layer of the transform itself, when it was produced by a model rather than fitted.")
+    regulatory: Regulatory | None = Field(
+        default=None,
+        description=(
+            "Regulatory layer of the transform itself, when it was produced by a model rather than "
+            "fitted."
+        ),
+    )
 
     #: Prefijo con el que una maquina firma `operator`. Ver `provisional`.
     #: `ClassVar` para que pydantic no lo tome por un campo del manifiesto.
@@ -612,8 +963,12 @@ class Registration(BaseModel):
 class Visit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(description="Stable identifier of the visit within this container.")
-    date: str = Field(description="Date of the encounter. Shifted when `deidentification.date_shift_days` is set.")
-    label: str = Field("", description="Human-readable name for the encounter. Free text.")
+    date: str = Field(
+        description=(
+            "Date of the encounter. Shifted when `deidentification.date_shift_days` is set."
+        ),
+    )
+    label: str = Field(default="", description="Human-readable name for the encounter. Free text.")
 
 
 class Subject(BaseModel):
@@ -623,9 +978,23 @@ class Subject(BaseModel):
     #: ⚠️ **HMAC con clave, NUNCA un hash simple del identificador clinico.** El espacio de
     #: identificadores de una clinica es pequeno, asi que un hash sin clave se invierte por
     #: diccionario y el seudonimo no seudonimiza nada. Ver `cbct_agent.pseudonymize`.
-    pseudonym: str = Field(description="The subject's pseudonym. Always a pseudonym: a direct identifier MUST NOT appear here.")
-    fhir_patient: str | None = Field(None, description="Reference to a FHIR `Patient` resource held elsewhere. A pointer, never the record.")
-    consent: Consent | None = Field(None, description="What the subject consented to, and for which purposes.")
+    pseudonym: str = Field(
+        description=(
+            "The subject's pseudonym. Always a pseudonym: a direct identifier MUST NOT appear here."
+        ),
+    )
+    fhir_patient: str | None = Field(
+        default=None,
+        description=(
+            "Reference to a FHIR `Patient` resource held elsewhere. A pointer, never the record."
+        ),
+    )
+    consent: Consent | None = Field(
+        default=None,
+        description=(
+            "What the subject consented to, and for which purposes."
+        ),
+    )
 
 
 class FHIRResource(BaseModel):
@@ -645,9 +1014,23 @@ class FHIRResource(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    resource_type: str = Field(description="FHIR resource type this asset maps to, e.g. `Observation` or `ImagingSelection`.")
-    resource: str | None = Field(None, description="Reference to the resource instance, when one exists outside the container.")
-    note: str = Field("", description="Why this mapping was chosen. Free text, for the reader who disagrees with it.")
+    resource_type: str = Field(
+        description=(
+            "FHIR resource type this asset maps to, e.g. `Observation` or `ImagingSelection`."
+        ),
+    )
+    resource: str | None = Field(
+        default=None,
+        description=(
+            "Reference to the resource instance, when one exists outside the container."
+        ),
+    )
+    note: str = Field(
+        default="",
+        description=(
+            "Why this mapping was chosen. Free text, for the reader who disagrees with it."
+        ),
+    )
 
 
 class Extension(BaseModel):
@@ -672,52 +1055,183 @@ class Extension(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(description="Prefixed extension name. This specification reserves `histora_` and defines no other.")
+    name: str = Field(
+        description=(
+            "Prefixed extension name. This specification reserves `histora_` and defines no other."
+        ),
+    )
     version: str = Field(description="Version of the extension, independent of the format version.")
-    uri: str | None = Field(None, description="Path to the extension's payload inside the container, declared as an asset like any other.")
-    schema_id: str | None = Field(None, description="Identifier of the schema its payload validates against.")
-    description: str = Field("", description="One line on what the extension adds, so a reader that skips it can say what it skipped.")
+    uri: str | None = Field(
+        default=None,
+        description=(
+            "Path to the extension's payload inside the container, declared as an asset like any "
+            "other."
+        ),
+    )
+    schema_id: str | None = Field(
+        default=None,
+        description=(
+            "Identifier of the schema its payload validates against."
+        ),
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "One line on what the extension adds, so a reader that skips it can say what it "
+            "skipped."
+        ),
+    )
 
 
 class Provenance(BaseModel):
     """Chain de hashes entre versiones del caso (§8). `.uos` es append-only logico."""
 
     model_config = ConfigDict(extra="forbid")
-    prev_manifest_sha256: str | None = Field(None, description="SHA-256 of the previous version's manifest. This is what makes the history a chain rather than a claim.")
-    chain: str | None = Field(None, description="Path to the append-only chain file. Present without `prev_manifest_sha256` means a history exists that this manifest does not point into.")
+    prev_manifest_sha256: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 of the previous version's manifest. This is what makes the history a chain "
+            "rather than a claim."
+        ),
+    )
+    chain: str | None = Field(
+        default=None,
+        description=(
+            "Path to the append-only chain file. Present without `prev_manifest_sha256` means a "
+            "history exists that this manifest does not point into."
+        ),
+    )
 
 
 class Manifest(BaseModel):
     """`manifest.json`. DEBE ser la primera entrada fisica del ZIP (§3)."""
 
     model_config = ConfigDict(extra="forbid")
-    uos_version: str = Field(UOS_VERSION, description="Format version this container declares. A reader MUST check it before anything else.")
-    case_id: str = Field(description="Stable case identifier, conventionally `urn:uuid:<v5>`. It MUST NOT encode patient identity.")
-    created: datetime = Field(default_factory=lambda: datetime.now(UTC), description="When this manifest was written, RFC 3339 in UTC.")
-    generator: dict[str, str] = Field(description="Who wrote this container: name and version of the writer.")
-    phi_state: PHIState = Field(description="What identifiable content the container carries. It is a statement about the whole container, and a reader decides what it may do with it from here.")
+    uos_version: str = Field(
+        default=UOS_VERSION,
+        description=(
+            "Format version this container declares. A reader MUST check it before anything else."
+        ),
+    )
+    case_id: str = Field(
+        description=(
+            "Stable case identifier, conventionally `urn:uuid:<v5>`. It MUST NOT encode patient "
+            "identity."
+        ),
+    )
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description=(
+            "When this manifest was written, RFC 3339 in UTC."
+        ),
+    )
+    generator: dict[str, str] = Field(
+        description=(
+            "Who wrote this container: name and version of the writer."
+        ),
+    )
+    phi_state: PHIState = Field(
+        description=(
+            "What identifiable content the container carries. It is a statement about the whole "
+            "container, and a reader decides what it may do with it from here."
+        ),
+    )
     #: ⚠️ Obligatorio cuando `phi_state` no es `identified` (B-3): declarar un estado sin
     #: decir que medidas lo produjeron es una afirmacion que nadie puede comprobar.
-    deidentification: Deidentification | None = Field(None, description="What de-identification was applied, to which assets, and with what tool. `null` means none was declared, which is not the same as none being needed.")
+    deidentification: Deidentification | None = Field(
+        default=None,
+        description=(
+            "What de-identification was applied, to which assets, and with what tool. `null` means "
+            "none was declared, which is not the same as none being needed."
+        ),
+    )
     #: Para que se emitio ESTE contenedor (B-4). Tiene que estar dentro de
     #: `subject.consent.scope`: no se puede emitir para algo que el paciente no consintio.
-    purpose_of_use: PurposeOfUse | None = Field(None, description="What this container was assembled for. It bounds what a recipient may do with it, and is checked against the subject's consent.")
+    purpose_of_use: PurposeOfUse | None = Field(
+        default=None,
+        description=(
+            "What this container was assembled for. It bounds what a recipient may do with it, and "
+            "is checked against the subject's consent."
+        ),
+    )
     subject: Subject = Field(description="The patient, always by pseudonym.")
-    canonical_frame: Frame = Field(description="The frame every other frame must be reachable from. It is the geometric hub of the case.")
-    frames: list[Frame] = Field(default_factory=list, description="Every coordinate frame named in the case, besides the canonical one.")
-    visits: list[Visit] = Field(default_factory=list, description="The temporal axis: one entry per clinical encounter.")
-    assets: list[Asset] = Field(default_factory=list, description="The data plane: every file the container carries or references. The manifest is exhaustive, so a reader never walks the ZIP to discover content.")
-    registrations: list[Registration] = Field(default_factory=list, description="The relations: the transforms that place each frame with respect to another, each with its residual.")
+    canonical_frame: Frame = Field(
+        description=(
+            "The frame every other frame must be reachable from. It is the geometric hub of the "
+            "case."
+        ),
+    )
+    frames: list[Frame] = Field(
+        default_factory=list,
+        description=(
+            "Every coordinate frame named in the case, besides the canonical one."
+        ),
+    )
+    visits: list[Visit] = Field(
+        default_factory=list,
+        description=(
+            "The temporal axis: one entry per clinical encounter."
+        ),
+    )
+    assets: list[Asset] = Field(
+        default_factory=list,
+        description=(
+            "The data plane: every file the container carries or references. The manifest is "
+            "exhaustive, so a reader never walks the ZIP to discover content."
+        ),
+    )
+    registrations: list[Registration] = Field(
+        default_factory=list,
+        description=(
+            "The relations: the transforms that place each frame with respect to another, each "
+            "with its residual."
+        ),
+    )
     #: D-9 · como se registro la relacion entre arcadas. `None` es no declarado y el
     #: validador avisa: en un caso de dos arcadas es la registracion que mas importa.
-    occlusion: OcclusionRecord | None = Field(None, description="How the two arches relate, for a case that has both. Silence is never 'there is none': a two-arch case MUST declare a registration or say why it cannot.")
-    fhir_map: dict[str, FHIRResource] = Field(default_factory=dict, description="Which FHIR resource each asset maps to, so a clinical system can ingest the case without knowing this format.")
+    occlusion: OcclusionRecord | None = Field(
+        default=None,
+        description=(
+            "How the two arches relate, for a case that has both. Silence is never 'there is "
+            "none': a two-arch case MUST declare a registration or say why it cannot."
+        ),
+    )
+    fhir_map: dict[str, FHIRResource] = Field(
+        default_factory=dict,
+        description=(
+            "Which FHIR resource each asset maps to, so a clinical system can ingest the case "
+            "without knowing this format."
+        ),
+    )
     # Extensiones del formato. Ver `Extension` — es propuesta nuestra, no v0.3.
-    extensions: dict[str, Extension] = Field(default_factory=dict, description="Extensions this container declares, by name.")
-    extensions_used: list[str] = Field(default_factory=list, description="Names of extensions present. A reader that does not implement one still opens the case and can say what it left unread.")
+    extensions: dict[str, Extension] = Field(
+        default_factory=dict,
+        description=(
+            "Extensions this container declares, by name."
+        ),
+    )
+    extensions_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of extensions present. A reader that does not implement one still opens the "
+            "case and can say what it left unread."
+        ),
+    )
     # Vacio a proposito en todo lo que emitimos: nada de lo nuestro impide abrir el caso.
-    extensions_required: list[str] = Field(default_factory=list, description="Names of extensions a reader MUST implement to open the case correctly. Listing one here refuses readers, so it is for cases that would be misread otherwise.")
-    provenance: Provenance = Field(default_factory=lambda: Provenance(), description="The link to the previous version of this case, and to the chain that records every version.")
+    extensions_required: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of extensions a reader MUST implement to open the case correctly. Listing one "
+            "here refuses readers, so it is for cases that would be misread otherwise."
+        ),
+    )
+    provenance: Provenance = Field(
+        default_factory=lambda: Provenance(),
+        description=(
+            "The link to the previous version of this case, and to the chain that records every "
+            "version."
+        ),
+    )
 
     def json_canonico(self) -> str:
         """JSON estable: mismas claves, mismo orden, misma salida.

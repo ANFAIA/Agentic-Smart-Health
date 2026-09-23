@@ -64,8 +64,14 @@ ID = (
 DESCRIPCIONES_EN: dict[str, str] = {
     "Asset": "One file or directory the container carries or references.",
     "Part": "One file inside an asset that is a directory, such as a DICOM slice.",
-    "Locator": "Where to find a referenced original. A hint, never a contract: identity is decided by the hash and not by the route.",
-    "LocatorKind": "How a locator expresses a location: DICOMweb, an AE title, a URL, or an institution-local reference.",
+    "Locator": (
+        "Where to find a referenced original. A hint, never a contract: identity is decided by the "
+        "hash and not by the route."
+    ),
+    "LocatorKind": (
+        "How a locator expresses a location: DICOMweb, an AE title, a URL, or an institution-local "
+        "reference."
+    ),
     "Frame": "A coordinate system in which asset positions are expressed.",
     "Registration": "A rigid transform taking points from one frame to another.",
     "Visit": "One clinical encounter the assets belong to.",

@@ -1560,8 +1560,8 @@ def test_cada_codigo_del_validador_existe_en_la_tabla_del_algoritmo():
     }
     tex = (raiz / "docs/spec/uos-format-spec-v0.3.tex").read_text(encoding="utf-8")
     ini = tex.index(r"\textbf{\#} & \textbf{Cls} & \textbf{Check}")
-    listados = set(re.findall(r"^(\d+[a-z]?) & [EW/-]+ &", tex[ini:tex.index(r"\end{longtable}", ini)],
-                              re.M))
+    tabla = tex[ini : tex.index(r"\end{longtable}", ini)]
+    listados = set(re.findall(r"^(\d+[a-z]?) & [EW/-]+ &", tabla, re.M))
     sin_fila = emitidos - listados
     assert not sin_fila, f"el validador cita checks que la spec no lista: {sorted(sin_fila)}"
 
@@ -1587,7 +1587,6 @@ def _traslacion(dx: float):
 
 def _tx_al_canonico(m, marco):
     import numpy as np
-
     from uos.marcos import resuelve_al_canonico
 
     return np.array(resuelve_al_canonico(m, marco)).reshape(4, 4)[0, 3]
@@ -1654,7 +1653,6 @@ def test_un_locator_no_puede_declararse_sin_decir_si_identifica():
     """`identifying` no tiene defecto: callarlo seria «no se ha mirado» disfrazado de «no»."""
     import pytest
     from pydantic import ValidationError
-
     from uos.manifiesto import Locator
 
     with pytest.raises(ValidationError):
@@ -1690,3 +1688,25 @@ def test_un_locator_opaco_no_identificante_solo_avisa():
     _valida_locators(_manifiesto_con(_asset_referenciado([opaco]), PHIState.PSEUDONYMIZED), inf)
     assert not inf.errors, inf.errors
     assert any(a.code == "UOS-W-017o" for a in inf.warnings)
+
+
+def test_los_fallos_de_la_cadena_llevan_codigo_como_todos_los_demas():
+    """`revisa_cadena` devuelve frases, y el informe promete un codigo por hallazgo.
+
+    Metidas crudas en `Report.errors` se quedaban sin `code`, sin `severity` y sin
+    `path`, y `as_dict()` —que existe justamente para quien procesa el informe en vez
+    de leerlo— reventaba con `AttributeError` al llegar a la primera. Un contenedor con
+    la cadena de procedencia rota es el caso en que MAS falta hace poder procesarlo.
+    """
+    from uos.validador import Report
+
+    inf = Report()
+    inf.error("9", "provenance/chain.json es de otro caso", path="provenance/chain.json")
+
+    (fallo,) = inf.errors
+    assert fallo.code == "UOS-E-009"
+    assert fallo.severity == "error"
+    assert fallo.path == "provenance/chain.json"
+    # Y el informe entero se serializa, que es lo que antes no ocurria.
+    d = inf.as_dict()
+    assert d["findings"][0]["code"] == "UOS-E-009"

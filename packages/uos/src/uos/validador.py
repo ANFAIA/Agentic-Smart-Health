@@ -82,8 +82,11 @@ class Finding(str):
 class Report:
     """Lo que el validador encontro. `errores` invalida; `avisos` no."""
 
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    # `list[Finding]` y no `list[str]`: un `Finding` ES un `str`, asi que todo el que
+    # solo quiera leer la frase sigue funcionando, pero quien procesa el informe
+    # necesita `code`, `severity` y `path`, y con `list[str]` el tipo los negaba.
+    errors: list[Finding] = field(default_factory=list)
+    warnings: list[Finding] = field(default_factory=list)
     levels: list[Conformance] = field(default_factory=list)
     # ⚠️ **Perfil ORTOGONAL a los niveles, y por eso va aparte (B-6).** Los niveles dicen
     # que TIPOS de asset lleva el contenedor, o sea si un lector puede abrirlo. Ninguno
@@ -143,8 +146,10 @@ def validate(ruta: Path) -> Report:
     with zipfile.ZipFile(ruta) as z:
         nombres = z.namelist()
         if not nombres or nombres[0] != MANIFIESTO:
-            inf.error("1", f"la primera entrada del ZIP es {nombres[0] if nombres else 'ninguna'!r}, "
-                f"y el spec exige {MANIFIESTO!r}"
+            inf.error(
+                "1",
+                f"la primera entrada del ZIP es {nombres[0] if nombres else 'ninguna'!r}, "
+                f"y el spec exige {MANIFIESTO!r}",
             )
             return inf
         for zi in z.infolist():
@@ -250,7 +255,7 @@ def _perfil_distribuible(m: Manifest, inf: Report) -> None:
         faltan.append("no valida contra su propio manifiesto")
     # ⚠️ **Un locator identificante es una fuga de salida.** El contenedor puede estar
     # impecablemente de-identificado y aun asi llevar escrito el camino de vuelta.
-    con_ruta = [a.id for a in m.assets for l in a.locators if l.identifying]
+    con_ruta = [a.id for a in m.assets for loc in a.locators if loc.identifying]
     if con_ruta:
         faltan.append(
             f"lleva locators marcados `identifying` en {sorted(set(con_ruta))}: la ruta "
@@ -308,7 +313,11 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
             _valida_serie(z, a, dentro, inf)
             continue
         if a.uri not in dentro:
-            inf.error("5", f"asset {a.id}: {a.uri} no esta en el contenedor", path=f"assets[{a.id}]")
+            inf.error(
+                "5",
+                f"asset {a.id}: {a.uri} no esta en el contenedor",
+                path=f"assets[{a.id}]",
+            )
             continue
         crudo = z.read(a.uri)
         if (real := hashlib.sha256(crudo).hexdigest()) != a.sha256:
@@ -326,9 +335,11 @@ def _valida_assets(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
     # `sha256` acredita cual es el fichero, y quien lo custodie tendra que demostrarlo.
     if referenciados:
         inf.external_count = len(referenciados)
-        inf.warn("6", f"el contenedor REFERENCIA {len(referenciados)} original(es) adquirido(s) que "
+        inf.warn(
+            "6",
+            f"el contenedor REFERENCIA {len(referenciados)} original(es) adquirido(s) que "
             "no custodia, asi que su contenido no se verifica aqui: "
-            + ", ".join(referenciados)
+            + ", ".join(referenciados),
         )
 
 
@@ -353,13 +364,20 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
     declarados = {a.uri + p.name for p in a.parts}
     desidentificados = False
     if sobran := hijos - declarados:
-        inf.error("7", f"asset {a.id}: {len(sobran)} fichero(s) dentro de {a.uri} que el manifiesto "
-            f"no declara ({sorted(sobran)[0]}…)"
-        , path=f"assets[{a.id}]")
+        inf.error(
+            "7",
+            f"asset {a.id}: {len(sobran)} fichero(s) dentro de {a.uri} que el manifiesto "
+            f"no declara ({sorted(sobran)[0]}…)",
+            path=f"assets[{a.id}]",
+        )
     for parte in a.parts:
         ruta = a.uri + parte.name
         if ruta not in hijos:
-            inf.error("7", f"asset {a.id}: falta {ruta}, que el manifiesto declara", path=f"assets[{a.id}]")
+            inf.error(
+                "7",
+                f"asset {a.id}: falta {ruta}, que el manifiesto declara",
+                path=f"assets[{a.id}]",
+            )
             continue
         crudo = z.read(ruta)
         # ⚠️ **Dos niveles, reportados POR SEPARADO (D-3).** El hash del fichero dice si los
@@ -374,25 +392,38 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
             identidad_ok = (uid == parte.sop_instance_uid
                             and px == parte.pixel_data_sha256)
             if not identidad_ok:
-                inf.error("7", f"asset {a.id}: {parte.name} NO es la instancia declarada (SOP Instance "
-                    "UID o contenido de pixeles distinto). Es otro corte, no este alterado"
-                , path=f"assets[{a.id}]")
+                inf.error(
+                    "7",
+                    f"asset {a.id}: {parte.name} NO es la instancia declarada (SOP Instance "
+                    "UID o contenido de pixeles distinto). Es otro corte, no este alterado",
+                    path=f"assets[{a.id}]",
+                )
         if hashlib.sha256(crudo).hexdigest() != parte.sha256:
             if identidad_ok:
                 desidentificados = True
-                inf.warn("7", f"asset {a.id}: {parte.name} conserva su identidad DICOM y sus bytes no "
+                inf.warn(
+                    "7",
+                    f"asset {a.id}: {parte.name} conserva su identidad DICOM y sus bytes no "
                     "son los declarados. Es el mismo corte con las cabeceras reescritas "
-                    "—lo que hace una de-identificacion—, no un corte distinto"
-                , path=f"assets[{a.id}]")
+                    "—lo que hace una de-identificacion—, no un corte distinto",
+                    path=f"assets[{a.id}]",
+                )
             else:
-                inf.error("7", f"asset {a.id}: el sha256 de {parte.name} no cuadra", path=f"assets[{a.id}]")
+                inf.error(
+                    "7",
+                    f"asset {a.id}: el sha256 de {parte.name} no cuadra",
+                    path=f"assets[{a.id}]",
+                )
         if len(crudo) != parte.bytes and not identidad_ok:
             # ⚠️ Si la identidad se conserva, el tamano distinto es PARTE de la misma
             # historia —limpiar etiquetas acorta la cabecera— y ya se dijo arriba en un
             # aviso. Reportarlo aparte como error convertiria una de-identificacion en un
             # contenedor invalido, que es justo la conclusion que D-3 evita.
-            inf.error("7", f"asset {a.id}: {parte.name} declara {parte.bytes} bytes y tiene {len(crudo)}"
-            , path=f"assets[{a.id}]")
+            inf.error(
+                "7",
+                f"asset {a.id}: {parte.name} declara {parte.bytes} bytes y tiene {len(crudo)}",
+                path=f"assets[{a.id}]",
+            )
     if (real := digesto_de_partes(a.parts)) != a.sha256:
         inf.error("7", f"asset {a.id}: el digesto declarado del directorio no es el de sus partes "
             f"({a.sha256[:12]}… vs {real[:12]}…)"
@@ -402,8 +433,11 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
             f"{sum(p.bytes for p in a.parts)}"
         , path=f"assets[{a.id}]")
     if a.sidecar_uri is not None and a.sidecar_uri not in dentro:
-        inf.error("7", f"asset {a.id}: declara el sidecar {a.sidecar_uri} y no esta en el contenedor"
-        , path=f"assets[{a.id}]")
+        inf.error(
+            "7",
+            f"asset {a.id}: declara el sidecar {a.sidecar_uri} y no esta en el contenedor",
+            path=f"assets[{a.id}]",
+        )
 
 
 _FDI = {str(x) for x in (
@@ -428,37 +462,56 @@ def _valida_derivados(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
         if not a.uri.startswith("derived/"):
             continue
         if not a.sidecar_uri:
-            inf.error("17f", f"asset {a.id}: vive en derived/ y no declara `sidecar_uri`. Sin el nadie "
-                "puede saber que modelo lo produjo, y esa es la condicion del §5.5"
-            , path=f"assets[{a.id}]")
+            inf.error(
+                "17f",
+                f"asset {a.id}: vive en derived/ y no declara `sidecar_uri`. Sin el nadie "
+                "puede saber que modelo lo produjo, y esa es la condicion del §5.5",
+                path=f"assets[{a.id}]",
+            )
             continue
         if a.sidecar_uri not in dentro:
             continue
         try:
             meta = json.loads(z.read(a.sidecar_uri))
         except ValueError:
-            inf.error("17f", f"asset {a.id}: su sidecar {a.sidecar_uri} no es JSON valido", path=f"assets[{a.id}]")
+            inf.error(
+                "17f",
+                f"asset {a.id}: su sidecar {a.sidecar_uri} no es JSON valido",
+                path=f"assets[{a.id}]",
+            )
             continue
         if not (meta.get("model") or {}).get("name"):
-            inf.error("17f", f"asset {a.id}: su sidecar no dice `model.name`. «Lo produjo un modelo» "
-                "sin decir cual no se puede auditar ni reproducir"
-            , path=f"assets[{a.id}]")
+            inf.error(
+                "17f",
+                f"asset {a.id}: su sidecar no dice `model.name`. «Lo produjo un modelo» "
+                "sin decir cual no se puede auditar ni reproducir",
+                path=f"assets[{a.id}]",
+            )
         if not meta.get("source_assets"):
-            inf.error("17f", f"asset {a.id}: su sidecar declara `source_assets` vacio. Una inferencia "
-                "sin entradas declaradas no se puede rehacer"
-            , path=f"assets[{a.id}]")
+            inf.error(
+                "17f",
+                f"asset {a.id}: su sidecar declara `source_assets` vacio. Una inferencia "
+                "sin entradas declaradas no se puede rehacer",
+                path=f"assets[{a.id}]",
+            )
         if not meta.get("encoding"):
-            inf.error("17f", f"asset {a.id}: su sidecar no declara `encoding`. Un `int16` suelto sin "
-                "decir que indexa es un monton de numeros"
-            , path=f"assets[{a.id}]")
+            inf.error(
+                "17f",
+                f"asset {a.id}: su sidecar no declara `encoding`. Un `int16` suelto sin "
+                "decir que indexa es un monton de numeros",
+                path=f"assets[{a.id}]",
+            )
         # T-3 · las etiquetas tienen que ser codigos FDI de verdad, no enteros cualesquiera.
         vocabulario = (meta.get("labels") or {}).get("present")
         if vocabulario is not None:
             malos = sorted({str(c) for c in vocabulario} - _FDI)
             if malos:
-                inf.error("17f", f"asset {a.id}: su sidecar declara etiquetas que no son codigos ISO "
-                    f"3950: {', '.join(malos)}"
-                , path=f"assets[{a.id}]")
+                inf.error(
+                    "17f",
+                    f"asset {a.id}: su sidecar declara etiquetas que no son codigos ISO "
+                    f"3950: {', '.join(malos)}",
+                    path=f"assets[{a.id}]",
+                )
 
     # T-3 · `derived_from` tiene que apuntar a algo declarado.
     for a in m.assets:
@@ -523,8 +576,10 @@ def _valida_frames(m: Manifest, inf: Report) -> None:
                     cambio = True
     for asset in m.assets:
         if asset.frame not in alcanzables:
-            inf.error("15", f"asset {asset.id}: su frame {asset.frame!r} no conecta con el canonico "
-                f"{canonico!r} por ninguna registracion"
+            inf.error(
+                "15",
+                f"asset {asset.id}: su frame {asset.frame!r} no conecta con el canonico "
+                f"{canonico!r} por ninguna registracion",
             )
     for r in m.registrations:
         if r.provisional:
@@ -576,9 +631,11 @@ def _valida_regulatorio(m: Manifest, inf: Report) -> None:
             , path=f"assets[{a.id}]")
     # ── D-9 · la mordida, dicha o declarada ausente, nunca callada ─────────────
     if m.occlusion is None and not any(r.id == Registration.OCLUSION for r in m.registrations):
-        inf.warn("17n", "el contenedor no declara `occlusion`. Mandibula<->maxila es la registracion "
+        inf.warn(
+            "17n",
+            "el contenedor no declara `occlusion`. Mandibula<->maxila es la registracion "
             "clinicamente mas importante de un caso dental; en uno de una sola arcada la "
-            "respuesta es `single_arch`, pero hay que darla"
+            "respuesta es `single_arch`, pero hay que darla",
         )
     for r in m.registrations:
         # ⚠️ Aptitud de uso: `rms_error_mm` es un PROMEDIO y no decide un uso clinico.
@@ -590,9 +647,12 @@ def _valida_regulatorio(m: Manifest, inf: Report) -> None:
                 "`max_error_mm`. Para ese uso decide el error maximo local, no el promedio"
             , path=f"registrations[{r.id}]")
         if not r.fit_for:
-            inf.warn("17n", f"registro {r.id}: `fit_for` vacio, o sea NO DECLARADO. Un lector no debe "
-                "suponer que sirve para medir ni para planificar"
-            , path=f"registrations[{r.id}]")
+            inf.warn(
+                "17n",
+                f"registro {r.id}: `fit_for` vacio, o sea NO DECLARADO. Un lector no debe "
+                "suponer que sirve para medir ni para planificar",
+                path=f"registrations[{r.id}]",
+            )
 
     # ── D-1 y D-2 · los frames se anclan a DICOM y declaran su convencion ──────
     de_volumen = {a.frame for a in m.assets if a.kind == AssetKind.VOLUME}
@@ -627,9 +687,12 @@ def _valida_regulatorio(m: Manifest, inf: Report) -> None:
         # `layer: 1` puesto: la capa del calculo automatico era indistinguible de la de un
         # dato medido, y nadie podia ver la diferencia porque no habia diferencia escrita.
         if r.operator and r.operator.startswith(r.AUTO) and r.regulatory is None:
-            inf.error("17", f"registro {r.id}: lo calculo `{r.operator}` y no declara `regulatory`. "
-                "Un alineamiento automatico es computo (layer 2), no adquisicion"
-            , path=f"registrations[{r.id}]")
+            inf.error(
+                "17",
+                f"registro {r.id}: lo calculo `{r.operator}` y no declara `regulatory`. "
+                "Un alineamiento automatico es computo (layer 2), no adquisicion",
+                path=f"registrations[{r.id}]",
+            )
 
 
 def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
@@ -660,10 +723,13 @@ def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifest, inf: Report) -> 
                 lin.startswith("property ") and lin.split()[-1] == "region_id"
                 for lin in cabecera.splitlines()
             ):
-                inf.error("17b", f"asset {a.id}: {a.uri} declara la columna `region_id` y el asset es "
+                inf.error(
+                    "17b",
+                    f"asset {a.id}: {a.uri} declara la columna `region_id` y el asset es "
                     f"layer {a.regulatory.layer}; el codigo FDI por gaussiana es salida de "
-                    "modelo y va en derived/seg_gaussians, no dentro de la capa"
-                , path=f"assets[{a.id}]")
+                    "modelo y va en derived/seg_gaussians, no dentro de la capa",
+                    path=f"assets[{a.id}]",
+                )
             continue
         if not a.uri.endswith(".glb"):
             continue
@@ -677,15 +743,21 @@ def _valida_capas_en_la_escena(z: zipfile.ZipFile, m: Manifest, inf: Report) -> 
         for malla in doc.get("meshes", []):
             for pr in malla.get("primitives", []):
                 if "uos_fdi" in (pr.get("extras") or {}):
-                    inf.error("17b", f"asset {a.id}: un primitive de {a.uri} declara `extras.uos_fdi` "
+                    inf.error(
+                        "17b",
+                        f"asset {a.id}: un primitive de {a.uri} declara `extras.uos_fdi` "
                         f"y el asset es layer {a.regulatory.layer}; el codigo FDI sale de "
-                        "un segmentador, asi que borrar derived/ no quitaria la inferencia"
-                    , path=f"assets[{a.id}]")
+                        "un segmentador, asi que borrar derived/ no quitaria la inferencia",
+                        path=f"assets[{a.id}]",
+                    )
                 if "_REGION_ID" in (pr.get("attributes") or {}):
-                    inf.error("17b", f"asset {a.id}: un primitive de {a.uri} lleva `_REGION_ID` y el "
+                    inf.error(
+                        "17b",
+                        f"asset {a.id}: un primitive de {a.uri} lleva `_REGION_ID` y el "
                         f"asset es layer {a.regulatory.layer}; el FDI por gaussiana es "
-                        "salida de modelo y no puede viajar en un plano que no se desmonta"
-                    , path=f"assets[{a.id}]")
+                        "salida de modelo y no puede viajar en un plano que no se desmonta",
+                        path=f"assets[{a.id}]",
+                    )
 
 
 def _valida_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
@@ -734,24 +806,33 @@ def _valida_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
                 escala = _lee(attrs["KHR_gaussian_splatting:SCALE"]) \
                     if "KHR_gaussian_splatting:SCALE" in attrs else None
                 if escala is not None and float(np.min(escala)) < 0:
-                    inf.error("17i", f"asset {a.id}: `SCALE` de la primitiva de gaussianas tiene valores "
-                        "negativos. La extension pide escala lineal NO negativa"
-                    , path=f"assets[{a.id}]")
+                    inf.error(
+                        "17i",
+                        f"asset {a.id}: `SCALE` de la primitiva de gaussianas tiene valores "
+                        "negativos. La extension pide escala lineal NO negativa",
+                        path=f"assets[{a.id}]",
+                    )
                 op = _lee(attrs["KHR_gaussian_splatting:OPACITY"]) \
                     if "KHR_gaussian_splatting:OPACITY" in attrs else None
                 if op is not None and (float(np.min(op)) < 0 or float(np.max(op)) > 1):
-                    inf.error("17i", f"asset {a.id}: `OPACITY` fuera de [0,1]. La extension pide opacidad "
+                    inf.error(
+                        "17i",
+                        f"asset {a.id}: `OPACITY` fuera de [0,1]. La extension pide opacidad "
                         "LINEAL, y un PLY de INRIA la guarda en logit: confundirlas pinta "
-                        "la escena entera mal sin que nada falle"
-                    , path=f"assets[{a.id}]")
+                        "la escena entera mal sin que nada falle",
+                        path=f"assets[{a.id}]",
+                    )
                 rot = _lee(attrs["KHR_gaussian_splatting:ROTATION"]) \
                     if "KHR_gaussian_splatting:ROTATION" in attrs else None
                 if rot is not None and rot.size:
                     largos = np.linalg.norm(rot, axis=1)
                     if float(np.max(np.abs(largos - 1.0))) > 1e-3:
-                        inf.error("17i", f"asset {a.id}: `ROTATION` no es unitario. Un cuaternion sin "
-                            "normalizar codifica una escala encubierta"
-                        , path=f"assets[{a.id}]")
+                        inf.error(
+                            "17i",
+                            f"asset {a.id}: `ROTATION` no es unitario. Un cuaternion sin "
+                            "normalizar codifica una escala encubierta",
+                            path=f"assets[{a.id}]",
+                        )
                 # Grados SH completos: si esta el grado l, estan todos los inferiores.
                 grados: dict[int, set[int]] = {}
                 for k in attrs:
@@ -764,11 +845,14 @@ def _valida_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
                     for grado in range(tope + 1):
                         # El grado g tiene 2g+1 coeficientes.
                         if grados.get(grado, set()) != set(range(2 * grado + 1)):
-                            inf.error("17i", f"asset {a.id}: los armonicos esfericos declaran hasta el "
+                            inf.error(
+                                "17i",
+                                f"asset {a.id}: los armonicos esfericos declaran hasta el "
                                 f"grado {tope} y el grado {grado} esta incompleto. Un "
                                 "lector "
-                                "que itere por grados leera basura del buffer contiguo"
-                            , path=f"assets[{a.id}]")
+                                "que itere por grados leera basura del buffer contiguo",
+                                path=f"assets[{a.id}]",
+                            )
                             break
 
 
@@ -817,10 +901,13 @@ def _valida_uid_del_sidecar(z: zipfile.ZipFile, m: Manifest, inf: Report) -> Non
         suyo = sc.get("dicom_frame_of_reference_uid")
         if (frame is not None and suyo and frame.dicom_frame_of_reference_uid
                 and suyo != frame.dicom_frame_of_reference_uid):
-            inf.error("17b", f"asset {a.id}: su sidecar declara el frame of reference {suyo} y el frame "
+            inf.error(
+                "17b",
+                f"asset {a.id}: su sidecar declara el frame of reference {suyo} y el frame "
                 f"{frame.id} declara {frame.dicom_frame_of_reference_uid}. Uno de los dos "
-                "miente"
-            , path=f"assets[{a.id}]")
+                "miente",
+                path=f"assets[{a.id}]",
+            )
 
 
 def _valida_matrices_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
@@ -870,11 +957,14 @@ def _valida_matrices_gs(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
             esperada = np.asarray(reg.transform_4x4_row_major, dtype=np.float64).reshape(4, 4)
             # glTF por COLUMNAS, manifiesto por FILAS: la del nodo es la traspuesta.
             if not np.allclose(enel, esperada.T, atol=1e-4):
-                inf.error("17m", f"asset {a.id}: la `matrix` del nodo de {capa.id} no es la traspuesta "
+                inf.error(
+                    "17m",
+                    f"asset {a.id}: la `matrix` del nodo de {capa.id} no es la traspuesta "
                     f"de la registracion {reg.id}. glTF guarda por columnas y el manifiesto "
                     "por filas: confundirlas coloca la nube girada y espejada sin que nada "
-                    "falle"
-                , path=f"assets[{a.id}]")
+                    "falle",
+                    path=f"assets[{a.id}]",
+                )
 
 
 def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
@@ -914,10 +1004,13 @@ def _valida_union_segmentacion(z: zipfile.ZipFile, m: Manifest, inf: Report) -> 
         esperados = int(cuenta) * 2
         crudo_seg = z.read(a.uri)
         if len(crudo_seg) != esperados:
-            inf.error("17j", f"asset {a.id}: su sidecar declara {cuenta} codigos ({esperados} bytes) y "
+            inf.error(
+                "17j",
+                f"asset {a.id}: su sidecar declara {cuenta} codigos ({esperados} bytes) y "
                 f"el fichero tiene {len(crudo_seg)}. La union con la escena es posicional, "
-                "asi que un desajuste pinta las etiquetas sobre las piezas equivocadas"
-            , path=f"assets[{a.id}]")
+                "asi que un desajuste pinta las etiquetas sobre las piezas equivocadas",
+                path=f"assets[{a.id}]",
+            )
             continue
 
         # ⚠️ **T-3, punto 8: contra el asset FUENTE y no solo contra si mismo.** Que el
@@ -974,16 +1067,22 @@ def _valida_capas_clinicas(z: zipfile.ZipFile, inf: Report) -> None:
                 continue
             capa = valor["regulatory"].get("layer")
             if capa == 3:
-                inf.error("17d", f"clinical/observations.json: `{fdi}.{campo}` declara layer 3 y la "
-                    "capa 3 vive solo bajo derived/. Aqui no se puede desmontar"
+                inf.error(
+                    "17d",
+                    f"clinical/observations.json: `{fdi}.{campo}` declara layer 3 y la "
+                    "capa 3 vive solo bajo derived/. Aqui no se puede desmontar",
                 )
             if valor.get("derivation") == "inferred" and capa == 1:
-                inf.error("17d", f"clinical/observations.json: `{fdi}.{campo}` es `inferred` y declara "
-                    "layer 1. Lo que propuso un modelo no es adquisicion ni transcripcion"
+                inf.error(
+                    "17d",
+                    f"clinical/observations.json: `{fdi}.{campo}` es `inferred` y declara "
+                    "layer 1. Lo que propuso un modelo no es adquisicion ni transcripcion",
                 )
             if capa == 2 and not valor.get("derived_from"):
-                inf.error("17d", f"clinical/observations.json: `{fdi}.{campo}` declara layer 2 y no "
-                    "dice `derived_from`; sin sus fuentes no se puede reproducir"
+                inf.error(
+                    "17d",
+                    f"clinical/observations.json: `{fdi}.{campo}` declara layer 2 y no "
+                    "dice `derived_from`; sin sus fuentes no se puede reproducir",
                 )
 
 
@@ -1019,10 +1118,14 @@ def _valida_procedencia(
     except ValueError as e:
         inf.error("9", f"{CHAIN} no es una cadena valida: {e}")
         return
-    inf.errors += revisa_cadena(
+    # Por `inf.error` y no `inf.errors +=`: `revisa_cadena` devuelve frases, y metidas
+    # crudas en la lista se quedaban sin `code`, sin `severity` y sin `path` —
+    # `as_dict()` reventaba al llegar a ellas. Son la comprobacion 9.
+    for fallo in revisa_cadena(
         cadena, case_id=m.case_id, manifiesto_sha256=manifiesto_sha256,
         prev_declarado=m.provenance.prev_manifest_sha256,
-    )
+    ):
+        inf.error("9", fallo, path=CHAIN)
     _valida_cadena_ordenada(cadena, inf)
     inf.version = len(cadena.links)
 
@@ -1069,10 +1172,17 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
     vistos: set[str] = set()
     for v in vistas:
         if v.visit not in visitas:
-            inf.error("13", f"vista {v.id}: apunta a la visita {v.visit!r}, que el manifiesto no declara"
-            , path=f"views[{v.id}]")
+            inf.error(
+                "13",
+                f"vista {v.id}: apunta a la visita {v.visit!r}, que el manifiesto no declara",
+                path=f"views[{v.id}]",
+            )
         if v.id in vistos:
-            inf.error("13", f"vista {v.id}: identificador repetido en {VIEWS}", path=f"views[{v.id}]")
+            inf.error(
+                "13",
+                f"vista {v.id}: identificador repetido en {VIEWS}",
+                path=f"views[{v.id}]",
+            )
         vistos.add(v.id)
         # T-3 · `mpr` y `clip_planes` solo cuando hay volumen, y el §7 lo declara
         # normativo. Una vista con controles de volumen en un contenedor sin volumen le
@@ -1090,14 +1200,24 @@ def _valida_vistas(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
         u = np.asarray(v.camera.up, float)
         nd, nu = float(np.linalg.norm(d)), float(np.linalg.norm(u))
         if nd == 0:
-            inf.error("13", f"vista {v.id}: la camara mira a su propia posicion", path=f"views[{v.id}]")
+            inf.error(
+                "13",
+                f"vista {v.id}: la camara mira a su propia posicion",
+                path=f"views[{v.id}]",
+            )
         elif nu == 0 or abs(float(np.dot(d / nd, u / nu))) > 0.999:
-            inf.warn("17k", f"vista {v.id}: `up` es (casi) paralelo a la direccion de vista; la matriz "
-                "de vista queda degenerada y un visor pintara negro"
-            , path=f"views[{v.id}]")
+            inf.warn(
+                "17k",
+                f"vista {v.id}: `up` es (casi) paralelo a la direccion de vista; la matriz "
+                "de vista queda degenerada y un visor pintara negro",
+                path=f"views[{v.id}]",
+            )
         if not 1.0 < v.camera.fov < 179.0:
-            inf.warn("17k", f"vista {v.id}: `fov` de {v.camera.fov} grados esta fuera de lo razonable"
-            , path=f"views[{v.id}]")
+            inf.warn(
+                "17k",
+                f"vista {v.id}: `fov` de {v.camera.fov} grados esta fuera de lo razonable",
+                path=f"views[{v.id}]",
+            )
     inf.views = len(vistas)
 
 
@@ -1147,10 +1267,12 @@ def _valida_phi(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
         de_volumen = [a.id for a in m.assets
                       if a.kind == AssetKind.MESH_GS_SCENE and _es_medida(z, a)]
         if not identificado and de_volumen and Deidentification.LIMPIA_RASGOS not in d.options:
-            inf.error("17e", f"el contenedor lleva {', '.join(de_volumen)} —capa medida derivada de un "
+            inf.error(
+                "17e",
+                f"el contenedor lleva {', '.join(de_volumen)} —capa medida derivada de un "
                 f"volumen— y `deidentification.options` no incluye "
                 f"`{Deidentification.LIMPIA_RASGOS}`. De un campo de densidad con tejido "
-                "blando se reconstruye la cara: eso es un identificador, con etiquetas o sin"
+                "blando se reconstruye la cara: eso es un identificador, con etiquetas o sin",
             )
         if d.date_shift_days is not None and not identificado:
             inf.error("17e", "`deidentification.date_shift_days` viaja con "
@@ -1166,9 +1288,11 @@ def _valida_phi(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
                    if alcance else "el sujeto no declara consentimiento")
             )
     elif m.assets:
-        inf.warn("17e", "el contenedor no declara `purpose_of_use`: salir hacia un laboratorio, hacia "
+        inf.warn(
+            "17e",
+            "el contenedor no declara `purpose_of_use`: salir hacia un laboratorio, hacia "
             "una segunda opinion o hacia un entrenamiento son actos distintos y quien lo "
-            "reciba tendra que suponerlo"
+            "reciba tendra que suponerlo",
         )
 
 
@@ -1188,7 +1312,7 @@ def _valida_locators(m: Manifest, inf: Report) -> None:
             inf.error("17o", f"asset {a.id}: declara `locators` y no es `external`. Un locator "
                 "dice donde encontrar lo que el contenedor NO lleva; sobre un asset que "
                 "viaja dentro no significa nada", path=f"assets[{a.id}]")
-        identificadores = [l for l in a.locators if l.identifying]
+        identificadores = [loc for loc in a.locators if loc.identifying]
         if identificadores and m.phi_state in (PHIState.PSEUDONYMIZED, PHIState.ANONYMIZED):
             inf.error("17o", f"asset {a.id}: el contenedor declara `phi_state` "
                 f"{m.phi_state.value!r} y lleva {len(identificadores)} locator(s) marcados "
@@ -1217,7 +1341,9 @@ def _valida_extensiones(m: Manifest, inf: Report) -> None:
             "exigir algo que el fichero no usa deja el caso sin abrir para nada"
         )
     if sobran := declaradas - set(m.extensions_used):
-        inf.warn("19", f"el manifiesto declara {sorted(sobran)} y no las usa: sobran en `extensions`"
+        inf.warn(
+            "19",
+            f"el manifiesto declara {sorted(sobran)} y no las usa: sobran en `extensions`",
         )
     for nombre in m.extensions_required:
         inf.warn("19", f"la extension `{nombre}` es OBLIGATORIA: un lector que no la implemente no "

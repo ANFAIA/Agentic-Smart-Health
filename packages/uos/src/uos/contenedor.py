@@ -17,6 +17,7 @@ import json
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
+from typing import BinaryIO
 
 from uos.manifiesto import UOS_VERSION, Asset, Manifest, Part, digesto_de_partes
 
@@ -176,7 +177,9 @@ def identidad_dicom_de(crudo: bytes) -> tuple[str | None, str | None, float | No
     return _identidad_dicom(io.BytesIO(crudo))
 
 
-def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None, float | None, float | None]:
+def _identidad_dicom(
+    ruta: Path | BinaryIO,
+) -> tuple[str | None, str | None, float | None, float | None]:
     """`(sop_instance_uid, sha256 de PixelData)` de un corte, o `(None, None)` (D-3).
 
     ⚠️ **Se hashea el VALOR de `(7FE0,0010)`, no el fichero.** Es la unica parte que la
@@ -198,6 +201,8 @@ def _identidad_dicom(ruta: Path) -> tuple[str | None, str | None, float | None, 
         # descomprimidos aqui para hashearlos; sacar el minimo y el maximo es aritmetica
         # sobre un array que ya esta en memoria. Hacerlo en una pasada aparte —que es como
         # estaba— pagaba una tercera lectura del volumen entero por un dato gratuito.
+        bajo: float | None
+        alto: float | None
         try:
             arr = ds.pixel_array
             bajo, alto = float(np.min(arr)), float(np.max(arr))
@@ -235,7 +240,7 @@ def partes_y_rango(carpeta: Path) -> tuple[list[Part], list[float] | None]:
             sop_instance_uid=uid,
             pixel_data_sha256=px,
         ))
-    return partes, (None if bajo is None else [bajo, alto])
+    return partes, (None if bajo is None or alto is None else [bajo, alto])
 
 
 def partes_de(carpeta: Path) -> list[Part]:

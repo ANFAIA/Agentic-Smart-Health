@@ -1023,7 +1023,8 @@ def _comentarios_color(params: dict) -> list[str]:
             f"{n - pieza} restantes,",
             f"comment {med} carry a projected pixel, {interp} inherit it from the nearest "
             f"cercano y {n - pieza - med - interp}",
-            "comment measured one, and the rest use the fallback gradient, which is NOT the patient's colour.",
+            "comment measured one, and the rest use the fallback gradient, which is NOT the "
+            "patient's colour.",
             "comment NOT measured=true: the optimiser moved, split and pruned the",
             "comment Gaussians, so there is no 1:1 correspondence with what was projected",
         ]

@@ -140,7 +140,9 @@ def test_el_ply_no_se_disfraza_de_splat_de_inria(ingerido) -> None:
     assert "property float density" in cabecera
     # Sobre la DECLARACION de propiedades, no sobre el texto: los `comment` nombran
     # `opacity` justamente para decir que `density` no lo es.
-    declaradas = {l.split()[-1] for l in cabecera.splitlines() if l.startswith("property ")}
+    declaradas = {
+        linea.split()[-1] for linea in cabecera.splitlines() if linea.startswith("property ")
+    }
     for inventado in ("opacity", "f_dc_0", "f_rest_0", "red", "green", "blue"):
         assert inventado not in declaradas, f"el PLY declara `{inventado}`, que el CBCT no mide"
     # Y dice qué es `density`, para que nadie la lea como transparencia.
