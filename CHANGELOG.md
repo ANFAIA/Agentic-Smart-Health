@@ -104,6 +104,15 @@ assumptions and gets a plausible wrong answer.
 
 <!-- List new features, agents, schemas, or capabilities added since the last release. -->
 
+### Fixed — the white paper still described the old publishing act
+
+- §10 said a version is published by tagging the repository, «which is what makes the schema's
+  identifier resolve to that version». That stopped being true when the pre-release pointer
+  arrived: the identifier already resolves while the version is a draft, and publishing is what
+  **freezes** it. The paragraph now states the two requirements that cannot share a name and the
+  two tags that follow — and that publishing is an explicit act rather than a side effect of
+  pushing a tag, which is what it used to be.
+
 ### Changed — two tags, because the identifier had two jobs
 
 - **The `$id` now names `uos-spec-v0.3-draft`, and `uos-spec-v0.3` will not exist until the
