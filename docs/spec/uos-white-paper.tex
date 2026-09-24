@@ -1036,9 +1036,17 @@ change to the format and the change to the implementation that realises it belon
 request --- a proposal that does not say how it would be validated is not yet a proposal ---
 and each must state the rule, where a validator would check it and at what severity, and
 what it does to a container written under the previous version. The editor named on the cover
-decides, in the open, on the record of the request. A version is published by tagging the
-repository, which is what makes the schema's identifier resolve to that version rather than
-to whatever a branch holds today.
+decides, in the open, on the record of the request.
+
+\paragraph{And how a version is published.} The schema's identifier is pinned to a git tag
+rather than to a branch, because an identifier that returns different content depending on
+the day does not identify. That leaves a version under development needing an identifier that
+resolves while its content is still changing, and a published one needing an identifier that
+never changes --- two requirements that cannot share a name. So there are two tags: a
+pre-release pointer, which is what the identifier names while the title page says
+\emph{draft} and which may move, and the release tag, created once when the version is
+published and never moved. Publishing is therefore an explicit act rather than a side effect
+of pushing a tag, which is what it used to be, and once is what it costs.
 
 \begin{finding}{What ``open'' does and does not buy, and why we say ``not a standard''}
 This is a proposal with one implementation, not a standard with a committee, and calling it
