@@ -119,7 +119,8 @@ uv run python -c "import core_schemas; print('workspace OK')"
 **Ingestion, fusion, segmentation and the four export channels are built and
 tested**, and the full path input → twin → file has an integration test. The
 deliverable is a **`.uos`** container: a real clinical case closes at 12 entries and
-18 assets, UOS-Core + UOS-Vol conformance, 0 errors. Acquired data does not travel
+18 assets, UOS-Core + UOS-Vol conformance, 0 errors — measured on the container as last
+written, before UOS 0.6.0 gave the per-Gaussian tooth labels their own `derived/` entries. Acquired data does not travel
 inside — it is declared by its content address, with a per-slice hash for the CBCT's
 397 slices — and the [reference viewer](https://github.com/lgarbayo/uos-viewer) opens
 it in the browser without uploading anything.

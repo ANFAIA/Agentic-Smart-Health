@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import math
 import os
 import re
@@ -392,6 +393,16 @@ def agentes_implementados(ficheros: set[str]) -> dict[str, tuple[str, str]]:
     return fuera
 
 
+# ⚠️ Las DOS grafías, y no por gusto. `AGENTS.md` se escribió en castellano y hoy está en
+# inglés: dice `**Version**` diecisiete veces y `**Versión**` ninguna. Mientras esto buscó
+# solo la acentuada, `_ficha_de` devolvía `None` para los catorce agentes, `revisar_versiones`
+# no comparaba nada y el guardián imprimía «sin deriva» — verde permanente, que es peor que
+# no tener la comprobación. Se coló así una versión de ficha equivocada. Mismo criterio que
+# `_ENCABEZADO_COMPROBACIONES`, que ya acepta «Comprobación» o «Check».
+_ETIQUETA_VERSION = re.compile(r"\*\*Versi(?:ó|o)n\*\*")
+_FILA_VERSION = re.compile(r"\|\s*\*\*Versi(?:ó|o)n\*\*\s*\|(.+?)\|\s*$", re.M)
+
+
 def _ficha_de(texto: str, nombre: str) -> str | None:
     """La ficha de `nombre`: el bloque `###` cuyo TITULAR lo nombra y declara versión.
 
@@ -410,10 +421,10 @@ def _ficha_de(texto: str, nombre: str) -> str | None:
     secciones = re.split(r"\n(?=### )", texto)
     for seccion in secciones:
         titular = seccion.split("\n", 1)[0]
-        if f"`{nombre}`" in titular and "**Versión**" in seccion:
+        if f"`{nombre}`" in titular and _ETIQUETA_VERSION.search(seccion):
             return seccion
     for seccion in secciones:
-        if f"`{nombre}`" in seccion and "**Versión**" in seccion:
+        if f"`{nombre}`" in seccion and _ETIQUETA_VERSION.search(seccion):
             return seccion
     return None
 
@@ -425,7 +436,7 @@ def _version_declarada(ficha: str, nombre: str) -> str | None:
     Cuando la fila los nombra, se recorta desde la mención de este agente hasta la del
     siguiente, para no dar por buena la versión del vecino.
     """
-    fila = re.search(r"\|\s*\*\*Versión\*\*\s*\|(.+?)\|\s*$", ficha, re.M)
+    fila = _FILA_VERSION.search(ficha)
     if fila is None:
         return None
     celda = fila.group(1)
@@ -1090,6 +1101,140 @@ def sincronizar_spec(_ficheros: set[str], escribir: bool) -> list[str]:
     return [p for p in (_sincronizar(*b, escribir) for b in bloques) if p]
 
 
+# --------------------------------------------------------------------------- #
+# 13 · La version del formato UOS, que vive en siete sitios a la vez
+# --------------------------------------------------------------------------- #
+def _uos_version() -> str | None:
+    """`UOS_VERSION` del contrato, por AST. Es la fuente de verdad del formato."""
+    ruta = REPO / "packages" / "uos" / "src" / "uos" / "manifiesto.py"
+    if not ruta.exists():
+        return None
+    for nodo in ast.parse(ruta.read_text(encoding="utf-8")).body:
+        if isinstance(nodo, ast.Assign):
+            for destino in nodo.targets:
+                if isinstance(destino, ast.Name) and destino.id == "UOS_VERSION":
+                    if isinstance(nodo.value, ast.Constant) and isinstance(nodo.value.value, str):
+                        return nodo.value.value
+    return None
+
+
+def revisar_version_uos(ficheros: set[str]) -> list[str]:
+    """Que todo lo que dice ser la version del formato lo sea.
+
+    ⚠️ Esta comprobacion nace de haberlo vivido: al subir el formato de 0.2 a 0.3 se
+    quedaron atras el `pyproject` del paquete, el `title` y el `const` del esquema del
+    informe, el indice del banco de fixtures y el encabezado de TODAS las paginas de la
+    especificacion. Ninguno tenia guardian, y uno de ellos no era cosmetico: el esquema
+    publicado exigia `"0.2"` mientras el validador emitia `"0.3"`, asi que un informe de la
+    implementacion de referencia no validaba contra su propio esquema.
+
+    La version del formato es **una**; lo que hay son siete copias de ella. Esto las ata.
+    """
+    v = _uos_version()
+    if v is None:
+        return ["no se puede leer `UOS_VERSION` de `packages/uos/src/uos/manifiesto.py`"]
+    problemas: list[str] = []
+
+    def exige(ruta: str, encontrado: object, esperado: object, que: str) -> None:
+        if encontrado != esperado:
+            problemas.append(
+                f"`{ruta}` declara {que} como {encontrado!r} y el contrato dice "
+                f"{esperado!r} (`UOS_VERSION = {v!r}`)."
+            )
+
+    pyproject = REPO / "packages" / "uos" / "pyproject.toml"
+    if pyproject.exists():
+        crudo = pyproject.read_text(encoding="utf-8")
+        hallado = re.search(r'^version\s*=\s*"([^"]+)"', crudo, re.M)
+        exige("packages/uos/pyproject.toml", hallado and hallado.group(1), f"{v}.0", "su version")
+
+    for clase in ("manifest", "validation-report"):
+        ruta = f"schemas/uos-{clase}-{v}.schema.json"
+        fichero = REPO / ruta
+        if not fichero.exists():
+            problemas.append(f"falta `{ruta}`: el contrato va por {v!r} y el esquema publicado no.")
+            continue
+        esquema = json.loads(fichero.read_text(encoding="utf-8"))
+        if v not in str(esquema.get("title", "")):
+            problemas.append(f"`{ruta}` se titula {esquema.get('title')!r}, que no nombra {v!r}.")
+        if f"uos-spec-v{v}/" not in str(esquema.get("$id", "")):
+            problemas.append(f"`{ruta}` tiene un `$id` que no apunta al tag `uos-spec-v{v}`.")
+        const = esquema.get("properties", {}).get("uos_validation_report", {}).get("const")
+        if const is not None:
+            exige(ruta, const, v, "la version del informe")
+
+    indice = REPO / "fixtures" / f"uos-{v}" / "expected.json"
+    if not indice.exists():
+        problemas.append(f"falta `fixtures/uos-{v}/expected.json`: el banco no sigue al contrato.")
+    else:
+        exige(f"fixtures/uos-{v}/expected.json",
+              json.loads(indice.read_text(encoding="utf-8")).get("version"), v, "su version")
+
+    spec = REPO / "docs" / "spec" / f"uos-format-spec-v{v}.tex"
+    if not spec.exists():
+        problemas.append(f"falta `docs/spec/uos-format-spec-v{v}.tex`.")
+    else:
+        macro = re.search(r"\\newcommand\{\\uosver\}\{([^}]*)\}", spec.read_text(encoding="utf-8"))
+        if macro is None:
+            problemas.append(
+                f"`docs/spec/uos-format-spec-v{v}.tex` no define `\\uosver`. Es lo que evita "
+                "que la portada y el encabezado de pagina se separen."
+            )
+        else:
+            exige(f"docs/spec/uos-format-spec-v{v}.tex", macro.group(1), v, "`\\uosver`")
+
+    return problemas
+
+
+def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
+    """Que el tag al que apunta el `$id` de un esquema exista Y publique ESE esquema.
+
+    El `$id` se fija a una etiqueta justamente para que identifique siempre el mismo
+    documento, y la especificacion promete que es recuperable. Existir no basta: el tag
+    `uos-spec-v0.3` existia y publicaba un esquema del informe que exigia `const: "0.2"`
+    mientras el validador emitia `"0.3"`, asi que quien resolviera el `$id` se bajaba el
+    artefacto que rechaza nuestra propia salida. Un identificador que resuelve a contenido
+    equivocado es peor que uno que no resuelve: el 404 se ve.
+
+    ⚠️ **Se comprueba contra los tags que el clon CONOCE**, y si no conoce el que busca se
+    salta con la duda declarada en vez de fallar. `actions/checkout` no trae tags por
+    defecto, y una puerta roja que nadie puede arreglar desde CI acaba desactivada. Lo que
+    no se hace es consultar la red: un guardian que necesita internet falla en un tren.
+    """
+    salida = subprocess.run(
+        ["git", "tag", "--list"], cwd=REPO, capture_output=True, text=True, check=False
+    )
+    tags = {x for x in salida.stdout.split() if x}
+    if not tags:
+        return []  # clon sin etiquetas: no hay nada que afirmar, ni en un sentido ni en otro
+
+    problemas = []
+    for ruta in sorted(f for f in ficheros if f.startswith("schemas/") and f.endswith(".json")):
+        ident = json.loads((REPO / ruta).read_text(encoding="utf-8")).get("$id", "")
+        hallado = re.search(r"/(uos-spec-v[0-9.]+)/", str(ident))
+        if hallado is None:
+            continue
+        tag = hallado.group(1)
+        if tag not in tags:
+            continue  # este clon no lo conoce: `git fetch --tags` diria, y no lo hacemos aqui
+        publicado = subprocess.run(
+            ["git", "show", f"{tag}:{ruta}"], cwd=REPO, capture_output=True, text=True, check=False
+        )
+        if publicado.returncode != 0:
+            problemas.append(
+                f"`{ruta}` fija su `$id` al tag `{tag}`, y ese tag no contiene el fichero: "
+                "el identificador resuelve a un 404."
+            )
+        elif publicado.stdout != (REPO / ruta).read_text(encoding="utf-8"):
+            problemas.append(
+                f"`{ruta}` fija su `$id` al tag `{tag}`, y lo que ese tag publica NO es este "
+                "fichero. Quien resuelva el `$id` se baja otra cosa. Publica la version "
+                f"corregida con un tag nuevo — mover `{tag}` haria que el mismo identificador "
+                "nombrara dos documentos, que es lo que un `$id` existe para evitar."
+            )
+    return problemas
+
+
 COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ...] = (
     ("env", "variables de entorno", lambda f, _: revisar_env(f)),
     ("rutas", "rutas citadas", lambda f, _: revisar_rutas(f)),
@@ -1105,6 +1250,8 @@ COMPROBACIONES: tuple[tuple[str, str, Callable[[set[str], bool], list[str]]], ..
     ("arbol", "arbol del README", lambda f, _: revisar_arbol(f)),
     ("bloques", "bloques generados", sincronizar_bloques),
     ("campos", "tablas de campos de la spec", sincronizar_spec),
+    ("version_uos", "version del formato UOS", lambda f, _: revisar_version_uos(f)),
+    ("tag_esquema", "el tag del esquema existe", lambda f, _: revisar_tag_esquema(f)),
 )
 
 

@@ -104,7 +104,90 @@ assumptions and gets a plausible wrong answer.
 
 <!-- List new features, agents, schemas, or capabilities added since the last release. -->
 
+### Fixed — the version drift, and the guardian that should have caught it
+
+- **`docs-guardian`'s `versiones` check was dead, and printed «no drift» on every run.**
+  It looked for the card row labelled `**Versión**`; `AGENTS.md` had been translated and
+  says `**Version**`. Run against the repository, `_ficha_de` returned no card for **all 14
+  agents**, so `revisar_versiones` compared nothing and returned an empty list — a
+  permanently green gate, which this repository's own documentation calls the worst kind.
+  It had already let something through: `uos-export-agent` declared `0.14.0` in code
+  (`agente.py:236`) against a card saying `0.6.0`, while the `docs-guardian` card carried
+  `0.14.0` with its own history ending at `0.6.0`. **The two were swapped and nothing saw
+  it.** Both spellings are now accepted, as `_ENCABEZADO_COMPROBACIONES` already did for
+  `Comprobación`/`Check`.
+- **A report from the reference implementation did not validate against its own published
+  schema.** `schemas/uos-validation-report-0.3.schema.json` required `const: "0.2"` while
+  `Report.as_dict()` emitted `"0.3"` — and §13.3 claims the report «is validated against it
+  by the reference implementation on every case of the conformance fixture». There was no
+  such test; the suite's only `jsonschema.validate` checks the manifest. Now the version
+  comes from one place (`validador.REPORTE_VERSION`) and **the test the specification
+  described exists**, running over every fixture in the bank.
+- **The format version lived in seven places and five had fallen behind.** The package's
+  `pyproject` (`0.2.0`), the report schema's `title` and `const`, the fixture bank's index,
+  and the specification's running head — which announced `v0.2` on **every page** of a
+  document whose cover said 0.3. The `.tex` now defines `\uosver` once; the bank's index and
+  the fixture generator derive theirs from `UOS_VERSION`.
+- **Two new checks**, `version_uos` and `tag_esquema`, so none of the above can drift again.
+  The second checks something stronger than existence, and that is what it caught: the tag
+  `uos-spec-v0.3` exists and resolves, and what it **publishes** is the broken
+  validation-report schema — so an outside implementer who resolves the `$id` §1.5 calls
+  «retrievable» downloads the artifact that rejects our own reports. An identifier that
+  resolves to the wrong document is worse than one that does not resolve, because a 404 is
+  visible. The check skips a tag the clone does not know, and never touches the network.
+- **`uos-spec-v0.3` is moved, and §15 now says when that is allowed.** The specification
+  already said a published tag must not be moved and never said what *published* means, so
+  the answer had to be decided the first time it mattered. It is the `Status` on the title
+  page: while a version declares itself `Draft`, its tag is a pre-release pointer that exists
+  so the `$id` resolves during development and may be moved; once the title page stops saying
+  `Draft`, the tag freezes and a correction needs a new identifier. 0.3 is a draft, it is one
+  day old, it sits under `[Unreleased]` here, and no second implementation consumes it — so
+  moving it costs nothing and minting 0.3.1 would have renamed `UOS_VERSION`, two schema
+  files, the fixture directory and the specification's own filename to fix a two-value typo.
+  The move is recorded in §15 with its date and its reason rather than left implicit.
+- **Twelve sentences in the specification said «v0.2» meaning «this version»**, and are
+  rewritten to say so — which removes the class of drift rather than moving it to 0.4.
+  Three more said it meaning a **draft earlier than 0.2** (the schema published under the
+  `uos-spec-v0.2` tag already declares `extensions_used`/`extensions_required`), and neither
+  number was true: those are reworded, not renumbered. The genuinely historical mentions
+  are untouched.
+- **Stale measured figures.** Appendix D said the mesh travels in «15 primitives (14 teeth +
+  remainder)»; it has travelled as a single unpartitioned primitive since 0.5.0 reverted
+  exactly that, which the code, the validator, a hard assertion in the tests and the
+  conformance fixture all agree on. The reserved-path listing gained the
+  `derived/seg_gaussians.<layer>` entries that 0.6.0 introduced and §5.3 already named. And
+  the entry and asset counts are marked **pending re-measurement** rather than recomputed by
+  reading the writer — in a table titled *Measured figures*, a derived number is not a
+  measurement.
+- **The normative `field.gs.json` example would have been rejected by our own validator.**
+  It omitted `subsampling.method` and `occupancy`, which §5.3 makes mandatory, and wrote the
+  enum values in Spanish (`"lineal"`, `"sigma_normalizada"`) where the wire format is
+  `"linear"` and `"normalised_sigma"`.
+
 ### Changed
+
+- **The white paper is now a product white paper**
+  (`docs/spec/uos-white-paper.tex`). It was written as a research article — *Problem →
+  Approach → Mathematical formulation → What Gaussian splatting contributes → Results →
+  Negative results → Discussion* — and it co-titled the format with the representation,
+  spending about 40% of its body on 3DGS. That is the wrong document for the two readers
+  the specification does not serve: the clinician deciding what a case in this format is
+  worth to them, and the partner deciding what exists and what is measured. UOS is now the
+  only subject of the title. The mathematical formulation, the `SE(3)` algebra and the
+  seeding sweep move to an appendix; Gaussian splatting keeps one section, which states
+  what it buys (capacity allocation across modalities of different resolution) and what it
+  does not (enhancement of a single acquisition). Three sections are new: **a case walked
+  end to end**, from acquisition to the patient's next visit; **what the recipient gets
+  today**; and **status and openness**, which says plainly what is a published artefact and
+  what is a statement of intent. An executive summary replaces the academic abstract, and a
+  table of contents is added. The three negative results stay, at the same weight — a format
+  whose purpose is to keep measurement and inference apart earns nothing if its authors
+  exempt themselves from the rule.
+- Two claims in that document were **stale and are corrected**. It described the mesh as
+  partitioned into one primitive per tooth so that a foreign glTF viewer could pick one;
+  0.5.0 reverted exactly that, because the partition comes from a segmentation model and was
+  baked into a layer-1 asset. And it cited the specification as **v0.2** in both the abstract
+  and the bibliography.
 
 - **BREAKING — `scene/scene.glb` no longer carries the FDI code, in either form.** The mesh
   stops being split into one *primitive* per tooth with `extras.uos_fdi`, and the

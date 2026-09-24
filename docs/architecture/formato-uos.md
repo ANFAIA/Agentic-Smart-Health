@@ -2,7 +2,7 @@
 
 Documento de cierre del MVP. Explica el contenedor desde el lado del uso: qué hay dentro,
 qué problema concreto resuelve cada parte, y qué habilita más adelante. La especificación
-formal es `UOS-SPEC-v0.2` y el esquema publicado, `schemas/uos-manifest-0.3.schema.json`.
+formal es `UOS-SPEC-v0.3` y el esquema publicado, `schemas/uos-manifest-0.3.schema.json`.
 
 ## 0 · El problema que existe hoy en una clínica
 

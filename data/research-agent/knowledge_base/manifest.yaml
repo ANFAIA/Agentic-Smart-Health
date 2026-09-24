@@ -269,3 +269,14 @@ documentos:
     sha256: 744843ae76a8235a6bbadc70fb1529e91df865356ca2026b43ea0910b4eeafc8
     bytes: 3464868
     nota: "Descubierto por watch_literature.py el 2026-08-24 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
+  - fichero: "Unsupervised Adaptation of 3D CT Foundation Models for 3D CBCT Segmentation - 2608.27190v1.pdf"
+    titulo: "Unsupervised Adaptation of 3D CT Foundation Models for 3D CBCT Segmentation"
+    anio: 2026
+    fuente: arxiv
+    id: "2608.27190v1"
+    url: "https://arxiv.org/pdf/2608.27190v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: a1227a479ecff08c38b9798521e0dc4504fd1aa4e4310ac29bb8e188a07b00ca
+    bytes: 1785877
+    nota: "Descubierto por watch_literature.py el 2026-08-31 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."

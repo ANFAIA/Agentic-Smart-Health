@@ -32,6 +32,15 @@ from uos.manifiesto import (
 from uos.procedencia import CHAIN, SIGNATURES, Chain, revisa_cadena
 from uos.vistas import VIEWS, View
 
+# La version del INFORME, que no es la del contenedor validado: el esquema publicado
+# `schemas/uos-validation-report-<v>.schema.json` la exige con un `const`, y hasta ahora
+# estaba escrita dos veces —aqui a mano y alli a mano— con el resultado previsible: el
+# esquema pedia "0.2" mientras esto emitia "0.3", asi que un informe de la implementacion
+# de referencia NO validaba contra su propio esquema. Va atada a `UOS_VERSION` porque hoy
+# avanzan juntas; si algun dia el formato del informe cambia sin que cambie el del
+# contenedor, este es el sitio donde separarlas, y se vera.
+REPORTE_VERSION = UOS_VERSION
+
 
 class Conformance(StrEnum):
     CORE = "UOS-Core"      # manifiesto + mesh_gs_scene + image2d
@@ -128,7 +137,7 @@ class Report:
         cualquier automatismo a hacer expresiones regulares sobre frases que cambian.
         """
         return {
-            "uos_validation_report": "0.3",
+            "uos_validation_report": REPORTE_VERSION,
             "valid": self.valid,
             "findings": [f.as_dict() for f in (*self.errors, *self.warnings)],
             "levels": [str(n) for n in self.levels],

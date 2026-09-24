@@ -42,7 +42,10 @@ purpose: a small N that is declared is defensible; hidden behind a percentage, i
 ## 2 · What is finished and measured
 
 **The container.** A real case closes at **12 entries, 18 assets (13 external), UOS-Core +
-UOS-Vol conformance, 0 errors, 18 views**. Acquired data does not travel inside: the CBCT
+UOS-Vol conformance, 0 errors, 18 views**. ⚠️ Those counts describe the container as last
+written, and the export has not been re-run since UOS 0.6.0 moved the per-Gaussian tooth
+labels out of the payloads into their own `derived/seg_gaussians.<layer>` entries: today's
+writer would add two per labelled layer. Acquired data does not travel inside: the CBCT
 series is declared by its content address, with a per-slice hash for its 397 slices, and
 there are tests that check this by removing a slice, slipping in an extra one and altering
 one.
