@@ -21,7 +21,7 @@ human-readable and linked to the relevant pull request or issue where applicable
 
 ## [Unreleased]
 
-### UOS format 0.3 — released 2026-09-23, tag `uos-spec-v0.3`
+### UOS format 0.3
 
 Version 0.2 could not stay 0.2. Two external reviews of the specification
 changed what travels inside a container, and under the format's own rules those
@@ -135,6 +135,12 @@ assumptions and gets a plausible wrong answer.
   «retrievable» downloads the artifact that rejects our own reports. An identifier that
   resolves to the wrong document is worse than one that does not resolve, because a 404 is
   visible. The check skips a tag the clone does not know, and never touches the network.
+- **The «released 2026-09-23» annotation on this section is withdrawn.** It was added on
+  `develop` the evening the tag was pushed, and it disagreed with the two places that decide:
+  the specification's title page still says `Status: Draft`, and §18 still lists what the
+  version does not do. §15 now names the title page as the authority, so this heading gains
+  its release date when that page stops saying `Draft` — not when a tag is pushed. Pushing a
+  tag is what makes the `$id` resolve during development; it is not the release.
 - **`uos-spec-v0.3` is moved, and §15 now says when that is allowed.** The specification
   already said a published tag must not be moved and never said what *published* means, so
   the answer had to be decided the first time it mattered. It is the `Status` on the title
