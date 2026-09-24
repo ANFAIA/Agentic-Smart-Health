@@ -260,8 +260,10 @@ by hash are different guarantees. Where the format cannot enforce the difference
 Manifest JSON Schema & JSON Schema 2020-12, at
 \code{schemas/uos-manifest-0.3.schema.json} in the reference repository and retrievable at
 its \code{\$id},
-\url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-manifest-0.3.schema.json}
---- pinned to a tag, so the identifier always names the same document. It is
+\url{https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3-draft/schemas/uos-manifest-0.3.schema.json}
+--- pinned to a tag, so the identifier always names the same document. \textbf{While this
+document says \code{Status: Draft} that tag carries the \code{-draft} suffix and may move}
+(\S\ref{sec:versioning}); on publication the suffix goes and the tag is created once.  It is
 \emph{generated} from the reference implementation's types, never hand-written. \textbf{What it does and does not check.} It is the only artifact a third party needs
 to check a manifest's \emph{shape}. It cannot check truth: not that a \code{sha256} matches
 its asset, that the frame graph reaches the canonical frame, or that \code{derived/} carries
@@ -2718,25 +2720,44 @@ discovering the change when their reader breaks. The warning is also the written
 
 \begin{itemize}
   \item The manifest schema: \code{uos-manifest-<version>.schema.json}, whose \code{\$id}
-  is pinned to a release tag so the identifier always names the same document
-  (\S\ref{sec:artifacts}). A \textbf{released} tag \MUSTNOT{} be moved; a correction is a new
-  one. \textbf{What counts as released is the \code{Status} on the title page}, and that
-  sentence was missing until a tag had to be moved to find out. While a version declares
-  itself \code{Draft}, its tag is a \emph{pre-release pointer}: it exists so the \code{\$id}
-  resolves during development, and it \MAY{} be moved. From the moment the title page stops
-  saying \code{Draft}, the tag freezes and a correction \MUSTNOT{} reuse the identifier.
+  is pinned to a tag so the identifier always names the same document
+  (\S\ref{sec:artifacts}). A published tag \MUSTNOT{} be moved; a correction is a new one.
 
-  ⚠️ \textbf{This has been exercised twice, and both are recorded rather than left implicit.}
-  \code{uos-spec-v0.3} was moved on 2026-09-24, one day after it was first pushed, because
-  what it published was a validation-report schema requiring \code{"0.2"} while the reference
+  \textbf{Two tags, because the identifier has two jobs and they pull opposite ways.} One is
+  to resolve the \code{\$id} \emph{while the version is being written}, which requires
+  following the content; the other is to mark the publication, which requires never moving.
+  A single tag cannot do both.
+
+  \begin{longtable}{L{4.6cm} L{10.6cm}}
+  \toprule
+  \textbf{Tag} & \textbf{What it is}\\
+  \midrule
+  \endhead
+  \code{uos-spec-v<version>-draft} & The \textbf{pre-release pointer}. It is what the
+  \code{\$id} names while the title page says \code{Status: Draft}, so an implementer can
+  resolve the schema during development. It \MAY{} be moved, and its name says so --- which
+  is the whole point: a moving identifier that announces it moves misleads nobody.\\
+  \code{uos-spec-v<version>} & The \textbf{release tag}. Created \emph{once}, when the
+  version is published, and never moved. Until then it \MUSTNOT{} exist, because a name
+  that promises immutability should not be pointing at a draft.\\
+  \bottomrule
+  \end{longtable}
+
+  ⚠️ \textbf{This separation is the outcome of getting it wrong, and the record stays.}
+  \code{uos-spec-v0.3} was created from a working branch, before the pull request carrying it
+  was merged, and then moved twice on 2026-09-24. The first move was because what it
+  published was a validation-report schema requiring \code{"0.2"} while the reference
   implementation emitted \code{"0.3"} --- so resolving the \code{\$id} handed an outside
   implementer the artifact that rejects our own reports, which is worse than a tag that does
-  not resolve, because a 404 is visible. It was moved a second time the same day, this time
-  without changing a byte of what it publishes: the first push had put it on a working
-  branch rather than on the merge commit in \code{main}, which is where the repository's
-  release rules say a version tag belongs. A validator check (\S\ref{sec:conformance}) now
-  compares what a tag publishes against the file in the tree, so the next occurrence is found
-  before anybody downloads it.
+  not resolve, because a 404 is visible. The second put it on the merge commit in
+  \code{main}, where the repository's release rules say a version tag belongs.
+
+  Both moves were symptoms rather than the disease: one name was carrying both jobs, so every
+  correction to a draft had to violate the rule above in order to keep the \code{\$id}
+  resolving. With the two separated, the rule needs no exception --- which is why the
+  exception a previous revision of this section carried has been withdrawn. A validator check
+  (\S\ref{sec:conformance}) compares what a tag publishes against the file in the tree, so a
+  tag that drifts from its schema is found before anybody downloads it.
   \item Extensions, independently. \code{histora\_clinical} at 1.0 does not become 1.1 because
   UOS did (\S\ref{sec:extensions}).
   \item This document, whose version is on its title page.

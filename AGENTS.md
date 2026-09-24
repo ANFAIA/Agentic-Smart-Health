@@ -316,7 +316,7 @@ that fixes whatever the new version finds.
 | `vacios` | a component with a README card ↔ that it has code, or that the card declares it a placeholder |
 | `bloques` | that the generated tables match the code |
 | `campos` | that the specification's field tables match the Pydantic types |
-| `version_uos` | `UOS_VERSION` ↔ the seven places that copy it: the package's `pyproject`, both published schemas' `title` and `$id`, the report schema's `const`, the fixture bank's index, and the specification's `\uosver` |
+| `version_uos` | `UOS_VERSION` ↔ the seven places that copy it: the package's `pyproject`, both published schemas' `title` and `$id` — the `$id` against the tag name `esquema.py` declares in `TAG`, pre-release suffix included — the report schema's `const`, the fixture bank's index, and the specification's `\uosver` |
 | `tag_esquema` | that the git tag a schema's `$id` is pinned to publishes **that** schema — existing is not enough: the tag resolved to a copy that rejected our own output |
 
 > **Why the guardians are not versioned.** Giving them a `__version__` and comparing it,
