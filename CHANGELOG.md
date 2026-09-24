@@ -104,6 +104,29 @@ assumptions and gets a plausible wrong answer.
 
 <!-- List new features, agents, schemas, or capabilities added since the last release. -->
 
+### Changed — two tags, because the identifier had two jobs
+
+- **The `$id` now names `uos-spec-v0.3-draft`, and `uos-spec-v0.3` will not exist until the
+  version is published.** One tag was doing two things whose requirements pull opposite ways:
+  resolving the `$id` while the version is being written, which means following the content,
+  and marking the publication, which means never moving. That is why `uos-spec-v0.3` had to be
+  moved twice in two days — every correction to a draft schema forced a violation of the rule
+  in order to keep the identifier resolving.
+- **The exception added to §15 a revision ago is withdrawn.** It made the rule conditional on
+  the `Status` on the title page: draft tags movable, released tags frozen. That works and it
+  is fragile, because the mode lives in prose and nothing obliges anyone to flip it — the day
+  somebody corrects a schema without checking the title page, they are moving a released tag
+  and the rule only describes it. With the two tags separated the rule needs no exception, so
+  the original wording stands: **a published tag MUST NOT be moved; a correction is a new one.**
+- A moving identifier that says it moves misleads nobody; one that promises immutability and
+  moves does. That is the whole argument for the suffix, and it is what SemVer pre-release
+  identifiers are for. `esquema.py` carries it as `PRELANZAMIENTO`, so publishing means
+  deleting one string and creating the release tag once.
+- `version_uos` now checks the `$id` against the tag name `esquema.py` declares rather than
+  assuming it, and `tag_esquema`'s pattern recognises a suffixed tag. §15 keeps the record of
+  both moves: they were symptoms, and deleting the record would delete the reason the two
+  tags exist.
+
 ### Fixed — where a version tag points
 
 - **`uos-spec-v0.3` moves to the merge commit on `main`.** It was first pushed from the

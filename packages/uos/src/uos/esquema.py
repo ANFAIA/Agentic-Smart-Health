@@ -30,6 +30,22 @@ from uos.manifiesto import UOS_VERSION, Manifest
 # sirve para validar un contenedor antiguo, que es justo cuando hace falta.
 RUTA = Path("schemas") / f"uos-manifest-{UOS_VERSION}.schema.json"
 
+# ⚠️ **El sufijo de pre-publicación, y por qué existe.** Mientras la portada de la
+# especificación diga `Status: Draft`, la etiqueta que el `$id` nombra lleva `-draft` y
+# **puede moverse**; la etiqueta de publicación, `uos-spec-v<version>` a secas, se crea una
+# sola vez el día de la publicación y no se mueve jamás.
+#
+# La separación nace de haberlo hecho mal. Una sola etiqueta estaba haciendo dos trabajos con
+# requisitos opuestos: resolver el `$id` durante el desarrollo, lo que obliga a seguir al
+# contenido, y marcar la publicación, lo que obliga a no moverse nunca. Con las dos cosas en
+# el mismo nombre, `uos-spec-v0.3` se movió dos veces en dos días — una porque publicaba un
+# esquema que rechazaba nuestra propia salida, otra porque se había creado desde una rama de
+# trabajo. Un nombre que anuncia que se mueve no engaña a nadie; uno que promete no moverse y
+# se mueve, sí. Al publicar: quitar el sufijo aquí y crear la etiqueta definitiva.
+PRELANZAMIENTO = "-draft"
+
+TAG = f"uos-spec-v{UOS_VERSION}{PRELANZAMIENTO}"
+
 # El identificador del esquema, y **resuelve**. Antes apuntaba a `histora.dev`, un dominio
 # que nadie ha registrado: un `$id` no está obligado a descargarse —JSON Schema pide una URI,
 # no una URL— pero escribir `https://` le dice a quien lo lee que haga `curl`, y fallaba. El
@@ -38,10 +54,11 @@ RUTA = Path("schemas") / f"uos-manifest-{UOS_VERSION}.schema.json"
 # ⚠️ Fijado a una ETIQUETA y no a `main`. Un identificador que devuelve contenidos distintos
 # según el día no identifica: si esto apuntara a la rama, el mismo `$id` describiría un
 # contrato u otro según cuándo se resolviera, que es justo lo que un `$id` existe para evitar.
-# La etiqueta se crea al publicar cada versión del formato.
+# Esa objeción es sobre identificadores PUBLICADOS: un `-draft` que se mueve lo lleva escrito
+# en el nombre.
 ID = (
     "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/"
-    f"uos-spec-v{UOS_VERSION}/schemas/uos-manifest-{UOS_VERSION}.schema.json"
+    f"{TAG}/schemas/uos-manifest-{UOS_VERSION}.schema.json"
 )
 
 
