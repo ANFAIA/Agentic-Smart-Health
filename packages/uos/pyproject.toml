@@ -1,6 +1,6 @@
 [project]
 name = "uos"
-version = "0.2.0"
+version = "0.3.0"
 description = "Unified Oral Scene: contenedor + manifiesto de composicion para un caso dental"
 requires-python = ">=3.11"
 dependencies = [

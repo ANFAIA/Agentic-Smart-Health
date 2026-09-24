@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/ANFAIA/Agentic-Smart-Health/uos-spec-v0.3/schemas/uos-validation-report-0.3.schema.json",
-  "title": "UOS validation report 0.2",
+  "title": "UOS validation report 0.3",
   "description": "What a UOS validator reports, in a shape a program can act on. The message is written for whoever is debugging and may change between versions; the code is the contract.",
   "type": "object",
   "additionalProperties": false,
   "required": ["uos_validation_report", "valid", "findings"],
   "properties": {
     "uos_validation_report": {
-      "const": "0.2",
+      "const": "0.3",
       "description": "Version of this report format, not of the container that was validated."
     },
     "valid": {

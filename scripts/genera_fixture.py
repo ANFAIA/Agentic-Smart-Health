@@ -86,6 +86,7 @@ def _con_la_serie_dentro(destino: Path, serie: Path) -> Path:
     """
     from uos.contenedor import asset_de_directorio, write_uos
     from uos.manifiesto import (
+        UOS_VERSION,
         AssetKind,
         Deidentification,
         Frame,
@@ -100,7 +101,7 @@ def _con_la_serie_dentro(destino: Path, serie: Path) -> Path:
     sidecar_uri = SIDECAR.format(id="ct_001")
     sidecar, _ = describe_series(serie, frame="frame.ct_001")
     m = Manifest(
-        case_id="urn:uuid:0", generator={"name": "fixture", "version": "0.2"},
+        case_id="urn:uuid:0", generator={"name": "fixture", "version": UOS_VERSION},
         phi_state=PHIState.PSEUDONYMIZED, subject=Subject(pseudonym="FIXTURE-0001"),
         deidentification=Deidentification(
             profile="DICOM PS3.15 E.1 Basic Application Level Confidentiality Profile",
@@ -145,6 +146,7 @@ def genera(destino: Path) -> list[dict]:
     from agent_orchestrator import CaseInput, IngestionPipeline
     from ingestion_agents import ArtifactStore, synthetic
     from uos import UOSExportAgent
+    from uos.manifiesto import UOS_VERSION
 
     destino.mkdir(parents=True, exist_ok=True)
     trabajo = destino / "_trabajo"
@@ -316,7 +318,11 @@ def genera(destino: Path) -> list[dict]:
     (destino / "expected.json").write_text(
         json.dumps({
             "format": "UOS",
-            "version": "0.2",
+            # ⚠️ Derivada, no escrita a mano. Estuvo en "0.2" mientras el directorio se
+            # llamaba `uos-0.3` y los trece contenedores declaraban `uos_version: "0.3"`:
+            # nadie lee este campo, asi que nada lo cazo. Va atada al contrato para que no
+            # vuelva a pasar, y `scripts/docs_sync.py` lo comprueba.
+            "version": UOS_VERSION,
             "note": (
                 "Conformance bench. Run your validator over each file and compare with "
                 "`expects`. `error` means the container is NOT valid; `warning` that it is "

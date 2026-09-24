@@ -281,7 +281,7 @@ that fixes whatever the new version finds.
 | Field | Value |
 |---|---|
 | **Name** | `docs-guardian` |
-| **Version** | `0.14.0` |
+| **Version** | `0.7.0` |
 | **Location** | [`scripts/docs_sync.py`](scripts/docs_sync.py) |
 | **Status** | `active` |
 | **Trigger** | `pre-commit` hook (**does not block**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -316,6 +316,8 @@ that fixes whatever the new version finds.
 | `vacios` | a component with a README card ↔ that it has code, or that the card declares it a placeholder |
 | `bloques` | that the generated tables match the code |
 | `campos` | that the specification's field tables match the Pydantic types |
+| `version_uos` | `UOS_VERSION` ↔ the seven places that copy it: the package's `pyproject`, both published schemas' `title` and `$id`, the report schema's `const`, the fixture bank's index, and the specification's `\uosver` |
+| `tag_esquema` | that the git tag a schema's `$id` is pinned to publishes **that** schema — existing is not enough: the tag resolved to a copy that rejected our own output |
 
 > **Why the guardians are not versioned.** Giving them a `__version__` and comparing it,
 > as is done with the `*Agent` classes, was considered. It was not done, for three
@@ -367,6 +369,7 @@ this sentence, CI says so with the file and the line. There are 13 marked number
 | 2026-08-17 | 0.4.0 | **Constants** check: numbers cited in the documentation against the real value in the code, tied together with a `<!--const:NAME-->` marker. It was the extension this very card declared pending. |
 | 2026-08-18 | 0.5.0 | `constantes` accepts **strings**, not only numbers. `SCHEMA_VERSION` asked for it: the README announced schema `1.2.0` while the contract was already at `1.3.0`, and the check stayed green because "1.2.0" is not a number. |
 | 2026-08-24 | 0.6.0 | `versiones` finds the card by its **subject** rather than by any mention. The `export-agent` card names `render-export-agent` in its channel table and comes earlier, so the check was validating against the neighbour's version: invisible as long as everyone declared `0.1.0`. Along the way, the **Version** field of this card, which had stayed at `0.3.0` with the history already at `0.5.0`. |
+| 2026-09-24 | 0.7.0 | **`versiones` was dead and nobody knew.** It looked for the row labelled `**Versión**` and `AGENTS.md` had been translated: every one of the 14 agents returned no card, nothing was compared, and the check printed *no drift* on every run. A permanently green gate is worse than no gate, and this one had let two cards swap their versions — `uos-export-agent` declaring `0.6.0` against a class at `0.14.0`. Now both spellings are accepted. Plus two checks born from the same root cause: `version_uos`, which ties the seven copies of the format version to the contract, and `tag_esquema`, which checks that the tag a schema's `$id` names publishes **that** schema. Existing is not enough, and that is what it caught: `uos-spec-v0.3` resolves fine and serves a validation-report schema requiring `const: "0.2"`, so an outside implementer fetching the published identifier gets the artifact that rejects our own reports. |
 
 ---
 
@@ -1275,7 +1278,7 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.6.0` |
+| **Version** | `0.14.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
@@ -1289,7 +1292,7 @@ dimensions over the model and per-case framing.
 > transform they align. It is the difference between delivering files and delivering a
 > scene.
 
-It implements the **UOS-Core** and **UOS-Vol** levels of the *Unified Oral Scene* v0.2 draft
+It implements the **UOS-Core** and **UOS-Vol** levels of the *Unified Oral Scene* v0.3 draft
 spec: an **uncompressed** ZIP whose first physical entry is `manifest.json`, and which
 **references intact native formats** rather than transcoding them. No existing format does
 that — DICOM does not model Gaussians and does not transmit well over the web, glTF models
@@ -1438,7 +1441,7 @@ wrote.
   reads it as a contradiction. `color` carries none: that number is about the
   report-to-tooth chain and says nothing about a colour measurement.
 - **The manifest declares its extensions** (`extensions`, `extensions_used`,
-  `extensions_required`), and this **is not in v0.2**: it is our proposal, copied from glTF,
+  `extensions_required`), and this **was not in the draft we started from**: it is our proposal, copied from glTF,
   which UOS leans on. Without it, an outside reader ignores what we added **without
   realising it is ignoring it**, and an open format becomes one only its issuer can read in
   full. ⚠️ **Nothing of ours goes in `required`**: everything we add adds information, and a

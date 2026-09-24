@@ -1,6 +1,6 @@
 {
   "format": "UOS",
-  "version": "0.2",
+  "version": "0.3",
   "note": "Conformance bench. Run your validator over each file and compare with `expects`. `error` means the container is NOT valid; `warning` that it is valid and there is something to say; `valid-with-warning` that it is accepted while ignoring what it does not understand. Every byte is synthetic: there is no patient behind it.",
   "cases": [
     {
