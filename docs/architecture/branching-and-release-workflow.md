@@ -47,6 +47,12 @@ develop
 ## Release Rules
 
 - Version tags are created only from `main`.
+- **A version tag points at the merge commit on `main`**, not at the commit of the branch
+  that was merged — even though that commit becomes an ancestor of `main` straight after.
+  The distinction needs saying because without it "create the tag on `main`" and "create the
+  tag on the branch that is about to reach `main`" read the same, and the second is what
+  happened to `uos-spec-v0.3`: it was pushed from a working branch before its pull request
+  was merged.
 - GitHub Releases are created only from version tags already present on `main`.
 - Release assets such as the UOS specification and white paper are attached to the
   GitHub Release, not committed as generated binaries unless the data guardian allows
