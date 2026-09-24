@@ -52,6 +52,33 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
             assert inf.valid, f"{caso['file']}: {inf.errors}"
 
 
+def test_el_informe_VALIDA_contra_su_esquema_publicado(tmp_path: Path) -> None:
+    """La §13.3 dice que el informe «is validated against it by the reference
+    implementation on every case of the conformance fixture». No era verdad.
+
+    ⚠️ El esquema publicado exigía `const: "0.2"` mientras `Report.as_dict()` emitía
+    `"0.3"`, así que **ningún** informe que produjéramos validaba contra el esquema que
+    publicamos — y nadie lo notaba porque el único `jsonschema.validate` de la suite
+    comprueba el manifiesto. Un formato cuyo artefacto publicado rechaza la salida de su
+    propia implementación de referencia le dice a un implementador ajeno que el
+    equivocado es él.
+
+    La versión va atada (`validador.REPORTE_VERSION`), y esto es lo que obliga a que el
+    fichero de `schemas/` la siga.
+    """
+    import jsonschema
+    from genera_fixture import genera
+    from uos import validate
+
+    esquema = json.loads(
+        (RAIZ / "schemas" / "uos-validation-report-0.3.schema.json").read_text(encoding="utf-8")
+    )
+    destino = tmp_path / "banco"
+    for caso in genera(destino):
+        informe = validate(destino / caso["file"]).as_dict()
+        jsonschema.validate(informe, esquema)
+
+
 def test_el_caso_valido_del_banco_no_lleva_dato_de_paciente(tmp_path: Path) -> None:
     """La condición para que el banco se pueda publicar (B-3).
 

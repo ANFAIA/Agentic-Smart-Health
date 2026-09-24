@@ -14,7 +14,7 @@ Se portó el entrenador volumétrico del experimento a producción:
 - un módulo `bandas` en `gaussian-engine` (`siembra_por_banda`, partición por tramos
   de HU), que el revert eliminó y por eso ya no se cita por su ruta.
 - `--capas-hu` en `caso_completo.py`: siembra N campos, entrena cada uno contra la DRR de
-  **su** tramo y los emite como capas externas del `.uos` (spec v0.2 §"External Gaussian
+  **su** tramo y los emite como capas externas del `.uos` (spec v0.3 §"External Gaussian
   layers").
 
 ## Tres bugs que hubo que cazar
