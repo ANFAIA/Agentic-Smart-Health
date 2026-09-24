@@ -104,6 +104,28 @@ assumptions and gets a plausible wrong answer.
 
 <!-- List new features, agents, schemas, or capabilities added since the last release. -->
 
+### Fixed — where a version tag points
+
+- **`uos-spec-v0.3` moves to the merge commit on `main`.** It was first pushed from the
+  working branch that carried the fix, before that branch's pull request was merged. The
+  commit became an ancestor of `main` immediately afterwards and its tree is identical to
+  `main`'s, so the `$id` published the right bytes throughout and nothing downstream changes
+  — but `docs/architecture/branching-and-release-workflow.md` says version tags are created
+  only from `main`, and a tag pushed from a branch is not that.
+- **The rule that let it happen is written down.** The release rules said which *branch* a
+  version tag comes from and never which *commit* it points at, and without that sentence
+  "create the tag on `main`" and "create the tag on the branch that is about to reach `main`"
+  read the same. They now say: the merge commit on `main`, not the commit of the branch that
+  was merged, even though that commit becomes an ancestor a moment later.
+- §15 of the specification records **both** moves of this tag rather than one: the first
+  changed what the identifier published, the second did not change a byte of it.
+
+> A check that the tag is an ancestor of `main` was considered and **not** added. Any pull
+> request that creates or moves a version tag — including the one that adds the check — has
+> that tag outside `main` while it is open, so the gate would fail on its own pull request,
+> and a gate like that gets switched off. `tag_esquema` keeps checking the thing that
+> actually did damage: that the tag publishes *that* schema.
+
 ### Fixed — the version drift, and the guardian that should have caught it
 
 - **`docs-guardian`'s `versiones` check was dead, and printed «no drift» on every run.**
