@@ -1118,6 +1118,20 @@ def _uos_version() -> str | None:
     return None
 
 
+def _constante_str(ruta_rel: str, nombre: str) -> str | None:
+    """El valor de una constante de modulo que sea una cadena literal, por AST."""
+    ruta = REPO / ruta_rel
+    if not ruta.exists():
+        return None
+    for nodo in ast.parse(ruta.read_text(encoding="utf-8")).body:
+        if isinstance(nodo, ast.Assign):
+            for destino in nodo.targets:
+                if isinstance(destino, ast.Name) and destino.id == nombre:
+                    if isinstance(nodo.value, ast.Constant) and isinstance(nodo.value.value, str):
+                        return nodo.value.value
+    return None
+
+
 def revisar_version_uos(ficheros: set[str]) -> list[str]:
     """Que todo lo que dice ser la version del formato lo sea.
 
@@ -1133,6 +1147,10 @@ def revisar_version_uos(ficheros: set[str]) -> list[str]:
     v = _uos_version()
     if v is None:
         return ["no se puede leer `UOS_VERSION` de `packages/uos/src/uos/manifiesto.py`"]
+    # El sufijo de pre-publicacion sale de `esquema.py`, no se asume aqui: mientras la
+    # portada diga `Draft` el `$id` nombra `...-draft` y esa etiqueta puede moverse.
+    sufijo = _constante_str("packages/uos/src/uos/esquema.py", "PRELANZAMIENTO") or ""
+    tag = f"uos-spec-v{v}{sufijo}"
     problemas: list[str] = []
 
     def exige(ruta: str, encontrado: object, esperado: object, que: str) -> None:
@@ -1157,8 +1175,11 @@ def revisar_version_uos(ficheros: set[str]) -> list[str]:
         esquema = json.loads(fichero.read_text(encoding="utf-8"))
         if v not in str(esquema.get("title", "")):
             problemas.append(f"`{ruta}` se titula {esquema.get('title')!r}, que no nombra {v!r}.")
-        if f"uos-spec-v{v}/" not in str(esquema.get("$id", "")):
-            problemas.append(f"`{ruta}` tiene un `$id` que no apunta al tag `uos-spec-v{v}`.")
+        if f"/{tag}/" not in str(esquema.get("$id", "")):
+            problemas.append(
+                f"`{ruta}` tiene un `$id` que no apunta al tag `{tag}`, que es el que "
+                "`packages/uos/src/uos/esquema.py` declara en `TAG`."
+            )
         const = esquema.get("properties", {}).get("uos_validation_report", {}).get("const")
         if const is not None:
             exige(ruta, const, v, "la version del informe")
@@ -1211,7 +1232,7 @@ def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
     problemas = []
     for ruta in sorted(f for f in ficheros if f.startswith("schemas/") and f.endswith(".json")):
         ident = json.loads((REPO / ruta).read_text(encoding="utf-8")).get("$id", "")
-        hallado = re.search(r"/(uos-spec-v[0-9.]+)/", str(ident))
+        hallado = re.search(r"/(uos-spec-v[0-9.]+(?:-[A-Za-z0-9.]+)?)/", str(ident))
         if hallado is None:
             continue
         tag = hallado.group(1)
