@@ -9,3 +9,10 @@
 *.pdf
 *.synctex.gz
 *.toc
+
+# Word conversions. The `.tex` is the source of truth; a `.docx` exists to be handed to
+# reviewers who need to edit prose in a tool they already have. It is a DERIVATIVE, and
+# committing it would create a second document that drifts from the first the moment
+# somebody edits one and not the other — with no way to tell which is current.
+# Their edits come back as changes to the `.tex`, not as a newer binary.
+*.docx
