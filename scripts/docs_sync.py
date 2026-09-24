@@ -1247,11 +1247,20 @@ def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
                 "el identificador resuelve a un 404."
             )
         elif publicado.stdout != (REPO / ruta).read_text(encoding="utf-8"):
+            # El consejo depende de QUE clase de tag es, y darlo al reves es caro. Un
+            # puntero de pre-publicacion existe para moverse: se mueve y ya. Un tag de
+            # publicacion promete no moverse, asi que lo que toca es una version nueva.
+            que_hacer = (
+                f"Mueve el puntero a la revision que lleva este fichero: `{tag}` es un "
+                "puntero de pre-publicacion y existe para eso."
+                if "-" in tag.removeprefix("uos-spec-v")
+                else f"Publica la version corregida con un tag nuevo — mover `{tag}` haria "
+                "que el mismo identificador nombrara dos documentos, que es lo que un `$id` "
+                "existe para evitar."
+            )
             problemas.append(
                 f"`{ruta}` fija su `$id` al tag `{tag}`, y lo que ese tag publica NO es este "
-                "fichero. Quien resuelva el `$id` se baja otra cosa. Publica la version "
-                f"corregida con un tag nuevo — mover `{tag}` haria que el mismo identificador "
-                "nombrara dos documentos, que es lo que un `$id` existe para evitar."
+                f"fichero. Quien resuelva el `$id` se baja otra cosa. {que_hacer}"
             )
     return problemas
 
