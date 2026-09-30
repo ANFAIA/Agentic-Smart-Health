@@ -129,7 +129,7 @@
           "title": "Sidecar Uri"
         },
         "derived_from": {
-          "description": "Ids of the assets this one was derived from. Required for anything under `derived/`: an inference with no stated input cannot be audited.",
+          "description": "Ids of the assets this one was derived from. An empty list does not establish provenance. Clinical inference with explicitly unresolved sources is reported as incomplete and requires review.",
           "items": {
             "type": "string"
           },
@@ -164,7 +164,7 @@
         },
         "external": {
           "default": false,
-          "description": "True when the asset is referenced and not carried. Acquired originals MUST be external; their `uri` is then a content address and never a path.",
+          "description": "True when the asset is referenced and not carried; its uri is then a content address. The reference writer externalises acquired originals; the format also permits embedded payloads, validated against their declared bytes.",
           "title": "External",
           "type": "boolean"
         },
@@ -674,7 +674,7 @@
             }
           ],
           "default": null,
-          "description": "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the header. De-identification does not touch it, so it separates 'a different slice' from 'the same slice, cleaned'.",
+          "description": "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the header. It hashes stored bytes, not canonical decoded pixels or geometry; it does not establish semantic equivalence after header changes.",
           "title": "Pixel Data Sha256"
         }
       },

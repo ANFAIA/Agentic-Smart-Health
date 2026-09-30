@@ -420,3 +420,37 @@ def _stl_binario(triangulos: int = 4) -> bytes:
         v = rng.normal(0, 10, (3, 3)).astype("<f4")
         crudo += np.zeros(3, dtype="<f4").tobytes() + v.tobytes() + b"\x00\x00"
     return crudo
+
+
+def test_modalidad_ct_y_rescale_no_acreditan_calibracion(serie):
+    descriptor, _ = describe_series(serie, frame="frame.ct_001")
+    assert descriptor["modality"] == "CT"
+    assert descriptor["calibrated_hu"] is False
+    assert descriptor["calibration_status"] == "unknown"
+
+
+@pytest.mark.parametrize("campo, valor", [
+    ("ImagePositionPatient", [100, 0, 0]), ("RescaleSlope", 2), ("PatientName", "Anonymized2"),
+])
+def test_cabecera_modificada_no_pasa_como_identidad_clinica(serie, tmp_path, campo, valor):
+    import io
+
+    import pydicom
+
+    caso = _uos_con_la_serie_dentro(tmp_path / "original.uos", serie)
+    alterado = tmp_path / "alterado.uos"
+    with zipfile.ZipFile(caso) as entrada, zipfile.ZipFile(alterado, "w") as salida:
+        cambiado = False
+        for info in entrada.infolist():
+            crudo = entrada.read(info.filename)
+            if info.filename.endswith(".dcm") and not cambiado:
+                ds = pydicom.dcmread(io.BytesIO(crudo))
+                setattr(ds, campo, valor)
+                buf = io.BytesIO()
+                ds.save_as(buf)
+                crudo = buf.getvalue()
+                cambiado = True
+            salida.writestr(info, crudo)
+    resultado = validate(alterado)
+    assert not resultado.valid
+    assert any(e.code == "UOS-E-007" and "geometria, rescale" in e for e in resultado.errors)

@@ -120,6 +120,11 @@ class ExportOutput(BaseModel):
         "multivista). `path` queda entonces en el directorio que los contiene. Vacío en los "
         "exportadores de un solo fichero, que usan `path`.",
     )
+    sidecars: list[Path] = Field(
+        default_factory=list,
+        description="Metadatos que acompañan los ficheros exportados; deben conservarse "
+        "junto a ellos para mantener su procedencia.",
+    )
     psnr_db: float | None = Field(
         default=None,
         description="PSNR entre el render del campo del twin y el del fichero exportado, "

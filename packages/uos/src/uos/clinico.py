@@ -7,7 +7,7 @@ dice el informe del 24», que es justo la pregunta que un clínico hace delante 
 Se declara aquí con `kind: document`, se mapea a `Observation` en el `fhir_map`, y queda
 escrito que es nuestro para que nadie lo confunda con formato ratificado.
 
-**Por qué Layer 1 y no `derived/`.** Lo que viaja es la TRANSCRIPCIÓN de un informe que
+**La transcripción determinista usa Layer 1.** Lo que viaja es la TRANSCRIPCIÓN de un informe que
 firmó una persona: el pH que alguien midió, las raíces que alguien contó. Eso es registro
 clínico. Meterlo en `derived/` lo haría desmontable, y borrar `derived/` dejaría un caso
 sin lo que el informe dice — que no es lo que esa operación significa.
@@ -21,13 +21,16 @@ el primero se puede volver a obtener exactamente y defender diciendo «lo pone a
 **Y `derivation: null` significa NO DECLARADO, no determinista.** Se propaga tal cual. Un
 consumidor que reciba un valor sin declarar no debe darlo por reproducible — el silencio no
 puede pasar por una afirmación, que es la misma regla que separa `MISSING` de `FAILED`.
+
+`inferred=True` selecciona solo los valores inferidos (capa 3) para el exportador,
+que los escribe individualmente en `derived/`. El color sigue su propia cadena en capa 2.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from core_schemas import TwinSnapshot
+from core_schemas import Derivation, TwinSnapshot
 
 OBSERVATIONS = "clinical/observations.json"
 
@@ -87,7 +90,9 @@ def _nota_color(color) -> str:
             "foto no lleva referencia gris")
 
 
-def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]:
+def clinical_layer(
+    snapshot: TwinSnapshot, motivos: list[str], *, inferred: bool = False,
+) -> dict[str, Any]:
     """Las observaciones por pieza, las medidas no regionales y el gate.
 
     Los tres van juntos porque los tres son lo mismo: **lo que un clínico no puede deducir
@@ -97,7 +102,16 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
     """
     piezas: dict[str, dict[str, Any]] = {}
     for obs in snapshot.regional:
-        a = obs.attributes
+        es_inferida = obs.provenance.derivation is Derivation.INFERRED
+        # El color tiene una cadena determinista propia, independiente del informe.
+        a = obs.attributes.model_copy(update={
+            **({"ph": None, "n_raices": None, "n_conductos": None, "hallazgos": []}
+               if es_inferida != inferred else {}),
+            **({"color": None} if inferred else {}),
+        })
+        if not any((a.ph is not None, a.n_raices is not None,
+                    a.n_conductos is not None, a.hallazgos, a.color is not None)):
+            continue
         # ⚠️ **`body_site` codificado, no solo el numero (D-5).** `fdi: "27"` es un
         # entero con contexto implicito: un lector estadounidense lo lee en el Universal
         # Numbering System y es OTRO diente. El `Observation` de FHIR al que esto se mapea
@@ -119,7 +133,7 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
         # otro. Y sobre todo, el mismo `confidence` flotaba sobre `color`, que viene de
         # otra cadena entera y no tiene nada que ver con el.
         marca = {
-            "regulatory": {"layer": 1},
+            "regulatory": {"layer": 3 if inferred else 1},
             # `deterministic` si lo saco un patron, `inferred` si lo propuso un modelo,
             # `null` si nadie lo declaro — que NO es lo mismo que determinista.
             "derivation": (obs.provenance.derivation.value
@@ -144,7 +158,7 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
         if a.hallazgos:
             previos = d.get("findings", {}).get("value", [])
             nuevos = [
-                {"system": SNOMED, "code": None, "display": h.value}
+                {"system": SNOMED, "code": None, "display": h.value, "provenance": marca}
                 for h in a.hallazgos
             ]
             d["findings"] = {"value": previos + nuevos, "coding": MAPEO_PENDIENTE, **marca}
@@ -201,15 +215,16 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
             ),
         },
         "regulatory": {
-            "layer": 1,
+            "layer": 3 if inferred else 1,
             "default": True,
-            "note": (
+            "note": ("Extraccion inferida; cada valor conserva modelo y procedencia."
+                     if inferred else (
                 "⚠️ ESTO ES EL DEFECTO DEL FICHERO, no una afirmacion sobre todo su "
                 "contenido: cada valor de `teeth[]` declara su propia capa y manda sobre "
                 "esta. El fichero es capa 1 porque su grueso es la transcripcion de un "
                 "informe que firmo una persona; el `color` es capa 2, computado por el "
                 "pipeline desde las fotos, y lo dice en su sitio"
-            ),
+            )),
             "confidence": (
                 "el `confidence` de un valor NO mide cuanto se fia el extractor: es el "
                 "eslabon mas debil de la cadena que colgo ese valor de ESA pieza, y lo "
@@ -219,8 +234,7 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
             "layers": (
                 "1 = adquirido o transcrito de un informe firmado; 2 = computado por un "
                 "procedimiento determinista y reproducible a partir de capa 1, sin modelo "
-                "entrenado; 3 = salida de modelo, y NO puede aparecer en este fichero "
-                "porque vive solo bajo `derived/`"
+                "entrenado; 3 = salida de modelo, que solo se escribe bajo `derived/`"
             ),
         },
         "teeth": [piezas[k] for k in sorted(piezas)],
@@ -231,7 +245,7 @@ def clinical_layer(snapshot: TwinSnapshot, motivos: list[str]) -> dict[str, Any]
             {"name": m.nombre, "value": m.valor, "unit": m.unidad, "side": m.lado,
              "normal_min": m.normal_min, "normal_max": m.normal_max,
              "out_of_range": m.fuera_de_rango, "text": m.texto}
-            for m in snapshot.medidas
+            for m in ([] if inferred else snapshot.medidas)
         ],
         "review": {
             "note": "motivos por los que este caso pide revision humana antes de entregarse",

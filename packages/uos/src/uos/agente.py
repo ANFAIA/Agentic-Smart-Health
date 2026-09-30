@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from core_schemas import ModalityStatus, TwinSnapshot
+from core_schemas import Derivation, ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
 from export_agents.field import esquema_de_propiedades
 
@@ -233,7 +233,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.14.0"
+    version = "0.15.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -829,6 +829,39 @@ class UOSExportAgent(BaseExportAgent):
             motivos = [*(motivos or []), _aviso_cadena]
 
         # en una pieza, y los motivos del gate. Ver `clinico.py` — es EXTENSION nuestra.
+        # Una observacion por asset evita mezclar modelos o pisar valores del mismo FDI.
+        for i, obs in enumerate(snapshot.regional):
+            if obs.provenance.derivation is not Derivation.INFERRED:
+                continue
+            entrada = snapshot.model_copy(update={"regional": [obs], "medidas": []})
+            inferido = clinical_layer(entrada, [], inferred=True)
+            if not inferido["teeth"]:
+                continue
+            fuentes = [
+                f"asset.doc_{j:03d}" for j, doc in enumerate(informes or [])
+                if doc.exists()
+                and doc.resolve() == Path(obs.provenance.source_file).resolve()
+            ]
+            uri_inferido = f"derived/clinical_{i:03d}.json"
+            meta_uri = f"derived/clinical_{i:03d}.meta.json"
+            if not fuentes:
+                motivos = [*(motivos or []),
+                           f"{uri_inferido}: fuente de extraccion no resuelta; requiere revision"]
+            crudo_inferido = json_de(inferido)
+            extras_escena[uri_inferido] = crudo_inferido
+            extras_escena[meta_uri] = json_de({
+                "schema": "histora-clinical-inference/1.0",
+                "model": {"name": obs.provenance.model, "weights_sha256": None},
+                "source_assets": fuentes,
+                "source_status": "resolved" if fuentes else "unresolved",
+                "encoding": {"format": "json", "schema": "histora-clinical/2.0"},
+            })
+            assets.append(asset_de_bytes(
+                crudo_inferido.encode("utf-8"), uri_inferido,
+                id_=f"asset.clinical_inferred_{i:03d}", kind=AssetKind.DOCUMENT,
+                visit=visita.id, frame=FRAME_IOS, media_type="application/json",
+                regulatory=Regulatory(layer=3), sidecar_uri=meta_uri, derived_from=fuentes,
+            ))
         clinico = clinical_layer(snapshot, list(motivos or []))
         if clinico["teeth"] or clinico["measurements"]:
             crudo_clinico = json_de(clinico)
@@ -1218,7 +1251,7 @@ class UOSExportAgent(BaseExportAgent):
             )
         }
         for a in assets:
-            if a.id == "asset.clinical":
+            if a.id == "asset.clinical" or a.id.startswith("asset.clinical_inferred_"):
                 # ⚠️ NO `DocumentReference` como el resto de documentos: lo que lleva son
                 # medidas por diente, y el recurso de FHIR para una medida clinica es
                 # `Observation`. Mapearlo como adjunto lo dejaria fuera del alcance de
@@ -1443,14 +1476,21 @@ class UOSExportAgent(BaseExportAgent):
         fuera: dict[str, Extension] = {}
         if "asset.clinical" in ids:
             fuera["histora_clinical"] = Extension(
-                name="histora_clinical", version="1.0", uri=ids["asset.clinical"],
-                schema_id="histora-clinical/1.0",
+                name="histora_clinical", version="2.0", uri=ids["asset.clinical"],
+                schema_id="histora-clinical/2.0",
                 description=(
                     "atributos clinicos por pieza (pH, raices, conductos, hallazgos) y "
                     "medidas no regionales, con la procedencia de cada valor. El borrador "
                     "los manda a FHIR (§9) y entonces un .uos suelto no puede contestar "
                     "que dice el informe de una pieza"
                 ),
+            )
+        if any(a.id.startswith("asset.clinical_inferred_") for a in assets):
+            fuera["histora_clinical_inference"] = Extension(
+                name="histora_clinical_inference", version="1.0",
+                schema_id="histora-clinical-inference/1.0",
+                description="observaciones inferidas en derived/, payload histora-clinical/2.0, "
+                            "con modelo y fuentes; fuente no resuelta exige revision",
             )
         if any(a.id in ("asset.field", "asset.composite") for a in assets):
             fuera["histora_gs_measured"] = Extension(

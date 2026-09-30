@@ -65,8 +65,8 @@
     },
     {
       "file": "series-slice-deidentified.uos",
-      "expects": "warning",
-      "why": "slice 'volume/ct_001/slice_0000.dcm' has had tags cleaned: it keeps its SOP Instance UID and its pixels, and its bytes are no longer the declared ones. This is a WARNING and not an error --- it is the same slice de-identified, not a different slice (§6)"
+      "expects": "error",
+      "why": "slice 'volume/ct_001/slice_0000.dcm' has had tags cleaned: it keeps its SOP Instance UID and its pixels, but its whole-file hash and size no longer match. UID and stored PixelData do not establish semantic equivalence; regenerate the manifest (§6)"
     }
   ]
 }

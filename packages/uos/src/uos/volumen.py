@@ -178,7 +178,10 @@ def describe_series(
         # campo de vision y de la posicion dentro del volumen, y no son comparables entre
         # escaneres ni convertibles a Hounsfield sin un fantoma. Una TC convencional si.
         # Sin este campo, un lector aplica `slope`/`intercept` y cree tener HU.
-        "calibrated_hu": str(getattr(primera, "Modality", "") or "").upper() == "CT",
+        # La modalidad CT y rescale no acreditan una calibracion. Este lector no
+        # verifica procedimientos de calibracion; conserva explicitamente esa ausencia.
+        "calibrated_hu": False,
+        "calibration_status": "unknown",
         "value_range": rango,
         "pixel_encoding": _codificacion(primera),
         "modality": str(getattr(primera, "Modality", "") or ""),
@@ -186,8 +189,9 @@ def describe_series(
         "nota": (
             "leido de las cabeceras de la serie que viaja en este contenedor. La "
             "transformada al frame canonico NO esta aqui: vive en `registrations`. "
-            "`calibrated_hu` distingue una TC (grises en Hounsfield) de un CBCT (grises "
-            "del equipo): aplicar `rescale` a un CBCT NO da unidades Hounsfield."
+            "`calibrated_hu: false` significa que este escritor NO ha acreditado la "
+            "calibracion; `calibration_status: unknown` no afirma que el equipo carezca "
+            "de ella. Ni Modality=CT ni rescale bastan para acreditarla."
         ),
     }, avisos
 
