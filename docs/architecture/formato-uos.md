@@ -197,3 +197,44 @@ supuso, en una entrega.
   aviso). Rellenarlo con un valor inventado sería peor que dejarlo vacío.
 - **No es un estándar**: es una propuesta de contenedor con su esquema publicado y su
   validador, y hasta que otro implementador lo lea y lo abra no es más que eso.
+
+## Correcciones conservadoras de la revisión v0.3 — 2026-09-30
+
+Se mantiene el contrato del manifiesto y su digest de series, pero se retiran garantías
+que la implementación no podía demostrar. No se añade `fidelity`, identidad semántica
+DICOM, resolución de originales ni firma clínica.
+
+- **Observaciones inferidas:** el exportador UOS 0.15.0 crea un asset por observación
+  bajo `derived/`, capa 3, con modelo y referencias a los informes suministrados. No
+  mezcla modelos ni pisa dos inferencias del mismo diente. El color conserva su cadena
+  determinista independiente. Cuando el informe no puede vincularse, el sidecar
+  `histora-clinical-inference/1.0` declara `source_status: unresolved` y fuentes vacías;
+  el escritor exige revisión humana y el validador emite `UOS-W-017f`. Esta excepción
+  está limitada a esa extensión: valida el empaquetado, sin acreditar trazabilidad completa.
+- **Calibración:** `calibrated_hu: false` más `calibration_status: unknown` significa
+  calibración no acreditada por el escritor. No se deduce de `Modality=CT` ni de rescale.
+- **DICOM:** UID y PixelData almacenado siguen siendo comprobaciones parciales. Cambiar
+  cualquier byte o tamaño de un corte incluido invalida los hashes declarados, aunque
+  coincidan UID y PixelData. Una desidentificación requiere regenerar el manifiesto.
+  Se endurece deliberadamente una aceptación anterior que podía ocultar cambios de
+  geometría o intensidad. No hay canonicalización ni identidad por frame multiframe.
+- **Registros:** el umbral compara coeficientes de matrices, no distancias en mm.
+  El camino corto es una convención determinista; no minimiza incertidumbre. Se conserva
+  `TOLERANCIA_MM` como alias de compatibilidad de `TOLERANCIA_COEFICIENTES`.
+- **Originales:** el formato y las funciones de bajo nivel admiten payloads incluidos
+  y externos. La política de `UOSExportAgent` sigue externalizando los adquiridos. El
+  validador verifica los incluidos y avisa de que no comprueba el contenido externo.
+  Se corrige la prohibición documental que contradecía esta implementación; no se
+  introduce un perfil de archivo ni una garantía de recuperación.
+- **STL compuesto:** el exportador 0.4.0 conserva un mapa de intervalos de caras en
+  `<nombre>.provenance.json`, con SHA-256 del STL, origen y referencia al artefacto fuente.
+  Los intervalos son índices de triángulo desde cero, extremo final excluido. Identifican
+  escáner, cierre sintético y raíz reconstruida. Una inversión global del bobinado no
+  cambia esos índices; reordenar caras invalida el mapa. `ExportOutput.sidecars` permite
+  conservar los acompañantes sin alterar la lista `paths` de piezas. No es certificación
+  anatómica y la procedencia digital no acompaña por sí sola a una impresión física.
+
+La corrección se comprueba con datos sintéticos: exportación/validación de inferencias
+con y sin fuente, separación del color, rechazo de cambios en posición/rescale/cabecera,
+calibración desconocida y cobertura/hash de los mapas STL. Las cifras históricas del
+paper no se vuelven a medir ni se convierten en evidencia clínica por estas pruebas.

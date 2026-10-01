@@ -371,7 +371,6 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
         , path=f"assets[{a.id}]")
         return
     declarados = {a.uri + p.name for p in a.parts}
-    desidentificados = False
     if sobran := hijos - declarados:
         inf.error(
             "7",
@@ -389,12 +388,7 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
             )
             continue
         crudo = z.read(ruta)
-        # ⚠️ **Dos niveles, reportados POR SEPARADO (D-3).** El hash del fichero dice si los
-        # BYTES son los mismos; el SOP Instance UID y el hash de `PixelData` dicen si es la
-        # MISMA INSTANCIA CLINICA. Un corte de-identificado conserva la segunda y pierde la
-        # primera —de-identificar reescribe cabeceras— y eso **es informacion, no un
-        # error**: significa «es este corte, con las etiquetas limpiadas». Reportarlo como
-        # un solo fallo de hash le diria a quien lo lea que la serie es otra.
+        # UID y PixelData almacenado son comprobaciones parciales, no identidad semantica.
         identidad_ok = None
         if parte.sop_instance_uid and parte.pixel_data_sha256:
             uid, px, _bajo, _alto = identidad_dicom_de(crudo)
@@ -404,17 +398,17 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
                 inf.error(
                     "7",
                     f"asset {a.id}: {parte.name} NO es la instancia declarada (SOP Instance "
-                    "UID o contenido de pixeles distinto). Es otro corte, no este alterado",
+                    "UID o PixelData almacenado distinto); no se ha probado equivalencia semantica",
                     path=f"assets[{a.id}]",
                 )
         if hashlib.sha256(crudo).hexdigest() != parte.sha256:
             if identidad_ok:
-                desidentificados = True
-                inf.warn(
+                inf.error(
                     "7",
-                    f"asset {a.id}: {parte.name} conserva su identidad DICOM y sus bytes no "
-                    "son los declarados. Es el mismo corte con las cabeceras reescritas "
-                    "—lo que hace una de-identificacion—, no un corte distinto",
+                    f"asset {a.id}: {parte.name} conserva UID y PixelData almacenado, "
+                    "pero su sha256 no cuadra. No se puede verificar que los cambios "
+                    "de cabecera preserven geometria, rescale o significado clinico; "
+                    "una reescritura requiere regenerar el manifiesto",
                     path=f"assets[{a.id}]",
                 )
             else:
@@ -423,11 +417,7 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
                     f"asset {a.id}: el sha256 de {parte.name} no cuadra",
                     path=f"assets[{a.id}]",
                 )
-        if len(crudo) != parte.bytes and not identidad_ok:
-            # ⚠️ Si la identidad se conserva, el tamano distinto es PARTE de la misma
-            # historia —limpiar etiquetas acorta la cabecera— y ya se dijo arriba en un
-            # aviso. Reportarlo aparte como error convertiria una de-identificacion en un
-            # contenedor invalido, que es justo la conclusion que D-3 evita.
+        if len(crudo) != parte.bytes:
             inf.error(
                 "7",
                 f"asset {a.id}: {parte.name} declara {parte.bytes} bytes y tiene {len(crudo)}",
@@ -437,7 +427,7 @@ def _valida_serie(z: zipfile.ZipFile, a, dentro: set[str], inf: Report) -> None:
         inf.error("7", f"asset {a.id}: el digesto declarado del directorio no es el de sus partes "
             f"({a.sha256[:12]}… vs {real[:12]}…)"
         , path=f"assets[{a.id}]")
-    if sum(p.bytes for p in a.parts) != a.bytes and not desidentificados:
+    if sum(p.bytes for p in a.parts) != a.bytes:
         inf.error("7", f"asset {a.id}: declara {a.bytes} bytes y sus partes suman "
             f"{sum(p.bytes for p in a.parts)}"
         , path=f"assets[{a.id}]")
@@ -497,7 +487,10 @@ def _valida_derivados(z: zipfile.ZipFile, m: Manifest, inf: Report) -> None:
                 path=f"assets[{a.id}]",
             )
         if not meta.get("source_assets"):
-            inf.error(
+            sin_fuente = (meta.get("schema") == "histora-clinical-inference/1.0"
+                          and meta.get("source_status") == "unresolved")
+            registrar = inf.warn if sin_fuente else inf.error
+            registrar(
                 "17f",
                 f"asset {a.id}: su sidecar declara `source_assets` vacio. Una inferencia "
                 "sin entradas declaradas no se puede rehacer",
@@ -600,14 +593,15 @@ def _valida_frames(m: Manifest, inf: Report) -> None:
     # dirigido, asi que nada impide que haya mas de un camino; lo que no puede es que dos
     # den poses distintas y el visor elija una en silencio. Se declara, que es lo que el
     # formato hace con todo lo que no se puede resolver por el.
-    from uos.marcos import TOLERANCIA_MM, discrepancia_maxima
+    from uos.marcos import TOLERANCIA_COEFICIENTES, discrepancia_maxima
 
     for marco in sorted({a.frame for a in m.assets} & alcanzables):
         d = discrepancia_maxima(m, marco)
-        if d is not None and d > TOLERANCIA_MM:
+        if d is not None and d > TOLERANCIA_COEFICIENTES:
             inf.warn("15b", f"frame {marco!r}: hay mas de un camino de registraciones hasta el "
-                f"canonico y no coinciden (hasta {d:.4g} de diferencia). El lector usa el mas "
-                "corto; la discrepancia acota el error de la composicion",
+                f"canonico y no coinciden (maxima diferencia de coeficientes: {d:.4g}). "
+                "El lector usa el mas corto por convencion, no por precision. Este chequeo "
+                "algebraico NO mide distancia en mm, TRE ni incertidumbre clinica",
                 path=f"frames[{marco}]")
 
 

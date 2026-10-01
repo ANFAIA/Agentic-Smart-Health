@@ -42,6 +42,7 @@
 
 \setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
 \renewcommand{\arraystretch}{1.25}
+\setlength{\tabcolsep}{3.5pt}
 \titleformat{\section}{\Large\bfseries\color{uosblack}}{\thesection}{0.7em}{}
 \titleformat{\subsection}{\large\bfseries\color{uosblack}}{\thesubsection}{0.7em}{}
 \titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.7em}{}
@@ -71,6 +72,8 @@
   \noindent{\bfseries\color{uosblack}#1}\par\nobreak\vspace{2pt}}
  {\par\vspace{2pt}\noindent{\color{uosrule}\rule{\linewidth}{0.6pt}}\par\medskip}
 
+\newenvironment{finding}[1]{\begin{callout}{#1}}{\end{callout}}
+
 % ------------------------------------------------------------- listings -----
 % Only language-level keys here; presentation keys live in the styles below.
 \lstdefinelanguage{json}{
@@ -78,8 +81,9 @@
   morestring=[b]",
   morecomment=[l]{//},
   literate=
-   *{\{}{{{\color{uosblack}\{}}}{1} {\}}{{{\color{uosblack}\}}}}{1}
-    {[}{{{\color{uosblack}[}}}{1}   {]}{{{\color{uosblack}]}}}{1},
+   {\{}{{{\color{uosblack}\{}}}{1} {\}}{{{\color{uosblack}\}}}}{1}
+    {[}{{{\color{uosblack}[}}}{1}   {]}{{{\color{uosblack}]}}}{1}
+    {§}{{\S}}1,
 }
 \lstdefinestyle{box}{
   basicstyle=\ttfamily\scriptsize,
@@ -508,15 +512,15 @@ them.
   the matrix is $T_{AC} \cdot T_{FA}$: the first hop is applied first, so it sits on the
   right.
   \item \textbf{When several paths exist, a reader \MUST{} take the one with the fewest
-  edges}, breaking a tie by the ascending sequence of registration ids. Error propagates
-  along the path, so two hops are not worth one, and the choice cannot be left to
-  iteration order --- two readers would place the same asset differently.
+  edges}, breaking a tie by the ascending sequence of registration ids. This is a
+  deterministic convention, not selection by precision or propagated uncertainty.
 \end{enumerate}
 
 Paths that disagree are \textbf{not} averaged. Averaging would produce a pose that no
 registration claims and hide the disagreement inside it, which is the one thing this format
 exists to prevent. The reader takes the shortest path and check 15b reports the spread,
-which is a measured bound on what a composition across those frames is worth.
+as the maximum absolute difference of matrix coefficients. This mixes rotational and
+translational entries and is not a distance in mm, TRE or clinical error bound.
 
 The reference implementation resolves this in \code{uos.marcos}:
 \code{resuelve\_al\_canonico} returns the composed transform and
@@ -555,7 +559,7 @@ A \textbf{directory asset} is one whole multi-file series --- in practice a DICO
 What identifies it is that it carries a \code{parts[]} array, one entry per file, with a
 relative \code{name}, a \code{sha256} and \code{bytes}. Its \code{uri} follows the same
 rule as any other asset: a path ending in \code{/} if the series travels, a content address
-if it is referenced (\S\ref{sec:external}), which for an acquired series is always the case.
+if it is referenced (\S\ref{sec:external}), which is the reference writer's policy for acquired series.
 
 \paragraph{\code{parts[]} travels even when the series does not.} That is the point of
 splitting it out: the container cannot verify a series it does not hold, but whoever holds
@@ -565,9 +569,9 @@ traceability.
 \vspace{6px}
 The asset's own \code{sha256} is a \textbf{digest over the parts}, defined here because
 the format needs writer and validator to compute it identically. It runs over
-\emph{clinical identity} when every part declares it, and falls back to names and file
+the UID and stored-PixelData hash when every part declares them, and falls back to names and file
 hashes when they do not, so that a container written before identity was carried still
-verifies. \S\ref{sec:volume} says why identity is the better key:
+verifies. This is not a canonical semantic hash (\S\ref{sec:volume}):
 
 \begin{lstlisting}[style=py]
 def digest_of_parts(parts):
@@ -575,7 +579,7 @@ def digest_of_parts(parts):
     if all(p.sop_instance_uid and p.pixel_data_sha256 for p in parts):
         for p in sorted(parts, key=lambda x: x.sop_instance_uid):
             h.update(f"{p.sop_instance_uid}\0{p.pixel_data_sha256}\n".encode())
-        return h.hexdigest()                          # identity: the clinical series
+        return h.hexdigest()                          # UID + stored PixelData (partial identity)
     for p in sorted(parts, key=lambda x: x.name):     # fallback: one serialisation
         h.update(f"{p.name}\0{p.sha256}\n".encode())  # NAME, NUL, HEX HASH, LF
     return h.hexdigest()
@@ -589,17 +593,16 @@ without re-reading the series itself. Per-file hashes are the difference between
 
 \subsubsection{Referenced originals, and content addressing}\label{sec:external}
 
-\paragraph{Normative: acquired originals are referenced, not carried.} No acquired original
-\MUST{} travel inside a \code{.uos} --- not the DICOM series, not the scanner STL, not the
-clinical photographs, not the reports. They are declared with \code{external: true} and
-named by content address. What a container carries is what UOS composes: the scene, the
-Gaussian layers, the views, the clinical layer, and anything under \code{derived/}.
-\textbf{This is the format, not a variant of it.} There is no ``full'' packaging to opt
-into. A container found to carry an acquired original is a writer defect, not a richer
-case: it is duplicated source data whose custody the format never claimed. The photographs
-are worth naming explicitly because they are the ones that slipped --- eighteen megabytes
-of patient images once travelled inside a container that declared it carried no originals,
-because they were tied to a different flag from the STL and the DICOM.
+\paragraph{Format support and reference-writer policy.}
+The format permits embedded and external assets. An embedded payload \MUST{} be
+verified against its declared bytes, hashes and, for directories, inventory. An external
+asset \MUST{} use a content address; validation does not fetch or verify its payload.
+The reference \code{UOSExportAgent} always externalises acquired originals (DICOM, scanner
+meshes, photographs and reports). That is its packaging policy, not a prohibition on other
+writers. \code{write\_uos} and the validator support embedded synthetic fixtures. No new
+archival profile or guarantee of future retrieval is implied. Throughout this document,
+statements that originals do not travel describe the reference writer unless explicitly
+stated as a general format rule.
 
 \vspace{6px}
 An asset that is declared but not carried sets \code{external} to \code{true}, and its
@@ -735,10 +738,10 @@ sprinkling keys.
 \code{projection} & \code{Projection} & --- & Projection geometry, for 2D radiographs only. \code{null} for everything else.\\
 \code{parts} & \code{Part}[] & --- & One entry per file when the asset is a directory, such as a DICOM series. This is what lets a validator say which slice is wrong instead of 'the series does not match'.\\
 \code{sidecar\_uri} & string & --- & Path to a JSON sidecar describing the payload, so a reader can inspect it without a parser for its format.\\
-\code{derived\_from} & string[] & --- & Ids of the assets this one was derived from. Required for anything under \code{derived/}: an inference with no stated input cannot be audited.\\
+\code{derived\_from} & string[] & --- & Ids of the assets this one was derived from. An empty list does not establish provenance. Clinical inference with explicitly unresolved sources is reported as incomplete and requires review.\\
 \code{series\_instance\_uid} & string & --- & DICOM Series Instance UID \code{(0020,000E)}, so a recipient holding the series by another channel can tell it is this one.\\
 \code{study\_instance\_uid} & string & --- & DICOM Study Instance UID \code{(0020,000D)}.\\
-\code{external} & bool & default \code{False} & True when the asset is referenced and not carried. Acquired originals \MUST{} be external; their \code{uri} is then a content address and never a path.\\
+\code{external} & bool & default \code{False} & True when the asset is referenced and not carried; its uri is then a content address. The reference writer externalises acquired originals; the format also permits embedded payloads, validated against their declared bytes.\\
 \code{locators} & string & --- & Where to find this asset when it is referenced and not carried. Hints, never a contract: a reader verifies by hash and \MUST{} open the container without resolving any of them. An empty list is NOT DECLARED.\\
 \bottomrule
 \end{longtable}
@@ -842,7 +845,7 @@ One file inside a directory asset. \code{parts[]} is what lets a validator say \
 \code{sha256} & string & \MUST{} & SHA-256 over the whole file, lowercase hex. Proves these exact bytes.\\
 \code{bytes} & integer & \MUST{} & Size of the file in bytes.\\
 \code{sop\_instance\_uid} & string & --- & DICOM SOP Instance UID \code{(0008,0018)}. The identity DICOM itself defines, and what survives de-identification when UIDs are retained.\\
-\code{pixel\_data\_sha256} & string & --- & SHA-256 over the value of the PixelData element \code{(7FE0,0010)} alone, without the header. De-identification does not touch it, so it separates 'a different slice' from 'the same slice, cleaned'.\\
+\code{pixel\_data\_sha256} & string & --- & SHA-256 over the value of the PixelData element \code{(7FE0,0010)} alone, without the header. It hashes stored bytes, not canonical decoded pixels or geometry; it does not establish semantic equivalence after header changes.\\
 \bottomrule
 \end{longtable}
 % /generado: tabla-Part
@@ -1704,31 +1707,28 @@ Two real descriptors, abridged:
 \end{enumerate}
 
 % =============================================================================
+\paragraph{Clinical inference export.}
+The reference writer exports each inferred regional observation separately under
+\code{derived/clinical\_NNN.json}, with layer 3, model metadata and matched report asset
+references. Deterministic transcriptions and independently computed colour stay in
+\code{clinical/observations.json}. An unavailable report reference is explicitly unresolved:
+no filename or invented source hash is substituted. The writer adds a human-review reason
+and check 17f warns; a valid container with that warning does not have complete provenance.
+The clinical payload schema is \code{histora-clinical/2.0}.
+
 \section{Volume}\label{sec:volume}
 
-\paragraph{A slice's identity is not its file's hash.}\label{par:sliceid}
-\code{Part.sha256} covers the whole file, so \textbf{any de-identification changes it} ---
-and de-identification is the step every clinical flow takes, and the one \S\ref{sec:phi}
-now requires. The traceability \S\ref{sec:external} promises --- ``whoever holds the series
-can prove it is this case's, slice by slice'' --- broke at exactly the most common step.
+\paragraph{Exact bytes and partial DICOM identity.}\label{par:sliceid}
+\code{Part.sha256} identifies the whole file. The optional \code{sop\_instance\_uid}
+and \code{pixel\_data\_sha256} compare the instance identifier and stored PixelData value.
+They exclude geometry and rescale attributes and are not a canonical semantic hash.
+A lossless change of transfer syntax can change the stored PixelData hash.
 
-DICOM already settled what identifies an instance: the \textbf{SOP Instance UID}
-\code{(0008,0018)}, which survives de-identification when UIDs are retained, and the pixel
-content \code{(7FE0,0010)}, which de-identification does not touch unless it is explicitly
-cleaned. So \code{Part} additionally carries \code{sop\_instance\_uid} and
-\code{pixel\_data\_sha256} (SHA-256 over the PixelData element's value, without the
-header), and the \code{volume} asset carries \code{series\_instance\_uid} and
-\code{study\_instance\_uid}.
-
-The \code{parts[]} digest is computed over the UID and the pixel hash when every part
-declares them, and falls back to name and file hash when they do not --- so an older
-container still verifies. It therefore identifies the \textbf{clinical series} rather than
-one serialisation of it. File names stay in \code{parts[]} as ordering data, which is what
-\S\ref{sec:volume}'s argument for keeping them was about, but they leave identity.
-
-Verification becomes two levels, reported separately: \textbf{identity} (UID + pixels) and
-\textbf{exact bytes} (file hash). A de-identified file that preserves identity passes the
-first and fails the second, and \emph{that is information, not an error}.
+The directory digest keeps the existing v0.3 conditional algorithm for compatibility.
+For an embedded series, matching UID and PixelData \MUSTNOT{} waive a whole-file hash
+or size mismatch: check 7 reports an error. This includes de-identification; its producer
+must regenerate the manifest after rewriting files. External payloads remain unverified.
+Per-frame multiframe identity and semantic equivalence are not implemented.
 
 \paragraph{\code{value\_range} is measured, not skipped.}
 It \MUST{} be computed \textbf{during the \code{parts[]} hash}, whenever the series is
@@ -1746,8 +1746,9 @@ the pixels.
 \paragraph{A CBCT does not measure Hounsfield units.}
 Grey values from a CBCT depend on the device, the field of view and the position inside the
 volume; they are not comparable between scanners and not convertible to HU without a
-calibration phantom. The volume sidecar therefore declares \code{calibrated\_hu}, true only
-for a conventional CT. \textbf{Applying \code{rescale} to a CBCT does not yield Hounsfield
+calibration procedure. The reference sidecar emits \code{calibrated\_hu: false}
+and \code{calibration\_status: unknown}: calibration has not been established by this
+writer, rather than proven absent. Neither \code{Modality=CT} nor rescale proves it. \textbf{Applying \code{rescale} to a CBCT does not yield Hounsfield
 units}, and a reader that assumes it does will window on a scale that does not exist.
 
 A CBCT series is a \textbf{directory asset} (\S\ref{sec:dirasset}): \code{kind: volume},
@@ -2324,7 +2325,7 @@ check.\\
 15 & E & Frame connectivity (\S\ref{sec:frames}).\\
 15b & W & More than one path of registrations reaches the canonical frame
 from a frame an asset uses, and they disagree by more than $10^{-3}$. The reader still gets
-a defined answer; the spread is what a measurement across the seam inherits.\\
+a defined answer; this is an algebraic check, not a physical error bound.\\
 16 & W & Each provisional registration (\S\ref{sec:manifest}).\\
 17 & E & Regulatory: every asset under \code{derived/} has layer 3, and every layer-3 asset
 is under \code{derived/}. This verifies where layer 3 is \emph{declared}.\\
@@ -2346,10 +2347,12 @@ absent from \code{applied\_to} warns (W); a measured volume-derived layer withou
 \code{CleanRecognizableVisualFeatures} is an error (E); \code{date\_shift\_days} outside
 \code{identified} is an error (E); \code{purpose\_of\_use} outside
 \code{consent.scope} is an error (E), and its absence a warning (W).\\
-17f & E & \code{derived/} self-description (\S\ref{sec:derived}): every asset there has a
+17f & E/W & \code{derived/} self-description (\S\ref{sec:derived}): every asset there has a
 non-null \code{sidecar\_uri}; the sidecar declares \code{model.name}, a non-empty
 \code{source\_assets} and \code{encoding}; declared labels are ISO 3950 codes (permanent or
-deciduous) or 0; and \code{derived\_from} resolves to declared asset ids.\\
+deciduous) or 0; and \code{derived\_from} resolves to declared asset ids.
+For \code{histora-clinical-inference/1.0} only, empty sources with explicit
+\code{source\_status: unresolved} produce a warning and incomplete provenance.\\
 17g & E & Every ZIP entry is declared by the manifest (\S\ref{sec:container}). The other
 direction was checked and this one was not --- an undeclared file travels with no hash
 accrediting it and no regulatory layer, which is the shape a leak would take.\\
@@ -2743,7 +2746,7 @@ discovering the change when their reader breaks. The warning is also the written
   \bottomrule
   \end{longtable}
 
-  ⚠️ \textbf{This separation is the outcome of getting it wrong, and the record stays.}
+  \textbf{Note:} \textbf{This separation is the outcome of getting it wrong, and the record stays.}
   \code{uos-spec-v0.3} was created from a working branch, before the pull request carrying it
   was merged, and then moved twice on 2026-09-24. The first move was because what it
   published was a validation-report schema requiring \code{"0.2"} while the reference
@@ -2807,11 +2810,11 @@ validator has to accept an issuer that does. It reaches no conformance level, co
 changed.\\
 \code{series-slice-extra.uos} & \code{error} & A slice the manifest does not declare in
 \code{parts[]}. Extra is as serious as missing: nobody knows where it came from.\\
-\code{series-slice-deidentified.uos} & \code{warning} & A slice whose tags were cleaned: it
-keeps its SOP Instance UID and its pixels and its bytes are no longer the declared ones.
-\textbf{This is the case the two levels exist for} --- a validator comparing only file
-hashes says ``this series is not this case's'', which is false and is the most expensive
-conclusion available.\\
+\code{series-slice-deidentified.uos} & \code{error} & A slice whose tags were cleaned
+without updating its declared whole-file hash and size. Matching SOP Instance UID and
+stored PixelData does not establish that the rewritten header preserves geometry or
+intensity scaling. The producer must regenerate the manifest after rewriting the file;
+check 7 rejects the stale declaration without claiming that it is a different patient.\\
 \bottomrule
 \end{longtable}
 
@@ -3296,7 +3299,7 @@ originals are referenced, everything UOS composes is inside.
 \textbf{Item} & \textbf{Value}\\
 \midrule
 \endhead
-ZIP entries & 12. ⚠️ Measured on the container as last written, which predates 0.6.0
+ZIP entries & 12. \textbf{Note:} Measured on the container as last written, which predates 0.6.0
 moving the per-Gaussian FDI labels out of the payloads and into
 \code{derived/seg\_gaussians.<layer>.\{bin,meta.json\}}: a container written by today's
 writer carries two more entries per labelled layer. The figure is left as measured rather

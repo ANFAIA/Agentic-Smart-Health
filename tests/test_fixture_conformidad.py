@@ -35,10 +35,9 @@ def test_cada_caso_del_banco_produce_lo_que_anuncia(tmp_path: Path) -> None:
     # CUSTODIE la serie — algo que nuestro escritor no emite y un validador debe aceptar.
     por_corte = [c for c in indice if c["file"].startswith("series-slice-")]
     assert len(por_corte) == 4, "faltan casos de la verificación corte a corte"
-    # ⚠️ Y uno de ellos NO es un error: un corte de-identificado conserva su identidad
-    # clínica y pierde sus bytes. Un validador que lo llame error dice «esta serie no es
-    # la de este caso», que es falso y es la conclusión más cara posible.
-    assert any(c["file"] == "series-slice-deidentified.uos" and c["expects"] == "warning"
+    # Una limpieza con manifiesto sin actualizar falla por integridad; no implica
+    # que sea otro paciente o que el contenido clinico haya cambiado.
+    assert any(c["file"] == "series-slice-deidentified.uos" and c["expects"] == "error"
                for c in indice)
 
     esperado = json.loads((destino / "expected.json").read_text(encoding="utf-8"))
@@ -96,3 +95,16 @@ def test_el_caso_valido_del_banco_no_lleva_dato_de_paciente(tmp_path: Path) -> N
 
     assert m["subject"]["pseudonym"] == "FIXTURE-0001"
     assert m["subject"].get("fhir_patient") is None
+
+
+def test_el_banco_publicado_cuadra_con_sus_expectativas() -> None:
+    """Los binarios distribuidos deben concordar tambien, no solo los regenerados."""
+    from uos import validate
+
+    banco = RAIZ / "fixtures" / "uos-0.3"
+    indice = json.loads((banco / "expected.json").read_text(encoding="utf-8"))
+    for caso in indice["cases"]:
+        informe = validate(banco / caso["file"])
+        assert informe.valid == (caso["expects"] != "error"), caso["file"]
+        if caso["file"] == "series-slice-deidentified.uos":
+            assert any(e.code == "UOS-E-007" for e in informe.errors)

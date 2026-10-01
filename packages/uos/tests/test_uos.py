@@ -1710,3 +1710,54 @@ def test_los_fallos_de_la_cadena_llevan_codigo_como_todos_los_demas():
     # Y el informe entero se serializa, que es lo que antes no ocurria.
     d = inf.as_dict()
     assert d["findings"][0]["code"] == "UOS-E-009"
+
+
+@pytest.mark.parametrize("con_fuente", [True, False])
+def test_exporta_inferencia_en_derived_y_conserva_cada_modelo(tmp_path, malla, con_fuente):
+    from core_schemas import (
+        ClinicalAttributes,
+        Derivation,
+        Modality,
+        Provenance,
+        RegionalObservation,
+        TwinSnapshot,
+    )
+    from uos import UOSExportAgent
+
+    fuente = tmp_path / "informe-privado.txt"
+    fuente.write_text("Caso sintetico: pH 6.2")
+    obs = [RegionalObservation(
+        region_id="26", attributes=ClinicalAttributes(ph=valor),
+        timestamp=datetime.now(UTC), provenance=Provenance(
+            source_file=str(fuente), modality=Modality.REPORT,
+            agent="test@1", derivation=Derivation.INFERRED, model=modelo,
+        ),
+    ) for valor, modelo in [(6.2, "test:uno"), (6.4, "test:dos")]]
+    snapshot = TwinSnapshot(
+        acquisition_id="sintetico", timestamp=datetime.now(UTC), gaussian_field_ref="sha256:0",
+        provenance=Provenance(source_file="test", modality=Modality.MESH, agent="test@1"),
+        regional=obs,
+    )
+    salida = UOSExportAgent(None).export(
+        snapshot, tmp_path / "caso", pseudonimo="P-1", malla=malla,
+        informes=[fuente] if con_fuente else [],
+    )
+    assert salida.ok, salida.detail
+    informe = validate(salida.path)
+    assert informe.valid, informe.errors
+    manifest = read_manifest(salida.path)
+    inferidos = [a for a in manifest.assets if a.id.startswith("asset.clinical_inferred_")]
+    assert len(inferidos) == 2
+    assert all(a.regulatory.layer == 3 and a.uri.startswith("derived/") for a in inferidos)
+    with zipfile.ZipFile(salida.path) as z:
+        assert "clinical/observations.json" not in z.namelist()
+        for asset, modelo in zip(inferidos, ["test:uno", "test:dos"], strict=True):
+            payload = json.loads(z.read(asset.uri))
+            meta = json.loads(z.read(asset.sidecar_uri))
+            assert payload["teeth"][0]["ph"]["model"] == modelo
+            assert meta["model"]["name"] == modelo
+            assert meta["source_assets"] == (["asset.doc_000"] if con_fuente else [])
+            assert str(fuente) not in z.read(asset.uri).decode()
+    if not con_fuente:
+        assert any("fuente de extraccion no resuelta" in m for m in salida.hitl_reasons)
+        assert any(w.code == "UOS-W-017f" for w in informe.warnings)

@@ -122,9 +122,11 @@ def test_el_color_y_el_informe_conviven_en_la_misma_pieza() -> None:
         _snapshot(_obs("26", hallazgos=[Hallazgo.RESTAURACION], color=_COLOR)), []
     )
     pieza = ficha["teeth"][0]
-    assert pieza["findings"]["value"] == [
-        {"system": SNOMED, "code": None, "display": "restauracion"}
-    ]
+    hallazgo = pieza["findings"]["value"][0]
+    assert hallazgo["system"] == SNOMED
+    assert hallazgo["code"] is None
+    assert hallazgo["display"] == "restauracion"
+    assert hallazgo["provenance"]["derivation"] == "deterministic"
     assert pieza["color"]["value"]["n_pixels"] == 10205
 
 
@@ -200,3 +202,27 @@ def test_el_hallazgo_sale_CODIFICADO_y_su_codigo_va_a_null_a_proposito() -> None
     assert hallazgo["code"] is None
     # Y el fichero DECLARA por que va nulo, para que nadie lo lea como un hueco.
     assert "terminologo" in ficha["teeth"][0]["findings"]["coding"]
+
+
+def test_inferencia_se_separa_sin_arrastrar_el_color_determinista():
+    obs = _obs("26", ph=6.2, color=_COLOR)
+    obs.provenance = obs.provenance.model_copy(update={
+        "derivation": Derivation.INFERRED, "model": "test:model",
+    })
+    snapshot = _snapshot(obs)
+    clinico = clinical_layer(snapshot, [])
+    inferido = clinical_layer(snapshot, [], inferred=True)
+    assert "ph" not in clinico["teeth"][0]
+    assert clinico["teeth"][0]["color"]["regulatory"]["layer"] == 2
+    assert "color" not in inferido["teeth"][0]
+    assert inferido["teeth"][0]["ph"]["regulatory"]["layer"] == 3
+    assert inferido["teeth"][0]["ph"]["model"] == "test:model"
+    assert obs.attributes.ph == 6.2  # La exportacion no muta el twin.
+
+
+def test_hallazgos_acumulados_conservan_procedencias_distintas():
+    primero = _obs("26", hallazgos=[Hallazgo.CARIES])
+    segundo = _obs("26", hallazgos=[Hallazgo.RESTAURACION])
+    segundo.provenance = segundo.provenance.model_copy(update={"agent": "otro@1"})
+    hallazgos = clinical_layer(_snapshot(primero, segundo), [])["teeth"][0]["findings"]["value"]
+    assert [h["provenance"]["agent"] for h in hallazgos] == ["report-agent@0.1.0", "otro@1"]

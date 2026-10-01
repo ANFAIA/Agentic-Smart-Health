@@ -198,7 +198,8 @@ def _identidad_dicom(
         if uid is None or px is None or px.value is None:
             return None, None, None, None
         # ⚠️ **El rango sale de ESTA lectura y no de otra (T-2).** Los pixeles ya estan
-        # descomprimidos aqui para hashearlos; sacar el minimo y el maximo es aritmetica
+        # disponibles como bytes almacenados para el hash; el rango requiere decodificarlos.
+        # Sacar el minimo y el maximo es aritmetica
         # sobre un array que ya esta en memoria. Hacerlo en una pasada aparte —que es como
         # estaba— pagaba una tercera lectura del volumen entero por un dato gratuito.
         bajo: float | None

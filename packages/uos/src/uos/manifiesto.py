@@ -345,25 +345,10 @@ class Projection(BaseModel):
 
 
 class Part(BaseModel):
-    """Un fichero dentro de un asset que es un DIRECTORIO (una serie DICOM).
+    """Fichero de una serie: hash exacto y comprobaciones parciales UID/PixelData.
 
-    Existe para que la verificacion sea POR FICHERO. Un solo hash del conjunto dice que
-    algo cambio; estos dicen cual de los 397 cortes, que es la diferencia entre «esta serie
-    no cuadra» y «el corte 214 esta corrupto».
-
-    ⚠️ **Y el hash del FICHERO no es la identidad del corte (D-3).** `sha256` cubre la
-    cabecera entera, asi que cualquier de-identificacion —el paso que todo flujo clinico da,
-    y que B-3 ademas exige— reescribe etiquetas y cambia el hash. La trazabilidad que el
-    §3.4.2 promete («quien tenga la serie puede probar que es la de este caso, corte a
-    corte») se rompia exactamente en el paso mas comun.
-
-    DICOM ya resolvio que identifica una instancia: el **SOP Instance UID** `(0008,0018)`,
-    que sobrevive a la de-identificacion cuando se elige retener UIDs, y el contenido de
-    pixeles `(7FE0,0010)`, que la de-identificacion no toca salvo que se limpie a proposito.
-    Los dos viajan al lado del hash del fichero, y la verificacion pasa a tener dos niveles
-    que se reportan por separado: **identidad** (UID + pixeles) y **bytes exactos** (hash
-    del fichero). Un corte de-identificado que conserva identidad pasa el primero y falla el
-    segundo, y eso es informacion, no un error.
+    El digest de UID y PixelData almacenado no incluye geometria ni rescale. No
+    acredita equivalencia semantica; una reescritura exige actualizar los hashes.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -394,8 +379,8 @@ class Part(BaseModel):
         pattern=r"^[0-9a-f]{64}$",
         description=(
             "SHA-256 over the value of the PixelData element `(7FE0,0010)` alone, without the "
-            "header. De-identification does not touch it, so it separates 'a different slice' from "
-            "'the same slice, cleaned'."
+            "header. It hashes stored bytes, not canonical decoded pixels or geometry; "
+            "it does not establish semantic equivalence after header changes."
         ),
     )
 
@@ -518,8 +503,9 @@ class Asset(BaseModel):
     derived_from: list[str] = Field(
         default_factory=list,
         description=(
-            "Ids of the assets this one was derived from. Required for anything under `derived/`: "
-            "an inference with no stated input cannot be audited."
+            "Ids of the assets this one was derived from. An empty list does not establish "
+            "provenance. Clinical inference with explicitly unresolved sources is reported "
+            "as incomplete and requires review."
         ),
     )
     #: D-3 · `(0020,000E)` y `(0020,000D)`. Lo que DICOM define como identidad de la serie
@@ -553,8 +539,9 @@ class Asset(BaseModel):
     external: bool = Field(
         default=False,
         description=(
-            "True when the asset is referenced and not carried. Acquired originals MUST be "
-            "external; their `uri` is then a content address and never a path."
+            "True when the asset is referenced and not carried; its uri is then a content "
+            "address. The reference writer externalises acquired originals; the format "
+            "also permits embedded payloads, validated against their declared bytes."
         ),
     )
     #: Pista de donde vive el original. Vacio es NO DECLARADO, nunca «no hay donde».

@@ -55,6 +55,8 @@ en la cabecera en vez de colarse como si fuera una medida.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -215,7 +217,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
     """Escribe el STL del compuesto y mide el reconstructor donde hay verdad."""
 
     name = "composite-mesh-export-agent"
-    version = "0.3.0"
+    version = "0.4.0"
 
     def __init__(self, store: SurfaceStore, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -340,11 +342,18 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 + ("solido-cerrado" if cierre.get("estanca") else "CASCARA-ABIERTA")
             ),
         )
+        fuentes = {
+            "scanner": snapshot.surface_ref, "reconstructed_root": snapshot.gaussian_field_ref,
+        }
+        self._procedencia(destination, [
+            (len(caras), "scanner"),
+            (len(caras_base) - len(caras), "synthetic_closure"),
+        ], fuentes)
         vuelta = read_stl_triangles(destination)
         formato = float(np.abs(vuelta - base[caras_base]).max())
 
         escritas, sin_corona = self._por_pieza(
-            destination, raices, superficie, caras, etiquetas_ios, desviacion, sesgo
+            destination, raices, superficie, caras, etiquetas_ios, desviacion, sesgo, fuentes
         )
 
         motivos: list[str] = []
@@ -439,6 +448,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
             ModalityStatus.OK,
             path=destination,
             paths=escritas,
+            sidecars=[p.with_suffix(".provenance.json") for p in [destination, *escritas]],
             format="stl",
             frame="twin",
             n_vertices=len(base),
@@ -489,6 +499,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
         etiquetas_ios: np.ndarray | None,
         desviacion: float | None,
         sesgo: float | None,
+        fuentes: dict[str, str | None] | None = None,
     ) -> tuple[list[Path], list[int]]:
         """Un STL por diente: corona medida + raíz reconstruida, en un solo cuerpo.
 
@@ -527,8 +538,41 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 ruta, pos, car,
                 header=self._cabecera_pieza(fdi, corona is not None, desviacion, sesgo),
             )
+            self._procedencia(ruta, [
+                (0 if corona is None else len(corona[1]), "scanner"),
+                (len(frontera), "reconstructed_root"),
+            ], fuentes or {})
             escritas.append(ruta)
         return escritas, sin_corona
+
+    @staticmethod
+    def _procedencia(
+        ruta: Path, grupos: list[tuple[int, str]], fuentes: dict[str, str | None],
+    ) -> None:
+        """Intervalos [inicio, fin) en el orden de triangulos del STL concreto."""
+        inicio = 0
+        intervalos = []
+        for numero, origen in grupos:
+            if numero:
+                intervalos.append({
+                    "start": inicio, "stop": inicio + numero, "origin": origen,
+                    "source_ref": fuentes.get(origen),
+                })
+            inicio += numero
+        documento = {
+            "schema": "ash-stl-provenance/1.0",
+            "stl_sha256": hashlib.sha256(ruta.read_bytes()).hexdigest(),
+            "n_faces": inicio, "face_ranges": intervalos,
+            "agent": "composite-mesh-export-agent@0.4.0",
+            "indexing": "zero-based, stop-exclusive, binary STL triangle order",
+            "clinical_validation": "not_established",
+            "note": "Las caras scanner conservan geometria adquirida; su asignacion FDI "
+                    "depende de segmentacion. Cierres y raices no son superficie medida. "
+                    "Reordenar o modificar el STL invalida este mapa; la impresion no lo conserva.",
+        }
+        ruta.with_suffix(".provenance.json").write_text(
+            json.dumps(documento, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        )
 
     def _corona_de(
         self, fdi: int, superficie: np.ndarray, caras: np.ndarray, etq: np.ndarray | None

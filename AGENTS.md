@@ -1101,11 +1101,13 @@ point more. The comment was true about the intention and false about the content
 | Field | Value |
 |---|---|
 | **Location** | `packages/export-agents/` (`malla_compuesta.py` · `solido.py` · `anatomia.py` · `compuesto.py` · `stl.py` · `base.py`) |
-| **Version** | `0.3.0` |
+| **Version** | `0.4.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
 | **Orchestrator** | `IngestionPipeline.exportar(..., etiquetas_ios=...)`; with no scanner, no registration or no segmentation it returns `MISSING` and says which one is absent |
+
+**2026-09-30 correction.** Each STL has a SHA-256-bound `.provenance.json` companion mapping triangle ranges to scanner geometry, synthetic closure or reconstructed root. `ExportOutput.sidecars` lists companions separately from per-tooth STL `paths`. They must be kept together; this does not validate anatomy or accompany a physical print.
 
 **Role / Purpose**
 
@@ -1278,11 +1280,13 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.14.0` |
+| **Version** | `0.15.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
 | **Orchestrator** | `IngestionPipeline.exportar(...)`; with no pseudonym it declares `FAILED`, with no mesh `MISSING` |
+
+**2026-09-30 correction.** Inferred regional findings are exported individually in `derived/` with layer 3 and model/source metadata. An unresolved source is explicit, warned by validation and added to human review. HU calibration defaults to unverified. Embedded DICOM hash mismatches fail even when UID and stored pixels match; originals remain external in this writer. Format validation also supports embedded payloads.
 
 **Role / Purpose**
 

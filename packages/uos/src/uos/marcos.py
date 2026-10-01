@@ -8,8 +8,9 @@ se componen dos saltos, y que hacer cuando hay dos caminos que no coinciden.
 ⚠️ **Dos caminos que discrepan no se promedian ni se eligen en silencio.** Es exactamente
 el caso que la disciplina del formato prohibe: dos cosas que no son iguales pareciendo
 iguales. Se elige uno de forma determinista —el mas corto, y a igualdad el de ids menores,
-porque un error se propaga a lo largo del camino y dos saltos no valen lo que uno— y la
-discrepancia se DECLARA como aviso en vez de esconderse en la media.
+como convencion reproducible— y la
+discrepancia se DECLARA como aviso en vez de esconderse en la media. Elegir menos
+saltos es una convencion reproducible, no una garantia de menor incertidumbre.
 """
 
 from __future__ import annotations
@@ -20,11 +21,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from uos.manifiesto import Manifest, Registration
 
-#: Cuanto pueden discrepar dos caminos antes de decirlo. En milimetros para la
-#: traslacion; la parte rotacional entra en la misma norma porque un giro pequeño a
-#: distancia del origen es un desplazamiento grande, y es el desplazamiento lo que
-#: hereda una medida clinica.
-TOLERANCIA_MM = 1e-3
+#: Umbral algebraico sobre coeficientes de matrices, NO una distancia ni un TRE.
+#: Mezcla entradas rotacionales y traslacionales; solo detecta poses discrepantes.
+TOLERANCIA_COEFICIENTES = 1e-3
+# Alias conservado para consumidores existentes; el nombre antiguo era incorrecto.
+TOLERANCIA_MM = TOLERANCIA_COEFICIENTES
 
 
 def _aristas(m: Manifest) -> list[tuple[str, str, Registration]]:
@@ -76,8 +77,8 @@ def resuelve_al_canonico(m: Manifest, frame: str) -> list[float] | None:
     """La transformada que lleva puntos de `frame` al canonico, o `None` si no conecta.
 
     Determinista: el camino con MENOS aristas, y a igualdad el de la secuencia de ids mas
-    pequeña. Un error de registracion se propaga a lo largo del camino, asi que dos saltos
-    no valen lo que uno y la eleccion no puede quedar al azar del orden de iteracion.
+    pequeña. Esta convencion evita depender del orden de iteracion, pero no selecciona
+    el camino de menor incertidumbre: no se propagan covarianzas.
     """
     caminos = caminos_al_canonico(m, frame)
     if not caminos:
@@ -87,9 +88,10 @@ def resuelve_al_canonico(m: Manifest, frame: str) -> list[float] | None:
 
 
 def discrepancia_maxima(m: Manifest, frame: str) -> float | None:
-    """Cuanto se separan, como mucho, dos caminos distintos de `frame` al canonico.
+    """Maxima diferencia absoluta de coeficientes entre matrices de caminos distintos.
 
-    `None` cuando hay un camino o ninguno: no hay nada que comparar.
+    No es distancia espacial, ni tiene unidades fisicas uniformes. `None` cuando hay
+    un camino o ninguno: no hay nada que comparar.
     """
     import numpy as np
 

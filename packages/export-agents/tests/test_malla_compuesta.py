@@ -500,6 +500,14 @@ def test_la_arcada_sale_CERRADA_cuando_hay_eje_anatomico(tmp_path):
         _snapshot(), tmp_path / "c.stl", etiquetas_ios=almacen.etiquetas_ios
     )
     assert salida.ok, salida.detail
+    import json
+
+    meta = json.loads(salida.sidecars[0].read_text())
+    grupos = meta["face_ranges"]
+    assert [g["origin"] for g in grupos] == ["scanner", "synthetic_closure"]
+    assert grupos[0]["stop"] == len(almacen.load(REF_MALLA)["faces"])
+    assert grupos[1]["start"] == grupos[0]["stop"]
+    assert grupos[1]["stop"] == salida.n_faces
     assert "solido-cerrado" in salida.path.read_bytes()[:80].decode("ascii", "replace")
     assert not any("estanca" in m for m in salida.hitl_reasons), salida.hitl_reasons
     # ⚠️ La comprobación topológica de verdad vive en `test_solido`, sobre índices. Aquí
@@ -550,3 +558,31 @@ def test_la_base_cae_al_lado_CONTRARIO_de_las_coronas(tmp_path):
     assert float((v @ oclusal).max()) <= float(coronas.max()) + 1e-6, (
         "hay geometría nueva POR ENCIMA de las coronas: la base salió del lado equivocado"
     )
+
+
+def test_sidecars_cubren_todas_las_caras_y_estan_ligados_al_stl(tmp_path):
+    import hashlib
+    import json
+
+    almacen = _almacen(piezas=(36, 46))
+    salida = CompositeMeshExportAgent(almacen).export(
+        _snapshot(), tmp_path / "c.stl", etiquetas_ios=almacen.etiquetas_ios,
+    )
+    assert salida.ok, salida.detail
+    assert len(salida.sidecars) == 1 + len(salida.paths)
+    for ruta, sidecar in zip([salida.path, *salida.paths], salida.sidecars, strict=True):
+        meta = json.loads(sidecar.read_text())
+        caras = read_stl_triangles(ruta)
+        assert meta["stl_sha256"] == hashlib.sha256(ruta.read_bytes()).hexdigest()
+        assert meta["n_faces"] == len(caras)
+        cursor = 0
+        for grupo in meta["face_ranges"]:
+            assert grupo["start"] == cursor
+            assert grupo["stop"] > cursor
+            cursor = grupo["stop"]
+        assert cursor == len(caras)
+        origenes = {g["origin"] for g in meta["face_ranges"]}
+        if ruta == salida.path:
+            assert "reconstructed_root" not in origenes
+        else:
+            assert origenes == {"scanner", "reconstructed_root"}
