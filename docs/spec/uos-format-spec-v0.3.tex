@@ -2746,7 +2746,7 @@ discovering the change when their reader breaks. The warning is also the written
   \bottomrule
   \end{longtable}
 
-  ⚠️ \textbf{This separation is the outcome of getting it wrong, and the record stays.}
+  \textbf{Note:} \textbf{This separation is the outcome of getting it wrong, and the record stays.}
   \code{uos-spec-v0.3} was created from a working branch, before the pull request carrying it
   was merged, and then moved twice on 2026-09-24. The first move was because what it
   published was a validation-report schema requiring \code{"0.2"} while the reference
@@ -2810,11 +2810,11 @@ validator has to accept an issuer that does. It reaches no conformance level, co
 changed.\\
 \code{series-slice-extra.uos} & \code{error} & A slice the manifest does not declare in
 \code{parts[]}. Extra is as serious as missing: nobody knows where it came from.\\
-\code{series-slice-deidentified.uos} & \code{warning} & A slice whose tags were cleaned: it
-keeps its SOP Instance UID and its pixels and its bytes are no longer the declared ones.
-\textbf{This is the case the two levels exist for} --- a validator comparing only file
-hashes says ``this series is not this case's'', which is false and is the most expensive
-conclusion available.\\
+\code{series-slice-deidentified.uos} & \code{error} & A slice whose tags were cleaned
+without updating its declared whole-file hash and size. Matching SOP Instance UID and
+stored PixelData does not establish that the rewritten header preserves geometry or
+intensity scaling. The producer must regenerate the manifest after rewriting the file;
+check 7 rejects the stale declaration without claiming that it is a different patient.\\
 \bottomrule
 \end{longtable}
 
@@ -3299,7 +3299,7 @@ originals are referenced, everything UOS composes is inside.
 \textbf{Item} & \textbf{Value}\\
 \midrule
 \endhead
-ZIP entries & 12. ⚠️ Measured on the container as last written, which predates 0.6.0
+ZIP entries & 12. \textbf{Note:} Measured on the container as last written, which predates 0.6.0
 moving the per-Gaussian FDI labels out of the payloads and into
 \code{derived/seg\_gaussians.<layer>.\{bin,meta.json\}}: a container written by today's
 writer carries two more entries per labelled layer. The figure is left as measured rather
