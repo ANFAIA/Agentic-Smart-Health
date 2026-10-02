@@ -459,31 +459,38 @@ so.
 \endhead
 \textbf{1} & \textbf{Acquired}, or transcribed from a document a person signed. A DICOM
 series, a scanner mesh, a photograph; the pH someone measured and wrote down.\\
-\textbf{2} & \textbf{Computed} by a deterministic, reproducible procedure from layer-1
-assets, \emph{with no trained model}. Automatic registrations, format conversions,
-subsampling, per-tooth colour measured off a photograph. A layer-2 asset \MAY{} live
-outside \code{derived/}, but it \MUST{} declare \code{derived\_from}: if the claim is that
-it is reproducible, the container has to say from what, or the claim cannot be checked.\\
+\textbf{2} & \textbf{Computed} from declared sources without a pretrained clinical
+model. Reproducibility is a separate property, recorded by the fidelity/provenance
+extension; the layer number does not guarantee identical repeated results.
+Automatic registrations, format conversions, subsampling and photograph-based colour.
+Sources must remain traceable; unresolved provenance must be explicit.\\
 \textbf{3} & \textbf{Model output.} Lives only under \code{derived/}
 (\S\ref{sec:derived}).\\
 \bottomrule
 \end{longtable}
 
-Layer 2 is not a softer layer 3. The distinction that matters to a regulator is whether a
-trained model is in the path, and the distinction that matters to a reader is whether the
-value can be recomputed. Layer 2 answers yes to the second and no to the first, and it is
-exactly the class that was invisible before: an ICP transform, an STL converted to glTF, a
-subsampled density field, all of them shipping as though they had been measured.
+Layer numbers describe provenance rather than establish accuracy or reproducibility.
+An ICP transform, a converted mesh and a subsampled density field are computations,
+not new acquisitions. Outputs influenced by inferred segmentation remain removable,
+even when a subsequent computation removes the label column.
 
-\paragraph{Rationale.} The third plane is what makes the format shippable. Distributing
-the same case in a jurisdiction where the AI module is not cleared requires deleting a
-directory, not re-exporting anything. What the separation buys is the ability to say that
-layers 1 and 2 are \textbf{not Software as a Medical Device} (\textbf{SaMD}) --- software
-whose intended purpose is medical, and which therefore falls under the EU Medical Device
-Regulation or the FDA's --- and that only the layer-3 modules are. A claim like that has to
-be enforceable or it is not worth making. That property only holds if it is enforced --- which
-is why \S\ref{sec:conformance} makes ``layer 3 outside \code{derived/}'' an error in both
-directions.
+\paragraph{Rationale.} Separating inferred payloads permits creating a successor
+without them, updating its inventory, fidelity records, views and provenance chain.
+Layer 1 or 2 does not exempt software from medical-device requirements: qualification
+requires a separate assessment of intended purpose. The validator checks technical
+separation; it establishes neither regulatory authorization nor clinical fitness.
+
+\paragraph{Fidelity and processing extension.} The optional versioned extension
+\code{uos\_fidelity\_provenance} 1.0 references the embedded asset
+\code{metadata/fidelity-provenance.json}. Its executable contract is
+\code{schemas/uos-fidelity-provenance-1.0.schema.json}; the accompanying document is
+\code{docs/spec/uos-fidelity-provenance-v1.md}. It records per-asset losses, their
+inherited history, scoped metrics, processing configuration and evidence states.
+Legacy containers without it have unknown fidelity. With the extension present,
+the validator rejects removed or altered inherited losses, cyclic or contradictory
+lineage, and inference-dependent outputs declared outside layer 3. Clinical eligibility
+is never inferred from successful validation. Reproducibility mode and measured
+repeatability are distinct; geometric uncertainty remains unknown without evidence.
 
 \subsection{Frames and registrations}\label{sec:frames}
 
@@ -911,7 +918,7 @@ The layer of every asset's content, and what each regulator says about it. This 
 \textbf{Field} & \textbf{Type} & \textbf{Req.} & \textbf{Description}\\
 \midrule
 \endhead
-\code{layer} & integer & default \code{1} & Regulatory layer of the content: 1 acquired or transcribed, 2 computed deterministically from layer 1 with no trained model, 3 model output. Layer 3 \MUST{} live under \code{derived/}.\\
+\code{layer} & integer & default \code{1} & Regulatory layer of the content: 1 acquired or transcribed, 2 computed from declared sources without a pretrained clinical model, 3 model output. Reproducibility is recorded separately, not guaranteed by a layer number. Layer 3 \MUST{} live under \code{derived/}.\\
 \code{clearances} & \code{Clearance}[] & --- & What each regulator says about this asset. An empty list is 'nothing declared', not 'cleared everywhere'.\\
 \bottomrule
 \end{longtable}

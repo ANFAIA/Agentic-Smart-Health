@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -230,9 +231,10 @@ def test_ingesta_del_informe_sintetico(report_path: Path) -> None:
 def test_cada_observacion_lleva_su_provenance(report_path: Path) -> None:
     """Trazabilidad por valor: cada pH sabe de qué fichero y qué agente vino."""
     for obs in ReportAgent().ingest(report_path).regional:
-        assert obs.provenance.agent == "report-agent@0.1.0"
+        assert obs.provenance.agent == f"report-agent@{ReportAgent.version}"
         assert obs.provenance.modality is Modality.REPORT
-        assert obs.provenance.source_file == str(report_path)
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        assert obs.provenance.source_file == f"sha256:{digest}"
 
 
 def test_la_fecha_del_informe_data_las_observaciones(tmp_path: Path) -> None:
@@ -444,6 +446,7 @@ def test_los_indices_no_son_inferidos_ni_con_backend_de_modelo(tmp_path: Path) -
     que este campo vino a tapar.
     """
     agente = ReportAgent(backend="llm")
+    (tmp_path / "informe.txt").write_text("Informe sintetico")
     prov = agente._provenance(
         tmp_path / "informe.txt",
         confidence=0.9,

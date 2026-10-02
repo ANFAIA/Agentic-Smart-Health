@@ -929,7 +929,7 @@
       "properties": {
         "layer": {
           "default": 1,
-          "description": "Regulatory layer of the content: 1 acquired or transcribed, 2 computed deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST live under `derived/`.",
+          "description": "Regulatory layer of the content: 1 acquired or transcribed, 2 computed from declared sources without a pretrained clinical model, 3 model output. Reproducibility is recorded separately, not guaranteed by a layer number. Layer 3 MUST live under `derived/`.",
           "maximum": 3,
           "minimum": 1,
           "title": "Layer",

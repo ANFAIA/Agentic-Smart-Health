@@ -39,6 +39,7 @@ no el codigo.
 """
 
 from uos.agente import UOSExportAgent
+from uos.auditoria import read_fidelity, remove_inference
 from uos.clinico import OBSERVATIONS, clinical_layer
 from uos.contenedor import read_manifest, write_uos
 from uos.escena import GSNode, build_glb
@@ -63,4 +64,5 @@ __all__ = [
     "Visit", "build_views", "write_uos", "read_manifest", "anatomical_frame",
     "Extension", "GSNode", "OBSERVATIONS", "clinical_layer", "build_glb",
     "describe_series", "validate",
+    "read_fidelity", "remove_inference",
 ]

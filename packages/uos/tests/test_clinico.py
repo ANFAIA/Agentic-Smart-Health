@@ -226,3 +226,14 @@ def test_hallazgos_acumulados_conservan_procedencias_distintas():
     segundo.provenance = segundo.provenance.model_copy(update={"agent": "otro@1"})
     hallazgos = clinical_layer(_snapshot(primero, segundo), [])["teeth"][0]["findings"]["value"]
     assert [h["provenance"]["agent"] for h in hallazgos] == ["report-agent@0.1.0", "otro@1"]
+
+
+def test_valores_contradictorios_no_se_pierden_al_agrupar_por_diente():
+    primero = _obs("26", ph=6.2)
+    segundo = _obs("26", ph=7.1)
+    segundo.provenance = segundo.provenance.model_copy(update={"agent": "otro@1"})
+    value = clinical_layer(_snapshot(primero, segundo), [])["teeth"][0]["ph"]
+    assert value["value"] == 7.1
+    assert value["alternatives"][0]["value"] == 6.2
+    assert value["alternatives"][0]["agent"] == "report-agent@0.1.0"
+    assert value["selection"] == "last-observation-unreviewed"

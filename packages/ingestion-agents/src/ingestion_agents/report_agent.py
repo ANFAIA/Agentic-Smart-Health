@@ -53,6 +53,7 @@ from core_schemas import (
     Hallazgo,
     Medida,
     Modality,
+    Provenance,
     RegionalObservation,
     Support,
 )
@@ -658,7 +659,7 @@ class ReportAgent(BaseIngestionAgent):
     """Ingiere el informe clínico y produce la capa dispersa de atributos por FDI."""
 
     name = "report-agent"
-    version = "0.1.0"
+    version = "0.2.0"
     modality = Modality.REPORT
     support = Support.REGIONAL
 
@@ -840,10 +841,40 @@ class ReportAgent(BaseIngestionAgent):
                 "cotejarlo con el original, que viaja en el contenedor por su `sha256`."
             )
 
-        return self._success(
+        if leido_por_ocr:
+            # OCR is model output even when regex reads the recognised text afterwards.
+            # Approval must preserve that origin rather than laundering it into transcription.
+            for value in [*observations, *medidas]:
+                model = value.provenance.model
+                value.provenance = Provenance(**{
+                    **value.provenance.model_dump(),
+                    "derivation": Derivation.INFERRED,
+                    "model": "ocr:tesseract" + (f"|{model}" if model else ""),
+                    "confidence": min(value.provenance.confidence, _OCR_CONFIDENCE),
+                })
+        outcome = self._success(
             source,
             confidence=agent_confidence,
             regional=observations,
             medidas=medidas,
             detail=" ".join(motivos) if motivos else None,
         )
+        if leido_por_ocr and outcome.provenance is not None:
+            model = outcome.provenance.model
+            outcome.provenance = Provenance(**{
+                **outcome.provenance.model_dump(), "derivation": Derivation.INFERRED,
+                "model": "ocr:tesseract" + (f"|{model}" if model else ""),
+            })
+        return outcome
+
+    def _provenance(
+        self, source: Path, confidence: float = 1.0, *,
+        derivation: Derivation | None = None, model: str | None = None,
+    ) -> Provenance:
+        provenance = super()._provenance(
+            source, confidence, derivation=derivation, model=model,
+        )
+        if not source.is_file():
+            # A failed ingestion still needs a provenance record, without inventing a hash.
+            return provenance
+        return provenance.model_copy(update={"source_file": f"sha256:{_sha256(source)}"})

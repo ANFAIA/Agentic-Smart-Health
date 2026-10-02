@@ -112,7 +112,7 @@ class Regulatory(BaseModel):
     """La capa regulatoria del asset (§1.1) y lo que un regulador dice de el.
 
     **Las tres capas.** 1 es lo adquirido y su transcripcion; 2 es lo COMPUTADO por un
-    procedimiento determinista y reproducible a partir de capa 1, sin modelo entrenado —
+    procedimiento sin modelo clinico preentrenado a partir de fuentes declaradas —
     registraciones automaticas, conversiones de formato, submuestreos, color medido por
     pieza—; 3 es salida de modelo. El 2 no existia: el documento admitia `1..3` y solo
     definia el 1 y el 3, asi que todo el computo determinista viajaba como capa 1 sin que
@@ -134,7 +134,9 @@ class Regulatory(BaseModel):
         le=3,
         description=(
             "Regulatory layer of the content: 1 acquired or transcribed, 2 computed "
-            "deterministically from layer 1 with no trained model, 3 model output. Layer 3 MUST "
+            "from declared sources without a pretrained clinical model, 3 model output. "
+            "Reproducibility is recorded separately, not guaranteed by a layer number. "
+            "Layer 3 MUST "
             "live under `derived/`."
         ),
     )

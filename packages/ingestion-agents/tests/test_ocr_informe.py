@@ -102,6 +102,8 @@ def test_el_texto_de_OCR_no_pasa_por_capa_de_texto(ocr_de_mentira, tmp_path) -> 
     assert salida.provenance.confidence < 0.7
     assert "OCR" in (salida.detail or "")
     assert "cotejarlo con el original" in (salida.detail or "")
+    assert all(o.provenance.derivation.value == "inferred" for o in salida.regional)
+    assert all(o.provenance.model == "ocr:tesseract" for o in salida.regional)
 
 
 def test_sin_OCR_el_fallo_sigue_diciendo_que_clase_de_fichero_es(monkeypatch, tmp_path):

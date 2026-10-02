@@ -238,3 +238,58 @@ La corrección se comprueba con datos sintéticos: exportación/validación de i
 con y sin fuente, separación del color, rechazo de cambios en posición/rescale/cabecera,
 calibración desconocida y cobertura/hash de los mapas STL. Las cifras históricas del
 paper no se vuelven a medir ni se convierten en evidencia clínica por estas pruebas.
+
+
+## 2026-10-02 — Fidelidad y procedencia versionadas antes del complete case
+
+Se implementan los puntos 1 y 2 acordados tras revisar el executive summary: un
+contrato por asset para pérdidas/evidencia y la separación trazable de salidas.
+El alcance técnico y sus límites están en
+[la extensión 1.0](../spec/uos-fidelity-provenance-v1.md).
+
+La implementación es una extensión opcional sobre UOS 0.3, en lugar de presentar
+como completa toda la propuesta v0.4. Su asset tiene hash y tamaño en el manifiesto;
+el contrato se genera desde Pydantic y el validador comprueba contenido y linaje.
+Sin extensión, los datos de fidelidad permanecen desconocidos. Las pérdidas y los
+estados desconocidos se propagan; no se deduce aptitud clínica del resultado del
+validador, de hashes, del muestreo ni del residual de ajuste.
+
+La capa 2 declara cálculo sin modelo clínico preentrenado; no acredita
+reproducibilidad. El modo del proceso y la repetibilidad comprobada se registran
+por separado. La apariencia se mantiene en capa 3 y fuera de la escena base;
+la geometría condicionada por segmentación también es removible. Quitar una
+columna FDI no elimina las dependencias que ya influyeron en el resultado.
+
+ReportAgent 0.2.0 identifica documentos por contenido y conserva OCR como
+inferencia incluso en medidas no regionales. UOSExportAgent 0.16.0 conserva
+procedencia por valor, alternativas contradictorias y fuentes no resueltas.
+La revisión humana no reclasifica retroactivamente el origen. El sucesor sin
+inferencia conserva la malla base, actualiza metadatos y cadena, y vacía las vistas
+que podían depender de etiquetas.
+
+Se corrige la selección aleatoria de vistas de apariencia para usar una semilla
+local registrada. Configuración, semillas y versiones quedan en el artefacto y
+se trasladan al UOS. No se declara equivalencia exacta entre plataformas o GPU.
+La incertidumbre geométrica no acreditada permanece desconocida: no se calcula
+TRE a partir de RMS ni se inventan covarianzas.
+
+Permanecen fuera de esta entrega firmas confiables, resolvedores de originales,
+huella canónica DICOM, propagación de covarianzas y validación clínica. El complete
+case y la reproducción de métricas del paper se ejecutarán en la fase siguiente;
+los checks de esta entrega usan datos sintéticos.
+
+### Compatibilidad funcional de las etiquetas separadas (2026-10-02)
+
+La apariencia GLB conserva sus gaussianas sin códigos FDI incrustados. El
+exportador 0.17.0 publica `asset.seg_appearance`, con un código por gaussiana
+y enlace explícito a `asset.appearance`. El visor incorpora esas etiquetas sólo
+en memoria para selección e aislamiento; la regeneración de malla utiliza
+`asset.seg_teeth`, verifica el hash y el orden de posiciones y conserva su
+procedencia. Eliminar la inferencia retira ambos assets de etiquetas.
+
+El ejecutor puede reutilizar una apariencia archivada mediante los dos argumentos
+`--reusa-apariencia-uos` y `--reusa-apariencia-artefacto`. Comprueba el escaneo y
+las fotos por contenido y las posiciones y el color del artefacto contra el GLB
+anterior. Registra los hashes de origen y declara que no hubo entrenamiento nuevo.
+La migración acepta campos de manifiestos legados que el contrato estricto actual
+rechaza; esto no acredita la conformidad actual del archivo anterior.

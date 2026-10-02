@@ -431,7 +431,7 @@ this sentence, CI says so with the file and the line. There are 13 marked number
 | Field | Value |
 |---|---|
 | **Location** | `packages/ingestion-agents/` (`mesh_agent.py` · `cbct_agent.py` · `report_agent.py`) |
-| **Version** | `0.1.0` |
+| **Version** | `mesh-agent` **0.1.0** · `cbct-agent` **0.1.0** · `report-agent` **0.2.0** |
 | **Status** | `active` |
 | **Pipeline phase** | 1 · Ingestion (the raw → contract boundary) |
 | **Common contract** | `IngestionOutput` + `BaseIngestionAgent` in `ingestion_agents/base.py` |
@@ -493,6 +493,8 @@ IngestionOutput
   (HMAC-SHA256 with a salt from `ASH_PSEUDONYM_SALT`); no direct identifier reaches
   the contract.
 
+**Report provenance (2026-10-02):** each extracted value names its source by SHA-256. Renaming preserves its identity; changed bytes do not. OCR-derived regional values and global measurements remain model outputs requiring human review. Native-text extraction remains transcription. Human approval preserves inferred origin.
+
 **Per-modality rules**
 
 - 🔒 `mesh-agent` — **reversibility guardrail**: it preserves the source surface
@@ -511,6 +513,7 @@ IngestionOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-02 | report-agent 0.2.0 | Stable content-addressed sources; OCR provenance preserved for regional observations and global measurements. |
 | 2026-07-22 | 0.1.0 | Initial registration: the three ingestion agents go from `planned` to `active`. Common `IngestionOutput` contract, content-addressed store, quarantine, pseudonymisation, minimal ontology, synthetic case generator and phase 1 orchestration. |
 
 ---
@@ -1280,7 +1283,7 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.15.0` |
+| **Version** | `0.17.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
@@ -1303,6 +1306,8 @@ that — DICOM does not model Gaussians and does not transmit well over the web,
 neither volumes nor clinical metadata, OpenUSD is foreign to the clinical ecosystem — and
 that is why the container is our own and the validator can run over a file somebody else
 wrote.
+
+**Fidelity and separation (2026-10-02):** `uos_fidelity_provenance` 1.0 records per-asset losses, inherited unknown history, source lineage, scoped evidence, processing and repeatability. Computed representations use layer 2; its number does not prove reproducibility. Model-dependent appearance and segmentation-conditioned fitted geometry remain under `derived/`; the base mesh contains neither. `remove_inference` creates a validated successor with metadata and chain updated. Clinical eligibility, independent TRE and authenticated reviews require separate evidence.
 
 **Specific rules**
 
@@ -1476,6 +1481,8 @@ wrote.
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-02 | 0.17.0 | Separate indexed appearance labels preserve picking without inference in the base scene. |
+| 2026-10-02 | 0.16.0 | Versioned fidelity/provenance extension, validated loss inheritance and sources, inferred global measurements, separate model-dependent representations and removal as a successor. |
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |
 | 2026-09-03 | 0.14.0 | **G-1, the public API.** Everything an integrator types is now English: `read_manifest`, `validate`, `write_uos`, `Manifest`, `Registration`, `Subject`, `report.valid`, `report.errors`, `report.levels`. The eleven module **files** keep their Spanish names on purpose — nobody imports them, `__init__.py` re-exports everything, and renaming a listing nobody types is a breaking change bought for nothing. The payoff is that `esquema.py`'s title mapping collapses: the classes are already called what the schema should call them, so only the one-line English descriptions remain. |
 | 2026-09-03 | 0.13.0 | **The G items.** The extension prefix is `histora_`, one prefix, renamed from the summer-grant project's `ash_` — the specification told writers not to squat on it without saying who owned it, which is not a rule anyone can follow. Copyright and the Apache 2.0 licence are stated on the cover as covering the document and the reference implementation alike. The schema `$id` resolves, pinned to a tag rather than a branch, and deliberately names no domain nobody holds. There is a **conformance fixture**: one valid container and seven broken ones, each with a single defect and the expected result beside it, built by running the real writer over synthetic data and verified by the test suite on every run. And the document says how it changes and who decides, where before it referred to "the process of §16" and §16 described no process. |

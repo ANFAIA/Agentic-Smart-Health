@@ -160,7 +160,18 @@ def describe_series(
             "deja nulo y el frame queda identificado solo por un nombre que se invento el "
             "escritor"
         )
+    from uos.auditoria import dicom_losses
+
+    losses, history_unknown, encoding = dicom_losses(cabeceras, "asset.ct_001")
+    history_unknown |= len(cabeceras) != len(ficheros)
     return {
+        "compression_history": {
+            "prior_history_unknown": history_unknown,
+            "current_encoding": encoding.model_dump(mode="json"),
+            "losses": [loss.model_dump(mode="json") for loss in losses],
+            "scope": "DICOM header declarations across all readable instances; "
+                     "not clinical evidence",
+        },
         "frame": frame,
         "dicom_frame_of_reference_uid": None if for_uid is None else str(for_uid),
         "series_instance_uid": str(getattr(primera, "SeriesInstanceUID", "") or "") or None,

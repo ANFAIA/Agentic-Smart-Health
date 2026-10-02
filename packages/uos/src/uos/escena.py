@@ -243,6 +243,7 @@ def build_glb(
     extras: dict | None = None,
     nodos_gs: list[GSNode] | None = None,
     splats: SplatsKHR | None = None,
+    include_mesh: bool = True,
 ) -> bytes:
     """La escena en un solo `bytes`. Indexada: el orden de vertices se conserva.
 
@@ -281,40 +282,45 @@ def build_glb(
         desplazamiento += len(crudo)
         return len(vistas) - 1
 
-    # POSITION. `min`/`max` son OBLIGATORIOS en glTF para este accesor: es lo que deja a un
-    # visor calcular el encuadre sin leer el buffer entero.
-    accesos.append({
-        "bufferView": _anade(pos, _ARRAY_BUFFER), "componentType": _FLOAT,
-        "count": int(len(pos)), "type": "VEC3",
-        "min": [float(x) for x in pos.min(axis=0)],
-        "max": [float(x) for x in pos.max(axis=0)],
-    })
-    atributos = {"POSITION": 0}
-
-    if normales is not None and len(normales) == len(pos):
-        nor = np.ascontiguousarray(normales, dtype=np.float32)
-        # glTF exige normales UNITARIAS. Las del escaner lo son, pero normalizar aqui es
-        # barato y evita que una malla de otro emisor se renderice con la luz al reves.
-        largo = np.linalg.norm(nor, axis=1, keepdims=True)
-        nor = np.divide(nor, largo, out=np.zeros_like(nor), where=largo > 0)
+    if include_mesh:
+        # POSITION. `min`/`max` son OBLIGATORIOS en glTF para este accesor: es lo que deja a un
+        # visor calcular el encuadre sin leer el buffer entero.
         accesos.append({
-            "bufferView": _anade(nor, _ARRAY_BUFFER), "componentType": _FLOAT,
-            "count": int(len(nor)), "type": "VEC3",
+            "bufferView": _anade(pos, _ARRAY_BUFFER), "componentType": _FLOAT,
+            "count": int(len(pos)), "type": "VEC3",
+            "min": [float(x) for x in pos.min(axis=0)],
+            "max": [float(x) for x in pos.max(axis=0)],
         })
-        atributos["NORMAL"] = len(accesos) - 1
+        atributos = {"POSITION": 0}
 
-    # Un unico primitive y un unico index buffer: Layer 1 pura (B-1).
-    accesos.append({
-        "bufferView": _anade(idx, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
-        "count": int(idx.size), "type": "SCALAR",
-    })
-    mallas: list[dict] = [{
-        "name": nombre,
-        "primitives": [{"attributes": atributos, "indices": len(accesos) - 1, "mode": 4}],
-    }]
+        if normales is not None and len(normales) == len(pos):
+            nor = np.ascontiguousarray(normales, dtype=np.float32)
+            # glTF exige normales UNITARIAS. Las del escaner lo son, pero normalizar aqui es
+            # barato y evita que una malla de otro emisor se renderice con la luz al reves.
+            largo = np.linalg.norm(nor, axis=1, keepdims=True)
+            nor = np.divide(nor, largo, out=np.zeros_like(nor), where=largo > 0)
+            accesos.append({
+                "bufferView": _anade(nor, _ARRAY_BUFFER), "componentType": _FLOAT,
+                "count": int(len(nor)), "type": "VEC3",
+            })
+            atributos["NORMAL"] = len(accesos) - 1
 
-    # El nodo 0 es la malla y ES el marco canonico (§5.1). Los GS van de hijos suyos.
-    nodos: list[dict] = [{"mesh": 0, "name": nombre}]
+        # Un unico primitive y un unico index buffer: Layer 1 pura (B-1).
+        accesos.append({
+            "bufferView": _anade(idx, _ELEMENT_ARRAY_BUFFER), "componentType": _UINT32,
+            "count": int(idx.size), "type": "SCALAR",
+        })
+        mallas: list[dict] = [{
+            "name": nombre,
+            "primitives": [{"attributes": atributos, "indices": len(accesos) - 1, "mode": 4}],
+        }]
+
+        # El nodo 0 es la malla y ES el marco canonico (§5.1). Los GS van de hijos suyos.
+        nodos: list[dict] = [{"mesh": 0, "name": nombre}]
+
+    else:
+        mallas = []
+        nodos = [{"name": nombre}]
 
     # ⚠️ **La apariencia va DENTRO del glTF, que es lo que el §5.1 pedia desde el
     # principio.** Iba como `.ply` aparte con un `extras.uos_gs_uri` apuntandolo — el

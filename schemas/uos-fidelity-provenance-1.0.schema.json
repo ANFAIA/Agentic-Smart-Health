@@ -1,0 +1,489 @@
+{
+  "$defs": {
+    "AssetRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "enum": [
+            "unknown",
+            "acquired",
+            "transcribed",
+            "computed",
+            "inferred",
+            "mixed"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "source_status": {
+          "default": "unresolved",
+          "enum": [
+            "resolved",
+            "unresolved",
+            "not_applicable"
+          ],
+          "title": "Source Status",
+          "type": "string"
+        },
+        "process": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Process"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_encoding": {
+          "$ref": "#/$defs/Claim"
+        },
+        "prior_history_unknown": {
+          "default": true,
+          "title": "Prior History Unknown",
+          "type": "boolean"
+        },
+        "history": {
+          "$ref": "#/$defs/Claim"
+        },
+        "calibration": {
+          "$ref": "#/$defs/Claim"
+        },
+        "sampling": {
+          "$ref": "#/$defs/Claim"
+        },
+        "geometric_uncertainty": {
+          "$ref": "#/$defs/Claim"
+        },
+        "registrations_used": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Registrations Used",
+          "type": "array"
+        },
+        "introduced_losses": {
+          "items": {
+            "$ref": "#/$defs/Loss"
+          },
+          "title": "Introduced Losses",
+          "type": "array"
+        },
+        "inherited_losses": {
+          "items": {
+            "$ref": "#/$defs/Loss"
+          },
+          "title": "Inherited Losses",
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "clinical_assessments": {
+          "items": {
+            "$ref": "#/$defs/ClinicalAssessment"
+          },
+          "title": "Clinical Assessments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "origin"
+      ],
+      "title": "AssetRecord",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/State",
+          "default": "unknown"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "title": "Claim",
+      "type": "object"
+    },
+    "ClinicalAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "conclusion": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "eligible",
+            "ineligible"
+          ],
+          "title": "Conclusion",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/State",
+          "default": "unknown"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "ClinicalAssessment",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "reference_asset": {
+          "minLength": 1,
+          "title": "Reference Asset",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "scope": {
+          "minLength": 1,
+          "title": "Scope",
+          "type": "string"
+        },
+        "result": {
+          "minLength": 1,
+          "title": "Result",
+          "type": "string"
+        },
+        "verifier": {
+          "minLength": 1,
+          "title": "Verifier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference_asset",
+        "method",
+        "scope",
+        "result",
+        "verifier"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Loss": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "origin_asset": {
+          "minLength": 1,
+          "title": "Origin Asset",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "compression",
+            "quantization",
+            "subsampling",
+            "reconstruction",
+            "selection"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/State",
+          "default": "declared"
+        },
+        "ratio": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ratio"
+        },
+        "input_shape": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Shape"
+        },
+        "output_shape": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Shape"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "origin_asset",
+        "kind",
+        "method"
+      ],
+      "title": "Loss",
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "unit": {
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "reference_asset": {
+          "minLength": 1,
+          "title": "Reference Asset",
+          "type": "string"
+        },
+        "scope": {
+          "minLength": 1,
+          "title": "Scope",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/State",
+          "default": "declared"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "unit",
+        "method",
+        "reference_asset",
+        "scope"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "Process": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "agent": {
+          "minLength": 1,
+          "title": "Agent",
+          "type": "string"
+        },
+        "reproducibility": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "deterministic",
+            "stochastic"
+          ],
+          "title": "Reproducibility",
+          "type": "string"
+        },
+        "reproducibility_evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Reproducibility Evidence",
+          "type": "array"
+        },
+        "software": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Software",
+          "type": "object"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Parameters",
+          "type": "object"
+        },
+        "seeds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Seeds",
+          "type": "object"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "weights_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weights Sha256"
+        },
+        "reviews": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Reviews",
+          "type": "array"
+        },
+        "repeatability": {
+          "$ref": "#/$defs/Claim"
+        }
+      },
+      "required": [
+        "operation",
+        "agent"
+      ],
+      "title": "Process",
+      "type": "object"
+    },
+    "State": {
+      "enum": [
+        "unknown",
+        "declared",
+        "verified"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "uos-fidelity-provenance/1.0",
+      "default": "uos-fidelity-provenance/1.0",
+      "title": "Schema",
+      "type": "string"
+    },
+    "assets": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AssetRecord"
+      },
+      "title": "Assets",
+      "type": "object"
+    }
+  },
+  "required": [
+    "assets"
+  ],
+  "title": "UOS fidelity and provenance extension v1.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "uos-fidelity-provenance/1.0"
+}

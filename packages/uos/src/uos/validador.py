@@ -203,6 +203,9 @@ def validate(ruta: Path) -> Report:
         _valida_capas_en_la_escena(z, m, inf)
         _valida_capas_clinicas(z, inf)
         _valida_derivados(z, m, inf)
+        from uos.auditoria import validate_audit
+
+        validate_audit(z, m, inf)
         _valida_gs(z, m, inf)
         _valida_matrices_gs(z, m, inf)
         _valida_uid_del_sidecar(z, m, inf)
@@ -621,7 +624,8 @@ def _valida_regulatorio(m: Manifest, inf: Report) -> None:
         # La capa 2 dice «esto es computo reproducible a partir de capa 1». Si no se
         # declara a partir de QUE, no hay nada que reproducir y la etiqueta solo sirve
         # para sacar el asset del escrutinio que tendria como capa 3.
-        if a.regulatory.layer == 2 and not a.derived_from:
+        if (a.regulatory.layer == 2 and not a.derived_from
+                and "uos_fidelity_provenance" not in m.extensions):
             inf.error("17", f"asset {a.id}: declara layer 2 y no dice `derived_from`. La capa 2 es "
                 "computo reproducible; sin sus fuentes esa afirmacion no se puede "
                 "comprobar"
@@ -1066,6 +1070,8 @@ def _valida_capas_clinicas(z: zipfile.ZipFile, inf: Report) -> None:
     for pieza in doc.get("teeth", []):
         fdi = pieza.get("fdi", "?")
         for campo, valor in pieza.items():
+            if isinstance(valor, dict) and valor.get("alternatives"):
+                inf.warn("21", f"{fdi}.{campo}: several observations; selection not reviewed")
             if not isinstance(valor, dict) or "regulatory" not in valor:
                 continue
             capa = valor["regulatory"].get("layer")
@@ -1087,6 +1093,11 @@ def _valida_capas_clinicas(z: zipfile.ZipFile, inf: Report) -> None:
                     f"clinical/observations.json: `{fdi}.{campo}` declara layer 2 y no "
                     "dice `derived_from`; sin sus fuentes no se puede reproducir",
                 )
+    for measurement in doc.get("measurements", []):
+        provenance = measurement.get("provenance") or {}
+        if (provenance.get("derivation") == "inferred"
+                or provenance.get("regulatory", {}).get("layer") == 3):
+            inf.error("17d", "inferred global measurement outside derived/")
 
 
 def _valida_procedencia(

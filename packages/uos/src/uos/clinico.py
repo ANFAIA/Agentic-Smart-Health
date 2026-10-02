@@ -146,22 +146,33 @@ def clinical_layer(
             # a la que se le atribuye no lo es del todo.
             "confidence": round(obs.provenance.confidence, 3),
             "agent": obs.provenance.agent,
+            "source_ref": (obs.provenance.source_file
+                           if obs.provenance.source_file.startswith("sha256:") else None),
             "observed": obs.timestamp.isoformat(),
             **({"model": obs.provenance.model} if obs.provenance.model else {}),
         }
-        if a.ph is not None:
-            d["ph"] = {"value": a.ph, **marca}
-        if a.n_raices is not None:
-            d["n_roots"] = {"value": a.n_raices, **marca}
-        if a.n_conductos is not None:
-            d["n_canals"] = {"value": a.n_conductos, **marca}
+        for key, value in (("ph", a.ph), ("n_roots", a.n_raices), ("n_canals", a.n_conductos)):
+            if value is None:
+                continue
+            entry = {"value": value, **marca}
+            if key in d:
+                previous = dict(d[key])
+                alternatives = previous.pop("alternatives", [])
+                previous.pop("selection", None)
+                entry["alternatives"] = [*alternatives, previous]
+                entry["selection"] = "last-observation-unreviewed"
+            d[key] = entry
         if a.hallazgos:
             previos = d.get("findings", {}).get("value", [])
             nuevos = [
                 {"system": SNOMED, "code": None, "display": h.value, "provenance": marca}
                 for h in a.hallazgos
             ]
-            d["findings"] = {"value": previos + nuevos, "coding": MAPEO_PENDIENTE, **marca}
+            d["findings"] = {
+                "value": previos + nuevos, "coding": MAPEO_PENDIENTE, **marca,
+                "provenance_scope": "group metadata describes last observation; "
+                                    "each item preserves its original provenance",
+            }
         # ⚠️ **El color es capa 2 y NO capa 1, que es lo que decia el fichero entero.**
         # Nadie firmo esto: lo calcula el pipeline desde las fotos. Tampoco es capa 3 —la
         # segmentacion de la foto en coronas es un watershed y el codigo FDI sale de
@@ -244,8 +255,18 @@ def clinical_layer(
         "measurements": [
             {"name": m.nombre, "value": m.valor, "unit": m.unidad, "side": m.lado,
              "normal_min": m.normal_min, "normal_max": m.normal_max,
-             "out_of_range": m.fuera_de_rango, "text": m.texto}
-            for m in ([] if inferred else snapshot.medidas)
+             "out_of_range": m.fuera_de_rango, "text": m.texto,
+             "provenance": {
+                 "agent": m.provenance.agent,
+                 "derivation": (m.provenance.derivation.value
+                                if m.provenance.derivation else None),
+                 "model": m.provenance.model,
+                 "source_ref": (m.provenance.source_file
+                                if m.provenance.source_file.startswith("sha256:") else None),
+                 "regulatory": {"layer": 3 if inferred else 1},
+             }}
+            for m in snapshot.medidas
+            if (m.provenance.derivation is Derivation.INFERRED) == inferred
         ],
         "review": {
             "note": "motivos por los que este caso pide revision humana antes de entregarse",

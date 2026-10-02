@@ -17,6 +17,7 @@ nada: el `.uos` lleva `reg.ct_to_ios` con su matriz, su metodo y su error.
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from functools import partial
 from pathlib import Path
@@ -27,6 +28,12 @@ from core_schemas import Derivation, ModalityStatus, TwinSnapshot
 from export_agents.base import BaseExportAgent, ExportOutput
 from export_agents.field import esquema_de_propiedades
 
+from uos.auditoria import (
+    append_audit,
+    build_records,
+    record_image_encoding,
+    record_mesh_precision,
+)
 from uos.clinico import OBSERVATIONS, clinical_layer
 from uos.contenedor import (
     asset_de,
@@ -47,6 +54,7 @@ from uos.derivados import (
     sha256_de_fichero,
 )
 from uos.escena import MEDIA_GLB, GSNode, build_glb, columnas_de, lee_stl_binario
+from uos.fidelidad import Process
 from uos.manifiesto import (
     MEDIA_TYPE,
     UOS_VERSION,
@@ -233,7 +241,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.15.0"
+    version = "0.17.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -312,6 +320,7 @@ class UOSExportAgent(BaseExportAgent):
         # El descriptor del campo ajustado (dict plano, construido fuera de este paquete
         # para no acoplarlo a `gaussian_engine`). Se vuelca tal cual en el sidecar.
         campo_ajustado_descriptor: dict | None = None,
+        process_records: dict[str, Process] | None = None,
     ) -> ExportOutput:
         if not pseudonimo:
             # ⚠️ **No se cae al `acquisition_id`**, y es deliberado: ese identificador sale
@@ -409,8 +418,9 @@ class UOSExportAgent(BaseExportAgent):
             # El nombre dentro del contenedor describe QUE es, no de que variable sale.
             # `asset.gs` daria `scene/gs.ply`, que no dice nada a quien lo abra.
             corto = {"asset.gs": "appearance"}.get(id_, id_.split(".")[1])
-            uri = f"scene/{corto}{ruta.suffix.lower()}"
-            descriptor = f"scene/{corto}.gs.json"
+            prefijo = "derived" if id_ == "asset.gs" else "scene"
+            uri = f"{prefijo}/{corto}{ruta.suffix.lower()}"
+            descriptor = f"{prefijo}/{corto}.gs.json"
             ficheros[uri] = ruta
             # ⚠️ **`region_id` no entra en el contenedor dentro de la capa (B-1).** Es el
             # codigo FDI por gaussiana y sale del segmentador, o sea Layer 3; estos PLY son
@@ -475,6 +485,15 @@ class UOSExportAgent(BaseExportAgent):
                 n_primitives_override=_n,
                 unidades_override=_u,
             ))
+            if id_ == "asset.gs":
+                meta_gs = json.loads(extras_escena[descriptor])
+                meta_gs.update({
+                    "model": {"name": "per-case-3DGS-appearance", "weights_sha256": None},
+                    "source_assets": ["asset.ios"],
+                    "source_status": "unresolved",
+                    "encoding": {"format": "PLY"},
+                })
+                extras_escena[descriptor] = json_de(meta_gs)
             # ⚠️ El asset se declara sobre los bytes QUE VIAJAN. Al extraer `region_id`
             # el payload cambia, y hashear el fichero de disco dejaria el manifiesto
             # declarando un sha256 que el contenedor no contiene.
@@ -493,16 +512,17 @@ class UOSExportAgent(BaseExportAgent):
                 # midio esto— y tampoco es inferencia clinica, asi que no va a `derived/`.
                 # El `status="derived"` era esa idea dicha en un campo de texto libre que
                 # ningun lector podia interpretar; ahora es la capa, que si se comprueba.
-                **({"regulatory": Regulatory(layer=2), "derived_from": ["asset.ios"]}
+                **({"regulatory": Regulatory(layer=3), "derived_from": ["asset.ios"]}
                    if id_ == "asset.gs" else {}),
             ))
-            nodos_gs.append(GSNode(
+            if id_ != "asset.gs":
+                nodos_gs.append(GSNode(
                 uri=uri, nombre=papel,
                 # Lo que esta en el marco del CBCT necesita la transformada al canonico;
                 # la apariencia ya vive en el del escaner, que ES el canonico.
                 matriz_fila=(al_canonico if marco == FRAME_CBCT else None),
                 extras={"uos_descriptor_uri": descriptor, "uos_measured": medido},
-            ))
+                ))
 
         # ── Campo ajustado (gaussian-engine) ──────────────────────────────────
         # El ajuste optimiza el campo semilla contra la densidad medida. El resultado
@@ -519,20 +539,35 @@ class UOSExportAgent(BaseExportAgent):
                 and self.store is not None):
             try:
                 datos_aj = self.store.load(campo_ajustado)
-                uri_fit = "scene/field_fit.ply"
+                condicionado = "region_id" in datos_aj
+                prefijo_fit = "derived" if condicionado else "scene"
+                uri_fit = f"{prefijo_fit}/field_fit.ply"
                 ficheros[uri_fit] = self._escribe_ply(
                     destination / uri_fit, datos_aj,
                 )
-                descriptor_fit = "scene/field_fit.gs.json"
-                extras_escena[descriptor_fit] = json_de(campo_ajustado_descriptor)
+                descriptor_fit = f"{prefijo_fit}/field_fit.gs.json"
+                descriptor_fit_data = dict(campo_ajustado_descriptor)
+                fuentes_fit = ["asset.field"]
+                if condicionado:
+                    fuentes_fit += [a.id for a in assets if a.id == "asset.seg_field"]
+                    descriptor_fit_data.update({
+                        "model": {"name": "segmentation-conditioned-density-optimization",
+                                  "weights_sha256": None},
+                        "source_assets": fuentes_fit,
+                        "encoding": {"format": "PLY", "profile": snapshot.perfil_campo},
+                    })
+                extras_escena[descriptor_fit] = json_de(descriptor_fit_data)
                 assets.append(asset_de(
                     destination / uri_fit, uri_fit,
                     id_="asset.field_fit",
                     kind=AssetKind.MESH_GS_SCENE, visit=visita.id,
                     frame=FRAME_CBCT, media_type="application/octet-stream",
                     load_priority=25, sidecar_uri=descriptor_fit,
+                    regulatory=Regulatory(layer=3 if condicionado else 2),
+                    derived_from=fuentes_fit,
                 ))
-                nodos_gs.append(GSNode(
+                if not condicionado:
+                    nodos_gs.append(GSNode(
                     uri=uri_fit,
                     nombre="campo ajustado contra densidad medida",
                     matriz_fila=al_canonico,
@@ -540,7 +575,7 @@ class UOSExportAgent(BaseExportAgent):
                         "uos_descriptor_uri": descriptor_fit,
                         "uos_measured": False,
                     },
-                ))
+                    ))
             except (KeyError, OSError, ValueError) as e:
                 aviso_derivados.append(
                     f"campo ajustado no incluido en el `.uos`: {e}"
@@ -556,8 +591,10 @@ class UOSExportAgent(BaseExportAgent):
         # no coinciden con las claves de `_escribe_ply` (`centers`, `rotations`,
         # `density`). Usamos `escribe_inria` que conoce el formato INRIA de
         # primera mano — el mismo que escribe el PLY en el pipeline.
+        etiquetas_apariencia = None
         splats_khr = None
         descriptor_ap: str | None = None
+        proceso_ap: Process | None = None
         if (snapshot.apariencia_ref is not None and self.store is not None):
             try:
                 from gaussian_engine.agente_apariencia import esquema_apariencia
@@ -565,8 +602,12 @@ class UOSExportAgent(BaseExportAgent):
                     escribe_inria as _escribe_inria,
                 )
                 datos_ap = self.store.load(snapshot.apariencia_ref)
+                if "processing_json" in datos_ap:
+                    proceso_ap = Process.model_validate_json(
+                        np.asarray(datos_ap["processing_json"], dtype=np.uint8).tobytes(),
+                    )
                 # ⚠️ **El PLY se escribe y NO viaja: es un paso intermedio.** La capa de
-                # apariencia va dentro de `scene.glb` como primitiva
+                # apariencia va separada en `derived/appearance.glb` como primitiva
                 # `KHR_gaussian_splatting`, y llevarla ademas como `.ply` suelto eran 12,5
                 # MB duplicando un dato que ya esta ahi — con el riesgo clasico de dos
                 # copias: que diverjan y nadie sepa cual manda.
@@ -647,6 +688,9 @@ class UOSExportAgent(BaseExportAgent):
                         f"`KHR_gaussian_splatting` desde el campo entrenado: {e}"
                     )
                 if splats_khr is not None:
+                    etiquetas_partidas = separa_region_id(destino_ap.read_bytes())
+                    if etiquetas_partidas is not None:
+                        etiquetas_apariencia = etiquetas_partidas[1]
                     esq_ap = esquema_apariencia(columnas_de(splats_khr))
                     extras_escena[descriptor_ap] = json_de(_descriptor(esq_ap))
             except (KeyError, OSError, ValueError) as e:
@@ -680,7 +724,8 @@ class UOSExportAgent(BaseExportAgent):
                 malla_ingerida.get("normals"), nombre="scan",
                 generador=f"{self.name}@{self.version}",
                 nodos_gs=nodos_gs,
-                splats=splats_khr,
+                # Appearance is exported separately: colour may depend on inferred labels.
+                splats=None,
                 # ⚠️ La escena NO se parte por diente y NO lleva el FDI. Se partia (0.4.0)
                 # para que el picking del §11.3 funcionase en un visor ajeno, y el precio
                 # era hornear Layer 3 en un asset de Layer 1: quitar `derived/` dejaba de
@@ -717,7 +762,7 @@ class UOSExportAgent(BaseExportAgent):
                     # decir que `region_id` es inferencia con vocabulario ISO-3950 ni que
                     # `f_dc` es color medido corona a corona. Eso lo dice el sidecar, y sin
                     # el unas etiquetas de modelo se leerian como medidas.
-                    sidecar_uri=(descriptor_ap if splats_khr is not None else None),
+                    sidecar_uri=None,
                     # De donde sale esta malla, DICHO EN EL MANIFIESTO. Es el escaner
                     # reindexado a glTF —misma geometria, mismos 220.085 triangulos—, y sin
                     # esta linea la unica forma de saberlo era parsear el GLB entero.
@@ -765,6 +810,7 @@ class UOSExportAgent(BaseExportAgent):
                             status=ClearanceStatus.INVESTIGACION,
                         )]),
                         sidecar_uri=SEGMENTACION_META,
+                        derived_from=["asset.scene"],
                     ))
                 else:
                     aviso_derivados.append(
@@ -772,6 +818,57 @@ class UOSExportAgent(BaseExportAgent):
                         f"etiquetas y la escena {len(malla_ingerida['positions'])} "
                         "vertices, asi que no se pueden cruzar por indice"
                     )
+        if splats_khr is not None and malla_ingerida is not None and descriptor_ap is not None:
+            uri_ap = "derived/appearance.glb"
+            meta_ap = "derived/appearance.meta.json"
+            fuentes_ap = [a.id for a in assets if a.id == "asset.ios"
+                          or a.id == "asset.seg_teeth"]
+            fuentes_ap += [f"asset.img_{i:03d}" for i, image in enumerate(imagenes or [])
+                           if image.exists()]
+            modelo_ap = "gaussian-engine.apariencia"
+            descriptor = json.loads(extras_escena.pop(descriptor_ap))
+            descriptor.update({
+                "model": {"name": modelo_ap, "weights_sha256": None},
+                "source_assets": fuentes_ap,
+                "source_status": (
+                    "resolved" if "uses_inferred_labels" in datos_ap
+                    and (not bool(np.asarray(datos_ap["uses_inferred_labels"]).item())
+                         or "asset.seg_teeth" in fuentes_ap) else "unresolved"
+                ),
+                "encoding": {"format": "glTF", "extension": "KHR_gaussian_splatting"},
+                "note": "Per-case appearance model; label-conditioned colour may contain inference",
+            })
+            extras_escena[meta_ap] = json_de(descriptor)
+            glb_ap = build_glb(
+                malla_ingerida["positions"], malla_ingerida["faces"],
+                nombre="appearance", generador=f"{self.name}@{self.version}",
+                splats=splats_khr, include_mesh=False,
+            )
+            extras_escena[uri_ap] = glb_ap
+            assets.append(asset_de_bytes(
+                glb_ap, uri_ap, id_="asset.appearance", kind=AssetKind.MESH_GS_SCENE,
+                visit=visita.id, frame=FRAME_IOS, media_type=MEDIA_GLB,
+                regulatory=Regulatory(layer=3), derived_from=fuentes_ap, sidecar_uri=meta_ap,
+            ))
+            if etiquetas_apariencia is not None:
+                uri_etq = "derived/seg_gaussians.appearance.bin"
+                meta_etq = "derived/seg_gaussians.appearance.meta.json"
+                raw_etq = codifica_etiquetas(etiquetas_apariencia)
+                extras_escena[uri_etq] = raw_etq
+                extras_escena[meta_etq] = json_de(meta_segmentacion(
+                    etiquetas_apariencia, asset_origen="asset.appearance",
+                    modelo="gaussian-engine.apariencia", version=None, unidad="gaussian",
+                ))
+                assets.append(asset_de_bytes(
+                    raw_etq, uri_etq, id_="asset.seg_appearance", kind=AssetKind.DERIVED_SEG,
+                    visit=visita.id, frame=FRAME_IOS, media_type="application/octet-stream",
+                    regulatory=Regulatory(layer=3), sidecar_uri=meta_etq,
+                    derived_from=["asset.appearance"],
+                ))
+            if proceso_ap is not None:
+                proceso_ap.model = modelo_ap
+                process_records = {**(process_records or {}), "asset.appearance": proceso_ap}
+
         for i, foto in enumerate(imagenes or []):
             if not foto.exists():
                 continue
@@ -829,18 +926,49 @@ class UOSExportAgent(BaseExportAgent):
             motivos = [*(motivos or []), _aviso_cadena]
 
         # en una pieza, y los motivos del gate. Ver `clinico.py` — es EXTENSION nuestra.
+        def stable_provenance(value):
+            source = value.provenance.source_file
+            for j, doc in enumerate(informes or []):
+                if not doc.exists():
+                    continue
+                asset = next((a for a in assets if a.id == f"asset.doc_{j:03d}"), None)
+                if asset is not None and (
+                    source == asset.uri or (not source.startswith("sha256:")
+                                            and Path(source).resolve() == doc.resolve())
+                ):
+                    return value.model_copy(update={"provenance": value.provenance.model_copy(
+                        update={"source_file": asset.uri},
+                    )})
+            return value
+
+        snapshot = snapshot.model_copy(update={
+            "regional": [stable_provenance(value) for value in snapshot.regional],
+            "medidas": [stable_provenance(value) for value in snapshot.medidas],
+        })
         # Una observacion por asset evita mezclar modelos o pisar valores del mismo FDI.
-        for i, obs in enumerate(snapshot.regional):
+        # Both regional values and global measurements can be inferred (e.g. OCR).
+        valores = [
+            (obs, snapshot.model_copy(update={"regional": [obs], "medidas": []}))
+            for obs in snapshot.regional
+        ] + [
+            (medida, snapshot.model_copy(update={"regional": [], "medidas": [medida]}))
+            for medida in snapshot.medidas
+        ]
+        for i, (obs, entrada) in enumerate(valores):
             if obs.provenance.derivation is not Derivation.INFERRED:
                 continue
-            entrada = snapshot.model_copy(update={"regional": [obs], "medidas": []})
             inferido = clinical_layer(entrada, [], inferred=True)
-            if not inferido["teeth"]:
+            if not inferido["teeth"] and not inferido["measurements"]:
                 continue
             fuentes = [
                 f"asset.doc_{j:03d}" for j, doc in enumerate(informes or [])
-                if doc.exists()
-                and doc.resolve() == Path(obs.provenance.source_file).resolve()
+                if doc.exists() and (
+                    obs.provenance.source_file == next(
+                        (a.uri for a in assets if a.id == f"asset.doc_{j:03d}"), None,
+                    )
+                    or (not obs.provenance.source_file.startswith("sha256:")
+                        and doc.resolve() == Path(obs.provenance.source_file).resolve())
+                )
             ]
             uri_inferido = f"derived/clinical_{i:03d}.json"
             meta_uri = f"derived/clinical_{i:03d}.meta.json"
@@ -942,6 +1070,20 @@ class UOSExportAgent(BaseExportAgent):
 
         fhir = self._fhir(assets)
         extensiones = self._extensiones(assets)
+        records = build_records(
+            assets, {**extras_escena, **extras}, agent=f"{self.name}@{self.version}",
+            process_records=process_records,
+        )
+        for asset in assets:
+            if asset.frame == FRAME_CBCT or asset.id == "asset.composite":
+                records[asset.id].registrations_used = [r.id for r in registros]
+        if "asset.scene" in records and malla_ingerida is not None:
+            record_mesh_precision(records["asset.scene"], malla_ingerida["positions"], "asset.ios")
+        for i, image in enumerate(imagenes or []):
+            id_ = f"asset.img_{i:03d}"
+            if id_ in records:
+                record_image_encoding(records[id_], image, id_)
+        append_audit(assets, records, extras_escena, extensiones)
         ids_assets = {a.id for a in assets}
         vistas, aviso_vistas = self._vistas(
             snapshot, visita, etiquetas_ios,
@@ -1084,13 +1226,17 @@ class UOSExportAgent(BaseExportAgent):
             ModalityStatus.OK, path=salida, format="uos",
             # Cero MEDIDO, no afirmado: el validador recomputo el sha256 de cada asset
             # desde el contenedor ya escrito y cuadran todos.
-            max_deviation_mm=0.0,
+            max_deviation_mm=next((metric.value
+                for metric in records["asset.scene"].metrics
+                if metric.name == "max_vertex_rounding_error"), None)
+                if "asset.scene" in records else None,
             hitl_reasons=avisos,
             detail=(
                 f"{','.join(n.value for n in informe.levels)}"
                 f"{' · UOS-Distributable' if informe.distributable else ''} · "
-                f"{len(assets)} assets "
-                f"byte-identicos, {len(registros)} registracion(es), {informe.views} "
+                f"{len(assets)} assets declarados; hashes incluidos verificados, "
+                f"{informe.external_count} externos sin verificar; "
+                f"{len(registros)} registracion(es), {informe.views} "
                 f"vista(s), version {informe.version} de la cadena, frame canonico "
                 f"{FRAME_IOS}"
             ),

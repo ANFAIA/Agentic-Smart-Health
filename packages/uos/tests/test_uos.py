@@ -1761,3 +1761,119 @@ def test_exporta_inferencia_en_derived_y_conserva_cada_modelo(tmp_path, malla, c
     if not con_fuente:
         assert any("fuente de extraccion no resuelta" in m for m in salida.hitl_reasons)
         assert any(w.code == "UOS-W-017f" for w in informe.warnings)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_fuente_por_hash_sobrevive_renombrado_y_detecta_cambio(tmp_path, malla, changed):
+    from core_schemas import Derivation
+    from ingestion_agents import ReportAgent
+    from uos import UOSExportAgent, read_fidelity
+
+    original = tmp_path / "informe.txt"
+    original.write_text("Diente 26: pH 6.2")
+    ingesta = ReportAgent().ingest(original)
+    assert ingesta.ok
+    obs = ingesta.regional[0]
+    obs.provenance = obs.provenance.model_copy(update={
+        "derivation": Derivation.INFERRED, "model": "test:model",
+    })
+    renamed = tmp_path / "otro-nombre.txt"
+    original.rename(renamed)
+    if changed:
+        renamed.write_text("Diente 26: pH 7.4")
+    snapshot = _snapshot(regional=[obs])
+    outcome = UOSExportAgent(None).export(
+        snapshot, tmp_path / "case", malla=malla, pseudonimo="P-1", informes=[renamed],
+    )
+    assert outcome.ok, outcome.detail
+    record = read_fidelity(outcome.path).assets["asset.clinical_inferred_000"]
+    assert record.source_status == ("unresolved" if changed else "resolved")
+    assert record.sources == ([] if changed else ["asset.doc_000"])
+
+
+def test_medida_no_regional_inferida_es_removible_y_conserva_procedencia(tmp_path, malla):
+    from core_schemas import Derivation, Medida, Modality, Provenance
+    from uos import UOSExportAgent, read_fidelity, remove_inference
+
+    source = tmp_path / "informe.txt"
+    source.write_text("TORS 89 % normal 90-100")
+    medida = Medida(nombre="TORS", valor=89, unidad="%", provenance=Provenance(
+        source_file="sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
+        modality=Modality.REPORT, agent="report@1", derivation=Derivation.INFERRED,
+        model="ocr:tesseract",
+    ))
+    outcome = UOSExportAgent(None).export(
+        _snapshot(medidas=[medida]), tmp_path / "case", malla=malla,
+        pseudonimo="P-1", informes=[source],
+    )
+    assert outcome.ok, outcome.detail
+    with zipfile.ZipFile(outcome.path) as z:
+        assert "clinical/observations.json" not in z.namelist()
+        payload = json.loads(z.read("derived/clinical_000.json"))
+        assert payload["measurements"][0]["provenance"]["model"] == "ocr:tesseract"
+    successor = remove_inference(outcome.path, tmp_path / "successor.uos")
+    report = validate(successor)
+    assert report.valid, report.errors
+    assert report.version == 2
+    assert "asset.clinical_inferred_000" not in read_fidelity(successor).assets
+    with zipfile.ZipFile(successor) as z:
+        assert not any(name.startswith("derived/") for name in z.namelist())
+    assert any(a.regulatory.layer == 3 for a in read_manifest(outcome.path).assets)
+
+
+def test_apariencia_separada_no_contamina_la_escena_base(tmp_path, malla):
+    import numpy as np
+    from uos import UOSExportAgent, read_fidelity, remove_inference
+    from uos.fidelidad import Process
+
+    params = {
+        "means": np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
+        "quats": np.array([[1, 0, 0, 0]] * 2, dtype=np.float32),
+        "scales": np.full((2, 3), -1, dtype=np.float32),
+        "opacities": np.zeros(2, dtype=np.float32),
+        "colors": np.full((2, 3), 0.5, dtype=np.float32),
+        "scan_scale": np.array(1.), "scan_offset": np.zeros(3),
+        "region_id": np.array([11, 12], dtype=np.int16),
+    }
+    process = Process(operation="appearance-optimization", agent="test@1",
+                      reproducibility="stochastic", seeds={"numpy": 7, "torch": 7},
+                      parameters={"iterations": 4})
+    params["processing_json"] = np.frombuffer(process.model_dump_json().encode(), dtype=np.uint8)
+
+    class Store:
+        def load(self, ref):
+            return params
+
+    outcome = UOSExportAgent(Store()).export(
+        _snapshot(apariencia_ref="sha256:test"), tmp_path / "case",
+        malla=malla, pseudonimo="P-1",
+    )
+    assert outcome.ok, outcome.detail
+    report = validate(outcome.path)
+    assert report.valid, report.errors
+    manifest = read_manifest(outcome.path)
+    appearance = next(a for a in manifest.assets if a.id == "asset.appearance")
+    assert appearance.regulatory.layer == 3 and appearance.uri.startswith("derived/")
+    labels = next(a for a in manifest.assets if a.id == "asset.seg_appearance")
+    assert labels.regulatory.layer == 3
+    assert labels.derived_from == [appearance.id]
+    with zipfile.ZipFile(outcome.path) as z:
+        assert np.frombuffer(z.read(labels.uri), dtype="<i2").tolist() == [11, 12]
+        meta = json.loads(z.read(labels.sidecar_uri))
+        assert meta["source_assets"] == [appearance.id]
+        assert meta["encoding"]["count"] == 2
+        base = z.read("scene/scene.glb")
+        doc = json.loads(base[20:20 + int.from_bytes(base[12:16], "little")])
+        assert "KHR_gaussian_splatting" not in doc.get("extensionsUsed", [])
+        derived = z.read(appearance.uri)
+        doc = json.loads(derived[20:20 + int.from_bytes(derived[12:16], "little")])
+        assert "KHR_gaussian_splatting" in doc["extensionsUsed"]
+        assert all(p["mode"] != 4 for m in doc["meshes"] for p in m["primitives"])
+    record = read_fidelity(outcome.path).assets[appearance.id]
+    assert record.process.seeds == {"numpy": 7, "torch": 7}
+    assert record.process.repeatability.state == "unknown"
+    successor = remove_inference(outcome.path, tmp_path / "without.uos")
+    with zipfile.ZipFile(successor) as z:
+        assert z.read("scene/scene.glb") == base
+        assert appearance.uri not in z.namelist()
+        assert labels.uri not in z.namelist()
