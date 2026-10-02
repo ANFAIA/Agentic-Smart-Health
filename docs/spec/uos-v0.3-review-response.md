@@ -1,227 +1,284 @@
-# UOS v0.3: contraste de la revisión técnica y correcciones del white paper
+# UOS v0.3 — Respuesta actualizada a la revisión de Matías
 
-Fecha: 2026-09-30. Revisión de referencia: Matías Molinas, *UOS v0.3 — Revisión técnica para el autor de la especificación*, 2026-09-25, 32 páginas. Sus referencias corresponden al white paper del 24 de septiembre; esta respuesta examina el árbol de trabajo actual. No presupone que el código inspeccionado fuera idéntico al de aquella fecha.
+**Fecha de actualización:** 2 de octubre de 2026. **Ámbito:** white paper, especificación, implementación de referencia, ejecución del complete case y visor local.
 
-Se ha corregido el [white paper](uos-white-paper.tex), conservando su estructura y los cambios locales anteriores. Tras la corrección editorial se han aplicado las correcciones conservadoras descritas abajo al software, la especificación y las descripciones del esquema. El contrato v0.3 no incorpora un modelo de fidelidad. El PDF de la revisión y los datos clínicos no se incorporan al repositorio.
+**Revisión de referencia:** Matías Molinas, *UOS v0.3 — Revisión técnica para el autor de la especificación*, 25 de septiembre de 2026, 32 páginas. La revisión examina el white paper del 24 de septiembre; sus observaciones se han contrastado también con el contrato y el código. La numeración de las observaciones que aparece abajo corresponde a esa revisión.
 
-## Resultado y criterio de evidencia
+## 1. Resumen del estado actual
 
-**v0.3 no tiene un bloque general `fidelity`, historial de pérdida heredada ni cálculo de `diagnostic_eligible`.** El sidecar volumétrico contiene metadatos parciales; no equivalen a ese modelo. `fit_for` existe para registros, no para todos los assets.
+Se han corregido afirmaciones del white paper que excedían la evidencia y defectos de implementación relacionados con procedencia, DICOM, separación de inferencias y exportación. Después se ha añadido un contrato de fidelidad y procedencia por asset mediante una **extensión opcional 1.0 compatible con UOS 0.3**. El exportador está en la versión **0.17.0**.
 
-Estados usados: **implementado** (comportamiento localizado y, cuando procede, probado), **parcial**, **ausente**, **discrepancia documental**, **propuesta** (requiere una decisión). Tener un campo no demuestra que el escritor lo rellene, que el validador compruebe su contenido o que exista evidencia clínica. Cada fila distingue esos niveles y el trabajo pendiente.
+El complete case se ha ejecutado sobre los datos locales usados anteriormente. Se ha generado y validado un nuevo contenedor; se han recuperado la apariencia de agosto, la selección dental, las fichas clínicas y la regeneración de STL, PLY y 3MF. Los archivos clínicos originales permanecen fuera del contenedor generado, declarados por referencias y hashes. La geometría convertida del escaneo sí viaja dentro.
 
-Las cifras de experimentos se conservan como resultados históricos, no como mediciones repetidas en esta revisión. No se han abierto adquisiciones de pacientes ni vuelto a entrenar modelos. La matriz no certifica la exactitud de las cifras históricas.
+**Esto no cierra toda la revisión de Matías.** Están implementados el registro técnico de fidelidad, la herencia de pérdidas documentadas, la separación de inferencias y varias correcciones funcionales. No están demostradas la aptitud diagnóstica, la calibración clínica ni la repetibilidad experimental. Tampoco se han implementado recuperación garantizada de originales, identidad DICOM canónica, firmas ni incertidumbre geométrica propagada.
 
-### Fuentes locales del contraste
+La revisión de segmentación queda **aplazada por decisión del responsable del proyecto**. Se conservan etiquetas, avisos y motivos de revisión; no se presentan como segmentación clínicamente validada.
 
-Los identificadores siguientes remiten a archivos y símbolos, para que la evidencia sobreviva a cambios de línea:
+### Qué significa cada estado
 
-| ID | Fuente y ámbito |
+- **Implementado y comprobado:** comportamiento presente y contrastado mediante pruebas o artefactos locales, dentro del alcance indicado.
+- **Corregido editorialmente:** se ha corregido una afirmación; eso no implica haber implementado la capacidad propuesta.
+- **Parcial:** existe parte del mecanismo, pero falta funcionalidad o evidencia.
+- **Pendiente / aplazado:** no se ha cerrado; aplazado identifica una decisión expresa sobre la segmentación.
+
+Un hash demuestra identidad de bytes cuando puede comprobarse; no demuestra recuperación, autenticidad del emisor ni exactitud clínica. Una validación UOS-Core no constituye autorización clínica ni permiso de distribución.
+
+## 2. Qué se ha corregido en el documento
+
+La primera intervención corrigió el texto manteniendo su estructura y sus resultados negativos. Sus cambios principales fueron:
+
+1. Separar conservación numérica de una malla y precisión clínica del escáner.
+2. Distinguir el residual de ICP del error en puntos de interés, o TRE; dejar de presentar el primero como una barra de error anatómico.
+3. Presentar el color como estimación regional desde fotografías procesadas, sin prometer calibración ni resolución de medida por vértice.
+4. Distinguir calidad de representación en proyección, visualización y aptitud diagnóstica. PSNR y SSIM no acreditan diagnóstico.
+5. Retirar garantías de autenticidad y no repudio derivadas únicamente de una cadena de hashes.
+6. Explicar que dejar originales fuera condiciona su disponibilidad a la custodia externa; el contenedor no garantiza un archivo autónomo a largo plazo.
+7. Corregir el alcance de DICOM y diferenciar destinos FHIR por versión, sin presentar indicaciones de mapeo como conectores bidireccionales validados.
+8. Retirar la exención regulatoria general basada en el número de capa, la autorización implícita al quitar `derived/` y promesas de historia clínica legal completa.
+9. Presentar las etiquetas FDI y las raíces reconstruidas como experimentales, con sus anomalías visibles desde la descripción del resultado.
+10. Explicar que UOS-Core admite una escena de malla sin gaussianas y que la investigación de splatting no es un requisito para cualquier implementador.
+
+**Pendiente editorial de publicación:** el white paper aún contiene formulaciones anteriores a la extensión de octubre, especialmente las que sitúan la fidelidad por asset como trabajo futuro. Debe recibir una revisión final para incorporar el contrato nuevo y distinguir los experimentos históricos de las ejecuciones recientes. Esta respuesta actualizada no significa que ese repaso final ya se haya realizado.
+
+## 3. Correcciones en la implementación
+
+### 3.1 Fidelidad, pérdidas y evidencia por asset
+
+Se implementó `uos_fidelity_provenance`, versión `1.0`, con payload en `metadata/fidelity-provenance.json`, declarado y protegido por hash en el manifiesto. El contrato conserva el origen del dato, fuentes, operación, parámetros, semillas cuando constan, codificación, pérdidas introducidas e heredadas, calibración, muestreo e incertidumbre.
+
+Las afirmaciones distinguen **desconocido, declarado y verificado**. Una afirmación verificada requiere referencia a evidencia, método, alcance, resultado y verificador. El validador comprueba la estructura y referencias; no autentica al verificador ni convierte esa declaración en certificación clínica.
+
+El escritor y el validador recorren el linaje. Una pérdida documentada o una historia anterior desconocida no desaparecen al convertir el dato. Se comprueban ciclos, referencias, inventario, herencia y contradicciones. Los controles nuevos se integran en los códigos `UOS-E/W-020` y `UOS-E/W-021`, manteniendo la numeración del proyecto.
+
+La captura automática incluye atributos DICOM de compresión irreversible, marcadores JPEG soportados, desplazamiento numérico float64→float32 en malla y submuestreo/reconstrucción de campos. No inventa ratio, historia anterior ni exactitud clínica si no constan. El registro permite evaluaciones por tarea, pero el escritor **no genera elegibilidad diagnóstica automática**.
+
+### 3.2 Procedencia de informes y separación de inferencias
+
+Las fuentes de informes se identifican por SHA-256 desde la ingesta. Renombrar un archivo conserva su identidad; cambiar sus bytes no. El OCR y las rutas basadas en modelos mantienen origen inferido tanto en observaciones regionales como en medidas globales. Sus resultados se exportan bajo `derived/`, con modelo y fuente disponibles. La aprobación humana no borra su origen inferido.
+
+Se conservan valores alternativos y procedencias cuando varias observaciones discrepan sobre un campo dental. La selección no revisada queda indicada; no se pierde silenciosamente un valor anterior. La extracción determinista de texto nativo se distingue de OCR/LLM.
+
+La escena base conserva la geometría convertida sin etiquetas ni apariencia inferida incrustadas. La apariencia ajustada viaja en un GLB separado bajo `derived/`; la geometría ajustada condicionada por etiquetas permanece igualmente separada. Los códigos FDI viajan en arrays indexados independientes.
+
+`remove_inference` crea un sucesor validado, actualiza metadatos y cadena y retira las salidas inferidas. Conserva los bytes de la escena base. No implica borrar otras versiones, copias o repositorios, ni implementa la redacción firmada propuesta por Matías.
+
+### 3.3 Integridad DICOM, calibración y superficies sintéticas
+
+Una serie DICOM incluida cuyos bytes no coinciden con el hash declarado se rechaza con `UOS-E-007`, aunque sus UID y `PixelData` almacenado permanezcan iguales. Se evita aceptar una cabecera alterada como si demostrase equivalencia clínica. No se ha implementado el hash canónico de píxeles decodificados más geometría y escala.
+
+La modalidad CT ya no sirve para declarar automáticamente HU calibrados. Sin evidencia se registra calibración desconocida. Los mensajes del complete case hablan de **unidades de gris de entrada**, no de HU acreditadas. Esto corrige la declaración; no calibra el equipo.
+
+Los exports STL compuestos incorporan un mapa acompañante de intervalos de caras ligado por SHA-256 al STL, que diferencia superficie del escáner, cierre sintético y raíz reconstruida. Debe conservarse junto al archivo. No acredita anatomía ni acompaña automáticamente una impresión física.
+
+### 3.4 Reproducibilidad declarada y repetibilidad medida
+
+La capa de procesamiento deja de prometer reproducibilidad por su número. Se registran por separado tipo de algoritmo, configuración, versiones y semillas disponibles. El entrenamiento de apariencia utiliza una semilla para la selección de vistas y la de Torch, conservadas en el artefacto.
+
+**Fijar semillas y registrar configuración no es demostrar repetibilidad.** La comprobación experimental entre ejecuciones sigue desconocida. Tampoco se promete identidad bit a bit entre GPU, Blender, versiones o procesos archivados.
+
+## 4. Recuperación funcional del complete case y del visor
+
+La separación más estricta de inferencias exigió adaptar el visor. La revisión de Matías no pedía perder color, selección o fichas: las incompatibilidades aparecidas al cambiar la organización del contenedor se han corregido.
+
+### Apariencia y color
+
+La primera ejecución de octubre entrenó una apariencia nueva: 127.635 gaussianas, PSNR 34,26 dB y SSIM 0,955 frente a renders de referencia. Resolvió dos poses y proyectó/interpoló color, pero no activó la extracción de tonos por pieza con `--lado-foto`. Esas métricas no acreditaban que su apariencia coincidiera con agosto.
+
+La ejecución corregida reutiliza el artefacto archivado de agosto: **113.540 gaussianas y 13 registros de color por pieza**. Se comprueban el escaneo y las fotos fuente por contenido y el artefacto contra la apariencia transportada anteriormente. Los atributos binarios de posición, escala, opacidad, orientación y coeficientes de color coinciden exactamente. Las etiquetas de malla también coinciden con las archivadas.
+
+Se registran los hashes de la reutilización y se declara que **no hubo entrenamiento nuevo de apariencia en esta ejecución**. Recuperar el aspecto anterior no demuestra calibración de color ni valida retrospectivamente el resultado de agosto.
+
+### Selección, aislamiento y ficha clínica
+
+`asset.seg_appearance` aporta un código por gaussiana y `asset.seg_teeth` un código por vértice de malla. El visor cruza las etiquetas con su fuente y comprueba hashes, recuento y, cuando se declara, orden de posiciones. La unión ocurre en memoria; no vuelve a incrustar inferencias en la escena base.
+
+Se recuperan el clic sobre el modelo, el aislamiento y la selección desde el odontograma. Se corrigió además un fallo del pase de selección: el rasterizador de apariencia podía pintar RGB sobre el buffer de identificadores. Ahora se excluye y se rechazan códigos que no están presentes en las etiquetas.
+
+Las fichas interpretan las generaciones anteriores y actuales de los registros clínicos, incluido el color envuelto con procedencia. Conservan alternativas y muestran detalles desplegables. Se ajustó su disposición para mantener accesibles los datos y el botón de cierre.
+
+La comprobación en el navegador reconoce **14 piezas**, selecciona una pieza válida por clic, muestra su ficha, permite cerrar la selección y seleccionar la pieza 26 desde el odontograma, sin errores de JavaScript. Esto prueba el flujo funcional; no la corrección de los límites dentales.
+
+### Regeneración de STL, PLY y 3MF
+
+La malla se regenera desde el propio `.uos`, sin necesitar el STL original. Se leen geometría, apariencia y etiquetas separadas; se conserva la procedencia y se corrigieron diferencias de precisión numérica en el traspaso de color.
+
+El resultado tiene **112.067 vértices y 220.085 triángulos**. La comparación del visor con Python coincide exactamente en RGB y bandera de cobertura por vértice y en posiciones y atributos de color por triángulo del STL. Las normales pueden diferir por precisión aritmética. Se generan PLY, STL y 3MF; la prueba de igualdad realizada no acredita identidad integral del paquete 3MF.
+
+El STL coloreado usa la convención no estándar RGB555/VisCAM; algunos receptores mostrarán sólo la geometría. El color por vértice se conserva en PLY y 3MF. «Mejorado» significa geometría del escaneo con apariencia transferida; no una reparación automática de anatomía o segmentación. Los vértices de la pieza sin color declarado permanecen en gris.
+
+## 5. Estado frente a cada bloque de la revisión de Matías
+
+### 5.1 Fidelidad y pérdidas — revisión §1
+
+| Observación | Respuesta actual y límite |
 |---|---|
-| M | [manifiesto.py](../../packages/uos/src/uos/manifiesto.py): `Asset`, `Part`, `digesto_de_partes`, `Projection`, `Frame`, `Registration`, `Manifest`, `Deidentification`, `Acquisition`, `Consent`, `Locator`. |
-| S | [Esquema v0.3](../../schemas/uos-manifest-0.3.schema.json), generado desde el contrato. |
-| V | [validador.py](../../packages/uos/src/uos/validador.py): `validate`, `_valida_assets`, `_valida_serie`, `_valida_frames`, `_valida_capas_clinicas`, `_valida_phi`, `_perfil_distribuible`, `_valida_locators`, `_valida_gs`. |
-| W | [agente.py](../../packages/uos/src/uos/agente.py): exportación UOS; [contenedor.py](../../packages/uos/src/uos/contenedor.py): escritor ZIP y construcción de assets. |
-| VOL | [volumen.py](../../packages/uos/src/uos/volumen.py): `describe_series`, `_codificacion`, `identificables_en`. |
-| G | [marcos.py](../../packages/uos/src/uos/marcos.py): selección de camino, inversión/composición y discrepancia. |
-| C | [clinico.py](../../packages/uos/src/uos/clinico.py): `clinical_layer`, color regional, hallazgos y procedencia por valor. |
-| I | [report_agent.py](../../packages/ingestion-agents/src/ingestion_agents/report_agent.py): `_derivation`, `_ingest`, backends de reglas/LLM y fallback OCR. |
-| P | [procedencia.py](../../packages/uos/src/uos/procedencia.py): cadena y firmas todavía no verificadas. |
-| E | [malla_compuesta.py](../../packages/export-agents/src/export_agents/malla_compuesta.py): cierre, piezas y `_cabecera_pieza`; [visor.py](../../packages/export-agents/src/export_agents/visor.py): exportación PLY/JSON para visor externo. |
-| A | [apariencia.py](../../packages/gaussian-engine/src/gaussian_engine/apariencia.py): `_comentarios_color`; [pose_foto.py](../../packages/gaussian-engine/src/gaussian_engine/pose_foto.py): PnP y proyección. |
-| T | [Pruebas UOS](../../packages/uos/tests/), especialmente `test_uos.py`, `test_volumen.py`, `test_clinico.py` y `test_procedencia.py`. |
-| F | [Fixtures y resultados esperados](../../fixtures/uos-0.3/expected.json). |
-| H | [Cierre del MVP](../cierre-mvp.md): procedencia documental de métricas históricas; no sustituye los artefactos de ejecución. |
-| N | [Especificación normativa](uos-format-spec-v0.3.tex): contraste adicional; actualizado en la fase de implementación. |
+| 1.1 Aptitud diagnóstica e historia de pérdida | **Parcial.** Hay registro por asset y estados de evidencia; no cálculo automático de aptitud clínica general ni validación diagnóstica por tarea. |
+| 1.2 DICOM: codificación e historia irreversible | **Implementado en el contrato y escritor.** Se distingue codificación actual de historia y se heredan pérdidas documentadas. La ejecución real aún no resuelve su fuente CBCT. |
+| 1.3 JPEG y color | **Parcial.** Se registra pérdida JPEG detectable y se matiza la estimación regional. No se ha demostrado calibración; no se presupone 4:2:0 ni se publica EXIF completo. |
+| 1.4 STL como original recibido | **Corregido editorialmente.** Se distingue archivo recibido de formato nativo y preservación numérica de exactitud clínica. La cadena nativo→STL y su pérdida previa siguen sin caracterización completa. |
+| 1.5 Resolución y calibración | **Parcial.** Se registran muestreo y calibración desconocida cuando corresponde. Spacing o submuestreo no prueban resolución efectiva; no se ha calibrado el CBCT ni el color. |
 
-## 1. Fidelidad y pérdidas
+### 5.2 Identidad y recuperación — revisión §2
 
-| Observación de la revisión | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 1.1 Calidad diagnóstica y pérdida previa | **Ausente.** M/S no modelan fidelidad general ni elegibilidad diagnóstica. V comprueba estructura y coherencia, no rendimiento clínico. | Se declara la ausencia y se retiran garantías clínicas derivadas de hashes, PSNR o capas. Definir criterios por tarea antes de atribuir aptitud diagnóstica a un validador. |
-| 1.2 Historial DICOM, Transfer Syntax y herencia | **Parcial.** VOL consulta Transfer Syntax para describir codificación; no eleva los atributos de compresión irreversible ni su historial a un bloque de fidelidad. No hay herencia de pérdida por linaje. | Se separa metadato presente de capacidad pendiente. La futura política debe representar también historia desconocida; falta de declaración no significa ausencia de pérdida. |
-| 1.3 JPEG y color medido | **Parcial.** C declara CIELAB por tercios, foto fuente, píxeles y corrección de iluminación; no caracteriza pérdida JPEG ni calibración colorimétrica. A distingue varias fuentes de color. | Se habla de estimaciones regionales sobre fotografías procesadas. No se afirma que todo JPEG sea 4:2:0 sin inspeccionar su codificación. RAW/TIFF, referencias de color y captura controlada son propuestas. No adoptar «EXIF completo» sin filtrar identificadores. |
-| 1.4 STL como original | **Discrepancia documental.** El caso utiliza STL; ello no demuestra que el escáner carezca de color. M incluye fabricante/modelo/software, pero no una cadena general de exportación nativo→STL. | Se delimita el original como archivo recibido y la ida y vuelta como preservación numérica, sin atribuirla a precisión clínica. El nativo, color y cadena de exportación requieren trabajo específico. |
-| 1.5 Resolución y calibración | **Parcial.** VOL emite dimensiones, spacing, orientación, rescale y `calibrated_hu`. Ahora se emite `calibrated_hu: false` y `calibration_status: unknown`; ya no se acredita calibración mediante `Modality == "CT"`. | Se explica la limitación. No convertir automáticamente paso de muestreo en resolución efectiva validada ni tratar la etiqueta de modalidad como prueba de HU. |
-
-## 2. Identificación, recuperación y verificación
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 2.1 Originales externos y archivo | **Parcial.** M tiene `locators` con `dicomweb`, `ae_title`, URL y referencia opaca. W deja los originales fuera. V avisa de externos y no resuelve localizadores. T/F prueban que el validador acepta ciertas series incluidas. | Se condiciona la preservación al repositorio externo. No se afirma que no exista localización ni que ya exista recuperación garantizada. Se ha fijado la distinción: el formato admite incluidos y externos; el escritor de referencia externaliza los adquiridos. No se introduce un perfil `archival`. |
-| 2.2 Tres identidades | **Parcial.** M contiene UID de estudio/serie, SOP Instance UID, hash del fichero y hash del valor almacenado de `PixelData`. V distingue identidad declarada y bytes en series incluidas. No es un hash canónico del píxel decodificado más geometría/escala. | Se describe exactamente el alcance. No se da por hecho que la clínica conserve o no la copia pseudonimizada: no se inspeccionó su custodia. Quedan canonicalización, semántica geométrica y tratamiento del remapeo de UIDs. |
-| 2.3 Dependencia del nombre | **Discrepancia documental.** `digesto_de_partes` usa UID+PixelData si todos los cortes los declaran; recurre a nombre+hash de archivo en caso contrario. T verifica invariancia al renombrar en la rama UID. | Se sustituye la fórmula única del apéndice por las dos ramas. El nombre no determina orden anatómico. Matiz a la revisión: editar cabeceras sí cambia el hash del archivo completo y, por tanto, el digest de la rama basada en bytes. |
-| 2.4 Multiframe | **Ausente para la propuesta.** `Part` inventaría archivos. VOL calcula dimensiones de serie a partir de archivos/cabeceras; no se encontró un contrato canónico por frame multiframe. | Se limita «corte por corte» al caso por archivo y se declara pendiente el soporte general; no se extrapola la prueba a Enhanced CT. |
-
-## 3. Seguridad y ciclo de vida
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 3.1 Cadena y firmas | **Parcial.** P/V comprueban coherencia de versiones y advierten sobre firmas no soportadas. `verified_by` es una declaración, no una firma verificada. | Se retiran autenticidad, no repudio y prueba de ausencia de edición adversaria. Custodia de claves, formato, roles y sellado temporal requieren diseño. No elegir COSE/JAdES/CAdES en esta revisión editorial. |
-| 3.2 Cifrado | **Ausente como perfil UOS completo.** M/S no tienen un contrato de entradas cifradas; W escribe ZIP STORE. | Se declara pendiente. Elegir sobre completo o cifrado por entrada exige resolver acceso, claves y validación; no equivale a agregar un campo de algoritmo. |
-| 3.3 Supresión/redacción | **Ausente.** P implementa continuidad lógica, no tombstones firmados ni borrado verificable en todas las copias. | Se limita la garantía de append-only. La propuesta requiere política de retención, alcance entre versiones y copias, y revisión aplicable al uso; no asumir que conservar un hash resuelve todas las obligaciones. |
-| 3.4 Desidentificación | **Parcial.** M/V ya contienen perfiles/opciones, assets afectados, estado PHI, consentimiento y controles sobre representaciones faciales y localizadores. Eso valida declaraciones, no inspecciona exhaustivamente todo píxel o anatomía. | Se corrige «distributable» para que no parezca autorización o anonimización certificada. No asumir ni ausencia universal de riesgo ni imposibilidad absoluta de anonimizar cualquier dato dental. |
-
-## 4. Geometría e incertidumbre
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 4.1 Residuo y TRE | **Parcial.** M ya distingue RMS, máximo residual, TRE opcional, región y uso `fit_for`. No hay TRE independiente demostrado para el caso; tampoco contrato completo de covarianza/soporte/sensibilidad. | Se separan objetivo punto-a-plano, residual punto-a-punto y error en objetivo. El máximo sobre correspondencias tampoco es un límite de error anatómico. |
-| 4.2 Propagación y ciclos | **Parcial.** G elige camino corto y desempata por IDs; V avisa si las matrices por caminos discrepan. La discrepancia es el máximo de diferencias de coeficientes, mezclando componentes rotacionales y traslacionales, no TRE en mm. No propaga covarianzas. | Se evita afirmar que menos saltos garantizan más precisión o que el aviso acota error clínico. La fórmula propuesta requiere convenciones de perturbación y tratamiento de correlaciones; no incorporarla sin fijarlos. |
-| 4.3 Otras transformaciones y cámara | **Parcial.** `Registration` documenta una matriz rígida; `Projection` clasifica imágenes, sin intrínsecos ni distorsión. A sí tiene PnP/proyección en la implementación, aunque no sea un contrato general UOS de cámara. | Se corrige que «el pipeline no calcula pose». Similitud, deformable y cámara son cambios de contrato pendientes. Evitar una deformación que absorba el cambio biológico que se quiere medir. |
-| 4.4 Mandíbula y oclusión | **Parcial.** M tiene frames múltiples, `occlusion` y un ID reservado `reg.mandible_to_maxilla`; T prueba declaraciones de mordida. No hay evidencia de un flujo completo multioclusión/tracking en el caso maxilar. | No presentar oclusión como totalmente ausente ni como resuelta. Quedan relaciones tipadas, fechadas, varias posiciones y validación bilateral. |
-| 4.5 Unidades y orientación | **Parcial.** M/V ya contemplan mm, handedness, LPS/RAS y Frame of Reference UID. G implementa dirección e inversión de matrices; T las prueba. | Separar convención implementada de un round-trip DICOM no demostrado. La procedencia de unidades del STL y fixtures con objetos DICOM reales siguen pendientes. |
-
-## 5. Coherencia entre procedencia y uso
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 5.1 Reproducibilidad de capa 2 | **Discrepancia conceptual.** M define la capa 2 como cálculo determinista/reproducible; el paper describe variabilidad en ajuste por caso. No existen capas `2a`/`2b` ni una clase general de reproducibilidad. | Se explicita la tensión. Separar procedencia, modelo preentrenado y reproducibilidad es una propuesta; no cambiar enums ni anunciar la división como implementada. |
-| 5.2 Extracción de informes | **Corregido en exportación.** I distingue reglas/LLM y marca procedencia OCR. W separa cada observación inferida en `derived/`, capa 3, con modelo y fuentes. Una fuente no vinculable se declara no resuelta, avisa y exige revisión; no se inventa. | La reproducción original confirmó capa 1 + rechazo. La regresión ahora exporta y valida dos inferencias del mismo diente conservando ambos modelos; el color sigue en capa 2. No afirmar que toda extracción usa LLM ni que el 93,8% mide exactitud de hallazgos. La promoción por firma requiere conservar la procedencia original. |
-| 5.3 Caras sintéticas | **Corregido en exportación.** E persiste un mapa por intervalos de caras, ligado por SHA-256 al STL, que distingue escáner y cierre sintético. | Se declara geometría añadida y se retira la equivalencia entre estanco y validado para fabricación. El mapa reside en un JSON acompañante, listado en `ExportOutput.sidecars`; debe conservarse junto al STL. |
-| 5.4 Corona y raíz | **Parcial.** E describe origen y error en cabecera STL y ahora identifica las caras de corona y raíz en el JSON acompañante. La arcada por defecto no lleva raíces. La impresión física no conserva ese mapa. | Se presentan raíces como experimentales y se conservan las anomalías. No atribuir al export externo una separación interna `derived/` que no se haya probado. |
-| 5.5 Color por vértice | **Discrepancia documental.** C/A generan resúmenes por tercio y asignaciones a vértices; A distingue color regional, proyectado, interpolado y respaldo. | Se separan resolución de medida y almacenamiento. Los 108.922 regionales de 112.067 dejan 3.145 restantes. El borrador sumaba solo 112.060; un comentario de prueba menciona siete proyectados, pero no se usa como prueba del run clínico. Se retira el desglose exacto pendiente de verificar el artefacto. |
-| 5.6 Etiquetas FDI como beneficio | **Discrepancia de alcance.** Hay labels y selección por índice, pero el propio resultado histórico rechaza límites en 11/14 coronas. | Se explicita el carácter experimental desde el resumen y la descripción del receptor. Exportar una etiqueta no valida el límite que representa. |
-| 5.7 SaMD | **Discrepancia documental.** Los códigos de capa no deciden la calificación de un módulo. | Se sustituye la exención general por finalidad prevista; véase §10.1 y fuente oficial. |
-
-## 6. Gaussianas y evaluación
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 6.1 Diagnóstico, PSNR, HU | **No demostrado.** Los scores volumétricos son en proyección; el caso tiene submuestreo. VOL no acredita calibración de HU. | Se distingue calidad de representación y validación diagnóstica. No deducir resolución efectiva de un spacing supuesto ni asignar HU por modalidad. |
-| 6.2 Métricas futuras | **Propuesta.** No se demuestra aquí evaluación por tarea con observadores o fantoma. | Se requiere evidencia por tarea antes de ampliar el uso declarado. MAE, MTF o contraste pueden aportar evidencia, pero ninguno certifica por sí solo toda aptitud diagnóstica. |
-| 6.3 Fitness y prohibición de medir | **Ausente como regla general.** `fit_for` está en registros, no en todos los assets; V no prohíbe universalmente una medición por proceder de Gaussianas. | Se limita el uso demostrado de las capas actuales. La política general por representación/tarea y el recurso al original son cambios futuros, no capacidades existentes. |
-| 6.4 Transporte web | **Discrepancia documental.** DICOM PS3.18 ya define servicios web. La existencia de splatting no demuestra una ventaja frente a MPR del original. | Se corrige la comparación con DICOM y no se presenta UOS como sustituto validado del volumen original. |
-| 6.5 Peso de la investigación | **Propuesta editorial.** UOS-Core admite escena de malla sin splats; T verifica niveles. | Se declara al inicio de la sección experimental. Se mantiene un documento por el alcance acordado; separar el informe técnico queda para una decisión posterior. |
-
-## 7. Suficiencia clínica
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 7.1 Radiografía 2D | **Parcial.** M incluye `IMAGE2D`, `Projection.type` y `fdi_targets`; no prueba ingestión y registro completo de todas las modalidades radiográficas. | El título pasa a composición de un caso multimodal, evitando prometer toda la historia dental. Quedan conectores y geometrías por modalidad. |
-| 7.2 Contenido estructurado | **Parcial.** C conserva hallazgos por FDI y medidas. Hay extensión clínica, pero no un odontograma/periodontograma interoperable completo ni todos los antecedentes, prótesis y tratamientos. | Se separa extensibilidad de interoperabilidad. No inventar perfiles clínicos ni copiar datos del sistema de gestión en esta corrección. |
-| 7.3 Objeto dental longitudinal | **Ausente como modelo completo.** La clave regional es FDI; no hay entidad longitudinal general diente/implante/corona independiente de posición. | Queda pendiente modelar identidad y eventos sin confundir posición con objeto. No prometer seguimiento clínico solo por tener visitas y frames. |
-| 7.4 Acto clínico | **Parcial.** M tiene fecha y equipo, operador de registro y consentimiento. No representa de forma completa protocolo y autoría clínica autenticada. | Se conserva como limitación; no afirmar que todos los elementos temporales o del equipo estén ausentes. |
-| 7.5 Diversidad de casos | **Limitación de evidencia.** H y el paper no demuestran cobertura clínica de edéntulos, dentición mixta, mandíbula, metal o movimiento. | Se conserva N y la limitación del caso maxilar; una arquitectura extensible no sustituye validación en esas situaciones. |
-
-## 8. Contenedor y transporte
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 8.1 STORE y rangos | **Implementado como restricción, ventaja no medida.** W escribe STORE; V rechaza entradas comprimidas. No se encontró un benchmark de acceso interno por rangos en este repositorio. | Se corrige que STORE sea necesario para pedir una entrada completa. DEFLATE por entrada es propuesta de contrato. Matiz: marcar un códec como opcional no lo hace legible sin soporte; necesita un fallback real. |
-| 8.2 Compresión glTF | **Parcial.** V revisa estructura Gaussian/glTF, sin una política completa de pérdida por asset `measured`. | No afirmar que el validador ya proteja fidelidad geométrica/colorimétrica. La política debe atender a parámetros y transformaciones reales, no solo al nombre de extensión. |
-| 8.3 ZIP64, streaming y media type | **Parcial/propuesta.** W utiliza `zipfile`; eso no demuestra interoperabilidad ZIP64 con lectores externos. El manifiesto primero se comprueba. No se identifica una prueba >4 GiB ni lector web por rangos en el repo. | Se conserva el MIME como propuesto y no registrado. Gobernanza neutral, límites y prueba ZIP64 quedan pendientes. No inferir comportamiento de todos los lectores desde la biblioteca Python. |
-
-## 9. Estándares e interoperabilidad
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 9.1 FHIR R4/R5 | **Discrepancia documental.** W/M utilizan indicaciones de tipo; no hay conector bidireccional validado. | Se distingue `Media` R4 de `DocumentReference` R5. `ImagingSelection` queda como destino candidato sujeto a restricciones y referencias de imagen, no como equivalencia automática por FDI. |
-| 9.2 Capacidades DICOM | **Discrepancia documental.** La motivación infravaloraba objetos existentes y transporte web. | Se reconoce el alcance de DICOM. Matiz a la revisión: la existencia de una SOP Class no demuestra que cualquier PACS almacene, versione o visualice todos esos objetos; requiere conformidad del producto receptor. |
-| 9.3 Round-trip | **Propuesta.** Los campos y destinos documentados no equivalen a importación/exportación semánticamente reversible. | Se retira «field for field» como garantía y se deja pendiente una prueba real contra otro sistema. |
-| 9.4 Terminología y texto original | **Parcial.** C emite `{system, code:null, display}`. No es un hallazgo ya codificado en SNOMED; no consta un `coding_status` ni localización por página/posición general en esa salida. | Se corrige «coded». Quedan codificación supervisada y anclaje al documento sin inventar identificadores. |
-
-## 10. Alcance regulatorio y legal
-
-Esta intervención corrige afirmaciones del white paper; no determina la clasificación del producto ni verifica cumplimiento por jurisdicción. No se incorporan conclusiones de la revisión sobre clases FDA, plazos legales o aplicabilidad de leyes nacionales sin una evaluación específica.
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 10.1 Capas 1/2 no SaMD | **Corrección aceptada.** La guía europea MDCG 2019-11 rev.1 vincula la calificación a la finalidad prevista. | Se retira la exención basada en ausencia de modelo y la autorización implícita al borrar `derived/`. La evaluación corresponde a cada módulo y uso. |
-| 10.2 Ley de IA | **Propuesta de análisis.** Procedencia no prueba cumplimiento de todas las obligaciones que pudieran aplicar. | No se añade una afirmación de cumplimiento ni se equipara registro de pesos a logging completo. Evaluar alcance, fechas y obligaciones antes de usarlo como argumento regulatorio. |
-| 10.3 EHDS | **Propuesta.** No se identificó un mapeo implementado que demuestre conformidad con sus especificaciones. | No se anuncia compatibilidad. Debe contrastarse con requisitos aplicables al producto y su calendario. |
-| 10.4 Historia clínica | **Parcial.** Consentimiento/finalidad tienen contrato y checks; firma, acceso, retención y supresión no constituyen un ciclo legal completo. | Se elimina la equivalencia entre perfil de metadatos y permiso de distribución. No presentar UOS como historia clínica legal completa. |
-| 10.5 Export al paciente | **Propuesta.** No existe el perfil descrito con originales, visor y resumen garantizados. | Mantenerlo como posible evolución y no como entrega actual ni garantía universal de portabilidad jurídica. |
-
-## 11. Valor y estructura
-
-| Observación | Contraste y estado | Corrección editorial y pendiente |
-|---|---|---|
-| 11.1 Destinatarios | **Corrección aceptada.** Los experimentos no sostienen todas las promesas al laboratorio o al seguimiento. | Resumen y recorrido indican condiciones de acceso, raíces/labels experimentales y límites de medición desde la primera mención. |
-| 11.2 Diferenciación | **Parcial.** Procedencia, validación y composición son capacidades concretas; no se hizo una revisión exhaustiva de todas las alternativas del mercado. | Se eliminan afirmaciones universales de exclusividad y «no se puede comprar a ningún precio». |
-| 11.3 Dos documentos | **Propuesta aplazada.** Separación útil, pero fuera de esta intervención acordada. | Se conserva la estructura y se explica que la sección Gaussiana es investigación opcional, no requisito UOS-Core. |
-| 11.4 Qué preservar | **Aceptado.** Resultados negativos, N, códigos sin inventar y separación de planos siguen siendo parte de la propuesta. | Se mantienen con su alcance. Una segunda implementación demuestra interoperabilidad, pero no convierte por sí sola una propuesta en estándar formal. |
-
-## 12. JSON y reglas propuestos por Matías
-
-Los ejemplos de la revisión son propuestas, no schemas válidos de la v0.3 actual. No se copian al white paper como si estuvieran implementados.
-
-| Propuesta | Correspondencia y decisión pendiente |
+| Observación | Respuesta actual y límite |
 |---|---|
-| 12.1 Identidad, recuperación y `fidelity` | M ya tiene parte de identidad y `locators`; faltan canonicalización y fidelidad general. Un futuro validador puede comprobar un perfil técnico, pero no certificar aptitud clínica general con un booleano sin tarea, evidencia ni estado desconocido. |
-| 12.2 Derivado y pérdida heredada | Existe `derived_from`; faltan historial de pérdidas y clase de reproducibilidad. `layer: "2b"` no pertenece al contrato actual. No convertir automáticamente submuestreo en resolución efectiva medida. |
-| 12.3 Incertidumbre completa | Existen residual, máximo, TRE/región y revisión declarada. Faltan covarianza, soporte y sensibilidad estructurados. El ejemplo llama `residual_all` a una métrica `over: inliers`: debe aclararse antes de implementarlo. |
-| 12.4 Reglas UOS-F | No están implementadas como familia de fidelidad. Requieren contrato de fuentes, pérdidas, datos desconocidos y usos; extraer metadatos no sustituye validar clínicamente. |
-| 12.4 Reglas UOS-I | Hay checks de hashes y UID/PixelData almacenado, pero no los nuevos hashes canónicos. I-005, tal como está redactada, chocaría con un asset referenciado legítimo sin payload: distinguir externo, ausente y retirado. |
-| 12.4 Reglas UOS-R | Hay estado provisional y aviso por caminos distintos. No hay verificación criptográfica de `verified_by` ni covarianza propagada. |
-| 12.4 Reglas UOS-L | Existe rechazo de `inferred` en capa 1 y de capa 3 en `clinical/`; la exportación separada está corregida y probada. L-002 no debe clasificar automáticamente como salida de modelo toda extracción determinista. |
-| 12.4 Regla UOS-G | Se añade y prueba un mapa de intervalos de caras vinculado al hash del STL; no equivale a validación anatómica ni viaja con la impresión física. |
-| 12.5 Lector | El repositorio entrega metadatos y exports; no demuestra los cuatro comportamientos obligatorios propuestos en un lector independiente. Especificación de lector y pruebas de interfaz quedan pendientes. |
+| 2.1 Originales externos y archivo | **Parcial.** El contrato admite incluidos y externos y localizadores; el escritor actual externaliza originales. No hay resolvedor, recuperación garantizada ni perfil archival nuevo. |
+| 2.2 Tres identidades | **Pendiente para el píxel canónico.** Se comprueban bytes y UID/PixelData almacenado; no se ha definido el hash de imagen decodificada más geometría y rescale. No se presume qué copia custodia la clínica. |
+| 2.3 Nombres de cortes | **Contraste y corrección documental.** El digest usa UID+PixelData cuando constan en todos los cortes y nombre+hash en la rama alternativa. El nombre no se presenta como orden anatómico. |
+| 2.4 Multiframe | **Pendiente.** No se ha cerrado un contrato y una verificación general por frame Enhanced CT. |
 
-## 13. Prioridades y respuestas a preguntas abiertas
+### 5.3 Seguridad y ciclo de vida — revisión §3
 
-### 13.1 Orden de trabajo resultante
-
-Se han aplicado correcciones de exportación inferida, calibración no acreditada, validación estricta de bytes DICOM, lenguaje del chequeo de matrices, política de originales y procedencia por caras STL. La identidad semántica sigue pendiente: se rechazan los bytes distintos sin atribuirles equivalencia clínica. Diseñar después fidelidad, reproducibilidad y recuperación como contratos versionados, con su validador y pruebas. Firmas, transformación no rígida, perfiles clínicos y conectores necesitan decisiones propias; no se dan por aprobados por figurar en la revisión.
-
-No se aceptan las estimaciones de esfuerzo de Matías como mediciones del repositorio. Por ejemplo, canonicalizar imágenes DICOM y preservar compatibilidad no queda demostrado como trabajo «bajo».
-
-### 13.2 Respuestas contrastadas
-
-| Pregunta | Respuesta sustentada hoy |
+| Observación | Respuesta actual y límite |
 |---|---|
-| 1. ¿Existe `fidelity` equivalente? | No. VOL aporta metadatos parciales; M/S carecen del modelo general y V no calcula elegibilidad diagnóstica. |
-| 2. ¿Qué copia se hashea? | El escritor calcula hashes sobre los archivos que recibe. No se inspeccionó el repositorio clínico ni se puede afirmar qué copias conserva la clínica. UID/PixelData ayudan parcialmente, sin hash canónico de geometría. |
-| 3. ¿LLM/OCR? | I tiene reglas por defecto, backend LLM y fallback OCR; la procedencia distingue esas rutas. W separa ahora la inferencia en capa 3; §5.2 describe la regresión y la limitación de fuentes no resueltas. |
-| 4. ¿Se usa rango interno STORE? | Se implementa STORE y su validación. No se encontró benchmark ni lector HTTP por rangos en este repositorio que sostenga la ventaja anunciada. |
-| 5. ¿TRE independiente? | Existe el campo opcional, pero no se ha localizado evidencia de TRE independiente para el caso de referencia. El 0,666 mm sigue siendo residual de ajuste. |
-| 6. ¿Mandíbula/oclusión? | Hay frames, enum de oclusión e ID reservado de registro. No equivalen a un flujo clínico bilateral y multioclusión validado. |
-| 7. ¿Organización neutral? | Decisión de gobernanza pendiente; el tipo propuesto conserva `histora`. No se ha cambiado ni registrado un MIME. |
-| 8. ¿Contacto WG-22/ADA? | No consta evidencia en los archivos examinados. Requiere información del equipo; no se han enviado mensajes externos. |
-| 9. ¿Entregas reales al laboratorio? | Hay exports y resultados históricos; eso no acredita entregas, pilotos ni advertencias realmente recibidas. No se inspeccionaron registros de distribución. |
-| 10. ¿Umbral de cambio gingival? | No se ha localizado un criterio clínicamente validado de reportabilidad con incertidumbre del registro longitudinal. |
+| 3.1 Firmas y cadena | **Corregido editorialmente; firmas pendientes.** La cadena expresa coherencia interna, no autenticidad ni no repudio. `verified_by` y la evidencia no están autenticados. |
+| 3.2 Cifrado | **Pendiente.** No existe un perfil UOS completo de cifrado y custodia de claves. |
+| 3.3 Supresión y redacción | **Pendiente.** Retirar inferencias en un sucesor no equivale a tombstones firmados ni a borrado verificable en todas las copias. |
+| 3.4 Desidentificación | **Parcial.** Existen declaraciones y controles, no inspección exhaustiva de píxeles, anatomía o identidades. Dejar originales fuera no anonimiza el contenido restante. |
 
-## Hallazgos adicionales y validación
+### 5.4 Geometría e incertidumbre — revisión §4
 
-- El documento normativo, comentarios y pruebas contienen afirmaciones históricas que pueden discrepar entre sí. La fase editorial registró el conflicto; la fase de implementación ahora corrige explícitamente la especificación en los seis puntos acordados, dejando las capacidades nuevas pendientes.
-- Tras integrar los cambios remotos y corregir la expectativa de desidentificación, F enumera 13 fixtures: 2 `valid`, 9 `error`, 1 `warning` y 1 `valid-with-warning`. El índice declara ahora `version: "0.3"`. La serie con cabecera reescrita y hashes sin actualizar se rechaza por integridad, sin afirmar que pertenezca a otro paciente.
-- Se eliminaron «22 checks» como recuento ambiguo de checks/subchecks y la igualdad entre éxito del validador y aptitud clínica.
-- La copia pública de `KHR_gaussian_splatting` consultada durante esta revisión declara estado ratificado. El white paper ya no lo llama Release Candidate ni promete una migración automática. Sigue pendiente verificar compatibilidad de la implementación con la revisión final.
-- Se corrigieron dos problemas matemáticos del apéndice: mezclar el umbral de opacidad y el techo de atenuación en un único intervalo; atribuir el clamp 0,9999 al límite de `float32`. También se distingue promedio local de color de composición visible con transmitancia, y conectividad del grafo de independencia respecto al camino.
-- Se separan los scores de apariencia sobre vistas de entrenamiento de los scores volumétricos sobre vistas retenidas. La aditividad de una partición ideal no prueba fidelidad de capas ajustadas o calibradas por separado.
-- **Pruebas en la fase editorial inicial:** `.venv/bin/python -m pytest packages/uos/tests -q` → **140 passed**. Esto verificó la suite anterior a los cambios de implementación, no los resultados clínicos del white paper.
-- **Reproducción sintética inicial, antes de corregir:** un valor `ph` con `Derivation.INFERRED` y modelo declarado pasaba por `clinical_layer` como capa 1; `_valida_capas_clinicas` producía `UOS-E-017d`. Se usó ZIP en memoria, sin datos clínicos y sin añadir pruebas que fijen el defecto como conducta deseada.
-- **Comprobación documental:** `docs_sync.py --check` pasa antes y después de editar. Usa archivos versionados como inventario; los enlaces locales de esta matriz nueva se comprobaron además explícitamente.
-- **Compilación final:** `latexmk -pdf -interaction=nonstopmode -halt-on-error -cd docs/spec/uos-white-paper.tex` termina correctamente. Índice recuperado y limitado a secciones; sin referencias sin resolver, etiquetas duplicadas, avisos LaTeX ni desbordamientos. PDF inspeccionado visualmente.
-- **Higiene:** `git diff --check` y `data_guard.py --quiet` pasan. El PDF generado se mantiene como artefacto local, sin añadirlo al historial. Los cambios de agentes y contrato se documentan en la fase de implementación.
+| Observación | Respuesta actual y límite |
+|---|---|
+| 4.1 Residual frente a TRE | **Corregido editorialmente.** El RMS se limita al ajuste observado. El TRE independiente, covarianza, condicionamiento y validación anatómica siguen pendientes. |
+| 4.2 Grafo y propagación | **Parcial.** Se comprueban caminos y discrepancias de matrices. No se propagan covarianzas ni se convierte la diferencia entre coeficientes en error anatómico en mm. |
+| 4.3 Transformaciones y cámara | **Parcial.** El pipeline sí resuelve poses mediante PnP; no hay contrato general completo de cámara, similitud y deformación. |
+| 4.4 Mandíbula y oclusión | **Parcial.** Hay frames y declaraciones de oclusión; no flujo bilateral, multioclusión o tracking validado. |
+| 4.5 Unidades y orientación | **Parcial.** Se prueban dirección/inversión de matrices y se declaran convenciones. Faltan comprobaciones independientes de unidades y round-trip DICOM. |
 
-## Fuentes externas comprobadas
+### 5.5 Coherencia de capas — revisión §5
 
-Se consultaron fuentes primarias para las correcciones de estándares y finalidad prevista, sin convertir sus requisitos en afirmaciones de cumplimiento de UOS:
+| Observación | Respuesta actual y límite |
+|---|---|
+| 5.1 Reproducibilidad de capa 2 | **Implementado el registro separado.** Se mantienen capas 1/2/3; no se adoptan 2a/2b. Configuración y semillas no acreditan repetibilidad medida. |
+| 5.2 Extracción de informes | **Corregido en ingesta y exportación.** OCR/LLM, medidas y observaciones mantienen inferencia, modelo y fuente; aprobación no borra origen. Se distinguen de extracción determinista. |
+| 5.3 Caras sintéticas | **Implementado y probado.** Mapa por intervalos de caras ligado al hash STL; no valida la superficie ni la fabricación. |
+| 5.4 Corona y raíz | **Parcial.** Se distingue el origen en el mapa acompañante. Las raíces siguen experimentales; no se han corregido sus anomalías anatómicas. |
+| 5.5 Color regional y por vértice | **Corregido el alcance y recuperada la función.** Estimaciones por tercios no equivalen a medición independiente por vértice. La apariencia de agosto se conserva sin nueva calibración. |
+| 5.6 Etiquetas FDI | **Función recuperada; revisión aplazada.** Pueden seleccionarse e inspeccionarse piezas, con etiquetas separadas e inferidas. Sus fronteras no se dan por validadas. |
+| 5.7 Capas y calificación regulatoria | **Corregido editorialmente.** El número de capa no acredita una exención ni determina la calificación del módulo. |
 
-- [DICOM PS3.18: servicios web](https://dicom.nema.org/medical/dicom/current/output/html/part18.html).
-- [DICOM PS3.3 A.85: modelos 3D encapsulados](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_A.85.html).
-- [FHIR R4 Media](https://hl7.org/fhir/R4/media.html) y [FHIR R5 DocumentReference](https://hl7.org/fhir/R5/documentreference.html).
-- [MDCG 2019-11 rev.1, publicación de la Comisión Europea](https://health.ec.europa.eu/latest-updates/update-mdcg-2019-11-rev1-qualification-and-classification-software-regulation-eu-2017745-and-2025-06-17_en): finalidad prevista y calificación del software.
-- [KHR_gaussian_splatting, especificación de Khronos](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_gaussian_splatting): estado publicado consultado en esta revisión.
+### 5.6 Gaussianas y evaluación — revisión §6
 
-## Comprobación posterior a las correcciones de implementación
+| Observación | Respuesta actual y límite |
+|---|---|
+| 6.1 Diagnóstico, PSNR y HU | **Corregido el alcance.** Se registra la representación y sus métricas; no se acredita aptitud diagnóstica, HU calibrados ni recuperación de detalle perdido. |
+| 6.2 Evaluación futura | **Pendiente.** No se han realizado fantomas, métricas diagnósticas independientes ni estudios de observador por tarea. |
+| 6.3 Fitness y fuente de medidas | **Parcial.** Hay evaluaciones con tarea/evidencia y restricciones declaradas. No se ha implementado toda la política de prohibición y recurso al original propuesta por Matías. |
+| 6.4 Transporte web | **Corregido editorialmente.** No se presenta UOS como sustituto diagnóstico validado de DICOM/MPR. |
+| 6.5 Peso de la investigación | **Corregido el alcance.** UOS-Core puede prescindir de splats. La división del paper en dos publicaciones sigue aplazada. |
 
-Se añaden regresiones sintéticas de inferencias, calibración, alteraciones DICOM y mapas STL. Los hashes UID/PixelData de v0.3 no cambian: cualquier fichero DICOM incluido cuyo hash completo no coincide ahora falla con `UOS-E-007`, incluso si conserva UID y PixelData. El cambio evita aceptar modificaciones de geometría o rescale como supuesta desidentificación. Los originales externos no se descargan ni verifican.
+### 5.7 Contenido clínico — revisión §7
 
-Las correcciones de código no implementan `fidelity`, firmas, elegibilidad diagnóstica, recuperación de originales ni propagación de covarianzas. La justificación y los límites constan en [la decisión de arquitectura](../architecture/formato-uos.md).
+| Observación | Respuesta actual y límite |
+|---|---|
+| 7.1 Radiografía 2D | **Parcial.** Existen tipos de imagen y proyección, no todos los conectores y registros por modalidad. |
+| 7.2 Odontograma y periodontograma | **Parcial.** La selección visual por FDI funciona; no equivale a perfiles interoperables completos de odontograma y periodontograma. |
+| 7.3 Objeto dental longitudinal | **Pendiente.** FDI identifica posición; falta entidad estable de diente/implante/corona y sus eventos. |
+| 7.4 Acto clínico | **Parcial.** Existen metadatos y consentimiento, no autoría autenticada ni protocolo clínico completo. |
+| 7.5 Diversidad de casos | **Pendiente.** El caso maxilar no valida mandíbula, edéntulos, dentición mixta, metal o movimiento. |
 
-Validación anterior a integrar los cambios remotos: **303 pruebas correctas** en `packages/uos/tests` y `packages/export-agents/tests`; Ruff y MyPy sin errores en los módulos afectados, y controles `docs_sync`, `data_guard` y `git diff --check` correctos. El PDF del white paper se ha regenerado (28 páginas). Estas pruebas son sintéticas, no una validación clínica.
+### 5.8 Contenedor — revisión §8
 
+| Observación | Respuesta actual y límite |
+|---|---|
+| 8.1 STORE y rangos | **Restricción implementada; ventaja interna no medida.** STORE no es necesario para recuperar una entrada completa. El visor tiene lector por rangos, sin benchmark que cierre el beneficio de acceso interno aleatorio. |
+| 8.2 Compresión glTF | **Parcial.** Se caracteriza la conversión numérica actual, no toda la política por extensión/códec y grado de fidelidad propuesta. |
+| 8.3 ZIP64 y MIME | **Pendiente en interoperabilidad y gobernanza.** El uso de `zipfile` no prueba lectores externos de más de 4 GiB; el tipo de medio no está registrado como estándar neutral. |
 
-### Integración con los cambios remotos — 2026-10-01
+### 5.9 Estándares — revisión §9
 
-Se conservaron la política de publicación con etiquetas separadas de borrador y versión
-publicada, las actualizaciones de versión y las nuevas comprobaciones del remoto. Se
-actualizaron el generador, el índice y las pruebas del banco de conformidad para que una
-cabecera DICOM reescrita con hashes antiguos produzca `UOS-E-007`.
+| Observación | Respuesta actual y límite |
+|---|---|
+| 9.1 FHIR R4/R5 | **Corrección documental.** Se distinguen recursos por versión; no se acredita un conector bidireccional validado. |
+| 9.2 Alcance de DICOM | **Corrección documental.** Se reconocen objetos existentes. Su existencia no garantiza soporte de cualquier PACS receptor. |
+| 9.3 Round-trip | **Pendiente.** Los destinos documentados no prueban equivalencia semántica de importación y exportación. |
+| 9.4 Terminología | **Parcial.** Se conserva texto y no se inventan códigos. Falta codificación supervisada y localización general por página/posición. |
 
-La comprobación conjunta de UOS, exportación y conformidad pasó **307 pruebas**. Ruff y
-MyPy pasaron en los módulos comprobados. El control documental sigue detectando un
-pendiente de publicación: el esquema modificado difiere del contenido servido por
-`uos-spec-v0.3-draft`. La etiqueta no se ha movido durante la resolución del rebase.
+### 5.10 Alcance regulatorio y legal — revisión §10
+
+| Observación | Respuesta actual y límite |
+|---|---|
+| 10.1 Exención de capas 1/2 | **Retirada del texto.** Esta intervención no determina la clasificación del producto ni verifica cumplimiento por jurisdicción. |
+| 10.2 Ley de IA y 10.3 EHDS | **Pendientes de evaluación específica.** La procedencia implementada no acredita por sí sola cumplimiento ni compatibilidad. |
+| 10.4 Historia clínica | **Parcial.** Metadatos y consentimiento no constituyen el ciclo completo de firma, acceso, retención y supresión. |
+| 10.5 Exportación al paciente | **Propuesta pendiente.** No existe el perfil completo con originales, visor y resumen garantizados descrito por la revisión. |
+
+### 5.11 Posicionamiento — revisión §11
+
+| Observación | Respuesta actual y límite |
+|---|---|
+| 11.1 Destinatarios | **Corregido editorialmente.** Se condicionan acceso y usos; no se prometen resultados de laboratorio o seguimiento sin evidencia. |
+| 11.2 Diferenciación | **Corregido editorialmente.** Se describen capacidades concretas sin exclusividad universal frente al mercado. |
+| 11.3 Dos documentos | **Aplazado.** Se mantiene el paper; esta respuesta y el informe del complete case documentan por separado las correcciones. |
+| 11.4 Disciplina de evidencia | **Conservada.** Resultados negativos, N, códigos no inventados y límites siguen explícitos. Otro lector no convierte por sí solo la propuesta en estándar formal. |
+
+### 5.12 Propuestas de contrato y lector — revisión §12
+
+Se adopta el principio de fidelidad y pérdida heredada mediante una extensión compatible, no copiando literalmente el JSON ilustrativo ni sus campos `layer: "2b"`. Se conserva la numeración existente de controles. La identidad canónica, recuperación, covarianzas, autenticación y políticas clínicas completas siguen pendientes.
+
+El visor muestra el registro declarado y distingue la procedencia de las etiquetas; se ha comprobado selección, ficha y exportación. **No se han cerrado los cuatro comportamientos obligatorios del lector propuestos en §12.5**, incluyendo el recurso automático al DICOM para cortes/mediciones y la presentación completa de incertidumbre geométrica.
+
+## 6. Evidencia técnica disponible
+
+| Comprobación | Resultado y alcance |
+|---|---|
+| Suite del monorepo | 1.168 pruebas correctas, 2 omitidas y 2 advertencias numéricas en una prueba existente de apariencia. Resultado de la ejecución documentada durante las correcciones; no se ha repetido la suite para redactar este informe. |
+| Python y especificación | Ruff y MyPy pasaron en los archivos comprobados; la especificación LaTeX compiló. Las pruebas sintéticas no son validación clínica. |
+| Visor | Compilación correcta, pruebas unitarias de compatibilidad/etiquetas y regresión del pase de selección; comparación con el caso real y flujo de navegador comprobados. Las pruebas que requieren otras fixtures locales pueden omitirse. |
+| UOS corregido | 191.351.263 bytes; 24 assets; 13 originales externos; UOS-Core válido, cero errores y 42 advertencias. No acredita UOS-Distributable ni anonimización. |
+| Retirada de inferencias | Sucesor válido, sin assets de capa 3 ni entradas `derived/`; escena base idéntica y archivo de origen sin modificar. |
+| Apariencia archivada | Igualdad de atributos transportados frente a agosto; 113.540 gaussianas, 13 tonos regionales. No entrenamiento ni evaluación clínica nuevos. |
+| Malla regenerada | 112.067 vértices, 220.085 triángulos; cobertura de apariencia del 97,1 %, que no equivale a exactitud del color. 3.145 vértices de la pieza sin color declarado en gris. |
+| Procedencia CBCT del caso | `asset.field` permanece con fuente no resuelta porque el ejecutor pasa `cbct=None`. La representación no puede acreditar una vinculación completa al DICOM fuente. |
+
+Los resultados anteriores de 140, 303 y 307 pruebas pertenecen a fases de septiembre y a la integración del 1 de octubre; no deben confundirse con el total posterior de 1.168. Los resultados experimentales del paper no se sustituyen por las cifras del run nuevo.
+
+## 7. Próximo trabajo y lo que se deja aplazado
+
+### Trabajo previsto, sin revisión de segmentación
+
+1. **Procedencia CBCT del ejecutor:** declarar la serie fuente, vincularla al campo, comprobar hashes y regenerar el UOS. Estimación orientativa: **medio a un día**. No incluye recuperar originales desde un PACS externo.
+2. **Repetibilidad experimental:** repetir ejecuciones con configuración registrada, definir comparaciones y documentar variación y tolerancias. Estimación orientativa: **uno a dos días**, según duración de los procesos. Reutilizar agosto no cuenta como repetir entrenamiento.
+3. **Calibración:** inventariar referencias y adquisiciones, distinguir color, geometría e intensidad y definir o ejecutar comprobaciones cuando haya referencia adecuada. Estimación inicial: **uno a tres días**. Sin referencias puede cerrarse la auditoría y el diseño experimental, pero no acreditarse calibración.
+
+La previsión conjunta es de **tres a seis jornadas**, condicionada a datos, referencias y ejecuciones. No es el tiempo necesario para cerrar toda la revisión de Matías ni una garantía de obtener validación clínica.
+
+### Aplazado por decisión expresa
+
+**Revisión de segmentación y corrección de límites dentales.** La selección funciona, pero persisten fronteras que incluyen encía o superficie vecina y anomalías en raíces reconstruidas. Se mantienen las advertencias y el gate de revisión. No se retiran esos avisos ni se presenta el resultado como validado.
+
+### Fuera de este cierre inmediato
+
+Recuperación garantizada de originales; píxel DICOM canónico y multiframe completo; firmas, cifrado y redacción; covarianzas y TRE independiente; transformaciones ampliadas y oclusión validada; perfiles clínicos longitudinales; round-trip DICOM/FHIR; pruebas de otros receptores y diversidad de casos; evaluación clínica y regulatoria específica.
+
+## 8. Publicación y trazabilidad del trabajo
+
+Las correcciones de implementación ya están en commits locales de `main`:
+
+| Repositorio | Commit | Contenido |
+|---|---|---|
+| Agentic Smart Health | `ded264b` | Fidelidad, procedencia y separación de inferencias. |
+| Agentic Smart Health | `99d1886` | Pipeline, apariencia archivada y regeneración de malla. |
+| uos-viewer | `fb11d73` | Selección dental y fichas con etiquetas separadas. |
+| uos-viewer | `c10508f` | Etiquetas y correspondencia de exportación con Python. |
+
+Estos identificadores documentan el código local inspeccionado; no demuestran despliegue ni publicación remota. Este informe introduce un cambio documental posterior y no crea un commit automáticamente.
+
+Antes de publicar el paper deben revisarse su descripción de la extensión reciente, su resumen y sus conclusiones. También hay pendientes de publicación/documentación: el contenido del esquema modificado no coincide con el tag `uos-spec-v0.3-draft`; la comprobación de inventario detecta que `scripts/restaura_apariencia.py` carece de `RESUMEN_EN`. No se han movido tags ni corregido código como parte de esta redacción.
+
+El PDF de esta respuesta se genera como artefacto local bajo `data/processed/reports/`, ignorado por Git. El Markdown permanece en el repositorio. No se incorporan el PDF de Matías, archivos originales, capturas con información clínica ni geometría de pacientes al historial.
+
+## 9. Fuentes para comprobar esta respuesta
+
+- Revisión de Matías: PDF local leído íntegramente; sección y numeración conservadas en la matriz. No se reproduce su documento ni se incorpora al repositorio.
+- [Contrato de fidelidad y procedencia](uos-fidelity-provenance-v1.md): diseño implementado, pruebas y límites.
+- [Informe del complete case del 2 de octubre](uos-complete-case-2026-10-02.md): ejecuciones inicial y corregida, validación y pendientes.
+- [Decisión de arquitectura](../architecture/formato-uos.md) y [especificación normativa](uos-format-spec-v0.3.tex).
+- [White paper](uos-white-paper.tex): correcciones editoriales previas y repaso final aún pendiente.
+- [Contrato Python](../../packages/uos/src/uos/fidelidad.py), [auditoría y retirada de inferencias](../../packages/uos/src/uos/auditoria.py), [exportador](../../packages/uos/src/uos/agente.py) y [validador](../../packages/uos/src/uos/validador.py).
+- [Ejecutor del caso](../../scripts/caso_completo.py), [recuperación de apariencia](../../scripts/restaura_apariencia.py) y [regeneración de malla](../../scripts/malla_mejorada.py).
+- [Plan de implementación](uos-v0.4-plan-de-implementacion.md): hoja de ruta; no equivale a trabajo completamente realizado.
+- Visor: repositorio local `uos-viewer`, commits indicados y pruebas del navegador. Evidencia clínica y artefactos pesados permanecen en almacenamiento local ignorado.
+
+La respuesta inicial se redactó el 30 de septiembre y se amplió tras integrar cambios el 1 de octubre. Esta edición sustituye sus estados desactualizados; preserva la distinción entre corrección del texto, implementación, prueba funcional y evidencia clínica.
