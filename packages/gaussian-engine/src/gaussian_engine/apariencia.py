@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import json
 import math
+import platform
 import subprocess
 import time
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -603,6 +605,7 @@ def _entrena_gsplat(
     siembra: str = "vertice",
     dispositivo: str = "cuda",
     traza: bool = False,
+    random_seed: int = 0,
     # ⚠️ Estrategia de densificacion/poda. "mcmc" (Kheradmand et al. 2024) REUBICA las
     # gaussianas muertas en vez de podarlas: la cuenta se mantiene cerca de `cap_max` y la
     # niebla sale mucho menor. MEDIDO en este proyecto: con la estrategia clasica, la
@@ -809,12 +812,13 @@ def _entrena_gsplat(
     estado = (strat.initialize_state(scene_scale=1.0) if estrategia == "default"
               else strat.initialize_state())
 
-    torch.manual_seed(0)
+    torch.manual_seed(random_seed)
+    view_rng = np.random.default_rng(random_seed)
     curva: list[tuple[int, float, float, float]] = []
     t0 = time.perf_counter()
 
     for it in range(iteraciones):
-        i = int(np.random.choice(train))
+        i = int(view_rng.choice(train))
         out, info = render(viewmats[i])
         strat.step_pre_backward(params, opt, estado, it, info)
 
@@ -1380,6 +1384,7 @@ def entrena_apariencia(
     # IDENTICO color de entrada y IDENTICOS pixeles, sin que el RANSAC de la pose de foto
     # ni el render metan ruido entre corridas. La cabecera del PLY lo declara.
     reusa: Path | None = None,
+    random_seed: int = 0,
 ) -> tuple[dict[str, np.ndarray], EntrenamientoApariencia]:
     """Entrena un campo de gaussianas sobre una malla pintada con dos tonos de las fotos.
 
@@ -1575,6 +1580,7 @@ def entrena_apariencia(
         T, posiciones, vcol,
         destino=render_dir,
         iteraciones=iteraciones, semillas=semillas,
+        random_seed=random_seed,
         caras=caras, siembra=siembra,
         dispositivo=dispositivo, traza=traza or traza,
         estrategia=estrategia, antialiased=antialiased,
@@ -1674,6 +1680,29 @@ def entrena_apariencia(
     n_vistas_reales = len(T["frames"])
     params["n_vistas"] = np.array(n_vistas_reales, dtype=np.int32)
     params["iteraciones"] = np.array(iteraciones, dtype=np.int32)
+    software = {"python": platform.python_version(), "numpy": np.__version__}
+    for package in ("torch", "gsplat"):
+        try:
+            software[package] = version(package)
+        except PackageNotFoundError:
+            software[package] = "unknown"
+    process = {
+        "operation": "Gaussian-appearance-optimization",
+        "agent": "gaussian-engine.apariencia",
+        "reproducibility": "stochastic", "software": software,
+        "seeds": {"numpy_initialization": 0, "numpy_holdout": 1,
+                  "numpy_view_selection": random_seed, "torch": random_seed},
+        "parameters": {
+            "n_views": n_vistas_reales, "resolution": resolucion, "iterations": iteraciones,
+            "initial_gaussians": semillas, "seeding": siembra, "device": dispositivo,
+            "strategy": estrategia, "antialiased": antialiased,
+            "depth_weight": peso_profundidad, "depth_start": profundidad_desde,
+            "depth_ramp": profundidad_rampa, "flattening_weight": peso_aplanado,
+            "flattening_start": aplanado_desde, "reuse_inputs": reusa is not None,
+        },
+    }
+    params["processing_json"] = np.frombuffer(json.dumps(process).encode(), dtype=np.uint8)
+    params["uses_inferred_labels"] = np.asarray(etiquetas is not None, dtype=np.bool_)
     # ⚠️ La des-normalizacion viaja AQUI y no dentro del entrenamiento: gsplat optimiza en
     # el espacio normalizado de Blender y tiene que seguir haciendolo —es donde estan las
     # camaras—. Lo que no puede es salir de esta funcion sin deshacerse, porque el PLY

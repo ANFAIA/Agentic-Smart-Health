@@ -315,9 +315,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--entrena-apariencia", action="store_true",
-        help="Entrena 3DGS contra fotos intraorales para obtener color REAL del paciente "
+        help="Entrena apariencia 3DGS contra renders coloreados con información de fotos "
              "(gsplat + Blender, necesita GPU). El campo resultante viaja como "
-             "`asset.apariencia` en el .uos con perfil 'histora-gs-appearance/1.0'. "
+             "`asset.appearance` en el .uos; no acredita color clínico del paciente. "
              "⚠️ REQUIERE `--gs-apariencia` y fotos en image_refs.",
     )
     ap.add_argument(
@@ -383,7 +383,15 @@ def main() -> int:
              "aporta color: darle un lado sería peor, repartiría códigos FDI entre las "
              "cúspides de un solo diente.",
     )
+    ap.add_argument("--reusa-apariencia-uos", type=Path,
+                    help="UOS anterior del mismo escaneo; recupera sus tonos sin reentrenar.")
+    ap.add_argument("--reusa-apariencia-artefacto", type=Path,
+                    help="NPZ archivado que debe coincidir con la apariencia de ese UOS.")
     args = ap.parse_args()
+    if bool(args.reusa_apariencia_uos) != bool(args.reusa_apariencia_artefacto):
+        ap.error("La reutilización requiere el UOS anterior y su artefacto")
+    if args.reusa_apariencia_uos and args.entrena_apariencia:
+        ap.error("Reutilizar y entrenar apariencia son operaciones distintas")
 
     caso = descubre(args.caso)
     lado_fotos: dict[Path, int] = {}
@@ -580,7 +588,7 @@ def main() -> int:
         print("\n--- 3b · AJUSTE DEL CAMPO (elipsoides contra la densidad medida) ---")
         # Complementario de `--refina-3dgs`, no alternativo: aquel optimiza contra los DRR
         # del volumen y este contra la densidad de las propias semillas, sin renderizador
-        # de por medio. Aquí la pérdida sale en HU, que es la unidad del dato.
+        # de por medio. El residual usa la escala de grises de entrada; no acredita HU.
         #
         # Va DESPUÉS de la segmentación a propósito. Con `region_id` el ajuste se hace
         # región a región, y entonces la etiqueta de cada elipsoide es exacta por
@@ -617,15 +625,17 @@ def main() -> int:
         campo_ajustado_ref = snap_ajustado.gaussian_field_ref
         ajuste_info = aj
         print(f"  → {len(antes['centers']):,} → {len(aj.centers):,} gaussianas "
-              f"(×{aj.compresion:.1f}) · error de reconstrucción {aj.rmse_hu:.1f} HU")
+              f"(×{aj.compresion:.1f}) · residual {aj.rmse_hu:.1f} unidades de gris de entrada")
         peor = sorted(aj.rmse_hu_por_region.items(), key=lambda kv: -kv[1])[:3]
         if peor:
             print("  → peores regiones: " +
-                  " · ".join(f"{'fondo' if c == 0 else c}: {e:.0f} HU" for c, e in peor))
+                  " · ".join(f"{'fondo' if c == 0 else c}: {e:.0f} unidades de gris"
+                             for c, e in peor))
         print(f"  → perfil `{snap_ajustado.perfil_campo}`: DERIVADO, la escala ya no "
               "es el vóxel · viaja como `asset.field_fit` en el `.uos`")
         # El descriptor del campo ajustado se construye AQUÍ para no acoplar el paquete
         # UOS a `gaussian_engine`. El UOS agent recibe un dict plano y lo vuelca tal cual.
+        import numpy as np
         from gaussian_engine import PERFIL, esquema
 
         descriptor_ajustado = {
@@ -646,6 +656,15 @@ def main() -> int:
                 for c in esquema(aj.rmse)
             ],
             "reconstruction_error_hu": aj.rmse_hu,
+            "processing": {
+                "operation": "Gaussian-density-optimization",
+                "agent": "gaussian-engine.ajuste",
+                "reproducibility": "unknown",
+                "software": {"numpy": np.__version__},
+                "parameters": {"iterations": aj.iteraciones,
+                               "compression": args.compresion,
+                               "tooth_compression": args.compresion_dientes},
+            },
             "compression": aj.compresion,
             # La submuestrea es la misma que la semilla (el ajuste parte de los
             # mismos vóxeles), pero el número final es el del campo comprimido.
@@ -654,9 +673,23 @@ def main() -> int:
 
     # ── Entrenamiento de apariencia (gsplat contra fotos) ───────────────────
     # El `--entrena-apariencia` necesita GPU y bloquea el pipeline. Entrena un campo
-    # de gaussianas con color REAL del paciente optimizado contra renders de Blender.
-    # El resultado viaja como `asset.apariencia` en el `.uos` con perfil
-    # 'histora-gs-appearance/1.0' y regulatory.layer=1, status="derived".
+    # de gaussianas optimizado contra renders de Blender, sin acreditar color clínico.
+    # El resultado viaja como `asset.appearance` en el `.uos` bajo derived/, en capa 3.
+    if args.reusa_apariencia_uos:
+        from restaura_apariencia import restaura
+
+        params_ap, tonos_previos = restaura(
+            args.reusa_apariencia_uos, args.reusa_apariencia_artefacto,
+            caso.mesh, list(caso.images),
+        )
+        ref_ap = pipe.store.put(**params_ap)
+        fus = replace(fus, snapshot=_con_color(fus.snapshot, tonos_previos).model_copy(
+            update={"apariencia_ref": ref_ap}
+        ))
+        print("\n--- 3b · APARIENCIA ARCHIVADA REUTILIZADA ---")
+        print(f"  {len(tonos_previos)} tonos por pieza; mismo escaneo y fuentes verificadas")
+        print("  No se ejecutó entrenamiento; se conserva la procedencia de la reutilización")
+
     if args.entrena_apariencia:
         if args.gs_apariencia is None:
             print("  ⚠ --entrena-apariencia requiere --gs-apariencia")
@@ -737,8 +770,8 @@ def main() -> int:
                         print(f"  → apariencia: PSNR {metricas.psnr_db:.2f} dB, "
                               f"SSIM {metricas.ssim:.3f}, "
                               f"{metricas.n_gaussianas:,} gaussianas")
-                        print(f"  → perfil `{metricas.perfil}`: DERIVADO, color real "
-                              "· viaja como `asset.apariencia` en el `.uos`")
+                        print(f"  → perfil `{metricas.perfil}`: apariencia INFERIDA "
+                              "· viaja como `asset.appearance` en el `.uos`")
                     tonos = list(metricas.tonos)
                     motivos_color = list(metricas.motivos)
             except Exception as e:
@@ -771,15 +804,12 @@ def main() -> int:
         etiquetas_ios=None if etq_ios is None else etq_ios.astype("int16"),
         sin_malla=args.solo_gaussianas,
         gs_apariencia=args.gs_apariencia,
-        # UOS referencia los ficheros ORIGINALES, no los derivados: el .uos lleva el STL
-        # y las fotos tal como entraron, con su sha256, para que quien lo reciba pueda
-        # verificar que no los tocamos.
+        # UOS referencia los originales por su dirección de contenido; no los incluye.
         malla=caso.mesh,
         escena_gs=(None if args.gs_apariencia is None
                    else args.gs_apariencia / "gs_escaner-coronas.ply"),
         imagenes=list(caso.images),
-        # Los PDF del caso viajan dentro, ilegibles incluidos: el `report-agent` extrae lo
-        # que puede y el documento queda para lo que no. Ver `_export`.
+        # Se referencian todos los PDF, incluidos los que la ingesta no pudo interpretar.
         informes=list(caso.reports),
         # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
         # ⚠️ La serie DICOM NO viaja: el formato no lleva originales, sólo su

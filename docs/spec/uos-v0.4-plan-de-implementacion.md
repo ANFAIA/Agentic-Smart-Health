@@ -120,3 +120,14 @@ En paralelo, se probarán los contenedores con un segundo lector y se verificar�
 Las referencias estables de ingesta del bloque 5 deben diseñarse junto a los tres primeros bloques. La preparación de los experimentos y del segundo lector puede avanzar en paralelo; las conclusiones dependerán de los resultados obtenidos.
 
 Cada bloque debe incluir contrato, implementación, pruebas y documentación. El white paper se actualizará después de las comprobaciones correspondientes, distinguiendo las capacidades implementadas, las propiedades demostradas y las propuestas todavía pendientes.
+
+
+## Avance de implementación — 2026-10-02
+
+El contrato del bloque 1 y las correcciones de separación/procedencia se han
+implementado como extensión versionada compatible con v0.3. Consulte
+[uos-fidelity-provenance-v1.md](uos-fidelity-provenance-v1.md) para conocer el
+alcance y los límites. No se ha implementado toda la propuesta v0.4 ni se ha
+acreditado aptitud diagnóstica. La incertidumbre sin evidencia y la repetibilidad
+no medida permanecen desconocidas. El [complete case del 2 de octubre](uos-complete-case-2026-10-02.md)
+ya se ejecutó; valida con advertencias y pendientes de fuente CBCT, color y revisión humana.

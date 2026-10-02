@@ -20,6 +20,25 @@ mm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mm)
 
 
+def test_lector_de_apariencia_glb_conserva_unidades_y_coeficientes():
+    from uos.escena import SplatsKHR, build_glb
+
+    gs = SplatsKHR(
+        posiciones=np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32),
+        rotacion=np.array([[0, 0, 0, 1]] * 2, dtype=np.float32),
+        escala=np.array([[0.1, 0.2, 0.3]] * 2, dtype=np.float32),
+        opacidad=np.array([0.25, 0.75], dtype=np.float32),
+        sh0=np.array([[0.05, 0.1, 0.15]] * 2, dtype=np.float32),
+    )
+    glb = build_glb(np.ones((3, 3)), np.array([[0, 1, 2]]),
+                    splats=gs, include_mesh=False)
+    result = mm.lee_apariencia_glb(glb)
+    assert np.allclose(result["x"], gs.posiciones[:, 0])
+    assert np.allclose(result["scale_0"], gs.escala[:, 0])
+    assert np.allclose(result["opacity"], gs.opacidad)
+    assert np.allclose(result["f_dc_2"], gs.sh0[:, 2])
+
+
 def _stl(triangulos: np.ndarray) -> bytes:
     tri = np.zeros(len(triangulos), np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)),
                                               ("a", "<u2")]))
@@ -117,12 +136,21 @@ def test_una_malla_que_no_es_la_del_caso_se_rechaza(tmp_path, capsys) -> None:
     en el resultado lo delataría. El `sha256` que el manifiesto declara sí.
     """
     import sys
-    import zipfile
+
+    from uos import Asset, Frame, Manifest, Subject, Visit, validate, write_uos
+    from uos.manifiesto import AssetKind, PHIState
 
     uos = tmp_path / "caso.uos"
-    with zipfile.ZipFile(uos, "w") as z:
-        z.writestr("manifest.json", '{"assets":[{"id":"asset.ios","sha256":"' + "a" * 64 + '"}]}')
-        z.writestr("scene/appearance.ply", b"ply\n")
+    manifest = Manifest(
+        case_id="urn:uuid:synthetic", generator={"name": "test", "version": "1"},
+        phi_state=PHIState.IDENTIFIED, subject=Subject(pseudonym="synthetic"),
+        canonical_frame=Frame(id="master"), visits=[Visit(id="v1", date="2026-10-02")],
+        assets=[Asset(id="asset.ios", kind=AssetKind.MESH_GS_SCENE, visit="v1",
+                      uri="sha256:" + "a" * 64, external=True,
+                      media_type="model/stl", sha256="a" * 64, bytes=134, frame="master")],
+    )
+    write_uos(uos, manifest, [])
+    assert validate(uos).valid
     otra = tmp_path / "otra.stl"
     otra.write_bytes(_stl(np.zeros((1, 3, 3))))
 

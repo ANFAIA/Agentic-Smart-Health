@@ -65,6 +65,34 @@ def lee_stl(datos: bytes) -> tuple[np.ndarray, np.ndarray]:
     return pos.astype(np.float64), np.asarray(inv).reshape(-1, 3).astype(np.int32)
 
 
+def lee_apariencia_glb(datos: bytes) -> dict[str, np.ndarray]:
+    """Read appearance coefficients from the carried glTF, in its declared linear units."""
+    size = struct.unpack("<I", datos[12:16])[0]
+    doc = json.loads(datos[20:20 + size])
+    binary = datos[28 + size:]
+    primitive = next(p for mesh in doc["meshes"] for p in mesh["primitives"]
+                     if "KHR_gaussian_splatting:OPACITY" in p["attributes"])
+
+    def read(name: str, components: int) -> np.ndarray:
+        acc = doc["accessors"][primitive["attributes"][name]]
+        view = doc["bufferViews"][acc["bufferView"]]
+        if acc["componentType"] != 5126 or "byteStride" in view:
+            raise ValueError("unsupported appearance accessor")
+        offset = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        return np.frombuffer(binary, dtype="<f4", count=acc["count"] * components,
+                             offset=offset).reshape(acc["count"], components)
+
+    centers = read("POSITION", 3)
+    scales = read("KHR_gaussian_splatting:SCALE", 3)
+    sh0 = read("KHR_gaussian_splatting:SH_DEGREE_0_COEF_0", 3)
+    return {
+        **{name: centers[:, i] for i, name in enumerate(("x", "y", "z"))},
+        **{f"scale_{i}": scales[:, i] for i in range(3)},
+        **{f"f_dc_{i}": sh0[:, i] for i in range(3)},
+        "opacity": read("KHR_gaussian_splatting:OPACITY", 1).ravel(),
+    }
+
+
 def lee_glb(datos: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """`scene.glb` a `(vertices, triangulos)`.
 
@@ -202,6 +230,13 @@ def main() -> int:
                     help="Por defecto, un directorio `mejorado/` junto al `.uos`.")
     args = ap.parse_args()
 
+    from uos import validate
+
+    validation = validate(args.uos)
+    if not validation.valid:
+        print("✗ El contenedor no valida: " + "; ".join(validation.errors))
+        return 1
+
     salida = args.salida or args.uos.parent / "mejorado"
     salida.mkdir(parents=True, exist_ok=True)
 
@@ -238,14 +273,20 @@ def main() -> int:
                   "`--solo-gaussianas` el manifiesto declara el `sha256` del escáner y se "
                   "puede aportar con `--malla`.")
             return 1
-        if "scene/appearance.ply" not in dentro:
-            print("✗ El contenedor no lleva campo de apariencia: se generó sin "
-                  "`--entrena-apariencia`, así que no hay color medido que transferir.")
-            return 1
         if crudo_malla is not None:
             pos, caras, fdi_glb = (*lee_stl(crudo_malla), None)
-        esquema = json.loads(z.read("scene/appearance.gs.json"))
-        ap_col = lee_apariencia(z.read("scene/appearance.ply"), esquema)
+        if "derived/appearance.glb" in dentro:
+            ap_col = lee_apariencia_glb(z.read("derived/appearance.glb"))
+            print("  apariencia experimental de capa 3; el color transferido conserva ese origen")
+        else:
+            ply = next((name for name in ("derived/appearance.ply", "scene/appearance.ply")
+                        if name in dentro), None)
+            if ply is None:
+                print("✗ El contenedor no lleva apariencia ajustada que transferir.")
+                return 1
+            schema_path = ply.removesuffix(".ply") + ".gs.json"
+            esquema = json.loads(z.read(schema_path))
+            ap_col = lee_apariencia(z.read(ply), esquema)
         clinico = (json.loads(z.read("clinical/observations.json"))
                    if "clinical/observations.json" in dentro else {"teeth": []})
         seg = (z.read("derived/seg_teeth.bin"),
@@ -292,9 +333,9 @@ def main() -> int:
                   "van en gris: el campo las pinta con el degradado de respaldo")
     comentarios = [
         f"arcada del escaner con el color del campo de apariencia de {args.uos.name}",
-        f"{len(pos)} vertices, {100 * medido.mean():.1f} % con color medido del paciente",
+        f"{len(pos)} vertices, {100 * medido.mean():.1f} % con soporte del campo de apariencia",
         f"{len(piezas)} corona(s) con color declarado en clinical/observations.json",
-        "la columna `medido` vale 0 donde el color NO es del paciente: ahi va gris neutro",
+        "`medido` indica cobertura del campo; no acredita calibracion ni medicion independiente",
         (f"la columna `fdi` lleva {int((fdi > 0).sum())} vertices etiquetados por"
          " derived/seg_teeth, con el orden comprobado contra la malla"
          if fdi is not None else
@@ -314,16 +355,28 @@ def main() -> int:
                 codigos, comentarios, medido)
     escribe_3mf(salida / "arcada-color.3mf", pos, caras, rgb, " · ".join(comentarios[:3]))
     escribe_stl_viscam(salida / "arcada-color.stl", pos, caras, rgb,
-                       "arcada con color medido (RGB555 VisCAM, NO estandar)")
+                       "arcada con apariencia experimental (RGB555 VisCAM, NO estandar)")
 
     meta = descriptor(pos, caras, rgb, medido, codigos, origen=args.uos.name,
                       sha256_malla=_sha256_declarado(manifiesto),
                       piezas_con_color=[int(t["fdi"]) for t in piezas])
+    meta["provenance"] = {
+        "container_sha256": hashlib.sha256(args.uos.read_bytes()).hexdigest(),
+        "operation": "appearance-coefficient-transfer-to-mesh",
+        "origin": "inferred", "clinical_validation": "not_established",
+        "source_asset": next((a["id"] for a in manifiesto["assets"]
+                              if a["uri"] == "derived/appearance.glb"), None),
+        "note": "Coverage is not independent measured colour or calibrated colour accuracy",
+    }
+    meta["output_sha256"] = {
+        name: hashlib.sha256((salida / name).read_bytes()).hexdigest()
+        for name in ("arcada-color.ply", "arcada-color.3mf", "arcada-color.stl")
+    }
     (salida / "arcada-color.meta.json").write_text(
         json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
     print(f"  {len(pos):,} vertices · {len(caras):,} triangulos")
-    print(f"  color medido en {100 * medido.mean():.1f} % de los vertices")
+    print(f"  soporte del campo de apariencia en {100 * medido.mean():.1f} % de los vertices")
     if fdi is not None:
         print(f"  {int((fdi > 0).sum()):,} vertices con codigo FDI, orden comprobado")
     for nombre in ("arcada-color.ply", "arcada-color.3mf", "arcada-color.stl",

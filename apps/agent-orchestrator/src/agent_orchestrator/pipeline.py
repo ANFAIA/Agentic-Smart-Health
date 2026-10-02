@@ -77,6 +77,7 @@ from ingestion_agents import (
 )
 from ingestion_agents.base import BaseIngestionAgent
 from uos import UOSExportAgent
+from uos.fidelidad import Process
 
 # Por debajo de esta confianza una modalidad no se da por buena sola: pasa por
 # revisión humana. Es el gate de human-in-the-loop en su forma más simple —
@@ -694,6 +695,7 @@ class IngestionPipeline:
         # El descriptor del campo ajustado (dict plano, construido en `caso_completo.py`
         # para no acoplar UOS a gaussian_engine). Se vuelta tal cual en el sidecar.
         campo_ajustado_descriptor: dict | None = None,
+        process_records: dict[str, Process] | None = None,
         # ⚠️ Esta firma es una lista EXPLICITA de argumentos que hay que acordarse de
         # ampliar cada vez que el agente de UOS gana uno, y ya ha costado: una ejecucion
         # entera —451 s de entrenamiento incluidos— murio en la ultima linea con
@@ -835,7 +837,8 @@ class IngestionPipeline:
                 # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot.
                 campo_ajustado=campo_ajustado,
                 ajuste=ajuste,
-                campo_ajustado_descriptor=campo_ajustado_descriptor,
+            campo_ajustado_descriptor=campo_ajustado_descriptor,
+            process_records=process_records,
                 # ⚠️ **`sin_originales` NO se reenvia, y por eso no esta aqui.** Lo
                 # estuvo, con su propio `= False` en esta firma, y ese valor por
                 # defecto duplicado le gano al `= True` del agente: el contenedor
