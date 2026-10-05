@@ -280,3 +280,14 @@ documentos:
     sha256: a1227a479ecff08c38b9798521e0dc4504fd1aa4e4310ac29bb8e188a07b00ca
     bytes: 1785877
     nota: "Descubierto por watch_literature.py el 2026-08-31 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
+  - fichero: "When Misalignment Becomes Supervision_ Structured Label Noise in Supervised Synthetic CT Generation - 2609.29387v1.pdf"
+    titulo: "When Misalignment Becomes Supervision: Structured Label Noise in Supervised Synthetic CT Generation"
+    anio: 2026
+    fuente: arxiv
+    id: "2609.29387v1"
+    url: "https://arxiv.org/pdf/2609.29387v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: a36a4fd12f577e90a82b9f7e4e985a4767141a837a0e6e73b906a1732b32307b
+    bytes: 9681214
+    nota: "Descubierto por watch_literature.py el 2026-10-05 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
