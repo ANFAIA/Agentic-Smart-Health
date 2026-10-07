@@ -95,10 +95,19 @@ def describe_series(
     px = [float(v) for v in getattr(primera, "PixelSpacing", [1.0, 1.0])]
     dz = float(getattr(primera, "SliceThickness", 1.0) or 1.0)
     if len(cabeceras) > 1:
-        medido = abs(_z(cabeceras[1]) - _z(cabeceras[0]))
+        medido = float(np.median(np.diff([_z(ds) for ds in cabeceras])))
         if medido > 0:
             # El espaciado REAL manda sobre el declarado, igual que en el `cbct-agent`.
             dz = medido
+    posiciones = [_z(ds) for ds in cabeceras]
+    uniforme = len(posiciones) < 2 or bool(
+        np.allclose(np.diff(posiciones), dz, rtol=1e-4, atol=1e-5)
+    )
+    if not uniforme:
+        avisos.append(
+            "muestreo CBCT no uniforme: se conservan posiciones de corte; no se "
+            "interpolan los intervalos sin datos ni se acredita una rejilla MPR regular"
+        )
 
     iop = getattr(primera, "ImageOrientationPatient", None)
     if iop is None:
@@ -181,6 +190,8 @@ def describe_series(
         "anatomical": "LPS",
         "dimensions": [int(primera.Columns), int(primera.Rows), len(cabeceras)],
         "spacing_mm": [px[1], px[0], dz],
+        "sampling_uniform": uniforme,
+        "slice_positions_mm": posiciones,
         "orientation": [[round(float(x), 9) for x in fila] for fila in orientacion],
         "origin_mm": origen,
         "rescale": {"slope": pendiente, "intercept": corte},

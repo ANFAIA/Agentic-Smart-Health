@@ -429,6 +429,57 @@ def test_modalidad_ct_y_rescale_no_acreditan_calibracion(serie):
     assert descriptor["calibration_status"] == "unknown"
 
 
+def test_procedencia_y_repeticion_con_ingestas_independientes(serie, malla, tmp_path):
+    import shutil
+    import sys
+
+    import numpy as np
+    from export_agents.field import FieldExportAgent
+    from ingestion_agents import ArtifactStore, CBCTAgent
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    from verifica_complete_case import audita_fuente, compara
+
+    outputs = []
+    for i in range(2):
+        store = ArtifactStore(tmp_path / f"artifacts-{i}")
+        ingestion = CBCTAgent(store).ingest(serie)
+        assert ingestion.artifact_ref is not None
+        snapshot = _snapshot().model_copy(update={
+            "gaussian_field_ref": ingestion.artifact_ref,
+        })
+        field = FieldExportAgent(store).export(snapshot, tmp_path / f"field-{i}.ply")
+        assert field.path is not None
+        output = UOSExportAgent(store).export(
+            snapshot, tmp_path / f"case-{i}", pseudonimo="P-1", malla=malla, cbct=serie,
+            campo=Path(field.path),
+        )
+        assert output.path is not None, output.detail
+        outputs.append(Path(output.path))
+        manifest = read_manifest(output.path)
+        volume_asset = next(a for a in manifest.assets if a.id == "asset.ct_001")
+        field_asset = next(a for a in manifest.assets if a.id == "asset.field")
+        assert field_asset.frame != volume_asset.frame
+        matrices = {r.source_frame: np.asarray(r.transform_4x4_row_major).reshape(4, 4)
+                    for r in manifest.registrations}
+        shift = np.eye(4)
+        shift[:3, 3] = store.load(ingestion.artifact_ref)["origin"]
+        np.testing.assert_allclose(matrices[field_asset.frame],
+                                   matrices[volume_asset.frame] @ shift)
+        audit = audita_fuente(outputs[-1], serie)
+        assert audit["verified"]
+        assert not audit["calibration"]["calibrated_hu"]
+    comparison = compara(*outputs)
+    assert comparison["verified"]
+    assert not comparison["container_bytes_identical"]
+    # Una fuente cambiada después de exportar debe invalidar la auditoría local.
+    modified = tmp_path / "changed-source"
+    shutil.copytree(serie, modified)
+    file = next(modified.glob("*.dcm"))
+    file.write_bytes(file.read_bytes() + b"changed")
+    assert not audita_fuente(outputs[0], modified)["verified"]
+
+
 @pytest.mark.parametrize("campo, valor", [
     ("ImagePositionPatient", [100, 0, 0]), ("RescaleSlope", 2), ("PatientName", "Anonymized2"),
 ])

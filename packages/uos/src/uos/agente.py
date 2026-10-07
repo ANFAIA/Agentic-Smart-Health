@@ -241,7 +241,7 @@ class UOSExportAgent(BaseExportAgent):
     """
 
     name = "uos-export-agent"
-    version = "0.17.0"
+    version = "0.18.0"
 
     def __init__(self, store: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -382,6 +382,10 @@ class UOSExportAgent(BaseExportAgent):
         # construir la escena, solo un `.glb` con la malla suelta.
         registros = self._registros(snapshot, registrador)
         al_canonico = registros[0].transform_4x4_row_major if registros else None
+        marco_campo = FRAME_CBCT
+        if len(registros) > 1 and registros[1].id == "reg.ct_centered_to_ios":
+            marco_campo = registros[1].source_frame
+            al_canonico = registros[1].transform_4x4_row_major
         nodos_gs: list[GSNode] = []
 
         # Las capas de gaussianas. Son tres cosas distintas con el mismo `kind`, asi que
@@ -399,10 +403,10 @@ class UOSExportAgent(BaseExportAgent):
             and escena_gs is not None
         )
         for ruta, id_, papel, medido, marco, nota in (
-            (campo, "asset.field", "twin density field", True, FRAME_CBCT,
+            (campo, "asset.field", "twin density field", True, marco_campo,
              "density MEASURED by the CBCT: `density` is normalised sigma, not opacity, and "
              "scales are in linear millimetres, NOT logarithms"),
-            (compuesto, "asset.composite", "CBCT + scanner composite", True, FRAME_CBCT,
+            (compuesto, "asset.composite", "CBCT + scanner composite", True, marco_campo,
              "two modalities in one file, with a per-Gaussian `source_modality` column. Gingiva "
              "carries `density = 0` because the scanner does not measure attenuation"),
             (escena_gs, "asset.gs", "scanner appearance", False, FRAME_IOS,
@@ -520,7 +524,7 @@ class UOSExportAgent(BaseExportAgent):
                 uri=uri, nombre=papel,
                 # Lo que esta en el marco del CBCT necesita la transformada al canonico;
                 # la apariencia ya vive en el del escaner, que ES el canonico.
-                matriz_fila=(al_canonico if marco == FRAME_CBCT else None),
+                matriz_fila=(al_canonico if marco == marco_campo else None),
                 extras={"uos_descriptor_uri": descriptor, "uos_measured": medido},
                 ))
 
@@ -547,6 +551,7 @@ class UOSExportAgent(BaseExportAgent):
                 )
                 descriptor_fit = f"{prefijo_fit}/field_fit.gs.json"
                 descriptor_fit_data = dict(campo_ajustado_descriptor)
+                descriptor_fit_data["frame"] = marco_campo
                 fuentes_fit = ["asset.field"]
                 if condicionado:
                     fuentes_fit += [a.id for a in assets if a.id == "asset.seg_field"]
@@ -561,7 +566,7 @@ class UOSExportAgent(BaseExportAgent):
                     destination / uri_fit, uri_fit,
                     id_="asset.field_fit",
                     kind=AssetKind.MESH_GS_SCENE, visit=visita.id,
-                    frame=FRAME_CBCT, media_type="application/octet-stream",
+                    frame=marco_campo, media_type="application/octet-stream",
                     load_priority=25, sidecar_uri=descriptor_fit,
                     regulatory=Regulatory(layer=3 if condicionado else 2),
                     derived_from=fuentes_fit,
@@ -1075,7 +1080,7 @@ class UOSExportAgent(BaseExportAgent):
             process_records=process_records,
         )
         for asset in assets:
-            if asset.frame == FRAME_CBCT or asset.id == "asset.composite":
+            if asset.frame in (FRAME_CBCT, marco_campo):
                 records[asset.id].registrations_used = [r.id for r in registros]
         if "asset.scene" in records and malla_ingerida is not None:
             record_mesh_precision(records["asset.scene"], malla_ingerida["positions"], "asset.ios")
@@ -1158,7 +1163,9 @@ class UOSExportAgent(BaseExportAgent):
                 id=FRAME_IOS,
                 description="Escaner intraoral, hub geometrico del caso",
             ),
-            frames=[frame_cbct],
+            frames=[frame_cbct] + ([Frame(id=marco_campo,
+                       description="Gaussian field centred by its recorded DICOM origin")]
+                       if marco_campo != FRAME_CBCT else []),
             visits=[visita],
             assets=assets,
             registrations=registros,
@@ -1322,7 +1329,7 @@ class UOSExportAgent(BaseExportAgent):
         m = np.eye(4)
         m[:3, :3] = np.asarray(quaternion_to_matrix(t.rotation), dtype=np.float64)
         m[:3, 3] = np.asarray(t.translation, dtype=np.float64)
-        return [Registration(
+        result = [Registration(
             id="reg.ct_to_ios",
             source_frame=FRAME_CBCT,
             target_frame=FRAME_IOS,
@@ -1351,6 +1358,25 @@ class UOSExportAgent(BaseExportAgent):
             # el resto — vacia significaria «no declarado» y seria peor.
             fit_for=[RegistrationFitness.VISUALIZACION],
         )]
+        if self.store is not None:
+            try:
+                origin = self.store.load(snapshot.gaussian_field_ref).get("origin")
+            except (KeyError, OSError, ValueError):
+                origin = None
+            if origin is not None:
+                shift = np.eye(4)
+                shift[:3, 3] = np.asarray(origin, dtype=np.float64)
+                result.append(Registration(
+                    id="reg.ct_centered_to_ios", source_frame=f"{FRAME_CBCT}.centered",
+                    target_frame=FRAME_IOS,
+                    transform_4x4_row_major=(np.linalg.inv(m) @ shift).ravel().tolist(),
+                    method="recorded_origin_then_icp", computed=snapshot.timestamp,
+                    rms_error_mm=t.rms_mm,
+                    operator=f"auto:{self.name}@{self.version}",
+                    regulatory=Regulatory(layer=2),
+                    fit_for=[RegistrationFitness.VISUALIZACION],
+                ))
+        return result
 
     def _vistas(
         self, snapshot: TwinSnapshot, visita: Visit, etiquetas: Any | None,

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
+RESUMEN_EN = "Restores archived appearance after verifying its source hashes and carried data."
+
 
 def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path]):
     from malla_mejorada import lee_apariencia_glb

@@ -65,10 +65,8 @@ MARGEN_RAIZ_MM = 12.0
 # HU a partir del cual σ satura a 1.0 (esmalte/metal). Normaliza el rango útil.
 HU_SATURATION = 2000.0
 
-# Modalidades DICOM cuyos valores SÍ son unidades Hounsfield. El estándar no tiene
-# un código propio para CBCT —los equipos dentales lo emiten como `CT`—, pero algún
-# fabricante escribe `CBCT`, así que se aceptan las dos. Todo lo demás (MR, PT, US,
-# DX) usa otra escala y no se puede leer como densidad.
+# Modalidades admitidas. CT/CBCT y rescale no acreditan calibración de intensidades:
+# los umbrales históricos denominados HU se aplican a grises reescalados de entrada.
 ACCEPTED_MODALITIES = frozenset({"CT", "CBCT"})
 
 _PSEUDONYM_SALT_ENV = "ASH_PSEUDONYM_SALT"
@@ -119,7 +117,7 @@ class Serie:
     """Una serie DICOM ya leída y ordenada."""
 
     volume: np.ndarray
-    """`(n_cortes, filas, columnas)` en unidades Hounsfield."""
+    """`(n_cortes, filas, columnas)` en grises reescalados; HU no acreditados."""
     spacing: tuple[float, float, float]
     """Tamaño de vóxel `(x, y, z)` en mm. El de z es el **nominal**."""
     patient_id: str
@@ -139,6 +137,8 @@ class Serie:
     el sentido del eje es **desconocido** y quien separe arcadas por altura no puede
     nombrarlas. Se expone precisamente para que no se dé por supuesto lo que no consta.
     """
+    origin_xy: tuple[float, float] = (0.0, 0.0)
+    """Origen LPS del plano axial; no se omite al convertir índices a milímetros."""
 
 
 def _caja_dental(
@@ -209,7 +209,17 @@ def _read_series(directory: Path) -> Serie:
             "en el byte 128 (se comprueba el contenido, no la extensión)."
         )
 
-    slices = [pydicom.dcmread(str(p)) for p in files]
+    # Verificar identidad antes de decodificar o mezclar píxeles. No se escoge la
+    # serie mayor: esa decisión necesita conocer qué adquisición se quiere ingerir.
+    slices = [pydicom.dcmread(str(p), stop_before_pixels=True) for p in files]
+    for keyword in ("StudyInstanceUID", "SeriesInstanceUID", "FrameOfReferenceUID"):
+        values = {str(getattr(ds, keyword, "") or "") for ds in slices}
+        values.discard("")
+        if len(values) > 1:
+            raise ValueError(
+                f"CBCT heterogéneo: {len(values)} valores de {keyword}. "
+                "Separar las series de origen; no se mezclan marcos ni adquisiciones."
+            )
     # Orden por posición física si está; si no, por número de instancia. Un orden
     # equivocado deforma el volumen en silencio, así que no se deja al azar.
     def _z(ds: object) -> float:
@@ -240,12 +250,22 @@ def _read_series(directory: Path) -> Serie:
             huecos = int(round(float((anchos / paso).sum()) - len(anchos)))
 
     first = slices[0]
+    orientations = [getattr(ds, "ImageOrientationPatient", [1, 0, 0, 0, 1, 0])
+                    for ds in slices]
+    if any(not np.allclose(v, [1, 0, 0, 0, 1, 0], atol=1e-6) for v in orientations):
+        raise ValueError("Orientación CBCT no axial: este lector no la puede transformar")
+    origins = [getattr(ds, "ImagePositionPatient", [0, 0, 0])[:2] for ds in slices]
+    if not np.allclose(origins, origins[0], atol=1e-5):
+        raise ValueError("Origen XY variable entre cortes: rejilla axial no soportada")
+    origin_xy = tuple(float(v) for v in origins[0])
     rows, cols = int(first.Rows), int(first.Columns)
     volume = np.empty((len(slices), rows, cols), dtype=np.float32)
     for i, ds in enumerate(slices):
         if int(ds.Rows) != rows or int(ds.Columns) != cols:
             raise ValueError("Cortes de tamaño heterogéneo: la serie no es un volumen único.")
         try:
+            assert ds.filename is not None
+            ds = pydicom.dcmread(ds.filename)
             arr = ds.pixel_array.astype(np.float32)
         except RuntimeError as exc:
             # `pydicom` no descomprime solo: necesita un plugin por sintaxis de
@@ -259,7 +279,7 @@ def _read_series(directory: Path) -> Serie:
             ) from exc
         slope = float(getattr(ds, "RescaleSlope", 1.0))
         intercept = float(getattr(ds, "RescaleIntercept", 0.0))
-        volume[i] = arr * slope + intercept  # → unidades Hounsfield
+        volume[i] = arr * slope + intercept  # grises reescalados; no prueba HU calibrados
 
     # La modalidad no es un adorno: este agente interpreta los valores como
     # unidades Hounsfield. Una resonancia con extensión `.dcm` se leería igual de
@@ -275,7 +295,7 @@ def _read_series(directory: Path) -> Serie:
     px = getattr(first, "PixelSpacing", [1.0, 1.0])
     dz = float(getattr(first, "SliceThickness", 1.0) or 1.0)
     if len(slices) > 1:
-        measured = abs(_z(slices[1]) - _z(slices[0]))
+        measured = float(np.median(np.diff(posiciones)))
         if measured > 0:
             dz = measured  # el espaciado real manda sobre el declarado
     spacing = (float(px[1]), float(px[0]), dz)  # (x, y, z) en mm
@@ -296,6 +316,7 @@ def _read_series(directory: Path) -> Serie:
         z=posiciones,
         huecos=huecos,
         z_es_superior=z_es_superior,
+        origin_xy=(origin_xy[0], origin_xy[1]),
     )
 
 
@@ -303,7 +324,7 @@ class CBCTAgent(BaseIngestionAgent):
     """Ingiere una serie DICOM y siembra el campo gaussiano de densidad."""
 
     name = "cbct-agent"
-    version = "0.1.0"
+    version = "0.2.0"
     modality = Modality.CBCT
     support = Support.VOLUMETRIC
 
@@ -408,6 +429,7 @@ class CBCTAgent(BaseIngestionAgent):
                 serie.z[occupied[:, 0]],
             ]
         ).astype(np.float64)
+        mundo[:, :2] += serie.origin_xy
         # Centrado en el origen, como el 3DGS estándar. El desplazamiento se GUARDA:
         # restarlo y olvidarlo hace el campo irreversible, porque depende del dato y no
         # se puede recomputar desde el fichero exportado. Con `origin` a mano,

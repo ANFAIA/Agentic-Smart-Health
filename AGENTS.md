@@ -431,7 +431,7 @@ this sentence, CI says so with the file and the line. There are 13 marked number
 | Field | Value |
 |---|---|
 | **Location** | `packages/ingestion-agents/` (`mesh_agent.py` · `cbct_agent.py` · `report_agent.py`) |
-| **Version** | `mesh-agent` **0.1.0** · `cbct-agent` **0.1.0** · `report-agent` **0.2.0** |
+| **Version** | `mesh-agent` **0.1.0** · `cbct-agent` **0.2.0** · `report-agent` **0.2.0** |
 | **Status** | `active` |
 | **Pipeline phase** | 1 · Ingestion (the raw → contract boundary) |
 | **Common contract** | `IngestionOutput` + `BaseIngestionAgent` in `ingestion_agents/base.py` |
@@ -495,6 +495,10 @@ IngestionOutput
 
 **Report provenance (2026-10-02):** each extracted value names its source by SHA-256. Renaming preserves its identity; changed bytes do not. OCR-derived regional values and global measurements remain model outputs requiring human review. Native-text extraction remains transcription. Human approval preserves inferred origin.
 
+**CBCT identity (2026-10-07):** ingestion checks study, series and frame identifiers before decoding pixels and rejects mixed acquisitions. It does not select a series automatically or rewrite source identifiers. Rescaled intensity and header spacing do not establish independent calibration. The complete-case runner passes its ingested CBCT directory to the UOS writer for external source hashes.
+
+ZIP preparation preserves same-named instances in separate series directories. The runner accepts an explicit `--cbct` directory and records a random seed; irregular source slices are not interpolated and cannot enter the volumetric model path. Ingestion preserves axial DICOM XY origins and uses median slice separation for nominal sampling; unsupported non-axial orientations fail explicitly.
+
 **Per-modality rules**
 
 - 🔒 `mesh-agent` — **reversibility guardrail**: it preserves the source surface
@@ -513,6 +517,7 @@ IngestionOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-07 | cbct-agent 0.2.0 | Reject mixed DICOM studies, series and reference frames before pixel decoding. |
 | 2026-10-02 | report-agent 0.2.0 | Stable content-addressed sources; OCR provenance preserved for regional observations and global measurements. |
 | 2026-07-22 | 0.1.0 | Initial registration: the three ingestion agents go from `planned` to `active`. Common `IngestionOutput` contract, content-addressed store, quarantine, pseudonymisation, minimal ontology, synthetic case generator and phase 1 orchestration. |
 
@@ -1283,7 +1288,7 @@ dimensions over the model and per-case framing.
 | Field | Value |
 |---|---|
 | **Location** | `packages/uos/` (`agente.py` · `manifiesto.py` · `contenedor.py` · `validador.py` · `vistas.py` · `procedencia.py` · `volumen.py` · `escena.py` · `derivados.py` · `clinico.py`) |
-| **Version** | `0.17.0` |
+| **Version** | `0.18.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 6 · Export (the contract → file boundary) |
 | **Common contract** | `ExportOutput` + `BaseExportAgent` |
@@ -1308,6 +1313,8 @@ that is why the container is our own and the validator can run over a file someb
 wrote.
 
 **Fidelity and separation (2026-10-02):** `uos_fidelity_provenance` 1.0 records per-asset losses, inherited unknown history, source lineage, scoped evidence, processing and repeatability. Computed representations use layer 2; its number does not prove reproducibility. Model-dependent appearance and segmentation-conditioned fitted geometry remain under `derived/`; the base mesh contains neither. `remove_inference` creates a validated successor with metadata and chain updated. Clinical eligibility, independent TRE and authenticated reviews require separate evidence.
+
+**Coordinate frames (2026-10-07):** exporter 0.18.0 distinguishes the centred Gaussian field from the DICOM source frame. Its scanner registration composes the recorded field origin with the inverse ICP transform. Volume sidecars preserve nonuniform slice positions and warn against treating them as a regular MPR grid. Format version remains UOS 0.3.
 
 **Specific rules**
 
@@ -1481,6 +1488,7 @@ wrote.
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-07 | 0.18.0 | Separate centred field and DICOM frames; compose recorded origin with ICP; retain nonuniform slice positions. |
 | 2026-10-02 | 0.17.0 | Separate indexed appearance labels preserve picking without inference in the base scene. |
 | 2026-10-02 | 0.16.0 | Versioned fidelity/provenance extension, validated loss inheritance and sources, inferred global measurements, separate model-dependent representations and removal as a successor. |
 | 2026-08-24 | 0.1.0 | Initial registration. UOS-Core level: manifest, ZIP/STORE container, validator with conformance levels, views with measured anatomical axes and a provenance chain between versions. Verified on the real clinical case: `VALID`, 10 assets, 19 views, byte-identical mesh. |

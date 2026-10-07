@@ -151,6 +151,12 @@ def _fabrica_segmentador(caso, args, almacen, etq):
     V = np.asarray(parse_stl(caso.mesh)["positions"], dtype=np.float64)
 
     serie = _read_series(caso.cbct)
+    if serie.huecos:
+        raise ValueError(
+            "La inferencia CBCT requiere una rejilla regular: esta serie presenta "
+            "intervalos sin cortes. Ejecutar sin --modelo o aportar una reconstrucción "
+            "regular con su transformación documentada; no se interpolan datos aquí."
+        )
     prob = probabilidad_por_modelo(serie.volume, args.modelo,
                                    espaciado=np.asarray(serie.spacing))
     sx, sy, _z = serie.spacing
@@ -166,8 +172,10 @@ def _fabrica_segmentador(caso, args, almacen, etq):
 
         def probabilidad_en(puntos):
             p = np.asarray(puntos, dtype=np.float64) + origen_mm
-            col = np.clip(np.rint(p[:, 0] / sx).astype(int), 0, prob.shape[2] - 1)
-            fil = np.clip(np.rint(p[:, 1] / sy).astype(int), 0, prob.shape[1] - 1)
+            col = np.clip(np.rint((p[:, 0] - serie.origin_xy[0]) / sx).astype(int),
+                          0, prob.shape[2] - 1)
+            fil = np.clip(np.rint((p[:, 1] - serie.origin_xy[1]) / sy).astype(int),
+                          0, prob.shape[1] - 1)
             cor = np.clip(np.searchsorted(z_ord, p[:, 2]), 0, prob.shape[0] - 1)
             return prob[cor, fil, col]
 
@@ -293,6 +301,10 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--caso", type=Path, required=True)
+    ap.add_argument("--cbct", type=Path,
+                    help="Directorio de una serie CBCT seleccionada explícitamente.")
+    ap.add_argument("--semilla", type=int, default=0,
+                    help="Semilla de NumPy/PyTorch; no acredita repetibilidad medida.")
     ap.add_argument("--salida", type=Path, default=RAIZ / "data/processed/caso-completo")
     ap.add_argument(
         "--refina-3dgs", action="store_true",
@@ -388,12 +400,25 @@ def main() -> int:
     ap.add_argument("--reusa-apariencia-artefacto", type=Path,
                     help="NPZ archivado que debe coincidir con la apariencia de ese UOS.")
     args = ap.parse_args()
+    import numpy as np
+
+    np.random.seed(args.semilla)
+    try:
+        import torch
+
+        torch.manual_seed(args.semilla)
+    except ImportError:
+        pass
     if bool(args.reusa_apariencia_uos) != bool(args.reusa_apariencia_artefacto):
         ap.error("La reutilización requiere el UOS anterior y su artefacto")
     if args.reusa_apariencia_uos and args.entrena_apariencia:
         ap.error("Reutilizar y entrenar apariencia son operaciones distintas")
 
     caso = descubre(args.caso)
+    if args.cbct is not None:
+        if not args.cbct.is_dir():
+            ap.error("--cbct debe ser un directorio de una sola serie DICOM")
+        caso = replace(caso, cbct=args.cbct)
     lado_fotos: dict[Path, int] = {}
     for par in args.lado_foto:
         nombre, _, codigo = par.partition("=")
@@ -492,7 +517,11 @@ def main() -> int:
 
     fabrica = None
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
-        fabrica = _fabrica_segmentador(caso, args, almacen, etq_ios)
+        try:
+            fabrica = _fabrica_segmentador(caso, args, almacen, etq_ios)
+        except ValueError as exc:
+            print(f"  ✗ No se ejecuta el caso con estos datos de entrada: {exc}")
+            return 1
 
     pipe = IngestionPipeline(almacen,
                             quarantine_dir=args.salida / "quarantine",
@@ -661,6 +690,7 @@ def main() -> int:
                 "agent": "gaussian-engine.ajuste",
                 "reproducibility": "unknown",
                 "software": {"numpy": np.__version__},
+                "seeds": {"numpy": args.semilla, "torch": args.semilla},
                 "parameters": {"iterations": aj.iteraciones,
                                "compression": args.compresion,
                                "tooth_compression": args.compresion_dientes},
@@ -811,10 +841,9 @@ def main() -> int:
         imagenes=list(caso.images),
         # Se referencian todos los PDF, incluidos los que la ingesta no pudo interpretar.
         informes=list(caso.reports),
-        # La serie DICOM sube el .uos a UOS-Vol. Detrás de bandera: son cientos de megas.
-        # ⚠️ La serie DICOM NO viaja: el formato no lleva originales, sólo su
-        # dirección de contenido. Ver `UOSExportAgent._export`.
-        cbct=None,
+        # Referencia externa de la serie realmente ingerida: hashes por instancia y
+        # sidecar de geometría. El escritor no incluye los bytes DICOM originales.
+        cbct=caso.cbct,
         # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
         modelo_segmentacion=args.modelo,
         # El campo ajustado va APARTE en el `.uos`: el twin lleva la semilla medida

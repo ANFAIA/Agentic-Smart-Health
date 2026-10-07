@@ -55,6 +55,56 @@ def test_ingesta_de_la_serie_sintetica(cbct_dir: Path, store: ArtifactStore) -> 
     assert outcome.n_primitives == n
 
 
+@pytest.mark.parametrize("keyword", ["StudyInstanceUID", "SeriesInstanceUID",
+                                    "FrameOfReferenceUID"])
+def test_no_mezcla_series_ni_marcos(cbct_dir, store, tmp_path, keyword):
+    import shutil
+
+    import pydicom
+    from pydicom.uid import generate_uid
+
+    source = tmp_path / "mixed"
+    shutil.copytree(cbct_dir, source)
+    file = next(source.glob("*.dcm"))
+    ds = pydicom.dcmread(file)
+    setattr(ds, keyword, generate_uid())
+    ds.save_as(file)
+    result = CBCTAgent(store).ingest(source)
+    assert result.status is ModalityStatus.FAILED
+    assert keyword in result.detail
+    assert result.artifact_ref is None
+
+
+def test_origen_xy_dicom_se_conserva(cbct_dir, store, tmp_path):
+    import shutil
+
+    import pydicom
+
+    original = store.load(CBCTAgent(store).ingest(cbct_dir).artifact_ref)
+    source = tmp_path / "translated"
+    shutil.copytree(cbct_dir, source)
+    for file in source.glob("*.dcm"):
+        ds = pydicom.dcmread(file)
+        ds.ImagePositionPatient = [12, -7, ds.ImagePositionPatient[2]]
+        ds.save_as(file)
+    result = CBCTAgent(store).ingest(source)
+    actual = store.load(result.artifact_ref)
+    np.testing.assert_allclose(actual["origin"] - original["origin"], [12, -7, 0])
+    np.testing.assert_allclose(actual["centers"], original["centers"])
+
+
+def test_espaciado_no_lo_define_un_hueco_inicial(cbct_dir, tmp_path):
+    import shutil
+
+    source = tmp_path / "gap"
+    shutil.copytree(cbct_dir, source)
+    sorted(source.glob("*.dcm"))[1].unlink()
+    baseline = _read_series(cbct_dir)
+    actual = _read_series(source)
+    assert actual.huecos == 1
+    assert actual.spacing == pytest.approx(baseline.spacing)
+
+
 def test_el_campo_vuelve_a_coordenadas_reales(cbct_dir: Path, store: ArtifactStore) -> None:
     """El centrado en el origen tiene que ser DESHACIBLE, o el campo es irreversible.
 
