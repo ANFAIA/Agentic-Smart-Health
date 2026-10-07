@@ -1,16 +1,18 @@
 # UOS v0.3 — Respuesta actualizada a la revisión de Matías
 
-**Fecha de actualización:** 2 de octubre de 2026. **Ámbito:** white paper, especificación, implementación de referencia, ejecución del complete case y visor local.
+**Fecha de actualización:** 7 de octubre de 2026. **Ámbito:** white paper, especificación, implementación de referencia, ejecución del complete case y visor local. Las cifras del visor y del caso restaurado corresponden al 2 de octubre.
+
+**Actualización del 7 de octubre:** el ZIP original contiene 401 instancias en dos series de 100 y 301, con marcos distintos. La extracción anterior había sobrescrito cuatro archivos con nombres compartidos. Se prepararon copias separadas sin modificar los originales, se corrigieron procedencia y coordenadas y se ejecutó cada serie tres veces. Coinciden exactamente los ocho payloads binarios del UOS, los registros de proceso y las matrices dentro de cada serie. La calibración independiente y la alineación clínica siguen sin acreditarse. El protocolo reutiliza apariencia y etiquetas archivadas y no ejecuta el modelo de segmentación CBCT sobre estas series irregulares. Véase el [informe de verificación](uos-verification-2026-10-07.md).
 
 **Revisión de referencia:** Matías Molinas, *UOS v0.3 — Revisión técnica para el autor de la especificación*, 25 de septiembre de 2026, 32 páginas. La revisión examina el white paper del 24 de septiembre; sus observaciones se han contrastado también con el contrato y el código. La numeración de las observaciones que aparece abajo corresponde a esa revisión.
 
 ## 1. Resumen del estado actual
 
-Se han corregido afirmaciones del white paper que excedían la evidencia y defectos de implementación relacionados con procedencia, DICOM, separación de inferencias y exportación. Después se ha añadido un contrato de fidelidad y procedencia por asset mediante una **extensión opcional 1.0 compatible con UOS 0.3**. El exportador está en la versión **0.17.0**.
+Se han corregido afirmaciones del white paper que excedían la evidencia y defectos de implementación relacionados con procedencia, DICOM, separación de inferencias y exportación. Después se ha añadido un contrato de fidelidad y procedencia por asset mediante una **extensión opcional 1.0 compatible con UOS 0.3**. El agente exportador de referencia está en la versión **0.18.0**; esa cifra no es la versión del formato.
 
 El complete case se ha ejecutado sobre los datos locales usados anteriormente. Se ha generado y validado un nuevo contenedor; se han recuperado la apariencia de agosto, la selección dental, las fichas clínicas y la regeneración de STL, PLY y 3MF. Los archivos clínicos originales permanecen fuera del contenedor generado, declarados por referencias y hashes. La geometría convertida del escaneo sí viaja dentro.
 
-**Esto no cierra toda la revisión de Matías.** Están implementados el registro técnico de fidelidad, la herencia de pérdidas documentadas, la separación de inferencias y varias correcciones funcionales. No están demostradas la aptitud diagnóstica, la calibración clínica ni la repetibilidad experimental. Tampoco se han implementado recuperación garantizada de originales, identidad DICOM canónica, firmas ni incertidumbre geométrica propagada.
+**Esto no cierra toda la revisión de Matías.** Están implementados el registro técnico de fidelidad, la herencia de pérdidas documentadas, la separación de inferencias y varias correcciones funcionales. No están demostradas la aptitud diagnóstica ni la calibración clínica. La repetibilidad se ha medido únicamente para el protocolo y entorno del experimento del 7 de octubre. Tampoco se han implementado recuperación garantizada de originales, identidad DICOM canónica, firmas ni incertidumbre geométrica propagada.
 
 La revisión de segmentación queda **aplazada por decisión del responsable del proyecto**. Se conservan etiquetas, avisos y motivos de revisión; no se presentan como segmentación clínicamente validada.
 
@@ -38,7 +40,7 @@ La primera intervención corrigió el texto manteniendo su estructura y sus resu
 9. Presentar las etiquetas FDI y las raíces reconstruidas como experimentales, con sus anomalías visibles desde la descripción del resultado.
 10. Explicar que UOS-Core admite una escena de malla sin gaussianas y que la investigación de splatting no es un requisito para cualquier implementador.
 
-**Pendiente editorial de publicación:** el white paper aún contiene formulaciones anteriores a la extensión de octubre, especialmente las que sitúan la fidelidad por asset como trabajo futuro. Debe recibir una revisión final para incorporar el contrato nuevo y distinguir los experimentos históricos de las ejecuciones recientes. Esta respuesta actualizada no significa que ese repaso final ya se haya realizado.
+**Actualización editorial:** el white paper incorpora la extensión de fidelidad y el experimento separado por series del 7 de octubre. Identifica el caso histórico con entradas mezcladas y limita sus conclusiones. Sigue siendo necesaria la revisión editorial de publicación; actualizar el texto no acredita calibración ni aptitud clínica.
 
 ## 3. Correcciones en la implementación
 
@@ -74,7 +76,7 @@ Los exports STL compuestos incorporan un mapa acompañante de intervalos de cara
 
 La capa de procesamiento deja de prometer reproducibilidad por su número. Se registran por separado tipo de algoritmo, configuración, versiones y semillas disponibles. El entrenamiento de apariencia utiliza una semilla para la selección de vistas y la de Torch, conservadas en el artefacto.
 
-**Fijar semillas y registrar configuración no es demostrar repetibilidad.** La comprobación experimental entre ejecuciones sigue desconocida. Tampoco se promete identidad bit a bit entre GPU, Blender, versiones o procesos archivados.
+**Fijar semillas y registrar configuración no es demostrar repetibilidad.** Ahora se dispone además de tres ejecuciones por cada serie: los payloads binarios, registros de proceso y matrices coinciden exactamente dentro de cada serie. Los ZIP completos difieren y los JSON se comparan por separado. Esto no prueba repetibilidad del entrenamiento archivado ni identidad entre GPU, Blender o versiones distintas.
 
 ## 4. Recuperación funcional del complete case y del visor
 
@@ -150,7 +152,7 @@ El STL coloreado usa la convención no estándar RGB555/VisCAM; algunos receptor
 
 | Observación | Respuesta actual y límite |
 |---|---|
-| 5.1 Reproducibilidad de capa 2 | **Implementado el registro separado.** Se mantienen capas 1/2/3; no se adoptan 2a/2b. Configuración y semillas no acreditan repetibilidad medida. |
+| 5.1 Reproducibilidad de capa 2 | **Registro implementado y experimento acotado.** Se mantienen capas 1/2/3; no se adoptan 2a/2b. Tres ejecuciones por serie coinciden en payloads binarios, registros de proceso y matrices en el entorno documentado. No se generaliza a otros entornos ni al entrenamiento archivado. |
 | 5.2 Extracción de informes | **Corregido en ingesta y exportación.** OCR/LLM, medidas y observaciones mantienen inferencia, modelo y fuente; aprobación no borra origen. Se distinguen de extracción determinista. |
 | 5.3 Caras sintéticas | **Implementado y probado.** Mapa por intervalos de caras ligado al hash STL; no valida la superficie ni la fabricación. |
 | 5.4 Corona y raíz | **Parcial.** Se distingue el origen en el mapa acompañante. Las raíces siguen experimentales; no se han corregido sus anomalías anatómicas. |
@@ -230,19 +232,20 @@ El visor muestra el registro declarado y distingue la procedencia de las etiquet
 | Retirada de inferencias | Sucesor válido, sin assets de capa 3 ni entradas `derived/`; escena base idéntica y archivo de origen sin modificar. |
 | Apariencia archivada | Igualdad de atributos transportados frente a agosto; 113.540 gaussianas, 13 tonos regionales. No entrenamiento ni evaluación clínica nuevos. |
 | Malla regenerada | 112.067 vértices, 220.085 triángulos; cobertura de apariencia del 97,1 %, que no equivale a exactitud del color. 3.145 vértices de la pieza sin color declarado en gris. |
-| Procedencia CBCT del caso | `asset.field` permanece con fuente no resuelta porque el ejecutor pasa `cbct=None`. La representación no puede acreditar una vinculación completa al DICOM fuente. |
+| Procedencia CBCT del caso | Se corrigió `cbct=None`, se recuperaron del ZIP las 401 instancias y se separaron las dos series. Las seis exportaciones pasan la auditoría contra las fuentes externas y resuelven la procedencia del campo; no incluyen originales. La separación de fuentes no valida la alineación clínica. |
+| Verificación del 7 de octubre | 1.175 pruebas correctas, 2 omitidas y 2 advertencias existentes. Seis ejecuciones finales; ocho payloads binarios idénticos dentro de cada serie y STL/PLY regenerados idénticos en las seis. |
 
 Los resultados anteriores de 140, 303 y 307 pruebas pertenecen a fases de septiembre y a la integración del 1 de octubre; no deben confundirse con el total posterior de 1.168. Los resultados experimentales del paper no se sustituyen por las cifras del run nuevo.
 
 ## 7. Próximo trabajo y lo que se deja aplazado
 
-### Trabajo previsto, sin revisión de segmentación
+### Resultado del trabajo, sin revisión de segmentación
 
-1. **Procedencia CBCT del ejecutor:** declarar la serie fuente, vincularla al campo, comprobar hashes y regenerar el UOS. Estimación orientativa: **medio a un día**. No incluye recuperar originales desde un PACS externo.
-2. **Repetibilidad experimental:** repetir ejecuciones con configuración registrada, definir comparaciones y documentar variación y tolerancias. Estimación orientativa: **uno a dos días**, según duración de los procesos. Reutilizar agosto no cuenta como repetir entrenamiento.
-3. **Calibración:** inventariar referencias y adquisiciones, distinguir color, geometría e intensidad y definir o ejecutar comprobaciones cuando haya referencia adecuada. Estimación inicial: **uno a tres días**. Sin referencias puede cerrarse la auditoría y el diseño experimental, pero no acreditarse calibración.
+1. **Procedencia CBCT del ejecutor:** cerrada para las dos series separadas, con hashes verificados contra el ZIP original y seis exportaciones auditadas. No se fusionan marcos ni se reescriben UIDs. La alineación clínica sigue pendiente: la serie de 100 presenta RMS de 16,83 mm; la de 301, RMS de 0,680 mm sobre apenas el 3,6 % de solapamiento.
+2. **Repetibilidad experimental:** medida mediante tres ejecuciones por cada serie real en el mismo entorno y con semilla 0. Se reutilizan apariencia y etiquetas archivadas; el modelo de segmentación CBCT no se ejecuta sobre el muestreo irregular. Queda fuera la repetibilidad del entrenamiento y de otros entornos.
+3. **Calibración:** auditoría completada, sin referencias independientes disponibles. La conservación numérica de coordenadas respecto a las cabeceras presenta error inferior a 0,000002 mm; no mide precisión física. Geometría, intensidad y color mantienen calibración desconocida. Para acreditarla hacen falta referencias y mediciones independientes.
 
-La previsión conjunta es de **tres a seis jornadas**, condicionada a datos, referencias y ejecuciones. No es el tiempo necesario para cerrar toda la revisión de Matías ni una garantía de obtener validación clínica.
+La previsión anterior de **tres a seis jornadas** estaba condicionada a datos, referencias y ejecuciones. El hallazgo de dos series/marcos y la ausencia de referencias independientes impiden garantizar el cierre con esa estimación. No es el tiempo necesario para cerrar toda la revisión de Matías ni una garantía de obtener validación clínica.
 
 ### Aplazado por decisión expresa
 
@@ -263,9 +266,9 @@ Las correcciones de implementación ya están en commits locales de `main`:
 | uos-viewer | `fb11d73` | Selección dental y fichas con etiquetas separadas. |
 | uos-viewer | `c10508f` | Etiquetas y correspondencia de exportación con Python. |
 
-Estos identificadores documentan el código local inspeccionado; no demuestran despliegue ni publicación remota. Este informe introduce un cambio documental posterior y no crea un commit automáticamente.
+Estos identificadores documentan el código local inspeccionado; no demuestran despliegue ni publicación remota. El trabajo del 7 de octubre añade correcciones de implementación y documentación posteriores a esos commits.
 
-Antes de publicar el paper deben revisarse su descripción de la extensión reciente, su resumen y sus conclusiones. También hay pendientes de publicación/documentación: el contenido del esquema modificado no coincide con el tag `uos-spec-v0.3-draft`; la comprobación de inventario detecta que `scripts/restaura_apariencia.py` carece de `RESUMEN_EN`. No se han movido tags ni corregido código como parte de esta redacción.
+El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. Sigue pendiente alinear la publicación del esquema con el tag `uos-spec-v0.3-draft`, cuyo contenido difiere del esquema actual. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; no se han movido tags.
 
 El PDF de esta respuesta se genera como artefacto local bajo `data/processed/reports/`, ignorado por Git. El Markdown permanece en el repositorio. No se incorporan el PDF de Matías, archivos originales, capturas con información clínica ni geometría de pacientes al historial.
 
@@ -275,7 +278,7 @@ El PDF de esta respuesta se genera como artefacto local bajo `data/processed/rep
 - [Contrato de fidelidad y procedencia](uos-fidelity-provenance-v1.md): diseño implementado, pruebas y límites.
 - [Informe del complete case del 2 de octubre](uos-complete-case-2026-10-02.md): ejecuciones inicial y corregida, validación y pendientes.
 - [Decisión de arquitectura](../architecture/formato-uos.md) y [especificación normativa](uos-format-spec-v0.3.tex).
-- [White paper](uos-white-paper.tex): correcciones editoriales previas y repaso final aún pendiente.
+- [White paper](uos-white-paper.tex): extensión de fidelidad, evidencia histórica y experimento separado por series de octubre.
 - [Contrato Python](../../packages/uos/src/uos/fidelidad.py), [auditoría y retirada de inferencias](../../packages/uos/src/uos/auditoria.py), [exportador](../../packages/uos/src/uos/agente.py) y [validador](../../packages/uos/src/uos/validador.py).
 - [Ejecutor del caso](../../scripts/caso_completo.py), [recuperación de apariencia](../../scripts/restaura_apariencia.py) y [regeneración de malla](../../scripts/malla_mejorada.py).
 - [Plan de implementación](uos-v0.4-plan-de-implementacion.md): hoja de ruta; no equivale a trabajo completamente realizado.

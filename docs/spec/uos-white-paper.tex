@@ -93,9 +93,11 @@ implementation. Access to referenced originals still requires an external reposi
 
 \noindent\textbf{What has been demonstrated.} A reported mesh round trip differs by
 $4.59\times10^{-6}$\,mm from its input, a numerical preservation result rather than a
-measurement of scanner accuracy. The reference case declares a 397-file CBCT series and
-an automatic alignment with a 0.666\,mm fit residual, without independent clinical
-verification. Experimental exports add regional photograph-based colour estimates, tooth
+measurement of scanner accuracy. A subsequent source audit found two DICOM series in
+the reference case's downloaded archive, with 100 and 301 instances. Four shared filenames
+had reduced the earlier extraction to 397 files. The historical 0.666\,mm alignment residual
+therefore does not validate a coherent single-series volume. Experimental exports add
+regional photograph-based colour estimates, tooth
 labels and closed surfaces. Their limitations are material: crown boundaries fail anatomical
 checks for 11 of 14 teeth, some reconstructed roots are too long, and closure adds synthetic
 faces. These are prototype outputs, not validated laboratory or diagnostic deliverables.
@@ -315,10 +317,11 @@ The contract names three processing layers: \textbf{1} acquisition or transcript
 \textbf{2} deterministic computation with declared sources, and \textbf{3} model inference.
 The names are provenance categories, not medical-device classifications.
 
-Implementation limits qualify that separation. Per-case Gaussian optimisation is
-currently described as layer 2, although the reported run-to-run variability is incompatible
-with bitwise reproducibility. A reproducibility class, seed and tolerance are not yet a
-standard layer-2 contract. Also, report ingestion distinguishes rules, OCR and LLM
+Implementation limits qualify that separation. Layer numbers do not establish
+bitwise reproducibility. The optional \code{uos\_fidelity\_provenance} extension, version 1.0,
+records per-asset processing, software, parameters, seeds and scoped repeatability evidence;
+an unknown result remains unknown. Model-dependent appearance and segmentation-conditioned
+fitted fields are separated as inference. Report ingestion distinguishes rules, OCR and LLM
 provenance. Inferred regional findings now travel separately under \code{derived/}, one
 asset per observation, with layer 3 and model metadata. Sources are linked to supplied
 reports when resolvable; otherwise an explicit unresolved status, validator warning and
@@ -447,6 +450,15 @@ The argument so far is structural. This section walks one real case through the 
 because the value of a composition format is not visible in any single stage of it --- it
 is visible in what the sixth reader can do that the first could not.
 
+\paragraph{Source audit, 7 October 2026.} The walkthrough below records the earlier
+prototype execution. Inspection of the downloaded ZIP later found 401 instances in two
+series and two reference frames. Four filenames occur in both series with different
+contents; flattening the export into one directory overwrote four instances. The original
+archive is preserved. Current preparation retains both series separately, and ingestion
+rejects a mixed directory. Both series have nonuniform slice positions. Historical
+registration and volume results from the mixed extraction cannot establish a coherent
+single-series reconstruction or clinical accuracy.
+
 \paragraph{1. Acquisition, unchanged.} The practice scans, takes the CBCT, shoots the
 photographs and writes the report exactly as it does today. Nothing about UOS asks a
 clinician to change how they work, and a format that did would not be adopted. The four
@@ -460,7 +472,7 @@ one command. The acquired originals stay where the clinic keeps them and are nam
 the container by their content hash --- the CBCT series with a hash per slice, all 397 of
 them.
 
-What the container now holds that did not exist before the run is the relational layer: the
+What that historical container held that did not exist before the run was the relational layer: the
 CBCT-to-scanner transform with its 0.666\,mm residual and the statement that nobody has
 verified it, the visit each asset belongs to, a tooth code on every vertex sitting in the
 removable inference plane, and the report's findings anchored to the teeth they name.
@@ -760,6 +772,38 @@ Live primitives after culling & $16\times$ more across five layers & An observed
 \end{longtable}
 
 
+\subsection{Source-separated repeatability experiment, October 2026}
+
+The corrected runner was executed three times independently for each of the two original
+series: six runs in total. Both series were kept separate and referenced by per-instance
+hashes. The protocol included ingestion, automatic registration, Gaussian density fitting,
+export and mesh regeneration, with seed 0 and a fixed local software environment.
+Existing IOS labels and the archived appearance were reused. The CBCT segmentation model
+was excluded because these inputs are not regular volumetric grids; no missing slices were
+interpolated. This is a repeatability experiment for that protocol, not for new appearance
+training or clinical segmentation.
+
+All source audits passed. Within each series, all eight binary payloads, processing records
+and registration matrices were identical across the three runs. Container bytes differed;
+JSON payload bytes were inventoried separately, without claiming semantic equivalence.
+The regenerated STL and PLY outputs were identical across all six runs. These observations
+are limited to the tested input, configuration and environment; they are not a guarantee
+for other hardware or software versions.
+
+The 100-instance series gave a 16.830\,mm registration residual with no accepted overlap.
+The 301-instance series gave 0.680\,mm on only 3.6\,\% overlap and 8.341\,mm across the
+whole cloud. Neither result establishes clinically correct alignment. A numerical check
+against the source headers found maximum coordinate discrepancies below
+$2\times10^{-6}$\,mm for the transported seed positions. This verifies coordinate
+conservation, not acquisition accuracy or physical calibration. The original DICOM frame
+and the centred field now have separate frames, with their relationship explicitly composed
+from the recorded origin and ICP transform.
+
+The tests used Python 3.13.9, NumPy 2.5.1, SciPy 1.18.0, PyTorch 2.11.0 with CUDA 12.8,
+and an NVIDIA RTX 5070. The implementation suite passed 1{,}175 tests, with two skipped
+and two pre-existing numerical warnings. The writer version for this experiment is 0.18.0;
+the container format remains UOS 0.3.
+
 \subsection{Appearance estimated from clinical photographs}
 
 The earlier report assigns 108{,}922 of 112{,}067 vertices (about 97.2\,\%) regional
@@ -771,8 +815,9 @@ an exact allocation of the remaining 3{,}145 vertices. Test literals are not a s
 for that experimental record.
 
 The reported flash-correction slopes are 0.649 / 0.577 / 0.677. They describe this processing
-step, not its colourimetric accuracy. Neither the acquired photographs' compression history
-nor a general per-asset fidelity record is represented in v0.3.
+step, not its colourimetric accuracy. The optional fidelity extension records detectable
+JPEG loss and per-asset encoding, lineage and inherited losses. It preserves unknown prior
+history and does not establish colour calibration from these declarations.
 
 \subsection{The gingival boundary, without a model}
 
@@ -897,17 +942,21 @@ of stated conditions, not a legal authorisation, an independent de-identificatio
 or a guarantee that referenced originals are accessible. The issuer remains responsible
 for the actual data, access arrangements and applicable use restrictions.
 
-\begin{finding}{Fidelity is not yet a v0.3 capability}
-There is no general \code{fidelity} block, inherited loss history or per-asset diagnostic
-eligibility calculation in the current contract. Volume metadata includes spacing,
-orientation, encoding and a \code{calibrated\_hu} flag, but these do not form a validated
-fidelity model. The writer now emits \code{calibrated\_hu: false} together with
+\begin{finding}{Recorded fidelity evidence does not establish clinical suitability}
+The reference implementation supplies the optional \code{uos\_fidelity\_provenance}
+extension, version 1.0, without changing the UOS 0.3 format version. It records source
+lineage, known losses, inherited unknown history, processing and scoped claims. Absence of
+evidence remains explicit; no diagnostic eligibility is inferred from format validation.
+Volume metadata includes spacing, orientation, encoding and actual slice positions. The
+writer emits \code{calibrated\_hu: false} together with
 \code{calibration\_status: unknown}: calibration has not been established by the writer.
 Modality and rescale do not constitute evidence of calibrated Hounsfield units.
 
-A future fidelity model would need to record source quality, transformations and uncertainty
-without equating technical conformance with clinical suitability. The Gaussian results in
-this paper are representation experiments; no diagnostic task has been validated on them.
+The downloaded CBCT declares \code{RescaleType=HU}, slope 1 and intercept $-1000$;
+these are provider declarations, not an independent calibration experiment. Nonuniform
+slice sampling is preserved and warned, without filling unobserved intervals. The Gaussian
+results in this paper are representation experiments; no diagnostic task has been validated
+on them. Geometry and colour calibration also remain unestablished.
 \end{finding}
 
 Signatures, encryption profiles, authenticated clinical review and signed redaction are not
@@ -1248,8 +1297,10 @@ need further validation. The Gaussian experiments show improvements in projectio
 under the tested conditions; they do not demonstrate diagnostic fidelity or a universal
 limit of the representation.
 
-The next steps include a per-asset fidelity model, complete source resolution for inferred
-findings, reliable access to originals and independent-reader evaluation. Hash chains and
+Per-asset fidelity records and source hashing are implemented, while independent
+calibration, trustworthy clinical registration and independent-reader evaluation remain
+necessary. Reliable access to external originals also requires an external repository.
+Hash chains and
 layer separation already support auditing, but do not replace authentication, clinical
 validation or assessment of the software's intended purpose. These boundaries define what
 the current proposal can honestly offer.
