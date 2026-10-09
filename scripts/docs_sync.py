@@ -1230,12 +1230,29 @@ def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
         return []  # clon sin etiquetas: no hay nada que afirmar, ni en un sentido ni en otro
 
     problemas = []
-    for ruta in sorted(f for f in ficheros if f.startswith("schemas/") and f.endswith(".json")):
+    esquemas = sorted(f for f in ficheros if f.startswith("schemas/") and f.endswith(".json"))
+    nombrados: dict[str, str] = {}
+    for ruta in esquemas:
         ident = json.loads((REPO / ruta).read_text(encoding="utf-8")).get("$id", "")
         hallado = re.search(r"/(uos-spec-v[0-9.]+(?:-[A-Za-z0-9.]+)?)/", str(ident))
-        if hallado is None:
+        if hallado is not None:
+            nombrados[ruta] = hallado.group(1)
+    # ⚠️ **Un esquema cuyo `$id` no nombra un tag viaja igual con la publicacion.** El de
+    # la extension de fidelidad es `uos-fidelity-provenance/1.0`, una URI y no una URL, y
+    # hasta 0.8.0 se saltaba entero: nadie comprobaba que la copia publicada fuera esta. Si
+    # todos los demas nombran el MISMO tag, ese es el que lo publica; si nombran varios, no
+    # hay forma mecanica de saber cual, y se deja como estaba en vez de adivinar.
+    familia = set(nombrados.values())
+    explicitos = set(nombrados)
+    for ruta in esquemas:
+        if ruta not in nombrados and len(familia) == 1:
+            nombrados[ruta] = next(iter(familia))
+    for ruta in esquemas:
+        if ruta not in nombrados:
             continue
-        tag = hallado.group(1)
+        tag = nombrados[ruta]
+        como = (f"fija su `$id` al tag `{tag}`" if ruta in explicitos
+                else f"no nombra tag en su `$id` pero viaja con la publicacion de `{tag}`")
         if tag not in tags:
             continue  # este clon no lo conoce: `git fetch --tags` diria, y no lo hacemos aqui
         publicado = subprocess.run(
@@ -1243,8 +1260,8 @@ def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
         )
         if publicado.returncode != 0:
             problemas.append(
-                f"`{ruta}` fija su `$id` al tag `{tag}`, y ese tag no contiene el fichero: "
-                "el identificador resuelve a un 404."
+                f"`{ruta}` {como}, y ese tag no contiene el fichero: quien lo busque "
+                "en la publicacion no lo encuentra."
             )
         elif publicado.stdout != (REPO / ruta).read_text(encoding="utf-8"):
             # El consejo depende de QUE clase de tag es, y darlo al reves es caro. Un
@@ -1259,8 +1276,8 @@ def revisar_tag_esquema(ficheros: set[str]) -> list[str]:
                 "existe para evitar."
             )
             problemas.append(
-                f"`{ruta}` fija su `$id` al tag `{tag}`, y lo que ese tag publica NO es este "
-                f"fichero. Quien resuelva el `$id` se baja otra cosa. {que_hacer}"
+                f"`{ruta}` {como}, y lo que ese tag publica NO es este fichero. Quien lo "
+                f"descargue de la publicacion se baja otra cosa. {que_hacer}"
             )
     return problemas
 
