@@ -247,6 +247,16 @@ Los resultados anteriores de 140, 303 y 307 pruebas pertenecen a fases de septie
 
 La previsión anterior de **tres a seis jornadas** estaba condicionada a datos, referencias y ejecuciones. El hallazgo de dos series/marcos y la ausencia de referencias independientes impiden garantizar el cierre con esa estimación. No es el tiempo necesario para cerrar toda la revisión de Matías ni una garantía de obtener validación clínica.
 
+### Preparación de la evaluación clínica (10 de octubre)
+
+Se han redactado los tres primeros pasos del plan hacia una evaluación clínica. No se ha contactado con la clínica ni se ha evaluado nada con usuarios.
+
+1. **Uso previsto:** [ficha](uos-uso-previsto-v0.1.md) con usuario, tarea, errores relevantes y criterios de aceptación provisionales, pendientes de ratificar con un especialista. Con el registro actual el caso no cumple el criterio de solapamiento y no puede entrar en la evaluación de la tarea.
+2. **Paquete para la clínica:** inventario sin identificadores de las series, generado por `scripts/inventario_series_cbct.py`, y [plantilla](uos-paquete-clinica-plantilla.md) de lo que contiene y lo que se pide. En las dos series, los números de instancia ausentes coinciden con los huecos de posición. Las cabeceras no declaran fechas.
+3. **TRE:** herramienta `scripts/tre_puntos.py` y [protocolo de marcado](uos-protocolo-puntos-anatomicos.md). Se ha probado con puntos sintéticos; no hay todavía puntos de especialistas.
+
+El ejecutor del caso registra ahora revisión de código, estado del árbol y entorno en cada ejecución, de modo que futuras repeticiones sean atribuibles a un commit.
+
 ### Aplazado por decisión expresa
 
 **Revisión de segmentación y corrección de límites dentales.** La selección funciona, pero persisten fronteras que incluyen encía o superficie vecina y anomalías en raíces reconstruidas. Se mantienen las advertencias y el gate de revisión. No se retiran esos avisos ni se presenta el resultado como validado.
