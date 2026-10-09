@@ -219,7 +219,7 @@ that fixes whatever the new version finds.
 | Field | Value |
 |---|---|
 | **Name** | `data-guardian` |
-| **Version** | `0.1.0` |
+| **Version** | `0.2.0` |
 | **Location** | [`scripts/data_guard.py`](scripts/data_guard.py) |
 | **Status** | `active` |
 | **Trigger** | `pre-commit` hook (**blocks**) · `ai-code-review.yml` · `literature-watch.yml` |
@@ -241,6 +241,7 @@ that fixes whatever the new version finds.
 | `tamano` | any versioned file above 5 MiB |
 | `ignore` | asks `git check-ignore` about **probe paths**: it verifies behaviour, not the text of `.gitignore`, so it survives someone reordering them and detects that they were deleted |
 | `manifiesto` | that the entries in `manifest.yaml` are complete and parse |
+| `incrustados` | base64 inside a versioned `.html`, `.htm`, `.svg` or `.ipynb` that is not an image or a font: a mesh, volume, container or raw float array embedded in a viewer |
 | `procedencia` | a versioned notebook with embedded images must cite its dataset card |
 | `fichas` | that every dataset used has one |
 
@@ -255,17 +256,16 @@ that fixes whatever the new version finds.
 - It does not adjudicate doubtful licences: it vetoes by extension and size, which are
   mechanical criteria. Judging whether a licence permits redistribution is human work.
 
-> ⚠️ **Known blind spot (2026-08-09, still open and NOW WIDER).** It vetoes `.stl`,
-> `.ply` and `.obj`, but an `.html` with that same geometry embedded as base64 walks
-> straight past: the only barrier is the size limit, which is not the right criterion.
-> It was found while building a viewer with real patient geometry. The repository is
-> public.
+> **Blind spot closed for base64 (2026-10-10).** It vetoed `.stl`, `.ply` and `.obj`, but an
+> `.html` with that same geometry embedded as base64 walked past: the only barrier was the
+> size limit, which is not the criterion. It was found on 2026-08-09 while building a viewer
+> with real patient geometry; raising the limit to 5 MiB on 2026-08-18 widened it.
+> `incrustados` now lets a base64 block of 4096 characters or more through only if it starts
+> with a PNG, JPEG, GIF, WebP or WOFF signature, and names what anything else looks like.
 >
-> Raising the limit from 2 to 5 MiB on 2026-08-18 **widens this gap**: a 4 MiB viewer
-> that used to be stopped now passes. Half-mitigated because `notebooks/visores/` is
-> ignored, but that protects one specific path, not the pattern. Really closing it means
-> looking **inside** the HTML — hunting base64 blocks with a mesh signature — and that is
-> outstanding work.
+> ⚠️ **Still uncovered:** geometry written as plain text, for example a JSON array of vertex
+> coordinates inside a viewer. No signature distinguishes it from any other list of numbers,
+> so only the size limit stands in its way.
 
 **Change history**
 
@@ -273,6 +273,7 @@ that fixes whatever the new version finds.
 |---|---|---|
 | 2026-08-05 | 0.1.0 | Initial registration: six checks, probe paths for the ignore rules, wired into the hook and both workflows. |
 | 2026-08-11 | 0.1.1 | No behavioural change: the checks are now declared in a registry with stable identifiers, and this card reproduces it. |
+| 2026-10-10 | 0.2.0 | `incrustados`: base64 payloads that are not images or fonts are vetoed in tracked HTML, SVG and notebooks. Closes the blind spot recorded on 2026-08-09 for the base64 case. |
 
 ---
 
