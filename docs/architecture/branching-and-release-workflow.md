@@ -76,6 +76,15 @@ main
   -> merge or cherry-pick the same change back into develop
 ```
 
+## Recorded Exceptions
+
+Direct work on `main` breaks the flow above, so when it happens it is recorded here
+rather than left for the history to contradict this document silently.
+
+| Date | Commits | Why | How it was reconciled |
+|---|---|---|---|
+| 2026-10-07 to 2026-10-10 | `6af4e57` to `1d87299` | The repository owner explicitly authorised committing the UOS verification and clinical-preparation work straight to `main`. | `develop` was fast-forwarded to `main` on 2026-10-10, with no rewrite. Later work returned to `chore/...` branches and pull requests into `develop`. |
+
 ## GitHub Protection
 
 This workflow is currently documented as repository policy. It does not require

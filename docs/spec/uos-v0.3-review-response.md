@@ -267,7 +267,7 @@ Recuperación garantizada de originales; píxel DICOM canónico y multiframe com
 
 ## 8. Publicación y trazabilidad del trabajo
 
-Las correcciones de implementación ya están en commits locales de `main`:
+Las correcciones de implementación están en `main` y publicadas en los repositorios remotos:
 
 | Repositorio | Commit | Contenido |
 |---|---|---|
@@ -275,8 +275,10 @@ Las correcciones de implementación ya están en commits locales de `main`:
 | Agentic Smart Health | `99d1886` | Pipeline, apariencia archivada y regeneración de malla. |
 | uos-viewer | `fb11d73` | Selección dental y fichas con etiquetas separadas. |
 | uos-viewer | `c10508f` | Etiquetas y correspondencia de exportación con Python. |
+| Agentic Smart Health | `6af4e57`, `621f7e2` | Geometría fuente CBCT, repetibilidad e informe del 7 de octubre. |
+| Agentic Smart Health | `17cd9b6` a `1d87299` | Registro de ejecución, inventario de series, herramienta de TRE, ficha de uso previsto y tag del esquema, 10 de octubre. |
 
-Estos identificadores documentan el código local inspeccionado; no demuestran despliegue ni publicación remota. El trabajo del 7 de octubre añade correcciones de implementación y documentación posteriores a esos commits.
+Estar publicados no implica despliegue ni validación. Antes del borrador de publicación definitivo se cerraron en una rama aparte los errores de tipos previos, el punto ciego de geometría embebida en HTML y la comprobación del esquema de fidelidad. Quedan, como decisiones del autor, la actualización y revisión editorial del paper, qué evidencias del caso se publican, quitar el sufijo `-draft` y crear el tag definitivo.
 
 El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. El 10 de octubre se movió el tag de pre-publicación `uos-spec-v0.3-draft` al commit que contiene el esquema actual, con autorización del responsable, para que el `$id` publicado resuelva a ese fichero. Los tags `uos-spec-v0.3` y `uos-spec-v0.2` no se tocaron. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; solo se ha movido el tag `-draft`, que existe para eso.
 
