@@ -354,6 +354,11 @@ this sentence, CI says so with the file and the line. There are 13 marked number
 > covering everything. The marker inverts the burden: whoever writes the number declares
 > where it comes from, once, and CI watches it forever.
 
+> ⚠️ **`tag_esquema` only sees schemas whose `$id` names a `uos-spec-v…` tag.**
+> `schemas/uos-fidelity-provenance-1.0.schema.json` has the `$id` `uos-fidelity-provenance/1.0`,
+> which is a URI and not a URL, so nothing checks that a published copy matches it. Known blind
+> spot since 2026-10-10.
+
 > ⚠️ **What is still uncovered.** A prose claim **with no number** that becomes false.
 > The fusion card said "the coarse stage is still pending" long after it stopped being
 > so, and no constant backs that up. The other half of that same case — "ε = 0.5 mm" —

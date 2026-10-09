@@ -278,7 +278,7 @@ Las correcciones de implementación ya están en commits locales de `main`:
 
 Estos identificadores documentan el código local inspeccionado; no demuestran despliegue ni publicación remota. El trabajo del 7 de octubre añade correcciones de implementación y documentación posteriores a esos commits.
 
-El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. Sigue pendiente alinear la publicación del esquema con el tag `uos-spec-v0.3-draft`, cuyo contenido difiere del esquema actual. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; no se han movido tags.
+El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. El 10 de octubre se movió el tag de pre-publicación `uos-spec-v0.3-draft` al commit que contiene el esquema actual, con autorización del responsable, para que el `$id` publicado resuelva a ese fichero. Los tags `uos-spec-v0.3` y `uos-spec-v0.2` no se tocaron. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; solo se ha movido el tag `-draft`, que existe para eso.
 
 El PDF de esta respuesta se genera como artefacto local bajo `data/processed/reports/`, ignorado por Git. El Markdown permanece en el repositorio. No se incorporan el PDF de Matías, archivos originales, capturas con información clínica ni geometría de pacientes al historial.
 
