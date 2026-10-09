@@ -27,40 +27,33 @@ from uos.contenedor import digesto_de_partes, partes_de, sha256  # noqa: E402
 
 
 def audita_cabeceras(cbct: Path) -> dict:
-    """Cuenta identidades y examina muestreo sin publicar identificadores del paciente."""
-    import pydicom
+    """Cuenta identidades y examina muestreo sin publicar identificadores del paciente.
 
-    headers = [pydicom.dcmread(p, stop_before_pixels=True)
-               for p in sorted(cbct.glob("*.dcm"))]
+    Delega en `uos.inventario`; conserva las claves que ya usan los informes del 7 de
+    octubre y añade el inventario completo bajo `inventory`.
+    """
+    from uos.inventario import inventaria, lee_cabeceras_de_directorio
+
+    headers = lee_cabeceras_de_directorio(cbct)
     if not headers:
         raise ValueError("No hay cortes .dcm que auditar")
-    counts = {k: len({str(getattr(ds, k, "") or "") for ds in headers} - {""})
-              for k in ("StudyInstanceUID", "SeriesInstanceUID", "FrameOfReferenceUID")}
-    groups: dict[str, list] = {}
-    for ds in headers:
-        groups.setdefault(str(getattr(ds, "SeriesInstanceUID", "") or ""), []).append(ds)
+    inventory = inventaria(headers)
     series = []
-    for datasets in groups.values():
-        positions = [getattr(ds, "ImagePositionPatient", None) for ds in datasets]
-        spacing = None
-        gaps = None
-        if all(p is not None for p in positions) and len(positions) > 1:
-            z = np.sort([float(p[2]) for p in positions])
-            delta = np.diff(z)
-            spacing = [float(delta.min()), float(delta.max())]
-            step = float(np.median(delta))
-            if step > 0:
-                gaps = int(np.maximum(np.rint(delta / step).astype(int) - 1, 0).sum())
-        series.append({"instances": len(datasets), "slice_spacing_min_max_mm": spacing,
-                       "estimated_missing_slices": gaps})
+    for item in inventory["series"]:
+        pos = item["positions"] or {}
+        spacing = ([pos["min_step_mm"], pos["max_step_mm"]] if "min_step_mm" in pos
+                   else None)
+        series.append({"instances": item["instances"], "slice_spacing_min_max_mm": spacing,
+                       "estimated_missing_slices": pos.get("estimated_missing_slices")})
     tags = ("PixelSpacing", "SliceThickness", "ImageOrientationPatient", "RescaleSlope",
             "RescaleIntercept", "RescaleType", "PixelSpacingCalibrationType",
             "PixelSpacingCalibrationDescription", "DateOfLastCalibration")
     return {
-        "instances": len(headers), "identity_counts": counts,
-        "single_identity": all(n == 1 for n in counts.values()), "series": series,
+        "instances": inventory["instances"], "identity_counts": inventory["identity_counts"],
+        "single_identity": inventory["single_identity"], "series": series,
         "declarations": {k: sorted({str(getattr(ds, k, "") or "") for ds in headers})
                          for k in tags},
+        "inventory": inventory,
         "scope": "Header declarations and estimated missing slices; no independent calibration",
     }
 

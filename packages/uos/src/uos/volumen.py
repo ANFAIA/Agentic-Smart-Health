@@ -291,9 +291,16 @@ def identificables_en(carpeta: Path, *, muestra: int = 8) -> list[str]:
             ds = pydicom.dcmread(str(f), stop_before_pixels=True)
         except Exception:  # noqa: BLE001
             continue
-        for tag in TAGS_IDENTIFICABLES:
-            valor = str(getattr(ds, tag, "") or "").strip()
-            limpio = valor.replace("^", "").replace(" ", "").lower()
-            if limpio and not any(m in limpio for m in _MARCADORES):
-                poblados.add(tag)
+        poblados.update(tags_identificables_de(ds))
     return sorted(poblados)
+
+
+def es_identificable(valor: object) -> bool:
+    """Un valor de tag identifica si tiene contenido y no es un marcador de anonimizador."""
+    limpio = str(valor or "").strip().replace("^", "").replace(" ", "").lower()
+    return bool(limpio) and not any(m in limpio for m in _MARCADORES)
+
+
+def tags_identificables_de(cabecera: Any) -> set[str]:
+    """Los NOMBRES de los tags identificables poblados en una cabecera; nunca sus valores."""
+    return {t for t in TAGS_IDENTIFICABLES if es_identificable(getattr(cabecera, t, ""))}
