@@ -46,6 +46,108 @@ from ingestion_agents import ArtifactStore  # noqa: E402
 FOTOS = ("*.jpg", "*.jpeg", "*.png")
 
 
+# ── Registro de ejecución ────────────────────────────────────────────────────────
+#
+# ⚠️ **Sin esto, una ejecución no se puede atribuir a un código.** Las seis ejecuciones
+# del 7 de octubre se registraron con código ad hoc fuera del repositorio: HEAD más un
+# hash de diff que nadie puede recalcular. Fijar la semilla y no registrar qué código
+# corrió deja la repetibilidad medida sin su premisa. Un árbol sucio no bloquea —los
+# ensayos exploratorios son legítimos— pero se DECLARA, y la comparación entre
+# ejecuciones lo exige igual en ambas.
+CARPETAS_DE_CODIGO = ("scripts", "packages", "apps")
+
+
+def _git(*argumentos: str, raiz: Path) -> str | None:
+    import subprocess
+
+    try:
+        hecho = subprocess.run(["git", *argumentos], cwd=raiz, capture_output=True,
+                               timeout=30, check=True)
+    except Exception:  # noqa: BLE001 - sin git se declara desconocido, no se cae
+        return None
+    return hecho.stdout.decode("utf-8", errors="replace")
+
+
+def revision_de_codigo(raiz: Path = RAIZ) -> dict:
+    """HEAD y estado del árbol. El diff se resume por hash; su contenido no viaja."""
+    import hashlib
+
+    head = _git("rev-parse", "HEAD", raiz=raiz)
+    if head is None:
+        return {"git_head": None, "git_dirty": None, "git_diff_sha256": None,
+                "untracked_code": None}
+    diff = _git("diff", "HEAD", "--", *CARPETAS_DE_CODIGO, raiz=raiz) or ""
+    sueltos = _git("ls-files", "--others", "--exclude-standard", "--",
+                   *CARPETAS_DE_CODIGO, raiz=raiz) or ""
+    untracked = sorted(x for x in sueltos.splitlines() if x)
+    dirty = bool(diff) or bool(untracked)
+    return {
+        "git_head": head.strip(),
+        "git_dirty": dirty,
+        "git_diff_sha256": (hashlib.sha256(diff.encode()).hexdigest() if diff else None),
+        "untracked_code": untracked,
+    }
+
+
+def entorno_de_software() -> dict:
+    """Versiones que condicionan el resultado numérico. No acredita calibración."""
+    import platform
+
+    import numpy as np
+
+    entorno: dict = {"python": platform.python_version(), "platform": platform.platform(),
+                     "numpy": np.__version__}
+    try:
+        import scipy
+
+        entorno["scipy"] = scipy.__version__
+    except ImportError:
+        entorno["scipy"] = None
+    try:
+        import torch
+
+        entorno["torch"] = torch.__version__
+        entorno["cuda_build"] = torch.version.cuda
+        entorno["gpu"] = (torch.cuda.get_device_name(0) if torch.cuda.is_available()
+                          else None)
+    except ImportError:
+        entorno.update(torch=None, cuda_build=None, gpu=None)
+    return entorno
+
+
+def registro_ejecucion(argv: list[str], semilla: int) -> dict:
+    """Lo que identifica una ejecución: orden, semilla, código, entorno y versiones."""
+    from datetime import UTC, datetime
+
+    from ingestion_agents.cbct_agent import CBCTAgent
+    from uos import UOSExportAgent
+    from uos.manifiesto import UOS_VERSION
+
+    return {
+        "schema": "histora-run-record/1.0",
+        "argv": list(argv),
+        "seed": semilla,
+        "code": revision_de_codigo(),
+        "environment": entorno_de_software(),
+        "agents": {CBCTAgent.name: CBCTAgent.version,
+                   UOSExportAgent.name: UOSExportAgent.version},
+        "uos_format": UOS_VERSION,
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": None,
+        "mesh_regeneration_exit_code": None,
+        "scope": "Identifies code and environment of one run; not physical calibration",
+    }
+
+
+def escribe_registro(registro: dict, salida: Path) -> Path:
+    import json
+
+    ruta = salida / "run-record.json"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(json.dumps(registro, indent=2, ensure_ascii=False) + "\n")
+    return ruta
+
+
 def _submuestreo_desde(store: ArtifactStore, snapshot: object, n_final: int) -> dict:
     """Construye el dict de submuestreo desde el artefacto del campo semilla.
 
@@ -413,6 +515,8 @@ def main() -> int:
         ap.error("La reutilización requiere el UOS anterior y su artefacto")
     if args.reusa_apariencia_uos and args.entrena_apariencia:
         ap.error("Reutilizar y entrenar apariencia son operaciones distintas")
+    registro = registro_ejecucion(sys.argv, args.semilla)
+    escribe_registro(registro, args.salida)
 
     caso = descubre(args.caso)
     if args.cbct is not None:
@@ -876,12 +980,24 @@ def main() -> int:
         )
         print("\n--- 4b · MALLA MEJORADA (desde el `.uos`) ---")
         print(hecho.stdout.rstrip() or f"  ⚠ {hecho.stderr.strip().splitlines()[-1:]}")
+        registro["mesh_regeneration_exit_code"] = hecho.returncode
 
     print("\n--- 5 · GATE DE REVISIÓN HUMANA ---")
     if not fin.hitl_reasons:
         print("  sin motivos: el caso pasaría sin revisión")
     for m in fin.hitl_reasons:
         print(f"  · {m}")
+
+    from datetime import UTC, datetime
+
+    registro["finished_at"] = datetime.now(UTC).isoformat()
+    ruta = escribe_registro(registro, args.salida)
+    print(f"\n  registro de ejecución: {ruta}")
+    if registro["code"]["git_dirty"]:
+        print("  ⚠ árbol de trabajo con cambios sin commit: esta ejecución no es "
+              "atribuible a un commit (se registra el hash del diff)")
+    elif registro["code"]["git_head"] is None:
+        print("  ⚠ sin git: la revisión de código queda desconocida")
     return 0
 
 

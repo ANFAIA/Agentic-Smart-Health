@@ -121,7 +121,7 @@ Las evidencias se guardan localmente en `data/processed/verification-20261007/`:
 preparación de series, y bajo `final/`, seis ejecuciones, registro de entorno, auditorías
 contra las fuentes, comparaciones entre parejas y conservación de coordenadas.
 Los ensayos exploratorios anteriores a la corrección de marcos no se cuentan en el
-resultado final. El paper compilado está en el subdirectorio `paper/`.
+resultado final; desde el 10 de octubre están separados en `exploratory/`. El paper compilado está en el subdirectorio `paper/`.
 
 Antes de publicar quedan la revisión editorial final, la coherencia del tag de esquema
 y la decisión sobre qué evidencias pueden publicarse. Las referencias clínicas originales

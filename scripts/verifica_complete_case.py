@@ -105,6 +105,31 @@ def audita_fuente(uos: Path, cbct: Path) -> dict:
     }
 
 
+def registro_de(uos: Path) -> dict | None:
+    """El `run-record.json` que `caso_completo.py` deja junto a `export/`, si existe."""
+    ruta = uos.parent.parent / "run-record.json"
+    return json.loads(ruta.read_text()) if ruta.is_file() else None
+
+
+def revision_comparada(a: Path, b: Path) -> dict:
+    """Mismo código en las dos ejecuciones: HEAD y hash del diff, ambos registrados.
+
+    Las ejecuciones anteriores al registro no lo tienen: se declaran `unrecorded` y no
+    hacen fallar la comparación, porque ese dato no existía, no porque no coincida.
+    """
+    ra, rb = registro_de(a), registro_de(b)
+    if ra is None or rb is None:
+        return {"code_revision": "unrecorded", "same_code_revision": None}
+    ca, cb = ra.get("code", {}), rb.get("code", {})
+    claves = ("git_head", "git_diff_sha256", "untracked_code")
+    same = (ca.get("git_head") is not None
+            and all(ca.get(k) == cb.get(k) for k in claves))
+    return {"code_revision": "recorded", "same_code_revision": same,
+            "git_head": [ca.get("git_head"), cb.get("git_head")],
+            "git_dirty": [ca.get("git_dirty"), cb.get("git_dirty")],
+            "seed": [ra.get("seed"), rb.get("seed")]}
+
+
 def compara(a: Path, b: Path) -> dict:
     """Criterio fijado: identidad exacta de binarios y transformadas, mismas fuentes.
 
@@ -138,9 +163,11 @@ def compara(a: Path, b: Path) -> dict:
     if ra.keys() == rb.keys() and ra:
         displacement = max(float(np.max(np.abs(np.asarray(ra[k]) - np.asarray(rb[k]))))
                            for k in ra)
+    revision = revision_comparada(a, b)
     verified = (validate(a).valid and validate(b).valid and same_inventory and same_sources
                 and bool(binary) and all(x["identical"] for x in binary.values())
-                and same_registrations and same_process_records)
+                and same_registrations and same_process_records
+                and revision["same_code_revision"] is not False)
     return {
         "verified": verified, "runs": 2,
         "criterion": "Exact binary payloads and registration matrices; identical source hashes",
@@ -149,6 +176,7 @@ def compara(a: Path, b: Path) -> dict:
         "same_inventory": same_inventory, "same_sources": same_sources,
         "same_process_records": same_process_records,
         "same_registrations": same_registrations,
+        **revision,
         "max_registration_coefficient_difference": displacement,
         "binary_assets": binary, "metadata_bytes": metadata,
         "container_bytes_identical": sha256(a) == sha256(b),
