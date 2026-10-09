@@ -624,6 +624,13 @@ FusionOutput
   that the photo↔mesh error is **non-rigid** (ICP stalled at IoU ≈ 0.55), so it is not the
   same problem as rigid registration. With a bare mesh or a grey *placeholder* the result
   is **absence of colour**, which is a valid answer and not a bug.
+- `geometric-fusion-agent` — **the ICP residual is still not a TRE.** Since 2026-10-10,
+  `fusion_agents.tre` and `scripts/tre_puntos.py` measure target registration error from
+  landmarks that specialists mark outside the system, per
+  [the landmark protocol](docs/spec/uos-protocolo-puntos-anatomicos.md). Each points file
+  declares LPS or RAS and the caller declares how the STL was loaded, because guessing the
+  convention turns a perfect registration into ~100 mm of apparent error. The result is
+  not written into the `.uos` automatically.
 - `semantic-fusion-agent` — confidence is the **weakest link**,
   `min(observation_confidence, FDI_confidence)`: anchoring a pH to a tooth cannot be more
   reliable than knowing which tooth it is.
