@@ -123,7 +123,8 @@ contra las fuentes, comparaciones entre parejas y conservación de coordenadas.
 Los ensayos exploratorios anteriores a la corrección de marcos no se cuentan en el
 resultado final; desde el 10 de octubre están separados en `exploratory/`. El paper compilado está en el subdirectorio `paper/`.
 
-Antes de publicar quedan la revisión editorial final, la coherencia del tag de esquema
-y la decisión sobre qué evidencias pueden publicarse. Las referencias clínicas originales
-y los UOS de pacientes permanecen fuera de Git. Este informe documenta las verificaciones
-previas a los commits autorizados posteriormente; no se han movido tags.
+Antes de publicar quedan la revisión editorial final y la decisión sobre qué evidencias
+pueden publicarse. La coherencia del tag de esquema quedó cerrada el 10 de octubre, al
+mover el tag de pre-publicación con autorización del autor. Las referencias clínicas
+originales y los UOS de pacientes permanecen fuera de Git. Este informe documenta las
+verificaciones previas a los commits autorizados posteriormente.

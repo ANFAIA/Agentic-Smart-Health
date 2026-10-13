@@ -342,7 +342,7 @@ class CompositeMeshExportAgent(BaseExportAgent):
                 + ("solido-cerrado" if cierre.get("estanca") else "CASCARA-ABIERTA")
             ),
         )
-        fuentes = {
+        fuentes: dict[str, str | None] = {
             "scanner": snapshot.surface_ref, "reconstructed_root": snapshot.gaussian_field_ref,
         }
         self._procedencia(destination, [

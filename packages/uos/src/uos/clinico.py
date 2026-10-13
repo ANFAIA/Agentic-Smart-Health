@@ -154,7 +154,7 @@ def clinical_layer(
         for key, value in (("ph", a.ph), ("n_roots", a.n_raices), ("n_canals", a.n_conductos)):
             if value is None:
                 continue
-            entry = {"value": value, **marca}
+            entry: dict[str, Any] = {"value": value, **marca}
             if key in d:
                 previous = dict(d[key])
                 alternatives = previous.pop("alternatives", [])

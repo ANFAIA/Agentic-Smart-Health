@@ -154,12 +154,12 @@ historial, ciclos, evidencia incompleta, referencias inexistentes, compatibilida
 anterior, fuentes renombradas/modificadas, OCR, alternativas contradictorias,
 separación de apariencia y retirada de inferencias como sucesor válido.
 
-Comprobación local: 1168 tests pasan, 2 se omiten y aparecen 2 advertencias
+Comprobación local del 2 de octubre: 1168 tests pasan, 2 se omiten y aparecen 2 advertencias
 numéricas en la prueba existente de apariencia. Ruff pasa en los archivos Python
 afectados, MyPy en los 12 archivos fuente afectados y el guardián de datos no
 detecta infracciones. La especificación LaTeX compila. `docs_sync --check` todavía
-señala las dos referencias a este documento sin añadir a Git y la discrepancia
-del tag de esquema descrita abajo; no se considera cerrado ese control.
+señalaba entonces las dos referencias a este documento sin añadir a Git y la
+discrepancia del tag de esquema. Ambas quedaron cerradas el 10 de octubre.
 
 El [complete case](uos-complete-case-2026-10-02.md) se ejecutó después: el UOS y el
 sucesor sin inferencias validan. Quedan advertencias, una fuente CBCT sin resolver
@@ -167,8 +167,9 @@ y limitaciones de color/revisión humana. Los resultados históricos del paper,
 la repetibilidad medida y la validez clínica siguen pendientes de comprobación.
 La implementación del contrato no sustituye esos experimentos.
 
-Antes de publicar, deben versionarse los cambios y actualizarse de forma explícita
-los artefactos publicados. El tag móvil `uos-spec-v0.3-draft` todavía debe pasar a
-una revisión que incluya la descripción corregida del esquema del manifiesto;
-no se mueve durante esta implementación. Los commits y la publicación quedan
-para ejecución manual del autor.
+Los cambios están versionados. El 10 de octubre se movió el tag de pre-publicación
+`uos-spec-v0.3-draft` a una revisión que incluye el esquema corregido del manifiesto,
+con autorización del autor, y desde entonces el guardián de documentación comprueba
+también la copia publicada del esquema de esta extensión. Para publicar quedan quitar
+el sufijo `-draft`, regenerar los esquemas y crear el tag definitivo en `main`, que
+son decisiones del autor.

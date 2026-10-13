@@ -357,3 +357,42 @@ def test_sin_ficha_no_hay_mentira_que_cazar(tmp_path, monkeypatch):
     monkeypatch.setattr(ds, "__file__", str(tmp_path / "scripts" / "docs_sync.py"))
     assert ds.revisar_componentes_vacios({"apps/algo/src/server.py", "README.md"}) == []
 
+
+
+# --------------------------------------------------------------------------- #
+# `tag_esquema`: tambien los esquemas cuyo `$id` no nombra un tag.
+
+def _repo_esquemas(tmp_path: Path, ids: dict[str, str], tag: str = "uos-spec-v9.9-draft"):
+    import json
+    import subprocess
+
+    (tmp_path / "schemas").mkdir()
+    for nombre, ident in ids.items():
+        (tmp_path / "schemas" / nombre).write_text(json.dumps({"$id": ident}) + "\n")
+    for orden in (["init", "-q"], ["add", "."],
+                  ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"],
+                  ["tag", tag]):
+        subprocess.run(["git", *orden], cwd=tmp_path, check=True)
+    return {f"schemas/{n}" for n in ids}
+
+
+_URL = "https://example.org/{tag}/schemas/a.json"
+
+
+def test_esquema_sin_tag_se_compara_con_el_de_su_familia(tmp_path, monkeypatch):
+    ficheros = _repo_esquemas(tmp_path, {
+        "a.json": _URL.format(tag="uos-spec-v9.9-draft"), "b.json": "extension/1.0"})
+    monkeypatch.setattr(ds, "REPO", tmp_path)
+    assert ds.revisar_tag_esquema(ficheros) == []
+    (tmp_path / "schemas" / "b.json").write_text('{"$id": "extension/1.0", "x": 1}\n')
+    [problema] = ds.revisar_tag_esquema(ficheros)
+    assert "`schemas/b.json` no nombra tag" in problema and "uos-spec-v9.9-draft" in problema
+
+
+def test_esquema_sin_tag_y_familia_ambigua_no_se_adivina(tmp_path, monkeypatch):
+    ficheros = _repo_esquemas(tmp_path, {
+        "a.json": _URL.format(tag="uos-spec-v9.9-draft"),
+        "c.json": _URL.format(tag="uos-spec-v9.8"), "b.json": "extension/1.0"})
+    monkeypatch.setattr(ds, "REPO", tmp_path)
+    (tmp_path / "schemas" / "b.json").write_text('{"$id": "extension/1.0", "x": 1}\n')
+    assert ds.revisar_tag_esquema(ficheros) == []

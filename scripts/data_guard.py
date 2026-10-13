@@ -27,6 +27,8 @@ con la tabla de la ficha, así que añadir una y olvidar documentarla se cae en 
   línea del `.gitignore`, salta aquí y no tres meses después.
 - `manifiesto`: el inventario de la knowledge base está completo, con licencia
   declarada y sin apuntar a ficheros que estén versionados.
+- `incrustados`: un HTML, SVG o notebook no lleva en base64 nada que no sea una imagen
+  o una fuente. Una malla embebida en un visor pasaba por debajo del veto de `.stl`.
 - `procedencia`: un notebook versionado que lleva imágenes dentro tiene que citar
   un dataset con ficha. Los renders de una cohorte son un derivado del dato, y
   viajan escondidos en base64 donde ninguna regla de extensión los ve.
@@ -243,6 +245,90 @@ def revisar_fichas() -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Geometría o volúmenes embebidos en base64.
+#
+# ⚠️ **El punto ciego que esto cierra se encontró construyendo un visor con geometría
+# real de un paciente** (2026-08-09): se vetan `.stl` y `.ply`, pero un `.html` con esa
+# misma malla en base64 solo chocaba con el límite de tamaño, que no es el criterio. La
+# regla es mecánica, como las demás: en los ficheros de texto que suelen embeber binarios,
+# un bloque base64 grande solo pasa si EMPIEZA por la firma de una imagen o una fuente.
+# Lo demás se veta y se dice qué parece. No se juzga el contenido de la imagen: eso es
+# `procedencia`.
+EXTENSIONES_CON_INCRUSTADOS = (".html", ".htm", ".svg", ".ipynb")
+# 4096 caracteres son 3 KiB decodificados: por debajo no cabe una malla que importe, y
+# por encima ya entran las PNG de los notebooks, que son lo que hay que dejar pasar.
+MINIMO_BASE64 = 4096
+_BASE64 = re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % MINIMO_BASE64)
+_PERMITIDAS = (
+    (b"\x89PNG\r\n\x1a\n", "PNG"), (b"\xff\xd8\xff", "JPEG"), (b"GIF8", "GIF"),
+    (b"wOFF", "WOFF"), (b"wOF2", "WOFF2"),
+)
+
+
+def _firma(cabeza: bytes) -> str:
+    """Qué parece un binario por sus primeros bytes. Solo para el mensaje."""
+    if cabeza.startswith(b"ply"):
+        return "PLY"
+    if cabeza.startswith(b"glTF"):
+        return "glTF binario"
+    if cabeza.startswith(b"solid"):
+        return "STL de texto"
+    if cabeza.startswith(b"\x93NUMPY"):
+        return "array NumPy"
+    if cabeza.startswith(b"PK\x03\x04"):
+        return "ZIP (podría ser un .uos)"
+    if cabeza[128:132] == b"DICM":
+        return "DICOM"
+    if len(cabeza) >= 84 and int.from_bytes(cabeza[80:84], "little") > 0:
+        return "binario sin firma conocida (¿STL binario o array float de un visor?)"
+    return "binario sin firma conocida"
+
+
+def bloques_no_imagen(contenido: bytes) -> list[tuple[int, str]]:
+    """`(bytes decodificados, qué parece)` de cada bloque base64 que no es imagen ni fuente.
+
+    Los notebooks guardan el base64 partido en líneas JSON (`\\n` literal) y los HTML,
+    a veces, en líneas reales: se unen antes de buscar.
+    """
+    import base64
+
+    # Una lista JSON de líneas (`"abc\\n", "def\\n"`) se une primero: si no, cada trozo
+    # de 76 caracteres quedaría por debajo del mínimo y el bloque entero pasaría.
+    plano = re.sub(rb'\\n"\s*,\s*"', b"", contenido)
+    plano = plano.replace(b"\\n", b"").replace(b"\n", b"").replace(b"\r", b"")
+    hallados = []
+    for bloque in _BASE64.finditer(plano):
+        texto = bloque.group(0)
+        try:
+            cabeza = base64.b64decode(texto[:256], validate=False)
+        except ValueError:
+            continue
+        if any(cabeza.startswith(f) for f, _ in _PERMITIDAS):
+            continue
+        if cabeza[:4] == b"RIFF" and cabeza[8:12] == b"WEBP":
+            continue
+        hallados.append((len(texto) * 3 // 4, _firma(cabeza)))
+    return hallados
+
+
+def revisar_incrustados(ficheros: dict[str, int]) -> list[str]:
+    problemas = []
+    for ruta in sorted(ficheros):
+        if not ruta.lower().endswith(EXTENSIONES_CON_INCRUSTADOS):
+            continue
+        fichero = REPO / ruta
+        if not fichero.exists():
+            continue
+        for tam, parece in bloques_no_imagen(fichero.read_bytes()):
+            problemas.append(
+                f"`{ruta}` lleva {tam / 1024:.0f} KiB en base64 que no son una imagen ni "
+                f"una fuente: parece {parece}. Una malla o un volumen embebidos en un visor "
+                "son el mismo dato que un `.stl` o un `.nii`, y el repositorio es público."
+            )
+    return problemas
+
+
+# --------------------------------------------------------------------------- #
 # El registro: identificador, título para la persona que lo lee, y la función.
 #
 # El identificador va aparte del título a propósito. El título se escribe para quien
@@ -254,6 +340,7 @@ COMPROBACIONES: tuple[tuple[str, str, Callable[[dict[str, int]], list[str]]], ..
     ("tamano", "tamaño de los ficheros", revisar_tamano),
     ("ignore", "reglas de ignore vivas", lambda _: revisar_reglas_ignore()),
     ("manifiesto", "manifiesto de la knowledge base", revisar_manifiesto),
+    ("incrustados", "binarios embebidos en base64", revisar_incrustados),
     ("procedencia", "procedencia de los notebooks", revisar_procedencia),
     ("fichas", "fichas de dataset", lambda _: revisar_fichas()),
 )

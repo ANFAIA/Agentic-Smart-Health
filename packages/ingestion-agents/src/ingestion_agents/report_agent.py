@@ -844,7 +844,8 @@ class ReportAgent(BaseIngestionAgent):
         if leido_por_ocr:
             # OCR is model output even when regex reads the recognised text afterwards.
             # Approval must preserve that origin rather than laundering it into transcription.
-            for value in [*observations, *medidas]:
+            valores: list[RegionalObservation | Medida] = [*observations, *medidas]
+            for value in valores:
                 model = value.provenance.model
                 value.provenance = Provenance(**{
                     **value.provenance.model_dump(),
