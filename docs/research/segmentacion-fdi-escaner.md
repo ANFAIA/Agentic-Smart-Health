@@ -263,6 +263,22 @@ visual del antes y el después queda para revisión humana y no se versiona.
 ⚠️ El orden importa: va **después** de `rellena_huecos_interiores`. Un hueco de encía
 dentro de una corona es encía para el corte, y puesto antes declinaba las 14 piezas.
 
+### 6.3 · Puntuar un caso propio con líneas marcadas a mano (2026-10-13)
+
+Un caso propio no trae la etiqueta de un experto, y por eso el párrafo de arriba termina
+en «no hay anotación con la que decirlo». Lo más barato que una persona puede aportar es
+una curva cerrada por pieza sobre el margen gingival, trazada en 3D Slicer.
+[`scripts/puntua_margen.py`](../../scripts/puntua_margen.py) las lee y da, por pieza, la
+distancia de nuestro margen a la línea con su signo —desborde o sobre-recorte— y las mismas
+tasas que el banco, tomando como referencia lo que cada línea encierra. Con dos anotaciones
+da además cuánto distan entre sí, que es el suelo de la medida. El marcado está en
+[el protocolo](../spec/uos-protocolo-margen-gingival.md).
+
+**No hay ninguna anotación todavía**: la herramienta está probada con mallas sintéticas y,
+sobre la malla del caso, solo con líneas fabricadas a partir de nuestras propias etiquetas,
+que comprueban que funciona y no dicen nada del margen. Cuando la haya, medirá un caso y
+uno o dos anotadores; no es validación clínica.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
