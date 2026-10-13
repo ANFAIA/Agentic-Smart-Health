@@ -147,6 +147,51 @@ en la **anatomía del festoneado cervical**, y ninguna de las dos entra hoy en l
    precisión del clasificador **no** arregló el defecto que motivó entrenarlo; no hay
    razón para esperar que aquí sí.
 
+### 6.1 · El banco de pruebas, y la línea base que da (2026-10-13)
+
+Las cifras de frontera de este documento salieron de notebooks y ejecuciones sueltas, cada
+una con su regla. Desde el 13 de octubre hay una sola, versionada:
+[`scripts/benchmark_margen.py`](../../scripts/benchmark_margen.py), con las medidas en
+`analysis_agents.margen_metricas`. Puntúa cualquier método de frontera contra las etiquetas
+de experto de Teeth3DS+, sobre pacientes que el modelo no vio al entrenar.
+
+**La partición es la del entrenamiento**, reproducida con su mismo código. El 20 % de test
+se parte en `dev` (20 pacientes, para ajustar) y `eval` (40, para una sola ejecución
+final). Comprobado con la cifra del notebook: el acierto FDI sobre vértices de diente da
+**0,899** en los 20 maxilares de `dev`, contra el 0,898 que el notebook registró, y sube a
+0,950 en cinco pacientes de entrenamiento. Sin esa diferencia la partición estaría mal.
+
+Línea base sobre `dev`, 40 arcadas, medias por arcada:
+
+| Método | Acuerdo diente/encía | Falso diente | Falsa encía | Margen p50 | Piezas con < 85 % de corona |
+|---|---:|---:|---:|---:|---:|
+| Modelo, sin tocar | 0,809 | 0,448 | 0,009 | 2,08 mm | 5 de 520 |
+| + limpieza actual (pipeline de hoy) | 0,808 | 0,451 | 0,008 | 2,38 mm | 4 de 520 |
+| + `recorta_al_cuello` | 0,831 | 0,363 | 0,029 | 1,61 mm | 21 de 520 |
+| + `refina_fronteras` | 0,831 | 0,361 | 0,032 | 1,61 mm | 23 de 520 |
+| + `reparte_por_geodesica` | 0,808 | 0,451 | 0,008 | 2,38 mm | 4 de 520 |
+
+*Falso diente*: de lo que el experto llama encía, cuánto se etiqueta diente. *Falsa encía*:
+de lo que llama diente, cuánto se etiqueta encía. *Margen p50*: distancia simétrica entre
+el margen predicho y el del experto.
+
+Tres cosas que esto mide por primera vez:
+
+- **El error es casi todo de un signo.** El 45 % de la encía del experto sale etiquetada
+  como diente y menos del 1 % de la corona sale como encía. Por eso el acierto sobre
+  vértices de diente es alto y no dice nada del margen.
+- **La limpieza que aplica el pipeline empeora el margen**: de 2,08 a 2,38 mm. Rellenar
+  huecos avanza hacia la encía. Hace lo que promete entre piezas contiguas, y este coste
+  no estaba medido.
+- **`recorta_al_cuello` mejora la media y rompe piezas.** Acerca el margen en las 40
+  arcadas, y a cambio deja 21 piezas con menos del 85 % de su corona, cinco veces más que
+  antes. Es la misma bimodalidad que se vio sobre el caso clínico, ahora con número: una
+  media que mejora mientras un puñado de piezas pierde media corona.
+
+⚠️ Estas cifras son de Teeth3DS+: otro escáner, otra pose y otra población. Un método que
+pase aquí está autorizado a probarse sobre un caso propio, no validado sobre él. Las
+exploraciones anteriores ya habían mirado algunas arcadas de este test.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

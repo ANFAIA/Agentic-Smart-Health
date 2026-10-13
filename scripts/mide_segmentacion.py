@@ -86,8 +86,6 @@ TOLERANCIA_ESPEJO = 1.50
 # (rango 1,50-2,25). El umbral se pone en 1,00 —bien por debajo del peor experto— para que
 # solo salte una frontera que de verdad no esta en el pliegue, no una anotacion algo floja.
 RAZON_CONCAVIDAD_MINIMA = 1.00
-# Por debajo de esto la razon es ruido: no hay bastante frontera diente/encia que medir.
-MINIMO_VERTICES_MARGEN = 50
 
 SEGMENTACION = "derived/seg_teeth.bin"
 ESCENA = "scene/scene.glb"
@@ -135,22 +133,12 @@ def lee_escena(glb: bytes) -> tuple[np.ndarray, np.ndarray]:
 RECORTE_PCT = 1.0
 
 
-from analysis_agents.frontera import _aristas, concavidad  # noqa: E402
+from analysis_agents.frontera import (  # noqa: E402
+    MINIMO_VERTICES_MARGEN,
+    razon_de_concavidad,
+)
 
-
-def razon_de_concavidad(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> float | None:
-    """Cuanto mas concavo es el margen gingival que la malla entera. `None` si no lo hay.
-
-    ⚠️ El contacto interproximal —diente contra diente— queda FUERA a proposito: ahi no hay
-    margen gingival que medir, y meterlo mezclaria dos fronteras distintas en una cifra.
-    """
-    i, j = _aristas(tri)
-    marca = np.zeros(len(pos), dtype=bool)
-    marca[i[(etq[i] != 0) & (etq[j] == 0)]] = True
-    if int(marca.sum()) < MINIMO_VERTICES_MARGEN:
-        return None
-    c = concavidad(pos, tri)
-    return float(c[marca].mean() / max(float(np.abs(c).mean()), 1e-12))
+__all__ = ["MINIMO_VERTICES_MARGEN", "razon_de_concavidad"]
 
 
 def _diagonal_propia(puntos: np.ndarray) -> float:

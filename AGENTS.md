@@ -777,6 +777,7 @@ SegmentationOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-13 | 0.1.0 | A versioned benchmark, [`scripts/benchmark_margen.py`](scripts/benchmark_margen.py), scores boundary methods against Teeth3DS+ expert labels on patients the model never saw, with overflow and over-trim reported separately. Baseline on 40 held-out arches: 45% of expert gum is labelled tooth, the current clean-up chain moves the margin from 2.08 to 2.38 mm away from the expert's, and `recorta_al_cuello` improves the mean while leaving 21 of 520 teeth with under 85% of their crown. No contract change. |
 | 2026-08-25 | 0.1.0 | `quita_motas` and iterative filling: tooth specks in the gum drop from 692 to 311 and gum holes in crowns from 3,299 to 1,048. No contract change. |
 | 2026-08-25 | 0.1.0 | `afina_fronteras`: the boundary between adjacent teeth is no longer blurred (308 → 92 mm² of area with two teeth on the same face). And the per-tooth apical trim is withdrawn: measured, the axis taken from the CBCT comes out 60° off the real one because the cloud drags bone along. No contract change. |
 | 2026-08-24 | 0.1.0 | `absorbe_islas`: tiny teeth embedded inside another stop seeding a ghost tooth in the CBCT. No contract change. |
