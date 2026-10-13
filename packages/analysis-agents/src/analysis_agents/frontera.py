@@ -73,6 +73,37 @@ def concavidad(pos: np.ndarray, tri: np.ndarray) -> np.ndarray:
     return suma / np.maximum(cuenta, 1.0)
 
 
+# Por debajo de esto la razon es ruido: no hay bastante frontera diente/encia que medir.
+MINIMO_VERTICES_MARGEN = 50
+
+
+def margen_gingival(tri: np.ndarray, etq: np.ndarray) -> np.ndarray:
+    """Máscara de los vértices de DIENTE que tocan encía: el margen, visto desde la corona.
+
+    ⚠️ El contacto interproximal —diente contra diente— queda FUERA a propósito: ahí no hay
+    margen gingival, y meterlo mezclaría dos fronteras distintas en una cifra.
+    """
+    i, j = _aristas(tri)
+    marca = np.zeros(len(etq), dtype=bool)
+    marca[i[(etq[i] != 0) & (etq[j] == 0)]] = True
+    return marca
+
+
+def razon_de_concavidad(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> float | None:
+    """Cuánto más cóncavo es el margen gingival que la malla entera. `None` si no lo hay.
+
+    ⚠️ **Sirve para JUZGAR una frontera, no para construirla** (ver la cabecera): un método
+    que la optimice llega a la cifra del experto con las etiquetas mal. Vivía en
+    `scripts/mide_segmentacion.py`; está aquí para que el banco de pruebas y el falsador
+    midan con la misma función.
+    """
+    marca = margen_gingival(tri, etq)
+    if int(marca.sum()) < MINIMO_VERTICES_MARGEN:
+        return None
+    c = concavidad(pos, tri)
+    return float(c[marca].mean() / max(float(np.abs(c).mean()), 1e-12))
+
+
 def nucleos(tri: np.ndarray, etq: np.ndarray, anillos: int = ANILLOS_NUCLEO) -> np.ndarray:
     """Lo que queda de cada etiqueta tras retirarle `anillos` de su borde. `-1` = retirado.
 

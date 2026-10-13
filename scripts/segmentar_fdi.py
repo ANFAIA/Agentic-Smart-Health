@@ -248,6 +248,51 @@ def restringe_a_arcada(logp: np.ndarray, codigos: list[int], arcada: str) -> np.
     return m - np.logaddexp.reduce(m, axis=1, keepdims=True)
 
 
+def carga_modelo(checkpoint: Path, dev: str):
+    """`(modelo, codigos, n_clases, meta)` de un checkpoint; `meta` lleva nombre y semilla."""
+    ck = torch.load(checkpoint, map_location=dev, weights_only=False)
+    codigos = list(ck["codes"])
+    n_clases, in_ch = int(ck["K"]), int(ck["in_ch"])
+    modelo = Net(in_ch, n_clases, dim_model=[32, 64, 128, 256, 512], k=16).to(dev)
+    modelo.load_state_dict(ck["state_dict"])
+    return modelo, codigos, n_clases, {"name": ck["name"], "seed": ck["seed"]}
+
+
+def infiere(modelo, codigos, n_clases: int, V: np.ndarray, V_ent: np.ndarray,
+            N_ent: np.ndarray, arcada: str, dev: str, *, restringir: bool = True):
+    """`(logp, instancias)`: inferencia densa, arcada restringida y agregación a dientes.
+
+    `V` son las posiciones en milímetros, que es donde se agrega; `V_ent` y `N_ent`, las
+    que ve el modelo, canonizadas o no. Es lo que hacía `main` en línea: se extrae para
+    que el banco de pruebas use EXACTAMENTE la misma inferencia y no una copia.
+    """
+    # A simple precision: los pesos del checkpoint son float32 y la malla viene en
+    # float64. El error que da si no es «mat1 and mat2 must have the same dtype», que
+    # salta en mitad del grafo y no dice de dónde viene el doble.
+    pos = torch.from_numpy(np.ascontiguousarray(V_ent, dtype=np.float32))
+    d = NormalizeScale()(Data(pos=pos))
+    logp = logprob_denso(
+        modelo, d.pos.to(dev),
+        torch.from_numpy(np.ascontiguousarray(N_ent, dtype=np.float32)).to(dev),
+        n_clases, dev,
+    )
+    if restringir:
+        logp = restringe_a_arcada(logp, codigos, arcada)
+    instancias = aggregate_teeth(
+        V, logp, gum_class=0, k=KNN_INST, min_size=MIN_INST, merge_mult=MERGE_MULT,
+        codes=dict(enumerate(codigos)),
+    )
+    return logp, instancias
+
+
+def etiquetas_de(instancias, n: int) -> np.ndarray:
+    """Código FDI por vértice (`0` = encía) a partir de las instancias agregadas."""
+    etiquetas = np.zeros(n, dtype=np.int16)
+    for t in instancias:
+        etiquetas[t.vertices] = int(t.fdi)
+    return etiquetas
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -266,12 +311,8 @@ def main() -> int:
     args.salida.mkdir(parents=True, exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    ck = torch.load(args.checkpoint, map_location=dev, weights_only=False)
-    codigos = list(ck["codes"])
-    n_clases, in_ch = int(ck["K"]), int(ck["in_ch"])
-    modelo = Net(in_ch, n_clases, dim_model=[32, 64, 128, 256, 512], k=16).to(dev)
-    modelo.load_state_dict(ck["state_dict"])
-    print(f"modelo {ck['name']} · semilla {ck['seed']} · {n_clases} clases · {dev}")
+    modelo, codigos, n_clases, meta = carga_modelo(args.checkpoint, dev)
+    print(f"modelo {meta['name']} · semilla {meta['seed']} · {n_clases} clases · {dev}")
 
     store = ArtifactStore(args.salida / "_store")
     arte = store.load(MeshAgent(store).ingest(args.escaneo).artifact_ref)
@@ -295,22 +336,9 @@ def main() -> int:
               "ejes como Teeth3DS+, la salida sera de la arcada equivocada.")
         V_ent, N_ent = V, N
 
-    # A simple precision: los pesos del checkpoint son float32 y la malla viene en
-    # float64. El error que da si no es «mat1 and mat2 must have the same dtype», que
-    # salta en mitad del grafo y no dice de dónde viene el doble.
-    pos = torch.from_numpy(np.ascontiguousarray(V_ent, dtype=np.float32))
-    d = NormalizeScale()(Data(pos=pos))
-    logp = logprob_denso(
-        modelo, d.pos.to(dev),
-        torch.from_numpy(np.ascontiguousarray(N_ent, dtype=np.float32)).to(dev),
-        n_clases, dev,
-    )
-    if not args.sin_restringir:
-        logp = restringe_a_arcada(logp, codigos, args.arcada)
-
-    instancias = aggregate_teeth(
-        V, logp, gum_class=0, k=KNN_INST, min_size=MIN_INST, merge_mult=MERGE_MULT,
-        codes=dict(enumerate(codigos)),
+    logp, instancias = infiere(
+        modelo, codigos, n_clases, V, V_ent, N_ent, args.arcada, dev,
+        restringir=not args.sin_restringir,
     )
     _, _, P, _ = marco_arcada(V)
     filas = sorted(
@@ -336,15 +364,13 @@ def main() -> int:
         print(f"monotonia FDI vs posicion: rho {rho:+.2f} (p {p:.5f}) → "
               f"{'CONSISTENTE' if abs(rho) > 0.9 else 'NO consistente, desconfia'}")
 
-    etiquetas = np.zeros(len(V), dtype=np.int16)
-    for t in instancias:
-        etiquetas[t.vertices] = int(t.fdi)
+    etiquetas = etiquetas_de(instancias, len(V))
     np.save(args.salida / f"etiquetas_{args.arcada}.npy", etiquetas)
     np.save(args.salida / f"logprob_{args.arcada}.npy", logp.astype(np.float32))
     destino_json = args.salida / f"fdi_{args.arcada}.json"
     destino_json.write_text(
         json.dumps({"escaneo": args.escaneo.name, "arcada": args.arcada,
-                    "modelo": ck["name"], "monotonia_rho": rho,
+                    "modelo": meta["name"], "monotonia_rho": rho,
                     "instancias": filas}, indent=2),
         encoding="utf-8",
     )

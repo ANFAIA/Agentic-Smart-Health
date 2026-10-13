@@ -7,6 +7,7 @@ vecino. El contenedor decía la verdad sobre esa pieza y enseñaba otra cosa.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from analysis_agents.frontera import (
     EXCESO_ADMITIDO_MM,
     nucleos,
@@ -97,3 +98,62 @@ def test_el_umbral_de_ancho_sale_de_etiquetas_de_experto() -> None:
     nuestro caso daba p50 2,38 y p90 7,35.
     """
     assert 1.5 <= EXCESO_ADMITIDO_MM <= 2.0
+
+
+# --------------------------------------------------------------------------- #
+# Las tres funciones que no tenían prueba, aunque un comentario decía que sí.
+
+def _valle(tooth_desde: float, nx: int = 64, paso: float = 0.5):
+    """Loseta con un pliegue recto en `y = 0`; diente en `y >= tooth_desde`."""
+    ys = np.arange(-10.0, 10.0 + paso, paso)
+    xs = np.arange(nx) * paso
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    pos = np.stack([X, Y, 0.4 * np.abs(Y)], axis=-1).reshape(-1, 3)
+    ny = len(ys)
+    tri = []
+    for i in range(nx - 1):
+        for j in range(ny - 1):
+            a, b = i * ny + j, i * ny + j + 1
+            c, d = (i + 1) * ny + j, (i + 1) * ny + j + 1
+            tri += [(a, c, b), (b, c, d)]
+    etq = np.where(pos[:, 1] >= tooth_desde, 11, 0).astype(np.int64)
+    return pos, np.asarray(tri, dtype=np.int64), etq
+
+
+def test_la_concavidad_es_positiva_en_el_pliegue_y_nula_en_lo_liso() -> None:
+    from analysis_agents.frontera import concavidad
+
+    pos, tri, _ = _valle(0.0)
+    c = concavidad(pos, tri)
+    interior = (pos[:, 0] > 2.0) & (pos[:, 0] < 28.0)
+    pliegue = interior & (np.abs(pos[:, 1]) < 1e-9)
+    liso = interior & (np.abs(pos[:, 1]) > 2.0) & (np.abs(pos[:, 1]) < 8.0)
+    assert c[pliegue].min() > 0.05
+    assert np.abs(c[liso]).max() < 1e-9
+
+
+def test_el_eje_oclusal_va_de_la_encia_a_los_dientes() -> None:
+    from analysis_agents.frontera import eje_oclusal
+
+    pos, _, etq = _valle(0.0)
+    eje = eje_oclusal(pos, etq)
+    assert np.linalg.norm(eje) == pytest.approx(1.0)
+    assert eje[1] > 0.9                          # los dientes están en +y
+
+
+def test_el_recorte_al_cuello_CORTA_AUNQUE_NO_HAYA_PLIEGUE() -> None:
+    """⚠️ Fija el defecto por el que no se aplica: no sabe declinar.
+
+    Una lámina completamente plana no tiene cuello que encontrar. Aun así el recorte
+    devuelve a la encía todo lo que queda por debajo de la altura de tabla, porque cuando
+    no encuentra anillo cóncavo corta donde dice la anatomía. Sobre el caso clínico eso
+    fue «la encía bajando sobre las coronas». Un método nuevo tiene que hacer lo
+    contrario aquí: dejar la etiqueta como está.
+    """
+    from analysis_agents.frontera import recorta_al_cuello
+
+    pos, caras, _ = _rejilla(n=80, m=30, paso=0.4)
+    etq = np.where(pos[:, 0] >= 4.0, 11, 0).astype(np.int64)   # 28 mm de «corona» plana
+    recortada = recorta_al_cuello(pos, caras, etq)
+    assert int((recortada > 0).sum()) < int((etq > 0).sum())
+    assert not (recortada[etq == 0] > 0).any()                 # y nunca hace crecer
