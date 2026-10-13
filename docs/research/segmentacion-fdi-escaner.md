@@ -192,6 +192,77 @@ Tres cosas que esto mide por primera vez:
 pase aquí está autorizado a probarse sobre un caso propio, no validado sobre él. Las
 exploraciones anteriores ya habían mirado algunas arcadas de este test.
 
+### 6.2 · Anclar el margen al surco cervical: resultado (2026-10-13)
+
+Es el punto 2 de la lista de arriba, hecho: `analysis_agents.frontera.ancla_al_pliegue`.
+Busca el corte más barato que separa el núcleo de las coronas de la encía que hoy las
+rodea, con las aristas baratas dentro de un pliegue, y **deja como está la pieza donde no
+encuentra surco**. No reentrena nada ni usa color.
+
+Tres decisiones de diseño salieron de medir sobre `dev`, no de pensarlo:
+
+- **Qué parte de la corona nunca se corta.** La primera versión la fijaba con la altura de
+  corona de tabla. Las coronas de Teeth3DS+ miden 2 mm menos que la tabla, así que esa
+  zona contenía encía del experto en el 95 % de las piezas y el método declinaba 117 de
+  165. Ahora es lo más alejado de la encía sobre la propia malla: contaminación mediana
+  del 0,1 %, sin tabla y sin eje oclusal.
+- **Un corte para toda la arcada, no uno por pieza.** Cuando una etiqueta invade a la
+  vecina, el corte por pieza encuentra el surco *entre* los dos dientes, que es un pliegue
+  real, y manda a la encía media corona ajena.
+- **Un margen que ya está en un pliegue no se toca.** Sin esa regla, aplicado a etiquetas
+  de experto las dejaba en 0,981 de acuerdo.
+
+Resultado, medias por arcada. `dev` sirvió para ajustar; `eval` se ejecutó una sola vez,
+con las constantes ya fijadas:
+
+| | Acuerdo diente/encía | Falso diente | Falsa encía | Margen p50 | Piezas con < 85 % de corona |
+|---|---:|---:|---:|---:|---:|
+| `dev` · pipeline de hoy | 0,808 | 0,451 | 0,008 | 2,38 mm | 4 de 520 |
+| `dev` · + `ancla_al_pliegue` | 0,906 | 0,202 | 0,018 | 0,59 mm | 9 de 520 |
+| `eval` · pipeline de hoy | 0,808 | 0,450 | 0,009 | 2,42 mm | 13 de 1065 |
+| `eval` · + `recorta_al_cuello` | 0,826 | 0,354 | 0,044 | 1,63 mm | 70 de 1065 |
+| `eval` · + `ancla_al_pliegue` | **0,939** | **0,114** | 0,024 | **0,17 mm** | 26 de 1065 |
+
+Aplicado a las etiquetas del experto en `eval` las deja en 0,9988 de acuerdo.
+
+⚠️ **El veredicto es NEGATIVO, por un criterio de seis.** Los criterios se fijaron antes
+de ejecutar y los calcula el propio script:
+
+| Criterio | `eval` | |
+|---|---|---|
+| A1 · el margen mejora en ≥ 75 % de las arcadas | 100 %; mediana −2,36 mm | cumple |
+| A2 · el acuerdo no retrocede | +0,131; ninguna arcada retrocede | cumple |
+| A3 · falsa encía ≤ +1,0 punto y ≤ 1 % de piezas dañadas | **+1,51 puntos; 13 de 1065 (1,2 %)** | **no cumple** |
+| A4 · fracción etiquetada más cerca del experto | 0,119 → 0,033 | cumple |
+| A5 · el ancho no empeora | p90 2,88 → 2,41 mm | cumple |
+| A6 · no daña la verdad de campo (≥ 0,99) | 0,9988 | cumple |
+
+Es decir: corrige el defecto dominante —la encía etiquetada como diente pasa del 45 % al
+11 %— y a cambio recorta de más un poco por encima de lo que se había fijado como
+tolerable. En `dev` cumplía los seis; en `eval`, no. Por eso **queda disponible y sin
+aplicar**: `scripts/caso_completo.py --margen-gingival` vale `no` por defecto, `propone`
+calcula y declara sin cambiar nada, y `aplica` lo cambia. `eval` queda **gastado**: un
+intento posterior tiene que decirlo o reservar pacientes nuevos.
+
+Dos precisiones que se hicieron antes de tocar `eval` y que hay que tener escritas:
+
+- A3 decía «≤ 1 % de dientes conservan < 85 % de su corona» sin distinguir las piezas que
+  el modelo ya traía rotas (5 de 520 en `dev`). Cuenta las que el método rompe: las que
+  pasan de ≥ 85 % a < 85 %.
+- Los umbrales de evidencia son más exigentes que el propio experto (1,5 y 0,75 frente a su
+  percentil 5 de 1,34 y 0,65), para declinar los surcos dudosos.
+
+**Sobre el caso clínico, que solo se puede falsar.** Aplicado a las etiquetas del escáner
+de `another_patient` tras la limpieza: mueve 6 piezas y declina 8; la malla etiquetada baja
+del 69,6 % al 61,1 % (el experto anda entre 44 y 60 %); la razón de concavidad del margen
+sube de −0,06 a +0,24; siguen siendo 14 piezas. El número de piezas dentro del rango de
+ancho del experto **no cambia: 4 de 14**, y una pieza, el 12, pierde el 53 % de su
+etiqueta. No hay anotación con la que decir si eso es acierto o daño; la comparación
+visual del antes y el después queda para revisión humana y no se versiona.
+
+⚠️ El orden importa: va **después** de `rellena_huecos_interiores`. Un hueco de encía
+dentro de una corona es encía para el corte, y puesto antes declinaba las 14 piezas.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

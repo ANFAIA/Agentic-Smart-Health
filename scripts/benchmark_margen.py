@@ -53,6 +53,7 @@ from analysis_agents import (  # noqa: E402
     rellena_huecos_interiores,
 )
 from analysis_agents.frontera import (  # noqa: E402
+    ancla_al_pliegue,
     recorta_al_cuello,
     refina_fronteras,
     reparte_por_geodesica,
@@ -155,10 +156,13 @@ REFINAMIENTOS: dict[str, tuple[str, Callable[..., np.ndarray]]] = {
     "M2": ("limpieza + recorta_al_cuello", recorta_al_cuello),
     "M3": ("limpieza + refina_fronteras", refina_fronteras),
     "M4": ("limpieza + reparte_por_geodesica", reparte_por_geodesica),
+    "M5": ("limpieza + ancla_al_pliegue", lambda p, f, e: ancla_al_pliegue(p, f, e)[0]),
+    "M6": ("limpieza + reparte + ancla_al_pliegue",
+           lambda p, f, e: ancla_al_pliegue(p, f, reparte_por_geodesica(p, f, e))[0]),
 }
 # Los que además se prueban sobre las etiquetas del EXPERTO: un método que estropea la
 # verdad de campo no puede estar arreglando nada.
-SOBRE_EXPERTO: dict[str, tuple[str, str]] = {}
+SOBRE_EXPERTO: dict[str, tuple[str, str]] = {"E2": ("experto + ancla_al_pliegue", "M5")}
 
 MAYOR_ES_MEJOR = ("binary_agreement", "binary_iou", "fdi_agreement", "tooth_fdi_agreement")
 
@@ -166,6 +170,7 @@ DESCRIPCIONES = {
     "E0": "experto (referencia)", "E1": "experto + limpieza actual",
     "M0": "modelo, sin tocar", "M1": "modelo + limpieza actual (pipeline de hoy)",
     **{k: v[0] for k, v in REFINAMIENTOS.items()},
+    **{k: v[0] for k, v in SOBRE_EXPERTO.items()},
 }
 
 
@@ -204,6 +209,125 @@ def evalua_arcada(paciente: str, arcada: str) -> dict:
 
 def _evalua(par: tuple[str, str]) -> dict:
     return evalua_arcada(*par)
+
+
+# ── Criterios de aceptación ─────────────────────────────────────────────────────
+#
+# Fijados ANTES de ejecutar `eval` y escritos aquí para que el veredicto lo dé el script.
+# Comparan un candidato con el pipeline de hoy (`M1`), arcada a arcada.
+#
+# ⚠️ **A3 se precisó el 2026-10-13, antes de tocar `eval`, y se declara.** Decía «≤ 1 % de
+# dientes conservan < 85 % de su corona» sin distinguir las piezas que el modelo ya traía
+# rotas: en `dev` son 5 de 520 antes de aplicar ningún método. Lo que el criterio quiere
+# impedir es que el método rompa piezas, así que cuenta las que pasan de ≥ 85 % a < 85 %.
+CANDIDATO, BASE, SOBRE_VERDAD = "M5", "M1", "E2"
+MEJORA_MINIMA_ARCADAS = 0.75
+RETROCESO_TOLERADO = 0.005
+ARCADAS_CON_RETROCESO = 0.10
+SUBIDA_FALSA_ENCIA = 0.010
+PIEZAS_DANADAS = 0.01
+CORONA_MINIMA = 0.85
+ETIQUETADO_DE_MENOS = -0.02
+ACUERDO_SOBRE_VERDAD = 0.99
+
+
+def _medida(fila: dict, metodo: str, *ruta: str) -> float | None:
+    valor = fila["methods"][metodo]
+    for clave in ruta:
+        valor = valor.get(clave) if isinstance(valor, dict) else None
+        if valor is None:
+            return None
+    return float(valor)
+
+
+def _pares(filas: list[dict], *ruta: str) -> np.ndarray:
+    """`(candidato, base)` por arcada, solo donde las dos medidas existen."""
+    pares = [(_medida(f, CANDIDATO, *ruta), _medida(f, BASE, *ruta)) for f in filas]
+    return np.array([(c, b) for c, b in pares if c is not None and b is not None])
+
+
+def criterios(filas: list[dict]) -> dict:
+    """El veredicto A1-A6 del candidato frente al pipeline de hoy."""
+    if not all(CANDIDATO in f["methods"] and SOBRE_VERDAD in f["methods"] for f in filas):
+        return {}
+    margen = _pares(filas, "margin", "symmetric_p50_mm")
+    d_margen = margen[:, 0] - margen[:, 1]
+    acuerdos = {}
+    for nombre in ("binary_agreement", "fdi_agreement"):
+        par = _pares(filas, nombre)
+        d = par[:, 0] - par[:, 1]
+        acuerdos[nombre] = {"mean_diff": float(d.mean()),
+                            "arches_below": float((d < -RETROCESO_TOLERADO).mean())}
+    encia = _pares(filas, "false_gum_rate")
+    piezas = nuevas = 0
+    for f in filas:
+        antes, despues = f["methods"][BASE]["per_tooth"], f["methods"][CANDIDATO]["per_tooth"]
+        piezas += len(antes)
+        nuevas += sum(1 for t, v in antes.items() if v["retained"] >= CORONA_MINIMA
+                      and despues[t]["retained"] < CORONA_MINIMA)
+    etiquetado = _pares(filas, "labelled_fraction", "paired_diff_area")
+    anchos = {q: _pares(filas, "width_error_mm", q) for q in ("p50", "p90")}
+    verdad = np.array([_medida(f, SOBRE_VERDAD, "binary_agreement") for f in filas])
+    a = {
+        "A1_margin": {
+            "improved_fraction": float((d_margen < 0).mean()),
+            "median_diff_mm": float(np.median(d_margen)),
+            "pass": bool((d_margen < 0).mean() >= MEJORA_MINIMA_ARCADAS
+                         and np.median(d_margen) < 0)},
+        "A2_agreement": {
+            **acuerdos,
+            "pass": bool(all(v["mean_diff"] >= 0 and v["arches_below"] <= ARCADAS_CON_RETROCESO
+                             for v in acuerdos.values()))},
+        "A3_overtrim": {
+            "false_gum_rise": float((encia[:, 0] - encia[:, 1]).mean()),
+            "teeth": int(piezas), "newly_under_retained": int(nuevas),
+            "newly_under_retained_fraction": float(nuevas / piezas) if piezas else None,
+            "pass": bool((encia[:, 0] - encia[:, 1]).mean() <= SUBIDA_FALSA_ENCIA
+                         and piezas and nuevas / piezas <= PIEZAS_DANADAS)},
+        "A4_labelled_fraction": {
+            "mean_abs_candidate": float(np.abs(etiquetado[:, 0]).mean()),
+            "mean_abs_base": float(np.abs(etiquetado[:, 1]).mean()),
+            "mean_candidate": float(etiquetado[:, 0].mean()),
+            "pass": bool(np.abs(etiquetado[:, 0]).mean() < np.abs(etiquetado[:, 1]).mean()
+                         and etiquetado[:, 0].mean() >= ETIQUETADO_DE_MENOS)},
+        "A5_width": {
+            **{q: {"candidate": float(v[:, 0].mean()), "base": float(v[:, 1].mean())}
+               for q, v in anchos.items()},
+            "pass": bool(all(v[:, 0].mean() <= v[:, 1].mean() for v in anchos.values()))},
+        "A6_truth_untouched": {
+            "agreement": float(verdad.mean()),
+            "pass": bool(verdad.mean() >= ACUERDO_SOBRE_VERDAD)},
+    }
+    a["candidate"], a["baseline"] = CANDIDATO, BASE
+    a["all_pass"] = all(v["pass"] for k, v in a.items() if k.startswith("A"))
+    return a
+
+
+def veredicto_md(c: dict) -> list[str]:
+    if not c:
+        return []
+    si = lambda v: "cumple" if v else "**NO cumple**"  # noqa: E731
+    a1, a2, a3 = c["A1_margin"], c["A2_agreement"], c["A3_overtrim"]
+    a4, a5, a6 = c["A4_labelled_fraction"], c["A5_width"], c["A6_truth_untouched"]
+    return [
+        f"## Criterios de aceptación: `{c['candidate']}` frente a `{c['baseline']}`", "",
+        "| Criterio | Medido | Resultado |", "|---|---|---|",
+        f"| A1 margen | mejora en el {a1['improved_fraction']:.0%} de las arcadas; mediana "
+        f"{a1['median_diff_mm']:+.2f} mm | {si(a1['pass'])} |",
+        f"| A2 acuerdo | diente/encía {a2['binary_agreement']['mean_diff']:+.3f}, FDI "
+        f"{a2['fdi_agreement']['mean_diff']:+.3f}; arcadas que retroceden "
+        f"{a2['binary_agreement']['arches_below']:.0%} y "
+        f"{a2['fdi_agreement']['arches_below']:.0%} | {si(a2['pass'])} |",
+        f"| A3 sobre-recorte | falsa encía {a3['false_gum_rise'] * 100:+.2f} puntos; piezas "
+        f"dañadas de nuevo {a3['newly_under_retained']} de {a3['teeth']} "
+        f"({a3['newly_under_retained_fraction']:.1%}) | {si(a3['pass'])} |",
+        f"| A4 fracción etiquetada | distancia al experto {a4['mean_abs_base']:.3f} → "
+        f"{a4['mean_abs_candidate']:.3f}; sesgo {a4['mean_candidate']:+.3f} | {si(a4['pass'])} |",
+        f"| A5 ancho | p50 {a5['p50']['base']:.2f} → {a5['p50']['candidate']:.2f} mm; p90 "
+        f"{a5['p90']['base']:.2f} → {a5['p90']['candidate']:.2f} mm | {si(a5['pass'])} |",
+        f"| A6 no daña la verdad | acuerdo {a6['agreement']:.4f} sobre etiquetas de experto "
+        f"| {si(a6['pass'])} |",
+        "", f"**Veredicto: {'se cumplen todos' if c['all_pass'] else 'NO se cumplen todos'}.**", ""]
 
 
 # ── Órdenes ─────────────────────────────────────────────────────────────────────
@@ -273,7 +397,8 @@ def informe_md(salida: dict) -> str:
         "- **Falsa encía:** de lo que el experto llama diente, cuánto se etiqueta encía.",
         "- **Signo:** positivo si el margen predicho cae en encía del experto.",
         "- **Piezas < 85 %:** piezas que conservan menos del 85 % de su corona de experto.",
-        "", "Comprobación de la partición (modelo sin tocar, acierto FDI en vértices de "
+        "", *veredicto_md(salida.get("acceptance", {})),
+        "Comprobación de la partición (modelo sin tocar, acierto FDI en vértices de "
         "diente y piezas con el código correcto): " + "; ".join(
             f"{jaw} {v['tooth_fdi_agreement']:.3f} y {v['teeth_majority_correct']:.3f}"
             for jaw, v in salida.get("leak_check", {}).items()
@@ -333,6 +458,7 @@ def evalua(args: argparse.Namespace) -> int:
                       [f["methods"]["M0"] for f in filas if f["jaw"] == jaw]
                   )["teeth_majority_correct_fraction"]}
             for jaw in ARCADAS},
+        "acceptance": criterios(filas),
         "scope": "Teeth3DS+ held-out patients only; not the project's clinical cases",
     }
     destino_json = args.json or SALIDA / f"resumen-{args.split}.json"

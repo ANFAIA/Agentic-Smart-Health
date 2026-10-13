@@ -764,6 +764,13 @@ SegmentationOutput
   to **92 mm²**, reassigning 3,624 vertices. **It does not touch the crown/gum margin** —
   12.8% of the area — because that one is a clinical boundary and blurring it would erase
   what a periodontist comes to look at.
+- ⚠️ **The crown/gum margin has a method and it is not applied.** The five clean-up steps
+  are forbidden from moving the gingival margin, and measured, they push it 0.3 mm further
+  from the expert's. `analysis_agents.frontera.ancla_al_pliegue` does move it, towards the
+  cervical crease, and declines tooth by tooth when the crease is unclear. It runs **last**,
+  after the interior holes are closed: a gum hole inside a crown is gum to the cut. It stays
+  off because it failed the over-trim criterion on the held-out set; see
+  [the research note](docs/research/segmentacion-fdi-escaner.md).
 - ⚠️ **The scanner's labels are SEEDS, so a mislabelled island there becomes a whole
   tooth here.** Measured on a real case: the scanner's segmenter put a third molar's code
   on 275 vertices stuck to the distal face of its neighbour — median 0.85 mm — and that
@@ -777,6 +784,7 @@ SegmentationOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-13 | 0.1.0 | `ancla_al_pliegue`: one arch-wide minimum cut that moves each crown's margin to the cervical crease and leaves a tooth untouched where it finds none. On 80 held-out Teeth3DS+ arches, run once, gum labelled as tooth drops from 45% to 11% and the margin from 2.42 to 0.17 mm from the expert's. **It fails one of six pre-registered criteria**: crown labelled as gum rises 1.51 points against a limit of 1.0, and 13 of 1065 teeth lose over 15% of their crown against a limit of 1%. So it ships **off by default** behind `--margen-gingival {no,propone,aplica}`; its per-tooth records reach the review gate and the `gingival_margin` block of the `derived/seg_teeth` sidecar. No contract change. |
 | 2026-10-13 | 0.1.0 | A versioned benchmark, [`scripts/benchmark_margen.py`](scripts/benchmark_margen.py), scores boundary methods against Teeth3DS+ expert labels on patients the model never saw, with overflow and over-trim reported separately. Baseline on 40 held-out arches: 45% of expert gum is labelled tooth, the current clean-up chain moves the margin from 2.08 to 2.38 mm away from the expert's, and `recorta_al_cuello` improves the mean while leaving 21 of 520 teeth with under 85% of their crown. No contract change. |
 | 2026-08-25 | 0.1.0 | `quita_motas` and iterative filling: tooth specks in the gum drop from 692 to 311 and gum holes in crowns from 3,299 to 1,048. No contract change. |
 | 2026-08-25 | 0.1.0 | `afina_fronteras`: the boundary between adjacent teeth is no longer blurred (308 → 92 mm² of area with two teeth on the same face). And the per-tooth apical trim is withdrawn: measured, the axis taken from the CBCT comes out 60° off the real one because the cloud drags bone along. No contract change. |
