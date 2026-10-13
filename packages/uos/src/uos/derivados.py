@@ -114,6 +114,7 @@ def meta_segmentacion(
     calidad: dict[int, dict] | None = None,
     unidad: str = "vertice",
     posiciones_sha256: str | None = None,
+    margen: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """El sidecar del §5.5. Todo lo que hace falta para saber **de dónde salió esto**.
 
@@ -165,6 +166,9 @@ def meta_segmentacion(
                      "de experto lo fallan en el 77 %. Lo que separa es la magnitud"),
             "teeth": {str(k): v for k, v in sorted(calidad.items())},
         }}),
+        # Qué hizo el anclaje del margen gingival pieza a pieza, y con qué evidencia. Va
+        # solo si se calculó: ausente significa «no se ejecutó», no «no movió nada».
+        **({} if margen is None else {"gingival_margin": margen}),
         "labels": {
             "present": codigos,
             "n_labelled": int((etq > 0).sum()),

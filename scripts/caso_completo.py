@@ -497,6 +497,14 @@ def main() -> int:
              "aporta color: darle un lado sería peor, repartiría códigos FDI entre las "
              "cúspides de un solo diente.",
     )
+    ap.add_argument(
+        "--margen-gingival", choices=("no", "propone", "aplica"), default="no",
+        help="Anclar el margen corona-encía de las etiquetas del escáner al surco "
+             "cervical (`analysis_agents.frontera.ancla_al_pliegue`). `propone` calcula "
+             "qué movería y lo declara sin cambiar nada; `aplica` lo cambia. Por defecto "
+             "`no`: está medido sobre Teeth3DS+ y sin anotación propia con la que "
+             "puntuarlo en un caso clínico.",
+    )
     ap.add_argument("--reusa-apariencia-uos", type=Path,
                     help="UOS anterior del mismo escaneo; recupera sus tonos sin reentrenar.")
     ap.add_argument("--reusa-apariencia-artefacto", type=Path,
@@ -555,6 +563,8 @@ def main() -> int:
     # y el canal del visor. Estaban duplicadas —el segmentador con los huecos cerrados y
     # el visor con las crudas— y las dos mitades discrepaban sobre qué vértice es corona.
     etq_ios = None
+    margen_gingival: dict | None = None
+    motivos_margen: list[str] = []
     if args.fdi and caso.mesh:
         import numpy as _np
         from analysis_agents import absorbe_islas as _absorbe
@@ -598,13 +608,6 @@ def main() -> int:
         if _movidos:
             print(f"  frontera entre piezas contiguas afilada: {_movidos:,} vértices "
                   f"reasignados a su vecino por mayoría")
-        # ⚠️ **El recorte al cuello NO se aplica, y es una decisión medida.** Mejora la
-        # frontera contra verdad de campo —0,891 → 0,906 de acuerdo con el experto sobre
-        # Teeth3DS+, 8 de 8 casos— y sobre este caso clínico se pasa: devuelve a la encía
-        # 9.942 vértices (12,3 % de lo etiquetado) y el resultado es visible, la encía
-        # bajando sobre las coronas. Una métrica que sube mientras el render empeora es una
-        # métrica que no está midiendo lo que importa. Queda en `analysis_agents.frontera`
-        # con sus tests, disponible y sin aplicar.
         # Y el simétrico de `rellena_etiquetas`: un vértice de diente rodeado de encía es
         # encía. Sin esto quedan motas color hueso salpicadas sobre el rosa del visor.
         etq_ios, _motitas = _motas(_V, etq_ios)
@@ -612,12 +615,54 @@ def main() -> int:
             print(f"  motas de diente en mitad de la encía: {_motitas:,} quitadas "
                   f"(el margen gingival no se toca)")
         # Y los huecos que el relleno por vecindario no alcanza porque son mayores que el
-        # vecindario. El criterio aquí es la distancia a encía de verdad, no los vecinos:
-        # un vértice del margen está pegado a la encía y por eso nunca entra.
+        # vecindario. El criterio es la CONECTIVIDAD: la encía de una arcada es una sola
+        # región conexa, margen incluido, así que cualquier otra componente de encía está
+        # rodeada de diente. El primer intento iba por distancia a «encía de verdad» y era
+        # circular; ver `rellena_huecos_interiores`.
         etq_ios, _dentro = _huecos(_V, etq_ios)
         if _dentro:
             print(f"  huecos de encía en mitad de una corona: {_dentro:,} rellenados "
-                  f"(a más de 1,5 mm de cualquier encía real)")
+                  f"(componentes de encía rodeadas de diente)")
+        # ⚠️ **El recorte al cuello (`recorta_al_cuello`) NO se aplica, y está medido.**
+        # Sobre 40 arcadas de Teeth3DS+ acerca el margen al del experto (2,38 → 1,61 mm) y
+        # deja 21 piezas de 520 con menos del 85 % de su corona, cinco veces más que antes;
+        # sobre este caso clínico devolvía a la encía 9.942 vértices y se veía la encía
+        # bajando sobre las coronas. No sabe declinar: sin surco corta a la altura de tabla.
+        #
+        # Lo que sí puede aplicarse, y solo si se pide, es `ancla_al_pliegue`: un corte que
+        # sigue el surco cervical y deja como está la pieza donde no lo encuentra.
+        #
+        # ⚠️ **Va EL ÚLTIMO, después de cerrar los huecos, y el orden no es indiferente.**
+        # Un hueco de encía dentro de una corona es encía para el corte, que tendría que
+        # rodearlo por donde no hay surco: puesto antes de `rellena_huecos_interiores`,
+        # sobre este caso declinaba las 14 piezas. Es además el orden en que lo mide el
+        # banco de pruebas. Los registros por pieza viajan al gate y al contenedor.
+        if args.margen_gingival != "no":
+            from analysis_agents.frontera import ancla_al_pliegue as _ancla
+
+            _anclada, _registros = _ancla(_V, _Fc, etq_ios)
+            _movidas = {t: r for t, r in _registros.items() if r["moved"]}
+            _declinadas = sorted(t for t, r in _registros.items() if r["declined"])
+            _cedidos = sum(r["moved"] for r in _movidas.values())
+            aplica = args.margen_gingival == "aplica"
+            margen_gingival = {
+                "method": "analysis_agents.frontera.ancla_al_pliegue",
+                "applied": aplica,
+                "teeth": {str(t): r for t, r in sorted(_registros.items())},
+            }
+            print(f"  margen gingival ({'aplicado' if aplica else 'solo propuesto'}): "
+                  f"{len(_movidas)} piezas al surco cervical, {_cedidos:,} vértices "
+                  f"cedidos a la encía; {len(_declinadas)} sin surco claro, intactas")
+            motivos_margen.append(
+                f"margen gingival {'anclado' if aplica else 'propuesto, NO aplicado'} al "
+                f"surco cervical en {len(_movidas)} piezas ({_cedidos:,} vértices): es una "
+                "corrección geométrica medida sobre otro escáner, sin anotación propia")
+            if _declinadas:
+                motivos_margen.append(
+                    "margen gingival sin surco claro, frontera sin corregir en las piezas "
+                    + ", ".join(str(t) for t in _declinadas))
+            if aplica:
+                etq_ios = _anclada
 
     fabrica = None
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
@@ -929,6 +974,9 @@ def main() -> int:
             # pieza que ninguna foto ve son exactamente lo que una persona tiene que mirar.
             fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_color])
 
+    if motivos_margen:
+        fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_margen])
+
     print("\n--- 4 · EXPORTACIÓN ---")
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
     # completas y separadas, que es lo que un clínico reconoce. El compuesto del CBCT
@@ -950,6 +998,7 @@ def main() -> int:
         cbct=caso.cbct,
         # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
         modelo_segmentacion=args.modelo,
+        margen_gingival=margen_gingival,
         # El campo ajustado va APARTE en el `.uos`: el twin lleva la semilla medida
         # (en `fus.snapshot.gaussian_field_ref`) y el ajustado como `asset.field_fit`.
         campo_ajustado=campo_ajustado_ref,

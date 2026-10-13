@@ -686,6 +686,9 @@ class IngestionPipeline:
         # Los pesos del segmentador, sólo para declarar su `sha256` en el `meta.json`
         # de `derived/` (§5.5). Sin ellos el campo va a `null`, que es la verdad.
         modelo_segmentacion: Any | None = None,
+        # Registro por pieza del anclaje del margen gingival, para el sidecar de
+        # `derived/seg_teeth`. `None` = no se ejecutó.
+        margen_gingival: dict[str, Any] | None = None,
         render: bool = True,
         # El campo ajustado (gaussian-engine) y su informe de ajuste. Va APARTE en el
         # `.uos` como `asset.field_fit`, sin sustituir la semilla del snapshot. Ver
@@ -828,6 +831,7 @@ class IngestionPipeline:
                 campo=campo.path if campo.ok else None,
                 compuesto=compuesto.path if compuesto.ok else None,
                 modelo_segmentacion=modelo_segmentacion,
+                margen_gingival=margen_gingival,
                 motivos=list(result.hitl_reasons),
                 # Las mismas etiquetas que el visor, y por otro motivo: aquí son lo único
                 # con lo que se pueden MEDIR los ejes anatómicos de la malla —dónde queda

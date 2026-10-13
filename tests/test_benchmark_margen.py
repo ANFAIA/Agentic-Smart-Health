@@ -61,3 +61,52 @@ def test_el_informe_declara_su_alcance() -> None:
                            "summary": {"M0": resumen}})
     assert "No miden los casos clínicos propios" in texto
     assert "| M0 | modelo, sin tocar | 0.900 |" in texto and "1 de 14" in texto
+
+
+# --------------------------------------------------------------------------- #
+# Los criterios de aceptación: el veredicto lo da el script, no quien lo lee.
+
+def _fila(margen: float, falsa_encia: float, conservada: float, verdad: float = 1.0,
+          base_conservada: float = 1.0) -> dict:
+    def metodo(m: float, g: float, r: float, acuerdo: float) -> dict:
+        return {"margin": {"symmetric_p50_mm": m}, "binary_agreement": acuerdo,
+                "fdi_agreement": acuerdo, "false_gum_rate": g,
+                "labelled_fraction": {"paired_diff_area": m / 20},
+                "width_error_mm": {"p50": m, "p90": m + 1},
+                "per_tooth": {"11": {"retained": r}}}
+    return {"methods": {"M1": metodo(2.4, 0.008, base_conservada, 0.80),
+                        "M5": metodo(margen, falsa_encia, conservada, 0.90),
+                        "E2": {"binary_agreement": verdad}}}
+
+
+def test_un_metodo_que_mejora_sin_romper_cumple() -> None:
+    c = bm.criterios([_fila(0.5, 0.012, 0.95) for _ in range(10)])
+    assert c["all_pass"] and c["A3_overtrim"]["newly_under_retained"] == 0
+
+
+def test_romper_piezas_suspende_aunque_todo_lo_demas_mejore() -> None:
+    filas = [_fila(0.5, 0.012, 0.95) for _ in range(9)] + [_fila(0.5, 0.012, 0.60)]
+    c = bm.criterios(filas)
+    assert not c["A3_overtrim"]["pass"] and not c["all_pass"]
+    assert c["A1_margin"]["pass"] and c["A2_agreement"]["pass"]
+
+
+def test_una_pieza_que_ya_venia_rota_no_cuenta_como_danada_por_el_metodo() -> None:
+    c = bm.criterios([_fila(0.5, 0.012, 0.60, base_conservada=0.60) for _ in range(10)])
+    assert c["A3_overtrim"]["newly_under_retained"] == 0 and c["A3_overtrim"]["pass"]
+
+
+def test_subir_la_falsa_encia_mas_de_un_punto_suspende() -> None:
+    c = bm.criterios([_fila(0.5, 0.030, 0.95) for _ in range(10)])
+    assert not c["A3_overtrim"]["pass"]
+
+
+def test_danar_la_verdad_de_campo_suspende() -> None:
+    c = bm.criterios([_fila(0.5, 0.012, 0.95, verdad=0.97) for _ in range(10)])
+    assert not c["A6_truth_untouched"]["pass"] and not c["all_pass"]
+
+
+def test_sin_candidato_no_hay_veredicto() -> None:
+    fila = _fila(0.5, 0.012, 0.95)
+    del fila["methods"]["M5"]
+    assert bm.criterios([fila]) == {} and bm.veredicto_md({}) == []

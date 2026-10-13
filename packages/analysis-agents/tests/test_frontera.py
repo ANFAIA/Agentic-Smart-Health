@@ -157,3 +157,115 @@ def test_el_recorte_al_cuello_CORTA_AUNQUE_NO_HAYA_PLIEGUE() -> None:
     recortada = recorta_al_cuello(pos, caras, etq)
     assert int((recortada > 0).sum()) < int((etq > 0).sum())
     assert not (recortada[etq == 0] > 0).any()                 # y nunca hace crecer
+
+
+# --------------------------------------------------------------------------- #
+# `ancla_al_pliegue`: lleva el margen al surco, o no toca nada.
+
+def test_una_etiqueta_desbordada_vuelve_al_surco() -> None:
+    """El caso del modelo: la etiqueta baja 3 mm por la encía y el surco está en y = 0."""
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    nueva, registros = ancla_al_pliegue(pos, tri, etq)
+    assert pos[nueva > 0, 1].min() == pytest.approx(0.0)
+    r = registros[11]
+    assert r["moved"] > 0 and not r["declined"]
+    assert r["evidence"] > 1.5 and r["coverage"] == pytest.approx(1.0)
+    assert r["concavity_before"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_una_etiqueta_que_ya_esta_en_el_surco_no_se_mueve() -> None:
+    """Lo que hace un anotador. Sin esto, cada pasada se comería un anillo de corona."""
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(0.0)
+    nueva, registros = ancla_al_pliegue(pos, tri, etq)
+    assert (nueva == etq).all()
+    assert registros[11]["moved"] == 0 and not registros[11]["declined"]
+
+
+def test_sin_pliegue_no_se_toca_nada() -> None:
+    """La diferencia con `recorta_al_cuello`, que sobre esta misma lámina corta."""
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, caras, _ = _rejilla(n=80, m=30, paso=0.4)
+    etq = np.where(pos[:, 0] >= 4.0, 11, 0).astype(np.int64)
+    nueva, registros = ancla_al_pliegue(pos, caras, etq)
+    assert (nueva == etq).all()
+    assert registros[11]["moved"] == 0
+
+
+def test_con_evidencia_insuficiente_declina_y_lo_dice() -> None:
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    nueva, registros = ancla_al_pliegue(pos, tri, etq, fuerza_minima=1e9)
+    assert (nueva == etq).all()
+    assert registros[11]["declined"] and registros[11]["reason"] == "weak_crease"
+    assert registros[11]["evidence"] is not None      # declina enseñando lo que vio
+
+
+def test_solo_cede_y_ninguna_pieza_desaparece() -> None:
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    dos = etq.copy()
+    dos[(etq > 0) & (pos[:, 0] > 16.0)] = 12
+    nueva, registros = ancla_al_pliegue(pos, tri, dos)
+    assert not ((nueva > 0) & (dos == 0)).any()        # la encía nunca pasa a diente
+    assert ((nueva == dos) | (nueva == 0)).all()       # y ningún vértice cambia de pieza
+    assert set(np.unique(nueva)) == {0, 11, 12}
+    assert registros[11]["moved"] > 0 and registros[12]["moved"] > 0
+
+
+def test_el_contacto_entre_dos_piezas_no_es_un_sitio_por_donde_cortar() -> None:
+    """⚠️ El fallo del corte por pieza: una etiqueta que invade a la vecina.
+
+    El «11» cubre aquí también media pieza 12. Cortando cada pieza por separado, el corte
+    más barato del 11 era su contacto con el 12 y media corona ajena acababa en la encía.
+    Con toda la arcada en el mismo grafo, las dos piezas llegan al mismo surco.
+    """
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    invadida = etq.copy()
+    invadida[(etq > 0) & (pos[:, 0] > 24.0)] = 12      # el 11 ocupa tres cuartos del ancho
+    nueva, _ = ancla_al_pliegue(pos, tri, invadida)
+    corona = pos[:, 1] >= 0.0
+    assert (nueva[corona] == invadida[corona]).all()   # nada de la corona se cede
+    assert not (nueva[~corona] > 0).any()              # y todo el desborde, sí
+
+
+def test_una_esquirla_no_se_toca() -> None:
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    con_esquirla = etq.copy()
+    esquirla = (pos[:, 0] < 1.0) & (pos[:, 1] < -2.0) & (etq > 0)
+    con_esquirla[esquirla] = 28
+    nueva, registros = ancla_al_pliegue(pos, tri, con_esquirla)
+    assert registros[28]["reason"] == "fragment" and registros[28]["declined"]
+    assert (nueva[esquirla] == 28).all()
+
+
+def test_es_idempotente_y_sus_registros_se_pueden_guardar() -> None:
+    import json
+
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(-3.0)
+    una, registros = ancla_al_pliegue(pos, tri, etq)
+    otra, _ = ancla_al_pliegue(pos, tri, una)
+    assert (una == otra).all()
+    assert json.loads(json.dumps({str(k): v for k, v in registros.items()}))
+
+
+def test_sin_encia_o_sin_dientes_devuelve_lo_que_recibe() -> None:
+    from analysis_agents.frontera import ancla_al_pliegue
+
+    pos, tri, etq = _valle(0.0)
+    todo = np.full(len(pos), 11, dtype=np.int64)
+    nada = np.zeros(len(pos), dtype=np.int64)
+    assert (ancla_al_pliegue(pos, tri, todo)[0] == todo).all()
+    assert ancla_al_pliegue(pos, tri, nada) == (pytest.approx(nada), {})

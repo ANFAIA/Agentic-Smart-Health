@@ -275,6 +275,9 @@ class UOSExportAgent(BaseExportAgent):
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
         modelo_segmentacion: Path | None = None,
+        # Lo que hizo `analysis_agents.frontera.ancla_al_pliegue` por pieza. Viaja al
+        # sidecar de `derived/seg_teeth`; `None` = no se ejecuto.
+        margen_gingival: dict[str, Any] | None = None,
         # Version declarada del segmentador. `None` -> el sidecar dice `null`.
         version_segmentador: str | None = None,
         cbct: Path | None = None,
@@ -796,6 +799,7 @@ class UOSExportAgent(BaseExportAgent):
                         pesos_sha256=(None if modelo_segmentacion is None
                                       else sha256_de_fichero(modelo_segmentacion)),
                         calidad=_calidad_frontera(malla_ingerida, etq),
+                        margen=margen_gingival,
                         # T-4 · el hash del array de POSITION tal y como va en la escena.
                         # Es lo unico que convierte la union posicional en comprobable.
                         posiciones_sha256=hashlib.sha256(
