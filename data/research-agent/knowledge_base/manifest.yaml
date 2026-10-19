@@ -280,3 +280,14 @@ documentos:
     sha256: a1227a479ecff08c38b9798521e0dc4504fd1aa4e4310ac29bb8e188a07b00ca
     bytes: 1785877
     nota: "Descubierto por watch_literature.py el 2026-08-31 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
+  - fichero: "AD-GS_ Anatomical Density-guided 3D Gaussian Splatting for Sparse-View Dental CBCT Reconstruction - 2610.14963v1.pdf"
+    titulo: "AD-GS: Anatomical Density-guided 3D Gaussian Splatting for Sparse-View Dental CBCT Reconstruction"
+    anio: 2026
+    fuente: arxiv
+    id: "2610.14963v1"
+    url: "https://arxiv.org/pdf/2610.14963v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: c1f016f54c39610a2bccfa5ca555801926e3dce153f0ad466a138c4717aca2bb
+    bytes: 17202446
+    nota: "Descubierto por watch_literature.py el 2026-10-19 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
