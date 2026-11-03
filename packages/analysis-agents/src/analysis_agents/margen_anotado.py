@@ -187,29 +187,73 @@ def lazo_de_vertices(pos: np.ndarray, grafo: Any, control: np.ndarray) -> np.nda
 
 
 def interior_del_lazo(grafo: Any, lazo: np.ndarray) -> np.ndarray | None:
-    """Máscara de lo que el lazo encierra, lazo incluido; `None` si no encierra nada.
+    """Máscara de lo que UN lazo encierra por sí solo, lazo incluido; `None` si no encierra nada.
 
     Quitado el lazo, lo de fuera es la componente mayor: el resto de la arcada. Dentro
     queda toda otra componente **que toque el lazo**; un fragmento suelto del escaneo en la
     otra punta de la malla no lo toca y no cuenta.
     """
-    from scipy.sparse.csgraph import connected_components
+    regiones = _regiones_entre_lazos(grafo, {0: lazo})
+    return None if regiones[0] is None else regiones[0]
+
+
+def _regiones_entre_lazos(grafo: Any,
+                          lazos: dict[int, np.ndarray]) -> dict[int, np.ndarray | None]:
+    """Lo que encierra cada lazo, quitando TODOS a la vez.
+
+    ⚠️ **Por qué todos a la vez y no uno a uno.** Donde dos coronas se tocan, el escáner
+    las une en una sola superficie por encima del punto de contacto. Una línea que pasa por
+    el fondo del surco interproximal, por debajo de ese puente, deja su corona conectada con
+    la vecina, y la vecina con la encía: medido sobre un caso real, dos de catorce líneas no
+    encerraban nada por separado. Quitando los lazos de las dos, las dos coronas quedan
+    juntas en una región cerrada, y esa región se reparte entre ellas por cercanía
+    geodésica a cada lazo. Donde no hay puente, cada región toca un solo lazo y el reparto
+    no hace nada.
+    """
+    from scipy.sparse.csgraph import connected_components, dijkstra
 
     n = grafo.shape[0]
-    libre = np.ones(n, dtype=bool)
-    libre[lazo] = False
-    quedan = np.flatnonzero(libre)
+    barrera = np.zeros(n, dtype=bool)
+    for lazo in lazos.values():
+        barrera[lazo] = True
+    quedan = np.flatnonzero(~barrera)
     _, comp_local = connected_components(grafo[quedan][:, quedan], directed=False)
     comp = np.full(n, -1, dtype=np.int64)
     comp[quedan] = comp_local
-    tocan = np.unique(comp[grafo[lazo].indices])
-    tocan = tocan[tocan >= 0]
-    if len(tocan) < 2:
-        return None
-    fuera = tocan[np.argmax(np.bincount(comp_local)[tocan])]
-    dentro = np.isin(comp, tocan[tocan != fuera])
-    dentro[lazo] = True
-    return dentro
+    tamano = np.bincount(comp_local)
+    # Qué componentes toca cada lazo, y lo de fuera: la mayor de todas las que tocan alguno.
+    toca = {f: {int(c) for c in np.unique(comp[grafo[lazo].indices]) if c >= 0}
+            for f, lazo in lazos.items()}
+    todas = set().union(*toca.values()) if toca else set()
+    if not todas:
+        return dict.fromkeys(lazos)
+    fuera = max(todas, key=lambda c: tamano[c])
+    dentro: dict[int, np.ndarray] = {f: np.zeros(n, dtype=bool) for f in lazos}
+    for c in todas - {fuera}:
+        suyos = [f for f in lazos if c in toca[f]]
+        miembros = np.flatnonzero(comp == c)
+        if len(suyos) == 1:
+            dentro[suyos[0]][miembros] = True
+            continue
+        # Varios lazos tocan la misma región: cada vértice va al lazo más cercano por la
+        # superficie, sin cruzar otros lazos ni salir de la región.
+        sub = np.concatenate([miembros] + [lazos[f] for f in suyos])
+        local = grafo[sub][:, sub]
+        distancias = []
+        for f in suyos:
+            fuentes = np.flatnonzero(np.isin(sub, lazos[f]))
+            distancias.append(dijkstra(local, indices=fuentes, min_only=True)[:len(miembros)])
+        gana = np.argmin(np.vstack(distancias), axis=0)
+        for k, f in enumerate(suyos):
+            dentro[f][miembros[gana == k]] = True
+    salida: dict[int, np.ndarray | None] = {}
+    for f, lazo in lazos.items():
+        if dentro[f].any():
+            dentro[f][lazo] = True
+            salida[f] = dentro[f]
+        else:
+            salida[f] = None
+    return salida
 
 
 def etiquetas_de_curvas(pos: np.ndarray, tri: np.ndarray,
@@ -217,31 +261,42 @@ def etiquetas_de_curvas(pos: np.ndarray, tri: np.ndarray,
     """Etiqueta FDI por vértice a partir de las líneas, y qué pasó con cada una.
 
     Una línea que no encierra nada —abierta sobre el borde del escaneo, o que salta entre
-    trozos de malla— se declara y su pieza queda sin etiquetar: no se rellena a ojo. Un
-    vértice que reclaman dos piezas va a la de centro más cercano y se cuenta.
+    trozos de malla— se declara y su pieza queda sin etiquetar: no se rellena a ojo. Una
+    región que encierran entre varias líneas se reparte entre ellas y se declara en
+    `shared_with`. Un vértice que reclaman dos piezas va a la de centro más cercano y se
+    cuenta.
     """
     grafo = _grafo(pos, tri)
     area = area_por_vertice(pos, tri)
-    dentro: dict[int, np.ndarray] = {}
+    lazos: dict[int, np.ndarray] = {}
     registros: dict[str, Any] = {}
     for fdi, control in sorted(curvas.items()):
         cerrada = np.vstack([control, control[:1]])
-        registro: dict[str, Any] = {
+        registros[str(fdi)] = {
             "control_points": int(len(control)),
             "max_control_gap_mm": float(np.linalg.norm(np.diff(cerrada, axis=0), axis=1).max()),
-            "usable": False, "reason": None,
+            "usable": False, "reason": None, "shared_with": [],
         }
         try:
-            mascara = interior_del_lazo(grafo, lazo_de_vertices(pos, grafo, control))
+            lazos[fdi] = lazo_de_vertices(pos, grafo, control)
         except ValueError as e:
-            mascara, registro["reason"] = None, str(e)
+            registros[str(fdi)]["reason"] = str(e)
+    regiones = _regiones_entre_lazos(grafo, lazos) if lazos else {}
+    solas = {f: interior_del_lazo(grafo, lazo) for f, lazo in lazos.items()}
+    dentro: dict[int, np.ndarray] = {}
+    for fdi, mascara in regiones.items():
+        registro = registros[str(fdi)]
         if mascara is None:
-            registro["reason"] = registro["reason"] or "la línea no encierra ninguna región"
-        else:
-            dentro[fdi] = mascara
-            registro.update(usable=True, vertices=int(mascara.sum()),
-                            area_mm2=float(area[mascara].sum()))
-        registros[str(fdi)] = registro
+            registro["reason"] = "la línea no encierra ninguna región"
+            continue
+        dentro[fdi] = mascara
+        registro.update(usable=True, vertices=int(mascara.sum()),
+                        area_mm2=float(area[mascara].sum()))
+        if solas[fdi] is None:
+            # Sola no cerraba: su región es la que comparte con las vecinas.
+            registro["shared_with"] = sorted(
+                int(f) for f, m in solas.items()
+                if f != fdi and m is None and fdi in regiones and regiones[f] is not None)
 
     etq = np.zeros(len(pos), dtype=np.int64)
     veces = np.zeros(len(pos), dtype=np.int64)
@@ -278,12 +333,35 @@ def _gingival(curvas: dict[int, np.ndarray], fdi: int) -> np.ndarray:
     return propias[cKDTree(np.concatenate(otras)).query(propias)[0] > CONTACTO_MM]
 
 
+def empareja(pred: np.ndarray, anotado: np.ndarray,
+             curvas: dict[int, np.ndarray]) -> dict[int, dict[str, Any]]:
+    """Qué pieza de `pred` corresponde a cada línea, por SOLAPE y no por número.
+
+    ⚠️ Quien anota numera según su criterio y el programa según el suyo. Si discrepan —un
+    molar que uno llama 16 y el otro 15—, emparejar por código mide la distancia entre dos
+    dientes distintos: sobre un caso real, cuatro de catorce líneas caían sobre un vecino de
+    otro número. Aquí cada línea se empareja con la pieza que más vértices tiene dentro de
+    su región, y la discrepancia de número se declara aparte. Sin región, se cae al número.
+    """
+    pred = np.asarray(pred, dtype=np.int64)
+    en_pred = {int(x) for x in np.unique(pred) if x > 0}
+    parejas: dict[int, dict[str, Any]] = {}
+    for fdi in sorted(curvas):
+        dentro = pred[(anotado == fdi) & (pred > 0)]
+        if len(dentro):
+            codigos, cuenta = np.unique(dentro, return_counts=True)
+            parejas[fdi] = {"pred": int(codigos[np.argmax(cuenta)]), "by": "overlap"}
+        else:
+            parejas[fdi] = {"pred": fdi if fdi in en_pred else None, "by": "number"}
+    return parejas
+
+
 def distancia_a_las_curvas(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
                            curvas: dict[int, np.ndarray], anotado: np.ndarray,
                            con_region: set[int] | None = None) -> dict[str, Any]:
     """Distancia, por pieza, entre el margen de `pred` y la línea de esa misma pieza.
 
-    Se emparejan por código FDI. `pred_to_curve` va de nuestros vértices de margen a la
+    Se emparejan con `empareja`, por solape. `pred_to_curve` va de nuestros vértices de margen a la
     línea; `curve_to_pred`, de la línea —sin sus tramos de contacto— a nuestro margen. El
     signo usa la región anotada: positivo si nuestro margen cae sobre lo que la persona
     dejó fuera de toda corona (desborde), negativo si cae dentro (sobre-recorte). Una pieza
@@ -293,11 +371,12 @@ def distancia_a_las_curvas(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
 
     pred = np.asarray(pred, dtype=np.int64)
     margen = margen_gingival(tri, pred)
+    parejas = empareja(pred, anotado, curvas)
     por_pieza: dict[str, Any] = {}
     todas_pc, todas_cp = [], []
     for fdi in sorted(curvas):
-        suyo = margen & (pred == fdi)
-        if not suyo.any():
+        suyo = margen & (pred == parejas[fdi]["pred"])
+        if parejas[fdi]["pred"] is None or not suyo.any():
             continue
         d_pc = cKDTree(muestrea(curvas[fdi])).query(pos[suyo])[0]
         gingival = _gingival(curvas, fdi)
@@ -307,16 +386,20 @@ def distancia_a_las_curvas(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
         medible = con_region is None or fdi in con_region
         por_pieza[str(fdi)] = {
             "pred_to_curve": _resumen(d_pc), "curve_to_pred": _resumen(d_cp),
-            "signed_mean_mm": float((d_pc * signo).mean()) if medible else None}
+            "signed_mean_mm": float((d_pc * signo).mean()) if medible else None,
+            "paired_with": parejas[fdi]["pred"], "paired_by": parejas[fdi]["by"]}
         todas_pc.append(d_pc)
         todas_cp.append(d_cp)
     en_pred = {int(x) for x in np.unique(pred) if x > 0}
+    emparejadas = {v["pred"] for v in parejas.values() if v["pred"] is not None}
     return {
         "per_tooth": por_pieza,
+        "renumbered": {str(f): v["pred"] for f, v in parejas.items()
+                       if v["pred"] is not None and v["pred"] != f},
         "pred_to_curve": _resumen(np.concatenate(todas_pc) if todas_pc else np.zeros(0)),
         "curve_to_pred": _resumen(np.concatenate(todas_cp) if todas_cp else np.zeros(0)),
-        "only_annotated": sorted(set(curvas) - en_pred),
-        "only_predicted": sorted(en_pred - set(curvas)),
+        "only_annotated": sorted(f for f, v in parejas.items() if v["pred"] is None),
+        "only_predicted": sorted(en_pred - emparejadas),
     }
 
 

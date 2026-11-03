@@ -173,3 +173,44 @@ def test_el_convenio_equivocado_se_rechaza_y_se_dice_cual_es() -> None:
         comprueba_sobre_malla(pos, {16: _circulo(2.5) * [-1, -1, 1]})
     with pytest.raises(ValueError, match="otro escaneo"):
         comprueba_sobre_malla(pos, {16: _circulo(2.5) + [0, 0, 50]})
+
+
+def test_dos_coronas_unidas_por_el_contacto_se_reparten_la_region() -> None:
+    """El escáner une dos coronas en contacto por encima del punto de contacto.
+
+    Se simula con un triángulo que conecta el interior de una con el de la otra: una línea
+    que pasa por debajo del puente ya no encierra su corona por sí sola. Juntas sí, y cada
+    corona queda con la línea que la rodea.
+    """
+    pos, tri = _lamina(61)
+    a, b = np.array([4.0, 7.5, 0.0]), np.array([11.0, 7.5, 0.0])
+    curvas = {21: _circulo(2.0, a), 22: _circulo(2.0, b)}
+    cerca = [int(np.argmin(np.linalg.norm(pos - p, axis=1))) for p in (a, a + [0.5, 0, 0], b)]
+    con_puente = np.vstack([tri, [cerca]])
+    etq, registros = etiquetas_de_curvas(pos, con_puente, curvas)
+    assert all(r["usable"] for r in registros["per_tooth"].values())
+    assert registros["per_tooth"]["21"]["shared_with"] == [22]
+    assert etq[cerca[0]] == 21 and etq[cerca[2]] == 22
+    d = np.linalg.norm(pos - a, axis=1)
+    assert (etq[d < 1.5] == 21).all() and (etq[np.linalg.norm(pos - b, axis=1) < 1.5] == 22).all()
+
+
+def test_sin_puente_ninguna_region_se_comparte() -> None:
+    pos, tri = _lamina(61)
+    curvas = {21: _circulo(2.0, np.array([4.0, 7.5, 0])),
+              22: _circulo(2.0, np.array([11.0, 7.5, 0]))}
+    _, registros = etiquetas_de_curvas(pos, tri, curvas)
+    assert all(r["shared_with"] == [] for r in registros["per_tooth"].values())
+
+
+def test_se_empareja_por_solape_y_no_por_numero() -> None:
+    """La persona llama 16 a lo que el programa llama 15: se mide contra el 15 y se dice."""
+    pos, tri = _lamina()
+    curvas = {16: _circulo(2.5)}
+    anotado, _ = etiquetas_de_curvas(pos, tri, curvas)
+    pred = np.where(_disco(pos, 3.5) > 0, 15, 0)
+    r = distancia_a_las_curvas(pos, tri, pred, curvas, anotado)
+    assert r["renumbered"] == {"16": 15}
+    assert r["per_tooth"]["16"]["paired_with"] == 15
+    assert r["per_tooth"]["16"]["pred_to_curve"]["p50_mm"] == pytest.approx(1.0, abs=0.3)
+    assert r["only_annotated"] == [] and r["only_predicted"] == []

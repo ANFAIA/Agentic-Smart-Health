@@ -82,6 +82,13 @@ Límites que el script declara y no esconde:
 - Si las líneas quedan a más de **1,0 mm** de la malla, se rechazan y se dice si el <!--const:DISTANCIA_MAXIMA_A_MALLA_MM-->
   convenio contrario (LPS/RAS) las pondría sobre ella. No se corrige solo.
 - Una línea que no encierra ninguna región se declara y su pieza queda sin etiqueta.
+- Donde dos coronas se tocan, el escáner las une por encima del punto de contacto, y una
+  línea que pasa por debajo no cierra su corona por sí sola. Las líneas se cierran todas a
+  la vez y la región que encierran entre dos se reparte por cercanía sobre la superficie;
+  el informe dice qué piezas compartieron región.
+- Cada línea se empareja con la pieza del etiquetado que más cae dentro de ella, no con la
+  de su mismo número, y una numeración distinta se declara. Emparejar por número mediría
+  la distancia entre dos dientes diferentes.
 
 ## Qué no dice
 
