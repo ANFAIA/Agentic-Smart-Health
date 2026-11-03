@@ -132,6 +132,11 @@ def informe_md(resultado: dict[str, Any]) -> str:
             lineas += [f"Líneas que no encierran una región: {malas}. Su distancia al margen "
                        "se mide, pero sin signo, y las tasas por etiqueta cuentan esas "
                        "piezas como encía.", ""]
+        compartidas = {f: r["shared_with"] for f, r in datos["per_tooth"].items()
+                       if r.get("shared_with")}
+        if compartidas:
+            lineas += [f"Líneas que solo cierran junto a una vecina (contacto unido en la "
+                       f"malla), con la región repartida por cercanía: {compartidas}.", ""]
         if datos["disputed_vertices"]:
             lineas += [f"{datos['disputed_vertices']} vértices quedaban dentro de dos "
                        "líneas y se asignaron a la pieza de centro más cercano.", ""]
@@ -164,6 +169,11 @@ def informe_md(resultado: dict[str, Any]) -> str:
         lineas.append("")
         for cand, s in notas.items():
             c = s["curves"]
+            if c["renumbered"]:
+                lineas += [f"`{cand}` numera distinto que la anotación: " + ", ".join(
+                    f"la línea {f} cae sobre su {p}" for f, p in c["renumbered"].items())
+                    + ". La distancia se mide contra la pieza que cae dentro de cada línea.",
+                    ""]
             if c["only_annotated"] or c["only_predicted"]:
                 lineas += [f"`{cand}`: piezas solo anotadas {c['only_annotated']}; solo en "
                            f"el etiquetado {c['only_predicted']}.", ""]
