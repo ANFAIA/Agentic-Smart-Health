@@ -34,10 +34,15 @@ jobs:
         with:
           enable-cache: true
 
+      # ⚠️ La versión sale de `.python-version`, no de `requires-python`. Con `>=3.13`,
+      # setup-python instala la última que exista, y el 3 de noviembre de 2026 eso fue la
+      # 3.15, para la que `vtk` aún no publica ruedas: el `uv sync` falló en todos los PR
+      # sin que nadie hubiera tocado el código. Es la misma razón por la que ruff y mypy
+      # van fijados: subir de versión es un commit deliberado.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: pyproject.toml
+          python-version-file: .python-version
 
       # ⚠️ Con `--extra vision`, que trae opencv y scikit-image. Sin ellos los tests de
       # `pose_foto` —la pose de camara y el descarte de una vista torcida— se SALTAN aqui y
