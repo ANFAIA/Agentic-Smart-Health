@@ -279,6 +279,33 @@ sobre la malla del caso, solo con líneas fabricadas a partir de nuestras propia
 que comprueban que funciona y no dicen nada del margen. Cuando la haya, medirá un caso y
 uno o dos anotadores; no es validación clínica.
 
+### 6.4 · La numeración, medida aparte del margen (2026-11-09)
+
+Cruzar las curvas revisadas del caso clínico con nuestras etiquetas sacó un error más grave
+que el margen: un «17» casi entero sobre la encía, un «24» de 41 mm² y, entre medias, los
+números corridos un puesto. El acuerdo FDI por vértice apenas lo ve, así que el banco
+cuenta ahora la identidad de cada etiqueta (`margen_metricas.identidad_de_piezas`): si cae
+sobre la pieza del experto de su número, sobre otra (y si es la vecina), sobre la encía
+(fantasma), si es un fragmento de más, y qué piezas no tiene nadie.
+
+Línea base sobre `dev`, 40 arcadas y 520 piezas del experto:
+
+| Fila | Correctas | Desplazadas (a la vecina) | Fantasmas | Fragmentos | Ausentes | Arcadas perfectas |
+|---|---:|---:|---:|---:|---:|---:|
+| Modelo, sin tocar | 498 | 22 (21) | 42 | 11 | 11 | 12 de 40 |
+| + limpieza actual | 498 | 22 (21) | 24 | 11 | 11 | 21 de 40 |
+
+La limpieza quita la mitad de los fantasmas y no toca los desplazamientos, que casi siempre
+son al vecino. La predicción se regeneró guardando la log-probabilidad por vértice: las
+etiquetas salieron idénticas a las de octubre en 119 de 120 arcadas, y en la otra difieren
+en el 0,01 % de los vértices.
+
+**En el caso clínico la pose pesa.** Su razón de orientación es 0,62, dudosa, y la
+numeración depende de la arcada de Teeth3DS+ que se usa como referencia para canonizarla:
+con la de agosto salen corridas 4 piezas; con otra, 13 de 14, todas un puesto. Un
+desplazamiento uniforme está ordenado, así que imponer el orden de la arcada no basta para
+corregirlo: hace falta algo que ancle cada número a su tipo de diente.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

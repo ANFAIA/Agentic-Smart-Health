@@ -63,12 +63,13 @@ from analysis_agents.margen_metricas import (  # noqa: E402
     agrega,
     compara,
     metricas_de_arcada,
+    posicion_en_arcada,
 )
 from ingestion_agents.mesh_agent import parse_obj  # noqa: E402
 
 # Cambia cuando cambie CUALQUIER cosa que haga incomparables dos ejecuciones: la partición,
 # la inferencia, una métrica. Viaja en la salida.
-VERSION_PROTOCOLO = "1"
+VERSION_PROTOCOLO = "2"
 
 DATOS = RAIZ / "data/raw/teeth3ds"
 MALLAS = DATOS / "3D_scans_per_patient_obj_files"
@@ -358,12 +359,26 @@ def predice(args: argparse.Namespace) -> int:
         # dan etiquetas distintas: el banco compararía métodos sobre entradas diferentes.
         torch.manual_seed(0)
         # Sin canonizar: Teeth3DS+ YA está en la pose de entrenamiento.
-        _, instancias = seg.infiere(modelo, codigos, n_clases, pos, pos, normales,
-                                    arcada, dev)
+        logp, instancias = seg.infiere(modelo, codigos, n_clases, pos, pos, normales,
+                                       arcada, dev)
+        etiquetas = seg.etiquetas_de(instancias, len(pos))
+        # ⚠️ Rehacer una predicción no puede cambiar la línea base sin que se note: si
+        # las etiquetas no salen idénticas a las guardadas, se dice cuánto difieren.
+        igual = ""
+        if destino.is_file():
+            antes = np.load(destino)["etiquetas"]
+            iguales = float((antes == etiquetas).mean()) if len(antes) == len(etiquetas) else 0.0
+            igual = " · idénticas a la caché" if iguales == 1.0 else \
+                f" · ⚠ {100 * (1 - iguales):.2f} % de vértices distintos a la caché"
+        # Solo las columnas de esta arcada: las demás están anuladas por `restringe_a_arcada`.
+        # En float16 caben de sobra y la caché no se multiplica por diez.
+        columnas = [i for i, c in enumerate(codigos)
+                    if c == 0 or posicion_en_arcada(c)[0] == arcada]
         destino.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(destino, etiquetas=seg.etiquetas_de(instancias, len(pos)),
-                            checkpoint_sha256=sha)
-        print(f"  [{k}/{len(pares)}] {paciente}_{arcada}: {len(instancias)} piezas")
+        np.savez_compressed(destino, etiquetas=etiquetas, checkpoint_sha256=sha,
+                            logp=logp[:, columnas].astype(np.float16),
+                            codigos_logp=np.asarray([codigos[i] for i in columnas]))
+        print(f"  [{k}/{len(pares)}] {paciente}_{arcada}: {len(instancias)} piezas{igual}")
     return 0
 
 
@@ -397,6 +412,18 @@ def informe_md(salida: dict) -> str:
         "- **Falsa encía:** de lo que el experto llama diente, cuánto se etiqueta encía.",
         "- **Signo:** positivo si el margen predicho cae en encía del experto.",
         "- **Piezas < 85 %:** piezas que conservan menos del 85 % de su corona de experto.",
+        "", "Identidad de las piezas: si cada etiqueta lleva el número de la pieza del "
+        "experto sobre la que cae.", "",
+        "| Fila | Correctas | Desplazadas (a la vecina) | Fantasmas | Fragmentos | Ausentes "
+        "| Arcadas perfectas |", "|---|---:|---:|---:|---:|---:|---:|",
+        *[f"| {clave} | {i['correct']} de {i['expert']} "
+          f"| {i['shifted']} ({i['neighbour_shift']}) | {i['ghost']} | {i['split']} "
+          f"| {i['missing']} | {i['perfect_arches']} de {salida['arches']} |"
+          for clave, i in ((c, r.get("identity")) for c, r in salida["summary"].items())
+          if i],
+        "",
+        "- **Fantasma:** etiqueta con menos de la mitad de sus vértices sobre dientes.",
+        "- **Fragmento:** etiqueta de más sobre una pieza que ya tiene otra.",
         "", *veredicto_md(salida.get("acceptance", {})),
         "Comprobación de la partición (modelo sin tocar, acierto FDI en vértices de "
         "diente y piezas con el código correcto): " + "; ".join(

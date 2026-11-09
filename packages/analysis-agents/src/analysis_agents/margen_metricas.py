@@ -104,6 +104,75 @@ def anchos(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> list[float]:
     return [abs(float(m) - float(t)) for m, t in anchos_de_corona(pos, tri, etq).values()]
 
 
+# Una etiqueta con menos de esta fracción de sus vértices sobre dientes del experto no es
+# un diente con el número cambiado: es un diente que no existe.
+FRACCION_FANTASMA = 0.5
+
+
+def posicion_en_arcada(fdi: int) -> tuple[str, int]:
+    """`(arcada, índice)` de un código FDI recorriendo la arcada de un extremo al otro.
+
+    Arriba 18…11 | 21…28 y abajo 48…41 | 31…38 quedan en 0…15, así que dos piezas vecinas
+    distan 1 aunque estén a ambos lados de la línea media.
+    """
+    cuadrante, pieza = divmod(int(fdi), 10)
+    arcada = "upper" if cuadrante in (1, 2) else "lower"
+    return arcada, (8 - pieza) if cuadrante in (1, 4) else (7 + pieza)
+
+
+def identidad_de_piezas(pred: np.ndarray, experto: np.ndarray) -> dict[str, Any]:
+    """Si cada pieza lleva el NÚMERO correcto, separado de dónde está su borde.
+
+    ⚠️ **Por qué no basta con el acuerdo FDI por vértice.** Un desplazamiento de un puesto
+    en toda una hemiarcada, un diente fantasma sobre la encía o una astilla con su propio
+    código apenas mueven la fracción de vértices bien numerados, y son justo lo que hace
+    que un hallazgo del informe acabe colgado del diente de al lado. Aquí cada etiqueta
+    predicha se empareja con la pieza del experto que más solapa y se clasifica.
+
+    - `correct`: emparejada con una pieza del experto de su mismo número.
+    - `shifted`: emparejada con otro número; `neighbour_shift` cuenta las que caen en la
+      pieza vecina de la arcada.
+    - `ghost`: menos de `FRACCION_FANTASMA` de sus vértices caen sobre dientes del experto.
+    - `split`: etiquetas de más sobre una pieza ya emparejada (fragmentos).
+    - `missing`: piezas del experto que ninguna etiqueta tiene como pareja.
+    """
+    pred = np.asarray(pred, dtype=np.int64)
+    experto = np.asarray(experto, dtype=np.int64)
+    cuenta = dict.fromkeys(("correct", "shifted", "neighbour_shift", "ghost"), 0)
+    por_etiqueta: dict[str, dict[str, Any]] = {}
+    parejas: list[int] = []
+    for codigo in (int(c) for c in np.unique(pred) if c > 0):
+        suyos = experto[pred == codigo]
+        dientes = suyos[suyos > 0]
+        if len(dientes) < FRACCION_FANTASMA * len(suyos):
+            cuenta["ghost"] += 1
+            por_etiqueta[str(codigo)] = {"status": "ghost", "expert": None}
+            continue
+        codigos, veces = np.unique(dientes, return_counts=True)
+        pareja = int(codigos[np.argmax(veces)])
+        parejas.append(pareja)
+        if pareja == codigo:
+            cuenta["correct"] += 1
+            estado = "correct"
+        else:
+            cuenta["shifted"] += 1
+            (a1, i1), (a2, i2) = posicion_en_arcada(codigo), posicion_en_arcada(pareja)
+            vecina = a1 == a2 and abs(i1 - i2) == 1
+            cuenta["neighbour_shift"] += int(vecina)
+            estado = "neighbour_shift" if vecina else "shifted"
+        por_etiqueta[str(codigo)] = {"status": estado, "expert": pareja}
+    expertas = {int(c) for c in np.unique(experto) if c > 0}
+    ausentes = sorted(expertas - set(parejas))
+    salida: dict[str, Any] = {
+        **cuenta, "split": len(parejas) - len(set(parejas)), "missing": len(ausentes),
+        "expert": len(expertas), "labels": len(por_etiqueta),
+        "missing_teeth": ausentes, "per_label": por_etiqueta,
+    }
+    salida["perfect"] = (salida["shifted"] == 0 and salida["ghost"] == 0
+                         and salida["split"] == 0 and salida["missing"] == 0)
+    return salida
+
+
 def metricas_de_arcada(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
                        experto: np.ndarray) -> dict[str, Any]:
     """Todas las medidas de una arcada. `pred` y `experto`: código FDI por vértice, 0 = encía."""
@@ -151,6 +220,7 @@ def metricas_de_arcada(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
             "min_retained": float(conservadas.min()) if len(conservadas) else None,
         },
         "per_tooth": {str(t): v for t, v in piezas.items()},
+        "identity": identidad_de_piezas(pred, experto),
     }
 
 
@@ -201,6 +271,15 @@ def agrega(arcadas: list[dict[str, Any]]) -> dict[str, Any]:
     correctas = sum(a["teeth"]["majority_correct"] for a in arcadas)
     resumen["teeth_majority_correct_fraction"] = float(correctas / piezas) if piezas else None
     resumen["teeth_under_retained_fraction"] = float(danadas / piezas) if piezas else None
+    identidades = [a["identity"] for a in arcadas if "identity" in a]
+    if identidades:
+        resumen["identity"] = {
+            **{k: int(sum(i[k] for i in identidades))
+               for k in ("correct", "shifted", "neighbour_shift", "ghost", "split",
+                         "missing", "expert", "labels")},
+            "perfect_arches": int(sum(i["perfect"] for i in identidades)),
+            "arches_with_ghost": int(sum(i["ghost"] > 0 for i in identidades)),
+        }
     return resumen
 
 
