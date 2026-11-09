@@ -280,3 +280,14 @@ documentos:
     sha256: a1227a479ecff08c38b9798521e0dc4504fd1aa4e4310ac29bb8e188a07b00ca
     bytes: 1785877
     nota: "Descubierto por watch_literature.py el 2026-08-31 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
+  - fichero: "SparseTokenGS_ Gaussian-based Sparse-View CBCT Reconstruction via Reusable Token Pool - 2610.38360v1.pdf"
+    titulo: "SparseTokenGS: Gaussian-based Sparse-View CBCT Reconstruction via Reusable Token Pool"
+    anio: 2026
+    fuente: arxiv
+    id: "2610.38360v1"
+    url: "https://arxiv.org/pdf/2610.38360v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 558bdd5639f81e8311152d20aec6b4d9bfdc79de272c4a201e46b7bdd23ec46e
+    bytes: 4380913
+    nota: "Descubierto por watch_literature.py el 2026-11-09 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
