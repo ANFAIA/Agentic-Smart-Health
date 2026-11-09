@@ -269,3 +269,28 @@ def test_sin_encia_o_sin_dientes_devuelve_lo_que_recibe() -> None:
     nada = np.zeros(len(pos), dtype=np.int64)
     assert (ancla_al_pliegue(pos, tri, todo)[0] == todo).all()
     assert ancla_al_pliegue(pos, tri, nada) == (pytest.approx(nada), {})
+
+
+def test_el_liston_del_experto_solo_se_usa_en_el_maxilar() -> None:
+    """En Teeth3DS+ dañó coronas de molares inferiores: la mandíbula se queda como estaba."""
+    from analysis_agents.frontera import (
+        COBERTURA_MINIMA_PLIEGUE,
+        COBERTURA_PLIEGUE_EXPERTO,
+        FUERZA_MINIMA_PLIEGUE,
+        FUERZA_PLIEGUE_EXPERTO,
+        umbrales_de_pliegue,
+    )
+
+    maxilar = np.array([0, 11, 12, 21, 26, 0])
+    mandibula = np.array([0, 31, 36, 41, 0])
+    mezclada = np.array([0, 11, 31])
+
+    assert umbrales_de_pliegue(maxilar, "experto") == (
+        FUERZA_PLIEGUE_EXPERTO, COBERTURA_PLIEGUE_EXPERTO, None)
+    for etq in (mandibula, mezclada, np.zeros(4, dtype=int)):
+        fuerza, cobertura, aviso = umbrales_de_pliegue(etq, "experto")
+        assert (fuerza, cobertura) == (FUERZA_MINIMA_PLIEGUE, COBERTURA_MINIMA_PLIEGUE)
+        assert aviso
+    assert umbrales_de_pliegue(maxilar) == (FUERZA_MINIMA_PLIEGUE, COBERTURA_MINIMA_PLIEGUE, None)
+    with pytest.raises(ValueError):
+        umbrales_de_pliegue(maxilar, "otro")

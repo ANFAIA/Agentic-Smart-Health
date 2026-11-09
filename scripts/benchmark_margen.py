@@ -53,6 +53,8 @@ from analysis_agents import (  # noqa: E402
     rellena_huecos_interiores,
 )
 from analysis_agents.frontera import (  # noqa: E402
+    COBERTURA_PLIEGUE_EXPERTO,
+    FUERZA_PLIEGUE_EXPERTO,
     ancla_al_pliegue,
     recorta_al_cuello,
     refina_fronteras,
@@ -169,8 +171,8 @@ REFINAMIENTOS: dict[str, tuple[str, Callable[..., np.ndarray]]] = {
     # Tercer intento (2026-11-10): aceptar las piezas cuyo surco es tan claro como el del
     # experto en su percentil 5. Parado en `dev` por dañar piezas; ver §6.8 de la nota.
     "M9": ("limpieza + ancla_al_pliegue, surco como el del experto",
-           lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=1.34,
-                                            cobertura_minima=0.65)[0]),
+           lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=FUERZA_PLIEGUE_EXPERTO,
+                                            cobertura_minima=COBERTURA_PLIEGUE_EXPERTO)[0]),
 }
 # Los que además se prueban sobre las etiquetas del EXPERTO: un método que estropea la
 # verdad de campo no puede estar arreglando nada.
