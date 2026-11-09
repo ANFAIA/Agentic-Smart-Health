@@ -342,6 +342,37 @@ La **confianza media del modelo sobre los dientes** sí las ordena igual que el 
 mirar ninguna anotación. Es un solo caso y unas curvas revisadas, no anotadas a ciegas: es
 una hipótesis para medir, no un resultado.
 
+### 6.6 · Varias referencias y voto: resultado en `eval` (2026-11-09)
+
+Aumentación en tiempo de inferencia: el escaneo se canoniza contra 18 arcadas de
+entrenamiento, se segmenta con cada una y cada vértice toma el código que le dan las 3
+segmentaciones más confiadas (`analysis_agents.pose_votada`). El banco es
+[`scripts/benchmark_pose.py`](../../scripts/benchmark_pose.py). La configuración se eligió
+en `dev` y los criterios se fijaron en un commit antes de ejecutar `eval`, una sola vez.
+
+| `eval`, 80 arcadas, 1065 piezas | Correctas | Desplazadas | Fantasmas | Arcadas perfectas |
+|---|---:|---:|---:|---:|
+| Pose original de Teeth3DS+ (techo) | 1017 | 66 | 52 | 30 |
+| Una sola referencia (lo que se hace hoy) | 363–1009; mediana por arcada, 896 | | | |
+| Voto entre 3 de 18 referencias | 979 | 93 | 57 | 31 |
+
+**No cumple tres de seis criterios**: queda a 38 piezas del techo (se admitían 11), con 5
+fantasmas más y 0,025 menos de acierto por vértice. **Cumple** los otros tres: gana a la
+mediana de una sola referencia por 83 piezas y solo pierde contra ella en 2 arcadas; la
+confianza ordena las referencias como su acierto en 78 de 80 arcadas; y no mueve el margen.
+
+La pérdida frente al techo se concentra: en 64 de 80 arcadas el voto numera igual que la
+pose original, en 4 mejor y en 12 peor, y dos arcadas con razón de orientación alta (0,85 y
+0,76) se llevan 24 de las 38 piezas perdidas. Con razón ≤ 0,6 queda a 7 piezas del techo
+(599 frente a 606).
+
+Lectura: el techo es la pose en que se entrenó el modelo, y un escáner real no la da. Frente
+a lo que el pipeline puede hacer con un escaneo real —una referencia—, el voto es mejor y
+mucho más estable; no alcanza el techo cuando la orientación de la propia malla es ambigua.
+En el caso clínico, con razón 0,62, numera 12 de 14 piezas como las curvas revisadas y
+ninguna desplazada, frente a 7 y 4 con la referencia de agosto. `eval` queda gastado también
+para esta hipótesis.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
