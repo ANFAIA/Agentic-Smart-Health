@@ -13,6 +13,7 @@ from fusion_agents.tre import (
     consenso,
     lee_puntos,
     region,
+    sobre_cortes,
     tre_de_registro,
     tre_por_puntos,
 )
@@ -121,3 +122,25 @@ def test_consenso_entre_observadores() -> None:
     assert list(media) == ["11-i"] and np.allclose(media["11-i"], [0.2, 0, 0])
     assert disp["not_marked_by_all"] == ["13-c", "21-i"]
     assert disp["max_pairwise_mm"] == pytest.approx(0.4)
+
+
+def test_un_punto_sobre_imagen_interpolada_se_excluye_y_se_declara() -> None:
+    """Slicer rellena los huecos de una serie dispersa; ahí no se mide nada."""
+    alturas = np.array([28.54, 28.84, 28.99, 29.29, 29.89, 30.94])
+    puntos = {
+        "16-mv": np.array([10.0, -30.0, 28.99]),   # sobre un corte
+        "11-i": np.array([0.0, -60.0, 30.94]),     # sobre el último
+        "13-c": np.array([20.0, -50.0, 30.40]),    # en el hueco de 1,05 mm
+    }
+    dentro, info = sobre_cortes(puntos, alturas)
+
+    assert set(dentro) == {"16-mv", "11-i"}
+    assert info["off_slice_mm"] == {"13-c": round(30.40 - 29.89, 3)}
+    # La altura de un punto bien marcado vale lo que la mitad de su mayor hueco vecino.
+    assert info["height_floor_mm"]["16-mv"] == round(0.5 * (29.29 - 28.99), 3)
+    assert info["height_floor_mm"]["11-i"] == round(0.5 * (30.94 - 29.89), 3)
+
+
+def test_sin_cortes_no_hay_nada_que_comprobar() -> None:
+    with pytest.raises(ValueError):
+        sobre_cortes({"16-mv": np.zeros(3)}, np.array([]))

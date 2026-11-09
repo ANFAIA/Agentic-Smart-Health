@@ -134,6 +134,50 @@ def consenso(observadores: list[dict[str, np.ndarray]]) -> tuple[dict[str, np.nd
     return media, dispersion
 
 
+# A cuánto puede estar un punto del CBCT del corte real más cercano para contar como
+# marcado sobre él. Slicer mueve el plano en pasos del espaciado de la rejilla (0,15 mm en
+# el caso clínico disperso), y los cortes reales caen sobre esa rejilla: un punto marcado en
+# un corte real está a menos de una centésima. Más lejos, está en una imagen interpolada.
+TOLERANCIA_CORTE_MM = 0.05
+
+
+def sobre_cortes(puntos: dict[str, np.ndarray], alturas: np.ndarray,
+                 tolerancia: float = TOLERANCIA_CORTE_MM) -> tuple[dict[str, np.ndarray], dict]:
+    """Los puntos del CBCT que están sobre un corte real, y lo que se sabe de su altura.
+
+    ⚠️ **Con una serie dispersa el visor rellena los huecos.** Slicer regulariza la
+    geometría y muestra imagen interpolada entre dos cortes lejanos; un punto marcado ahí
+    está sobre algo que el equipo no midió. Se excluye y se declara.
+
+    Y un punto bien marcado tampoco tiene la altura exacta: la punta de una cúspide puede
+    estar en cualquier sitio entre su corte y el siguiente. Por punto se declara la mitad
+    del mayor hueco con sus cortes vecinos: es el suelo de su error vertical.
+
+    `alturas` es la z (LPS) de cada corte de la serie, la de `ImagePositionPatient`.
+    """
+    z = np.unique(np.asarray(alturas, dtype=np.float64))
+    if len(z) == 0:
+        raise ValueError("la serie no tiene cortes")
+    dentro: dict[str, np.ndarray] = {}
+    fuera: dict[str, float] = {}
+    suelo: dict[str, float] = {}
+    for etiqueta, p in puntos.items():
+        k = int(np.argmin(np.abs(z - p[2])))
+        d = float(abs(z[k] - p[2]))
+        if d > tolerancia:
+            fuera[etiqueta] = round(d, 3)
+            continue
+        dentro[etiqueta] = p
+        huecos = [z[k] - z[k - 1]] if k > 0 else []
+        huecos += [z[k + 1] - z[k]] if k + 1 < len(z) else []
+        suelo[etiqueta] = round(0.5 * float(max(huecos)), 3) if huecos else 0.0
+    return dentro, {
+        "off_slice_mm": fuera,
+        "height_floor_mm": suelo,
+        "tolerance_mm": tolerancia,
+    }
+
+
 def _resumen(errores: dict[str, float]) -> dict:
     if not errores:
         return {"n": 0}
