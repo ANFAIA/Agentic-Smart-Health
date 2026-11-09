@@ -279,6 +279,69 @@ sobre la malla del caso, solo con líneas fabricadas a partir de nuestras propia
 que comprueban que funciona y no dicen nada del margen. Cuando la haya, medirá un caso y
 uno o dos anotadores; no es validación clínica.
 
+### 6.4 · La numeración, medida aparte del margen (2026-11-09)
+
+Cruzar las curvas revisadas del caso clínico con nuestras etiquetas sacó un error más grave
+que el margen: un «17» casi entero sobre la encía, un «24» de 41 mm² y, entre medias, los
+números corridos un puesto. El acuerdo FDI por vértice apenas lo ve, así que el banco
+cuenta ahora la identidad de cada etiqueta (`margen_metricas.identidad_de_piezas`): si cae
+sobre la pieza del experto de su número, sobre otra (y si es la vecina), sobre la encía
+(fantasma), si es un fragmento de más, y qué piezas no tiene nadie.
+
+Línea base sobre `dev`, 40 arcadas y 520 piezas del experto:
+
+| Fila | Correctas | Desplazadas (a la vecina) | Fantasmas | Fragmentos | Ausentes | Arcadas perfectas |
+|---|---:|---:|---:|---:|---:|---:|
+| Modelo, sin tocar | 498 | 22 (21) | 42 | 11 | 11 | 12 de 40 |
+| + limpieza actual | 498 | 22 (21) | 24 | 11 | 11 | 21 de 40 |
+
+La limpieza quita la mitad de los fantasmas y no toca los desplazamientos, que casi siempre
+son al vecino. La predicción se regeneró guardando la log-probabilidad por vértice: las
+etiquetas salieron idénticas a las de octubre en 119 de 120 arcadas, y en la otra difieren
+en el 0,01 % de los vértices.
+
+**En el caso clínico la pose pesa.** Su razón de orientación es 0,62, dudosa, y la
+numeración depende de la arcada de Teeth3DS+ que se usa como referencia para canonizarla:
+con la de agosto salen corridas 4 piezas; con otra, 13 de 14, todas un puesto. Un
+desplazamiento uniforme está ordenado, así que imponer el orden de la arcada no basta para
+corregirlo: hace falta algo que ancle cada número a su tipo de diente.
+
+### 6.5 · Renumerar por orden y ancho: resultado negativo (2026-11-09)
+
+Se probó, sin reentrenar, a elegir la secuencia de códigos de máxima verosimilitud que
+respeta el orden de la arcada: programación dinámica sobre las instancias ordenadas, con
+la log-probabilidad media del modelo más un término por lo verosímil que es el ancho de
+cada pieza para cada código, huecos permitidos, fantasmas a encía y fragmentos. Los anchos
+de referencia se midieron con el mismo estimador sobre 80 pacientes de **entrenamiento**.
+
+**No mejora nada en `dev`, y no se evaluó en `eval`.** Con peso de ancho 0,25 deja la
+numeración igual (498 de 520 correctas); con 0,5 baja a 496 y con 1,0 a 486, y empieza a
+renumerar dientes bien numerados (sobre etiquetas de experto, 517 de 520 conservan su
+número con 0,5). La causa está medida: los errores del modelo en Teeth3DS+ son de alta
+confianza —la pieza mal numerada da −0,4 de log-probabilidad media a su código y −3 al
+correcto— y el ancho de una corona varía demasiado entre pacientes para vencer eso. En el
+caso clínico es peor: el método prefiere mandar piezas a la encía. Queda descartado.
+
+**Lo que sí explica el caso clínico es la pose.** Se repitió la segmentación con seis
+arcadas de entrenamiento distintas como referencia para canonizar, y se comparó con las
+curvas revisadas:
+
+| Referencia | Correctas | Desplazadas | Fantasmas | Confianza media en dientes |
+|---|---:|---:|---:|---:|
+| `WKDWFB4W` | 12 | 0 | 2 | −0,298 |
+| `01A6HE9H` | 12 | 0 | 2 | −0,312 |
+| `01M24NSZ` | 12 | 0 | 2 | −0,316 |
+| `22AEG48N` | 11 | 0 | 3 | −0,318 |
+| `EJWZZZRF` | 10 | 1 | 4 | −0,327 |
+| `01FC2D4A` | 9 | 3 | 3 | −0,353 |
+| `013FHA7K` | 0 | 11 | 4 | −0,389 |
+
+La ejecución de agosto, con otra referencia, daba 7 correctas y 4 desplazadas. En las siete,
+la monotonía del orden sale entre 0,94 y 1,00, así que no distingue las buenas de las malas.
+La **confianza media del modelo sobre los dientes** sí las ordena igual que el acierto, sin
+mirar ninguna anotación. Es un solo caso y unas curvas revisadas, no anotadas a ciegas: es
+una hipótesis para medir, no un resultado.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

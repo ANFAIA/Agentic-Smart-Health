@@ -120,3 +120,64 @@ def test_la_comparacion_es_pareada() -> None:
                 menor_es_mejor=True)
     assert c["n"] == 2 and c["improved_fraction"] == 0.5
     assert c["mean_diff"] < 0.0 and c["worst_diff"] == 0.0
+
+
+def _arcada(*piezas: int, n: int = 20) -> np.ndarray:
+    """Etiquetas de experto: `n` vértices de encía y `n` por cada pieza, en orden."""
+    return np.concatenate([np.zeros(n, dtype=np.int64)]
+                          + [np.full(n, p, dtype=np.int64) for p in piezas])
+
+
+def test_identidad_de_una_arcada_bien_numerada() -> None:
+    from analysis_agents.margen_metricas import identidad_de_piezas
+
+    experto = _arcada(13, 12, 11, 21)
+    r = identidad_de_piezas(experto, experto)
+    assert r["correct"] == 4 and r["perfect"]
+    assert r["shifted"] == r["ghost"] == r["split"] == r["missing"] == 0
+
+
+def test_un_desplazamiento_a_la_vecina_se_distingue_de_otro_error() -> None:
+    """Cruzar la línea media también es ser vecina: 11 y 21 distan un puesto."""
+    from analysis_agents.margen_metricas import identidad_de_piezas
+
+    experto = _arcada(13, 12, 11, 21)
+    pred = experto.copy()
+    pred[experto == 11] = 21
+    pred[experto == 21] = 22
+    pred[experto == 13] = 15
+    r = identidad_de_piezas(pred, experto)
+    assert r["correct"] == 1 and r["shifted"] == 3 and r["neighbour_shift"] == 2
+    assert r["per_label"]["21"] == {"status": "neighbour_shift", "expert": 11}
+    assert r["per_label"]["15"]["status"] == "shifted"
+    assert not r["perfect"]
+
+
+def test_un_fantasma_sobre_la_encia_y_una_pieza_ausente() -> None:
+    from analysis_agents.margen_metricas import identidad_de_piezas
+
+    experto = _arcada(16, 15, n=20)
+    pred = experto.copy()
+    pred[:15] = 17            # 15 de los 20 vértices de encía: un 17 que no existe
+    pred[experto == 15] = 0   # el 15 no aparece
+    r = identidad_de_piezas(pred, experto)
+    assert r["ghost"] == 1 and r["per_label"]["17"]["status"] == "ghost"
+    assert r["missing"] == 1 and r["missing_teeth"] == [15]
+
+
+def test_un_fragmento_con_otro_codigo_cuenta_como_partido() -> None:
+    from analysis_agents.margen_metricas import identidad_de_piezas
+
+    experto = _arcada(26, 25)
+    pred = experto.copy()
+    pred[np.flatnonzero(experto == 26)[:5]] = 27
+    r = identidad_de_piezas(pred, experto)
+    assert r["split"] == 1 and r["shifted"] == 1 and r["correct"] == 2
+
+
+def test_posicion_en_arcada() -> None:
+    from analysis_agents.margen_metricas import posicion_en_arcada
+
+    assert posicion_en_arcada(18) == ("upper", 0)
+    assert posicion_en_arcada(11) == ("upper", 7) and posicion_en_arcada(21) == ("upper", 8)
+    assert posicion_en_arcada(38) == ("lower", 15) and posicion_en_arcada(41) == ("lower", 7)
