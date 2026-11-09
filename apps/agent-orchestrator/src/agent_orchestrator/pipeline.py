@@ -66,6 +66,7 @@ from fusion_agents import (
     insert_snapshot,
     nubes_para_registro,
 )
+from fusion_agents.por_cortes import motivos as motivos_por_cortes
 from ingestion_agents import (
     ArtifactStore,
     CBCTAgent,
@@ -474,6 +475,7 @@ class IngestionPipeline:
         arcada: str | None = None,
         dos_arcadas: bool = False,
         corona_origen: Any | None = None,
+        etiquetas_origen: Any | None = None,
     ) -> tuple[Any, Any, dict] | None:
         """Las dos nubes que `fuse` va a registrar, elegidas **aquí** y no a mano.
 
@@ -490,9 +492,20 @@ class IngestionPipeline:
         diga o mienta; si no, sale del nombre de `malla`. Nunca del residuo del registro,
         que está medido que no discrimina (0,490 vs 0,509 mm entre lóbulo correcto e
         incorrecto).
+
+        **Con `etiquetas_origen`** —el código FDI de cada vértice del escáner— y una serie
+        CBCT **dispersa** se usa el registro por cortes (`fusion_agents.por_cortes`):
+        orientación inicial medida con los ejes anatómicos de las dos modalidades y ajuste
+        solo con los cortes por encima de la mordida. Con cortes sueltos el camino de
+        siempre cae en poses visiblemente erróneas; con la serie completa registra mejor
+        que el nuevo, y por eso se queda. El registrador va en
+        `informe["registrador"]` para que `fuse` lo use; si no se puede (sin esmalte, sin
+        contornos, ejes sin medir), se cae al camino de siempre y se dice por qué.
         """
         import numpy as np
         from export_agents import densidad_a_hu
+        from export_agents.anatomia import anatomical_frame
+        from fusion_agents.por_cortes import SerieDensa, prepara_por_cortes
 
         snapshot = result.snapshot
         if snapshot is None or snapshot.surface_ref is None:
@@ -510,6 +523,38 @@ class IngestionPipeline:
         if arcada is None and malla is not None:
             arcada = arcada_del_nombre(malla)
 
+        sin_por_cortes: str | None = None
+        if etiquetas_origen is not None and hu is not None:
+            etq = np.asarray(etiquetas_origen, dtype=np.int64)
+            if len(etq) != len(vertices):
+                sin_por_cortes = (
+                    f"las etiquetas del escáner ({len(etq)}) no corresponden a sus "
+                    f"{len(vertices)} vértices"
+                )
+            else:
+                base, motivo = anatomical_frame(np.asarray(vertices), etq)
+                if base is None:
+                    sin_por_cortes = motivo
+                else:
+                    try:
+                        origen, destino, registrador, informe = prepara_por_cortes(
+                            campo, hu, np.asarray(vertices)[etq > 0],
+                            np.stack([base.derecha, base.anterior, base.superior]),
+                            base.arcada,
+                        )
+                    except SerieDensa:
+                        # Con la serie completa el camino de siempre registra mejor
+                        # (medido en `histora`): no hay nada que declarar.
+                        pass
+                    except ValueError as exc:
+                        sin_por_cortes = str(exc)
+                    else:
+                        informe["registrador"] = registrador
+                        informe["arcada"] = arcada or (
+                            "maxilar" if base.arcada == "upper" else "mandibular"
+                        )
+                        return origen, destino, informe
+
         # `registrar=icp` activa el árbitro: el umbral del objetivo se ELIGE midiendo,
         # porque está medido que ninguno vale para las dos arcadas, que el barrido no es
         # monótono, y que el rms del ICP no distingue entre poses buenas y malas.
@@ -522,6 +567,12 @@ class IngestionPipeline:
             corona_origen=corona_origen,
             registrar=icp,
         )
+        if sin_por_cortes is not None:
+            informe["sin_por_cortes"] = (
+                "no se pudo registrar por cortes con pose anatómica "
+                f"({sin_por_cortes}): se usa el ICP de siempre, que con una serie "
+                "dispersa puede converger a una pose errónea sin que el residuo lo note"
+            )
         if hu is not None and "n_corona" not in informe:
             informe["sin_corona"] = (
                 "el campo no tiene bastantes gaussianas de corona: se registra contra "
@@ -544,7 +595,9 @@ class IngestionPipeline:
                 "el escaneo no declara arcada (el nombre del fichero no la lleva): se "
                 "registra contra las dos, y el residuo del ICP no distingue una de otra"
             )
-        for clave in ("no_se_parte", "sin_corona", "sin_arbitro"):
+        if "registrador" in informe:
+            return motivos_por_cortes(informe)
+        for clave in ("no_se_parte", "sin_corona", "sin_arbitro", "sin_por_cortes"):
             if clave in informe:
                 motivos.append(str(informe[clave]))
         return motivos
@@ -559,6 +612,7 @@ class IngestionPipeline:
         arcada: str | None = None,
         dos_arcadas: bool = False,
         corona_origen: Any | None = None,
+        etiquetas_origen: Any | None = None,
         detected: Mapping[str, float] | None = None,
     ) -> PipelineResult:
         """Aplica las etapas de fusión sobre un resultado de ingesta.
@@ -594,7 +648,7 @@ class IngestionPipeline:
         if snapshot is not None and registration is None and malla is not None:
             preparado = self.prepara_registro(
                 result, malla=malla, arcada=arcada, dos_arcadas=dos_arcadas,
-                corona_origen=corona_origen,
+                corona_origen=corona_origen, etiquetas_origen=etiquetas_origen,
             )
             if preparado is not None:
                 origen, destino, informe = preparado
@@ -603,6 +657,14 @@ class IngestionPipeline:
                 # Este camino ES intraoral↔CBCT por construcción: la malla la trae un
                 # escáner y el destino sale del campo del CBCT. Ahí manda el otro ε.
                 agente_geo = self.fusion_ios_cbct
+                if "registrador" in informe:
+                    # Mismo ε y mismo gate; cambia solo cómo se busca la pose.
+                    agente_geo = GeometricFusionAgent(
+                        epsilon_mm=EPSILON_IOS_CBCT_MM,
+                        registrar=informe["registrador"],
+                        hitl_threshold=self.hitl_threshold,
+                        quarantine_dir=self.quarantine_dir,
+                    )
 
         if snapshot is not None and registration is not None:
             origen, destino = registration

@@ -626,6 +626,17 @@ FusionOutput
   that the photo↔mesh error is **non-rigid** (ICP stalled at IoU ≈ 0.55), so it is not the
   same problem as rigid registration. With a bare mesh or a grey *placeholder* the result
   is **absence of colour**, which is a valid answer and not a bug.
+- ⚠️ `geometric-fusion-agent` — **a sparse CBCT series is registered by slices, with an
+  anatomical starting pose.** When the scanner carries FDI labels and the field has gaps in
+  the crown band, `fusion_agents.por_cortes` replaces the identity-start ICP: the initial
+  rotation comes from the scanner's FDI axes and the DICOM patient axes, and an inverse ICP
+  (CBCT tooth contour → scanner surface) uses only the slices 1.5–6 mm above the bite. On
+  the second clinical case the old path left the arch visibly rotated (median
+  crown→enamel 4.92 mm, 3.6 % overlap); the new one 1.59 mm. With the whole series it
+  registers worse (`histora` upper 1.41 → 2.24 mm), so dense series keep the old path. Height
+  is the worst-measured direction, and the gate gets how much the pose moves across contour
+  thresholds rather than the residual. See
+  [the research note](docs/research/registro-por-cortes.md).
 - `geometric-fusion-agent` — **the ICP residual is still not a TRE.** Since 2026-10-10,
   `fusion_agents.tre` and `scripts/tre_puntos.py` measure target registration error from
   landmarks that specialists mark outside the system, per
@@ -655,6 +666,7 @@ FusionOutput
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Initial registration. ADR 004; `RigidTransform` in `core-schemas` (contract 1.3.0); complete semantic fusion; geometric fusion with multiscale ICP (coarse stage missing); idempotent insertion into the time series; wired into the orchestrator. |
 | 2026-08-10 | 0.2.0 (geometric) | Registration measured against a real patient with CBCT + scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). Confidence now comes from the **overlapping population**, ε becomes **per modality pair** (0.5 mm volume-derived · 1.5 mm intraoral↔CBCT), a **minimum overlap** gate is added, and the **coarse stage** (`icp_global`) ADR 004 left pending is implemented. Additive: a registrar that does not measure overlap behaves exactly as before. |
+| 2026-11-09 | 0.2.0 (geometric) | Registration by slices for sparse CBCT series (`fusion_agents.por_cortes`): anatomical starting pose from FDI and DICOM axes, inverse ICP restricted to the band above the bite, and a gate reason with the slice count, the gaps and the pose spread across contour thresholds. Used only when the scanner has FDI labels and the series is sparse; dense series keep the old path, which is measured better there. No contract change. |
 
 ---
 
