@@ -31,6 +31,7 @@ from fusion_agents.tre import (  # noqa: E402
     a_coordenadas_stl,
     consenso,
     lee_puntos,
+    sobre_cortes,
     tre_de_registro,
     tre_por_puntos,
 )
@@ -50,6 +51,23 @@ def registro_del_volumen(manifiesto, ident: str | None) -> tuple[str, np.ndarray
         if (r.id == ident) if ident else (r.source_frame == volumen.frame):
             return r.id, np.asarray(r.transform_4x4_row_major), r.source_frame, r.target_frame
     raise SystemExit("No hay registro desde el frame del volumen")
+
+
+def alturas_de_la_serie(directorio: Path) -> np.ndarray:
+    """La z (LPS) de cada corte, leída de las cabeceras sin descodificar píxeles."""
+    import pydicom
+
+    alturas = []
+    for f in sorted(p for p in Path(directorio).iterdir() if p.is_file()):
+        try:
+            ds = pydicom.dcmread(f, stop_before_pixels=True)
+        except Exception:  # noqa: BLE001 — un fichero que no es DICOM no es un corte
+            continue
+        if "ImagePositionPatient" in ds:
+            alturas.append(float(ds.ImagePositionPatient[2]))
+    if not alturas:
+        raise SystemExit(f"{directorio} no tiene cortes DICOM con posición")
+    return np.asarray(alturas)
 
 
 def _tabla(resumen: dict) -> list[str]:
@@ -91,6 +109,21 @@ def informe_md(resultado: dict) -> str:
                    "Residuo en los puntos de ajuste: "
                    f"{fit['fiducial_residual'].get('rms_mm', 0):.2f} mm RMS. Es un residuo, "
                    "no un error de registro.", ""]
+    cortes = resultado.get("cbct_slices")
+    if cortes:
+        lineas += ["## Puntos del CBCT y cortes reales", "",
+                   f"La serie tiene {cortes['slices']} cortes. Un punto a más de "
+                   f"{cortes['per_observer'][0]['tolerance_mm']} mm de un corte real está "
+                   "sobre imagen interpolada por el visor y no cuenta.", ""]
+        for o in cortes["per_observer"]:
+            fuera = o["off_slice_mm"]
+            suelo = o["height_floor_mm"]
+            media = sum(suelo.values()) / len(suelo) if suelo else 0.0
+            lineas.append(f"- `{o['file']}`: {len(suelo)} sobre corte real"
+                          + (f", excluidos {sorted(fuera)}" if fuera else "")
+                          + f". Suelo medio del error vertical {media:.2f} mm (mitad del "
+                          "hueco con el corte vecino).")
+        lineas.append("")
     lineas += ["## Acuerdo entre observadores", ""]
     for lado, nombre in (("cbct", "CBCT"), ("ios", "Escáner")):
         d = obs[lado]
@@ -120,12 +153,27 @@ def main() -> int:
     ap.add_argument("--ajuste", default="",
                     help="Etiquetas separadas por comas para un registro por puntos.")
     ap.add_argument("--registro", help="Id del registro; por defecto, el del volumen.")
+    ap.add_argument("--cbct-serie", type=Path,
+                    help="Directorio de la serie DICOM marcada. Con él, los puntos del CBCT "
+                         "que no están sobre un corte real se excluyen y se declaran. "
+                         "Imprescindible si la serie tiene huecos.")
     ap.add_argument("--salida", type=Path, required=True)
     args = ap.parse_args()
 
     manifiesto = read_manifest(args.uos)
     ident, matriz, origen, destino = registro_del_volumen(manifiesto, args.registro)
-    cbct, disp_cbct = consenso([lee_puntos(p, args.sistema_csv) for p in args.cbct_puntos])
+    listas_cbct = [lee_puntos(p, args.sistema_csv) for p in args.cbct_puntos]
+    cortes: dict | None = None
+    if args.cbct_serie is not None:
+        alturas = alturas_de_la_serie(args.cbct_serie)
+        cortes = {"slices": len(alturas), "per_observer": []}
+        filtradas = []
+        for ruta, lista in zip(args.cbct_puntos, listas_cbct, strict=True):
+            buenos, info = sobre_cortes(lista, alturas)
+            filtradas.append(buenos)
+            cortes["per_observer"].append({"file": ruta.name, **info})
+        listas_cbct = filtradas
+    cbct, disp_cbct = consenso(listas_cbct)
     ios_lps, disp_ios = consenso([lee_puntos(p, args.sistema_csv) for p in args.ios_puntos])
     ios = a_coordenadas_stl(ios_lps, args.stl_cargado_como)
 
@@ -135,6 +183,7 @@ def main() -> int:
         "stl_loaded_as": args.stl_cargado_como.upper(),
         "observers": {"cbct": disp_cbct, "ios": disp_ios},
         "existing_registration": tre_de_registro(cbct, ios, matriz),
+        "cbct_slices": cortes,
         "scope": ("TRE on expert landmarks for this case only; not general system accuracy, "
                   "not physical calibration. Not written into the .uos."),
     }

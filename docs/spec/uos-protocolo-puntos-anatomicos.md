@@ -57,13 +57,32 @@ coordenadas. Si se mide con el convenio equivocado, el TRE sale de decenas de mi
 parece un registro muy malo. En una prueba con el caso real, el mismo conjunto de puntos dio
 0,00 mm con el convenio correcto y 98 mm con el contrario.
 
+## Series con huecos
+
+Algunas exportaciones traen solo una selección de cortes, con huecos de varios milímetros.
+Dos consecuencias:
+
+1. **El visor rellena los huecos.** Al cargar una serie con espaciado irregular, Slicer
+   ofrece regularizar la geometría (*Acquisition geometry regularization*, en los ajustes
+   DICOM). Hay que regularizarla: sin eso coloca los cortes a distancias iguales y la altura
+   de cada punto sale mal. Pero regularizar también muestra imagen interpolada entre dos
+   cortes lejanos. **Los puntos se marcan solo sobre cortes reales**; al observador se le da
+   la lista de sus alturas en la zona de las coronas.
+2. **La altura de un punto vale lo que el hueco a su alrededor.** La punta de una cúspide
+   puede estar entre su corte y el siguiente.
+
+`tre_puntos.py --cbct-serie <directorio>` lee la altura de cada corte de las cabeceras,
+excluye los puntos a más de 0,05 mm de un corte real y declara, por punto, la mitad del <!--const:TOLERANCIA_CORTE_MM-->
+mayor hueco con sus cortes vecinos como suelo de su error vertical.
+
 ## Medida
 
 ```
 uv run python scripts/tre_puntos.py --uos <caso>.uos \
     --cbct-puntos obs1-cbct.mrk.json --cbct-puntos obs2-cbct.mrk.json \
     --ios-puntos obs1-ios.mrk.json --ios-puntos obs2-ios.mrk.json \
-    --stl-cargado-como lps --salida data/processed/<caso>/tre
+    --stl-cargado-como lps --cbct-serie <directorio-de-la-serie> \
+    --salida data/processed/<caso>/tre
 ```
 
 El script evalúa el registro que el `.uos` declara desde el volumen DICOM hacia el escáner.
