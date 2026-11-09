@@ -160,10 +160,20 @@ REFINAMIENTOS: dict[str, tuple[str, Callable[..., np.ndarray]]] = {
     "M5": ("limpieza + ancla_al_pliegue", lambda p, f, e: ancla_al_pliegue(p, f, e)[0]),
     "M6": ("limpieza + reparte + ancla_al_pliegue",
            lambda p, f, e: ancla_al_pliegue(p, f, reparte_por_geodesica(p, f, e))[0]),
+    # Segundo intento (2026-11-09): las dos formas de recortar menos corona que se probaron
+    # en `dev`. Ver `VARIANTES_SEGUNDO_INTENTO` y la nota de investigación, §6.7.
+    "M7": ("limpieza + ancla_al_pliegue, núcleo 0,4",
+           lambda p, f, e: ancla_al_pliegue(p, f, e, nucleo=0.4)[0]),
+    "M8": ("limpieza + ancla_al_pliegue, pliegue ≥ 2,0",
+           lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=2.0)[0]),
 }
 # Los que además se prueban sobre las etiquetas del EXPERTO: un método que estropea la
 # verdad de campo no puede estar arreglando nada.
-SOBRE_EXPERTO: dict[str, tuple[str, str]] = {"E2": ("experto + ancla_al_pliegue", "M5")}
+SOBRE_EXPERTO: dict[str, tuple[str, str]] = {
+    "E2": ("experto + ancla_al_pliegue", "M5"),
+    "E3": ("experto + ancla_al_pliegue, núcleo 0,4", "M7"),
+    "E4": ("experto + ancla_al_pliegue, pliegue ≥ 2,0", "M8"),
+}
 
 MAYOR_ES_MEJOR = ("binary_agreement", "binary_iou", "fdi_agreement", "tooth_fdi_agreement")
 
@@ -221,7 +231,23 @@ def _evalua(par: tuple[str, str]) -> dict:
 # dientes conservan < 85 % de su corona» sin distinguir las piezas que el modelo ya traía
 # rotas: en `dev` son 5 de 520 antes de aplicar ningún método. Lo que el criterio quiere
 # impedir es que el método rompa piezas, así que cuenta las que pasan de ≥ 85 % a < 85 %.
-CANDIDATO, BASE, SOBRE_VERDAD = "M5", "M1", "E2"
+CANDIDATO, BASE = "M5", "M1"
+
+# ⚠️ **Segundo intento, regla fijada el 2026-11-09 antes de ejecutar `M7` y `M8` en `dev`.**
+# `M5` falló A3 en `eval` (+1,51 puntos de falsa encía y 13 de 1065 piezas dañadas), y en
+# `dev` había salido aproximadamente 1,5 veces mejor. Así que en `dev` se exige holgura:
+#
+# 1. Pasan a `eval` solo las variantes que en `dev` cumplen A1-A6 con A3 a la mitad de su
+#    límite: subida de falsa encía ≤ 0,5 puntos y piezas dañadas ≤ 0,5 %.
+# 2. Si pasan las dos, se elige la de menos falso diente, que es el defecto que el método
+#    existe para corregir. Si no pasa ninguna, no se toca `eval`.
+# 3. `eval` se ejecuta UNA vez, con la elegida y los mismos umbrales A1-A6. Es su SEGUNDO uso
+#    para el margen, y se declara: tres variantes de un mismo método juzgadas sobre pacientes
+#    que ya informaron la primera.
+VARIANTES_SEGUNDO_INTENTO = ("M7", "M8")
+HOLGURA_DEV = 0.5
+# Cada candidato con su fila sobre etiquetas de experto, para A6.
+VERDAD_DE = {origen: clave for clave, (_, origen) in SOBRE_EXPERTO.items()}
 MEJORA_MINIMA_ARCADAS = 0.75
 RETROCESO_TOLERADO = 0.005
 ARCADAS_CON_RETROCESO = 0.10
@@ -241,34 +267,39 @@ def _medida(fila: dict, metodo: str, *ruta: str) -> float | None:
     return float(valor)
 
 
-def _pares(filas: list[dict], *ruta: str) -> np.ndarray:
+def _pares(filas: list[dict], *ruta: str, candidato: str = CANDIDATO) -> np.ndarray:
     """`(candidato, base)` por arcada, solo donde las dos medidas existen."""
-    pares = [(_medida(f, CANDIDATO, *ruta), _medida(f, BASE, *ruta)) for f in filas]
+    pares = [(_medida(f, candidato, *ruta), _medida(f, BASE, *ruta)) for f in filas]
     return np.array([(c, b) for c, b in pares if c is not None and b is not None])
 
 
-def criterios(filas: list[dict]) -> dict:
+def criterios(filas: list[dict], candidato: str = CANDIDATO) -> dict:
     """El veredicto A1-A6 del candidato frente al pipeline de hoy."""
-    if not all(CANDIDATO in f["methods"] and SOBRE_VERDAD in f["methods"] for f in filas):
+    sobre_verdad = VERDAD_DE[candidato]
+    if not all(candidato in f["methods"] and sobre_verdad in f["methods"] for f in filas):
         return {}
-    margen = _pares(filas, "margin", "symmetric_p50_mm")
+
+    def _pares_c(filas: list[dict], *ruta: str) -> np.ndarray:
+        return _pares(filas, *ruta, candidato=candidato)
+
+    margen = _pares_c(filas, "margin", "symmetric_p50_mm")
     d_margen = margen[:, 0] - margen[:, 1]
     acuerdos = {}
     for nombre in ("binary_agreement", "fdi_agreement"):
-        par = _pares(filas, nombre)
+        par = _pares_c(filas, nombre)
         d = par[:, 0] - par[:, 1]
         acuerdos[nombre] = {"mean_diff": float(d.mean()),
                             "arches_below": float((d < -RETROCESO_TOLERADO).mean())}
-    encia = _pares(filas, "false_gum_rate")
+    encia = _pares_c(filas, "false_gum_rate")
     piezas = nuevas = 0
     for f in filas:
-        antes, despues = f["methods"][BASE]["per_tooth"], f["methods"][CANDIDATO]["per_tooth"]
+        antes, despues = f["methods"][BASE]["per_tooth"], f["methods"][candidato]["per_tooth"]
         piezas += len(antes)
         nuevas += sum(1 for t, v in antes.items() if v["retained"] >= CORONA_MINIMA
                       and despues[t]["retained"] < CORONA_MINIMA)
-    etiquetado = _pares(filas, "labelled_fraction", "paired_diff_area")
-    anchos = {q: _pares(filas, "width_error_mm", q) for q in ("p50", "p90")}
-    verdad = np.array([_medida(f, SOBRE_VERDAD, "binary_agreement") for f in filas])
+    etiquetado = _pares_c(filas, "labelled_fraction", "paired_diff_area")
+    anchos = {q: _pares_c(filas, "width_error_mm", q) for q in ("p50", "p90")}
+    verdad = np.array([_medida(f, sobre_verdad, "binary_agreement") for f in filas])
     a = {
         "A1_margin": {
             "improved_fraction": float((d_margen < 0).mean()),
@@ -299,7 +330,7 @@ def criterios(filas: list[dict]) -> dict:
             "agreement": float(verdad.mean()),
             "pass": bool(verdad.mean() >= ACUERDO_SOBRE_VERDAD)},
     }
-    a["candidate"], a["baseline"] = CANDIDATO, BASE
+    a["candidate"], a["baseline"] = candidato, BASE
     a["all_pass"] = all(v["pass"] for k, v in a.items() if k.startswith("A"))
     return a
 
@@ -485,7 +516,7 @@ def evalua(args: argparse.Namespace) -> int:
                       [f["methods"]["M0"] for f in filas if f["jaw"] == jaw]
                   )["teeth_majority_correct_fraction"]}
             for jaw in ARCADAS},
-        "acceptance": criterios(filas),
+        "acceptance": criterios(filas, args.candidato),
         "scope": "Teeth3DS+ held-out patients only; not the project's clinical cases",
     }
     destino_json = args.json or SALIDA / f"resumen-{args.split}.json"
@@ -514,6 +545,9 @@ def main() -> int:
             sub.add_argument("--trabajos", type=int, default=4)
             sub.add_argument("--reanuda", action="store_true",
                              help="Reutiliza las arcadas ya evaluadas de este split.")
+            sub.add_argument("--candidato", choices=sorted(VERDAD_DE), default=CANDIDATO,
+                             help="Fila que juzgan los criterios A1-A6. Se elige ANTES de "
+                                  "ejecutar `eval`: ver `VARIANTES_SEGUNDO_INTENTO`.")
             sub.add_argument("--json", type=Path)
             sub.add_argument("--md", type=Path)
     args = ap.parse_args()
