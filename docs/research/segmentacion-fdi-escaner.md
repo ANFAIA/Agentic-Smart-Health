@@ -373,6 +373,48 @@ En el caso clínico, con razón 0,62, numera 12 de 14 piezas como las curvas rev
 ninguna desplazada, frente a 7 y 4 con la referencia de agosto. `eval` queda gastado también
 para esta hipótesis.
 
+### 6.7 · Recortar menos corona: segundo intento, parado en `dev` (2026-11-09)
+
+`ancla_al_pliegue` falló A3 en `eval` por recortar corona de más (§6.2). En `dev` el daño se
+concentra: de 346 piezas movidas, el 95 % de lo que cede era encía del experto y solo 3
+pierden más del 15 % de su corona, dos últimos molares y un canino, donde el corte sigue un
+pliegue fuerte que no es el cuello. Se probaron dos formas de recortar menos: proteger más
+corona (`M7`, núcleo 0,4) y exigir un pliegue más marcado (`M8`, fuerza ≥ 2,0).
+
+Antes de ejecutarlas se fijó una regla en `scripts/benchmark_margen.py`
+(`VARIANTES_SEGUNDO_INTENTO`): como `eval` había salido unas 1,5 veces peor que `dev`, una
+variante solo pasa a `eval` si en `dev` cumple A1-A6 con A3 a la mitad de su límite.
+
+| `dev`, 40 arcadas | Falso diente | Subida de falsa encía | Piezas dañadas | ¿Holgura? |
+|---|---:|---:|---:|---|
+| `M5`, el método | 0,202 | +1,00 puntos | 5 de 520 | no |
+| `M7`, núcleo 0,4 | 0,295 | +0,60 | 2 (0,38 %) | no |
+| `M8`, pliegue ≥ 2,0 | 0,306 | +0,58 | 4 (0,77 %) | no |
+
+**Ninguna pasa, así que `eval` no se ha tocado.** Las tres cumplen A1-A6 en `dev`, y las dos
+variantes pagan el recorte de menos dejando un 50 % más de encía etiquetada como diente.
+
+**Sobre el caso clínico, con una línea trazada a ciegas.** Una periodoncista marcó las 14
+piezas en 3D Slicer sin ver la salida del pipeline. Su línea y la de la segunda anotación,
+propuesta por una IA y revisada por otra dentista, distan 0,15 mm de mediana: es el suelo de
+la medida. Contra la línea a ciegas, con la numeración votada:
+
+| | Margen → línea, p50 | Encía marcada diente | Corona marcada encía | Piezas < 85 % |
+|---|---:|---:|---:|---:|
+| Sin método | 3,53 mm | 51,9 % | 0,0 % | 0 de 14 |
+| `M5` | **0,19 mm** | 21,1 % | 1,6 % | 0 de 14 |
+| `M7` | 3,03 mm | 47,3 % | 0,3 % | 0 de 14 |
+| `M8` | 1,80 mm | 36,8 % | 0,9 % | 0 de 14 |
+
+`M5` mueve 11 de 14 piezas y las deja todas a menos de 0,3 mm de la línea; declina el 11, el 12 y
+el 22, que siguen desbordados entre 1,8 y 4 mm. La pieza que más corona pierde conserva el
+94 %. La numeración votada coincide pieza a pieza con la línea a ciegas.
+
+Lectura: en este caso el método hace lo que promete y su defecto en Teeth3DS+, recortar de
+más, no aparece. Es **un caso y una anotadora**: no deshace el fallo de A3 sobre 80 arcadas
+y no es validación clínica. Las variantes prudentes no se adoptan: no pasan la regla en
+`dev` y en el caso devuelven casi todo el desborde. El método sigue apagado por defecto.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
