@@ -415,6 +415,36 @@ más, no aparece. Es **un caso y una anotadora**: no deshace el fallo de A3 sobr
 y no es validación clínica. Las variantes prudentes no se adoptan: no pasan la regla en
 `dev` y en el caso devuelven casi todo el desborde. El método sigue apagado por defecto.
 
+### 6.8 · Las piezas que el método declina: tercer intento, parado en `dev` (2026-11-10)
+
+En el caso clínico, `M5` deja el 11, el 12 y el 22 desbordados entre 3,5 y 4 mm porque su
+surco no llega a los umbrales (`weak_crease`). En `dev` pasa lo mismo a escala: declina 193
+de 544 piezas, y esas concentran casi todo el error que queda.
+
+| `dev`, `M5` | Piezas | Margen → experto, mediana | Encía marcada diente, mediana |
+|---|---:|---:|---:|
+| Declinadas | 193 | 2,16 mm | 54 mm² |
+| Movidas | 351 | 0,08 mm | 1,2 mm² |
+
+Los umbrales del método (fuerza 1,5, cobertura 0,75) están por encima, a propósito, del
+percentil 5 del margen del experto (1,34 y 0,65). `M9` acepta las piezas con un surco tan
+claro como ese. Los criterios se fijaron antes de ejecutar, comparando con `M5` porque
+ninguno de los dos cumple A3 frente a `M1`. Al elegir la variante ya se conocían los valores
+del caso: con estos umbrales pasarían el 11 y el 12, y no el 22.
+
+| Criterio, `M9` frente a `M5` | Límite | Resultado | |
+|---|---|---|---|
+| R1 · margen de las piezas que ahora acepta | baja a la mitad y mejora el 75 % | 41 piezas: 1,57 → 0,12 mm, mejoran todas | pasa |
+| R2 · piezas que pasan a < 85 % de corona | ≤ 0,5 % | 5 de 520, 0,96 % | **falla** |
+| R3 · subida de falsa encía | ≤ 0,5 puntos | +0,36 | pasa |
+| R4 · acuerdo sobre etiquetas del experto | ≥ 0,99 | 0,997 | pasa |
+
+**Falla R2, así que no se aplica al caso clínico y las líneas de las anotadoras no se han
+usado.** Las cinco piezas dañadas son de la arcada inferior: cuatro molares (36 y 37) y un
+canino (43), con un surco aceptado de cobertura 0,65-0,74 que no es el cuello. En la arcada
+superior no se daña ninguna. Esa observación es posterior al resultado: una regla que la use
+estaría ajustada sobre `dev`, y su única prueba independiente que queda es el caso clínico.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

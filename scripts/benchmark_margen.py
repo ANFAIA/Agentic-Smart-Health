@@ -166,6 +166,11 @@ REFINAMIENTOS: dict[str, tuple[str, Callable[..., np.ndarray]]] = {
            lambda p, f, e: ancla_al_pliegue(p, f, e, nucleo=0.4)[0]),
     "M8": ("limpieza + ancla_al_pliegue, pliegue ≥ 2,0",
            lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=2.0)[0]),
+    # Tercer intento (2026-11-10): aceptar las piezas cuyo surco es tan claro como el del
+    # experto en su percentil 5. Parado en `dev` por dañar piezas; ver §6.8 de la nota.
+    "M9": ("limpieza + ancla_al_pliegue, surco como el del experto",
+           lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=1.34,
+                                            cobertura_minima=0.65)[0]),
 }
 # Los que además se prueban sobre las etiquetas del EXPERTO: un método que estropea la
 # verdad de campo no puede estar arreglando nada.
@@ -173,6 +178,7 @@ SOBRE_EXPERTO: dict[str, tuple[str, str]] = {
     "E2": ("experto + ancla_al_pliegue", "M5"),
     "E3": ("experto + ancla_al_pliegue, núcleo 0,4", "M7"),
     "E4": ("experto + ancla_al_pliegue, pliegue ≥ 2,0", "M8"),
+    "E5": ("experto + ancla_al_pliegue, surco como el del experto", "M9"),
 }
 
 MAYOR_ES_MEJOR = ("binary_agreement", "binary_iou", "fdi_agreement", "tooth_fdi_agreement")
