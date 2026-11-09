@@ -438,6 +438,23 @@ def test_un_escaneo_que_no_dice_su_arcada_llega_al_gate(
     assert any("no declara arcada" in m for m in fusionado.hitl_reasons)
 
 
+def test_unas_etiquetas_que_no_son_de_ese_escaneo_se_declaran_y_no_se_usan(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """Con `etiquetas_origen` se intenta el registro por cortes; si no se puede, se dice.
+
+    Caer al ICP de siempre sin decirlo sería el fallo caro: con una serie dispersa ese
+    camino converge a poses erróneas y su residuo no lo nota.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(
+        result, malla=case_dir / "arcada.obj", etiquetas_origen=np.zeros(3, dtype=int)
+    )
+
+    assert fusionado.snapshot.provenance.transform is not None
+    assert any("registrar por cortes" in m for m in fusionado.hitl_reasons)
+
+
 def test_las_nubes_dadas_a_mano_mandan_sobre_la_preparacion(
     pipeline: IngestionPipeline, case_dir: Path
 ) -> None:

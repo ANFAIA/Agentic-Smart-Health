@@ -719,7 +719,10 @@ def main() -> int:
         # FOV completo trae maxilar y mandíbula, y el escaneo intraoral es de una sola.
         # El dato no puede deducirlo —en oclusión no hay valle que encontrar—, así que lo
         # dice quien tiene el contexto. Ver `fusion_agents.preparacion`.
-        fus = pipe.fuse(r, malla=caso.mesh, dos_arcadas=True)
+        # Con `--fdi`, las etiquetas del escáner dan su base anatómica y el registro va
+        # por cortes: pose inicial medida en las dos modalidades y ajuste solo por encima
+        # de la mordida. Ver `fusion_agents.por_cortes`.
+        fus = pipe.fuse(r, malla=caso.mesh, dos_arcadas=True, etiquetas_origen=etq_ios)
         for o in fus.fusion:
             print(linea(o))
         for a in fus.analysis:
