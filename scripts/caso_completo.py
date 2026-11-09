@@ -502,8 +502,9 @@ def main() -> int:
         help="Anclar el margen corona-encía de las etiquetas del escáner al surco "
              "cervical (`analysis_agents.frontera.ancla_al_pliegue`). `propone` calcula "
              "qué movería y lo declara sin cambiar nada; `aplica` lo cambia. Por defecto "
-             "`no`: está medido sobre Teeth3DS+ y sin anotación propia con la que "
-             "puntuarlo en un caso clínico.",
+             "`no`: en Teeth3DS+ recorta corona de más, por encima del límite fijado. "
+             "Su acierto sobre un caso concreto solo lo dice una línea trazada sobre ese "
+             "caso: ver `scripts/puntua_margen.py`.",
     )
     ap.add_argument("--reusa-apariencia-uos", type=Path,
                     help="UOS anterior del mismo escaneo; recupera sus tonos sin reentrenar.")
@@ -656,7 +657,9 @@ def main() -> int:
             motivos_margen.append(
                 f"margen gingival {'anclado' if aplica else 'propuesto, NO aplicado'} al "
                 f"surco cervical en {len(_movidas)} piezas ({_cedidos:,} vértices): es una "
-                "corrección geométrica medida sobre otro escáner, sin anotación propia")
+                "corrección geométrica ajustada sobre Teeth3DS+, donde recorta corona de "
+                "más; su acierto en este caso solo lo dice una línea trazada sobre él "
+                "(scripts/puntua_margen.py)")
             if _declinadas:
                 motivos_margen.append(
                     "margen gingival sin surco claro, frontera sin corregir en las piezas "
