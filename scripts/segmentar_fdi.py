@@ -51,6 +51,7 @@ paciente y otra patología.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -76,9 +77,11 @@ from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 RESUMEN_EN = "Labels each tooth in a dental arch with its FDI code."
 
 RAIZ = Path(__file__).resolve().parent.parent
-for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-aggregation"):
+for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-aggregation",
+                 "analysis-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))
 
+from analysis_agents.pose_votada import confianza, vota  # noqa: E402
 from fusion_agents.marco import a_marco_de, marco_arcada, marco_canonico  # noqa: E402
 from ingestion_agents import ArtifactStore, MeshAgent  # noqa: E402
 from tooth_aggregation import aggregate_teeth  # noqa: E402
@@ -293,6 +296,22 @@ def etiquetas_de(instancias, n: int) -> np.ndarray:
     return etiquetas
 
 
+def referencias_de_entrenamiento(n: int, arcada: str) -> list[Path]:
+    """Los OBJ de los `n` primeros pacientes de ENTRENAMIENTO, con la partición del modelo.
+
+    De entrenamiento a propósito: solo prestan su pose, y así ninguna arcada de `dev` ni de
+    `eval` hace de referencia de sí misma en el banco de pruebas.
+    """
+    spec = importlib.util.spec_from_file_location("benchmark_margen",
+                                                  RAIZ / "scripts/benchmark_margen.py")
+    assert spec and spec.loader
+    bm = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, bm)
+    spec.loader.exec_module(bm)
+    ids = bm.particion(bm.pacientes())["train"][:n]
+    return [bm.MALLAS / p / f"{p}_{arcada}.obj" for p in ids]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -302,9 +321,13 @@ def main() -> int:
     ap.add_argument("--salida", type=Path, required=True)
     ap.add_argument("--checkpoint", type=Path,
                     default=RAIZ / "data/processed/a3-checkpoints/normales-ce-baseline.pt")
-    ap.add_argument("--referencia", type=Path, default=None,
+    ap.add_argument("--referencia", type=Path, action="append", default=None,
                     help="OBJ de Teeth3DS+ que define la pose esperada por el modelo. "
-                         "Sin él no se canoniza, que es lo que rompe la inferencia.")
+                         "Sin él no se canoniza, que es lo que rompe la inferencia. "
+                         "Repetible: con varias, se vota entre las más confiadas.")
+    ap.add_argument("--referencias-entrenamiento", type=int, default=0, metavar="N",
+                    help="Usa como referencias los N primeros pacientes de entrenamiento de "
+                         "Teeth3DS+ (data/raw/teeth3ds). Recomendado: 18.")
     ap.add_argument("--sin-restringir", action="store_true",
                     help="No enmascarar la arcada contraria (para diagnóstico).")
     args = ap.parse_args()
@@ -320,26 +343,44 @@ def main() -> int:
     N = normales_vtk(arte["positions"].astype(np.float32), arte["faces"]).astype(np.float64)
     print(f"malla: {len(V):,} vertices · {len(arte['faces']):,} caras")
 
-    if args.referencia is not None:
-        lector = vtk.vtkOBJReader()
-        lector.SetFileName(str(args.referencia))
-        lector.Update()
-        V_ref = vtk_to_numpy(lector.GetOutput().GetPoints().GetData()).astype(np.float64)
-        origen = marco_canonico(V)[:2]
-        destino = marco_canonico(V_ref)[:2]
-        razon = marco_canonico(V)[2]
-        V_ent, N_ent = a_marco_de(V, origen, destino, normales=N)
-        print(f"pose canonizada · razon de orientacion {razon:.2f}"
-              + ("  ⚠ DUDOSA: desconfia del resultado" if razon > RAZON_DUDOSA else ""))
+    referencias = list(args.referencia or [])
+    if args.referencias_entrenamiento:
+        referencias += referencias_de_entrenamiento(args.referencias_entrenamiento, args.arcada)
+    origen = marco_canonico(V)
+    registro_pose: dict = {"orientation_ratio": float(origen[2]), "references": []}
+    if referencias:
+        print(f"pose canonizada contra {len(referencias)} referencia(s) · razon de "
+              f"orientacion {origen[2]:.2f}"
+              + ("  ⚠ DUDOSA" if origen[2] > RAZON_DUDOSA else ""))
+        segmentaciones, confianzas, logps, por_ref = {}, {}, {}, {}
+        for ruta in referencias:
+            lector = vtk.vtkOBJReader()
+            lector.SetFileName(str(ruta))
+            lector.Update()
+            V_ref = vtk_to_numpy(lector.GetOutput().GetPoints().GetData()).astype(np.float64)
+            V_ent, N_ent = a_marco_de(V, origen[:2], marco_canonico(V_ref)[:2], normales=N)
+            torch.manual_seed(0)
+            logp_r, inst_r = infiere(modelo, codigos, n_clases, V, V_ent, N_ent, args.arcada,
+                                     dev, restringir=not args.sin_restringir)
+            clave = ruta.stem
+            segmentaciones[clave] = etiquetas_de(inst_r, len(V)).astype(np.int64)
+            confianzas[clave] = confianza(logp_r, segmentaciones[clave])
+            logps[clave], por_ref[clave] = logp_r, inst_r
+        etiquetas_votadas, voto = vota(segmentaciones, confianzas)
+        mejor = voto["chosen"][0]
+        logp, instancias = logps[mejor], por_ref[mejor]
+        registro_pose.update(references=list(confianzas), vote=voto)
+        print("confianza por referencia: " + ", ".join(
+            f"{k} {v:.3f}" for k, v in voto["confidence"].items()))
+        print(f"votan: {', '.join(voto['chosen'])}")
     else:
         print("⚠ sin --referencia NO se canoniza la pose; si el escaner no escribe sus "
               "ejes como Teeth3DS+, la salida sera de la arcada equivocada.")
-        V_ent, N_ent = V, N
-
-    logp, instancias = infiere(
-        modelo, codigos, n_clases, V, V_ent, N_ent, args.arcada, dev,
-        restringir=not args.sin_restringir,
-    )
+        logp, instancias = infiere(
+            modelo, codigos, n_clases, V, V, N, args.arcada, dev,
+            restringir=not args.sin_restringir,
+        )
+        etiquetas_votadas = None
     _, _, P, _ = marco_arcada(V)
     filas = sorted(
         ({"fdi": int(t.fdi), "n": t.size, "x": float(P[t.vertices].mean(0)[0]),
@@ -364,13 +405,14 @@ def main() -> int:
         print(f"monotonia FDI vs posicion: rho {rho:+.2f} (p {p:.5f}) → "
               f"{'CONSISTENTE' if abs(rho) > 0.9 else 'NO consistente, desconfia'}")
 
-    etiquetas = etiquetas_de(instancias, len(V))
+    etiquetas = (etiquetas_de(instancias, len(V)) if etiquetas_votadas is None
+                 else etiquetas_votadas.astype(np.int16))
     np.save(args.salida / f"etiquetas_{args.arcada}.npy", etiquetas)
     np.save(args.salida / f"logprob_{args.arcada}.npy", logp.astype(np.float32))
     destino_json = args.salida / f"fdi_{args.arcada}.json"
     destino_json.write_text(
         json.dumps({"escaneo": args.escaneo.name, "arcada": args.arcada,
-                    "modelo": meta["name"], "monotonia_rho": rho,
+                    "modelo": meta["name"], "monotonia_rho": rho, "pose": registro_pose,
                     "instancias": filas}, indent=2),
         encoding="utf-8",
     )
