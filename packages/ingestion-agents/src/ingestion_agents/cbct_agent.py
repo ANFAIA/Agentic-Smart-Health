@@ -141,6 +141,55 @@ class Serie:
     """Origen LPS del plano axial; no se omite al convertir índices a milímetros."""
 
 
+# Un paso mayor que este múltiplo del mediano cuenta como corte ausente.
+SALTO_HUECO = 1.5
+
+
+def cuenta_huecos(z: np.ndarray) -> int:
+    """Cortes que faltan entre posiciones `z` ordenadas, deducidos del paso mediano."""
+    if len(z) <= 2:
+        return 0
+    pasos = np.diff(np.asarray(z, dtype=np.float64))
+    paso = float(np.median(pasos))
+    if paso <= 0:
+        return 0
+    anchos = pasos[pasos > paso * SALTO_HUECO]
+    return int(round(float((anchos / paso).sum()) - len(anchos)))
+
+
+def tramo_regular(z: np.ndarray) -> tuple[int, int]:
+    """`[inicio, fin)` del tramo más largo de cortes seguidos, sin ningún hueco dentro.
+
+    Sirve para lo que exige una rejilla regular —el segmentador del CBCT— sin interpolar:
+    en vez de inventar los cortes que faltan, se usan solo los que están seguidos. Un
+    corte ausente en la bóveda craneal deja así utilizable toda la zona dental. Si el
+    tramo cubre o no la región que interesa lo decide quien llama, que sabe cuál es.
+    """
+    z = np.asarray(z, dtype=np.float64)
+    if len(z) <= 2:
+        return 0, len(z)
+    pasos = np.diff(z)
+    paso = float(np.median(pasos))
+    saltos = np.flatnonzero(pasos > paso * SALTO_HUECO)
+    bordes = np.concatenate([[0], saltos + 1, [len(z)]])
+    k = int(np.argmax(np.diff(bordes)))
+    return int(bordes[k]), int(bordes[k + 1])
+
+
+def recorta_serie(serie: Serie, inicio: int, fin: int) -> Serie:
+    """La serie con solo los cortes `[inicio, fin)`. No toca píxeles ni posiciones.
+
+    `huecos` se recalcula sobre lo que queda, no se pone a cero por decreto: si el tramo
+    pedido tuviera un hueco dentro, seguiría constando.
+    """
+    from dataclasses import replace
+
+    if not 0 <= inicio < fin <= len(serie.z):
+        raise ValueError(f"tramo [{inicio}, {fin}) fuera de la serie de {len(serie.z)} cortes")
+    z = serie.z[inicio:fin]
+    return replace(serie, volume=serie.volume[inicio:fin], z=z, huecos=cuenta_huecos(z))
+
+
 def _caja_dental(
     volumen: np.ndarray, spacing, z: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray] | None:
@@ -241,13 +290,7 @@ def _read_series(directory: Path) -> Serie:
     # y el orquestador decide. Lo que no se hace es fingir que la serie está
     # completa, que es lo que pasaría si nadie mirase.
     posiciones = np.asarray([_z(ds) for ds in slices], dtype=np.float64)
-    huecos = 0
-    if len(posiciones) > 2:
-        pasos = np.diff(posiciones)
-        paso = float(np.median(pasos))
-        if paso > 0:
-            anchos = pasos[pasos > paso * 1.5]
-            huecos = int(round(float((anchos / paso).sum()) - len(anchos)))
+    huecos = cuenta_huecos(posiciones)
 
     first = slices[0]
     orientations = [getattr(ds, "ImageOrientationPatient", [1, 0, 0, 0, 1, 0])

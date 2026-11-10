@@ -228,7 +228,12 @@ def descubre(raiz: Path) -> CaseInput:
     )
 
 
-def _fabrica_segmentador(caso, args, almacen, etq):
+# Cuánto hacia arriba y hacia abajo de las coronas tiene que llegar el volumen para
+# segmentar: un diente entero mide 20-25 mm y no se sabe aún hacia qué lado va la raíz.
+MARGEN_SEGMENTACION_MM = 25.0
+
+
+def _fabrica_segmentador(caso, args, almacen, etq, motivos):
     """Devuelve la fábrica que el orquestador llamará **después** de registrar.
 
     El trabajo caro —ingerir el CBCT e inferir el volumen de probabilidad— se hace una vez,
@@ -244,7 +249,7 @@ def _fabrica_segmentador(caso, args, almacen, etq):
     import numpy as np
     from analysis_agents import SegmentadorDental
     from fusion_agents.registration import apply, quaternion_to_matrix
-    from ingestion_agents.cbct_agent import _read_series
+    from ingestion_agents.cbct_agent import _read_series, recorta_serie, tramo_regular
     from ingestion_agents.mesh_agent import parse_stl
 
     sys.path.insert(0, str(RAIZ / "scripts"))
@@ -253,16 +258,34 @@ def _fabrica_segmentador(caso, args, almacen, etq):
     V = np.asarray(parse_stl(caso.mesh)["positions"], dtype=np.float64)
 
     serie = _read_series(caso.cbct)
+    z_serie = (float(np.min(serie.z)), float(np.max(serie.z)))
     if serie.huecos:
-        raise ValueError(
-            "La inferencia CBCT requiere una rejilla regular: esta serie presenta "
-            "intervalos sin cortes. Ejecutar sin --modelo o aportar una reconstrucción "
-            "regular con su transformación documentada; no se interpolan datos aquí."
+        # El modelo necesita una rejilla regular y aquí no se interpola. Se usa el tramo
+        # más largo de cortes seguidos; si cubre los dientes lo decide la fábrica, que
+        # ya tiene la pose. Un corte ausente en la bóveda craneal no debería dejar sin
+        # segmentar una dentadura que está entera.
+        total = len(serie.z)
+        inicio, fin = tramo_regular(serie.z)
+        serie = recorta_serie(serie, inicio, fin)
+        if serie.huecos or fin - inicio < 2:
+            raise ValueError(
+                "La inferencia CBCT requiere una rejilla regular y esta serie no tiene un "
+                "tramo de cortes seguidos utilizable. Ejecutar sin --modelo o aportar una "
+                "reconstrucción regular; no se interpolan datos aquí."
+            )
+        motivos.append(
+            f"segmentación del CBCT sobre un tramo de cortes seguidos: {fin - inicio} de "
+            f"{total} cortes, z {serie.z[0]:.2f} a {serie.z[-1]:.2f} mm; el resto de la "
+            "serie tiene huecos y no se interpola"
         )
+        print(f"  segmentador: serie con huecos → tramo regular de {fin - inicio} de "
+              f"{total} cortes (z {serie.z[0]:.2f}…{serie.z[-1]:.2f} mm)")
     prob = probabilidad_por_modelo(serie.volume, args.modelo,
                                    espaciado=np.asarray(serie.spacing))
     sx, sy, _z = serie.spacing
     z_ord = np.sort(serie.z)
+    z_min, z_max = float(z_ord[0]), float(z_ord[-1])
+    medio_paso = float(serie.spacing[2]) / 2
 
     def sonda(origen_mm):
         """De mm a vóxel, para el `origin` que el campo del snapshot declare.
@@ -279,7 +302,9 @@ def _fabrica_segmentador(caso, args, almacen, etq):
             fil = np.clip(np.rint((p[:, 1] - serie.origin_xy[1]) / sy).astype(int),
                           0, prob.shape[1] - 1)
             cor = np.clip(np.searchsorted(z_ord, p[:, 2]), 0, prob.shape[0] - 1)
-            return prob[cor, fil, col]
+            # Fuera del volumen no hay medida: probabilidad 0, no la del corte del borde.
+            fuera = (p[:, 2] < z_min - medio_paso) | (p[:, 2] > z_max + medio_paso)
+            return np.where(fuera, 0.0, prob[cor, fil, col])
 
         return probabilidad_en
 
@@ -311,6 +336,19 @@ def _fabrica_segmentador(caso, args, almacen, etq):
         # Hace falta porque sin ella el nombrado funde cada diente con el que lo ocluye:
         # piezas de 44 y 47 mm cruzando la encia. Ver `TOLERANCIA_OCLUSAL_MM`.
         direccion = coronas[etq == 0].mean(axis=0) - coronas[etq > 0].mean(axis=0)
+        # Con el volumen recortado, comprobar que cubre las coronas y la raíz entera. Si
+        # no, segmentar daría dientes cortados por el borde del tramo y parecerían raíces
+        # cortas.
+        z_dientes = coronas[etq > 0, 2] + origen_mm[2]
+        z_lo = max(float(z_dientes.min()) - MARGEN_SEGMENTACION_MM, z_serie[0])
+        z_hi = min(float(z_dientes.max()) + MARGEN_SEGMENTACION_MM, z_serie[1])
+        if z_lo < z_min - medio_paso or z_hi > z_max + medio_paso:
+            aviso = (f"segmentación del CBCT no ejecutada: el tramo de cortes seguidos "
+                     f"(z {z_min:.2f} a {z_max:.2f} mm) no cubre los dientes y sus raíces "
+                     f"(z {z_lo:.2f} a {z_hi:.2f} mm)")
+            print(f"  segmentador: {aviso}")
+            motivos.append(aviso)
+            return None
         print(f"  segmentador: {args.modelo.name} · {len(coronas):,} coronas con la pose "
               f"de la fusión · {len(set(etq[etq > 0].tolist()))} códigos FDI")
         return SegmentadorDental(
@@ -687,9 +725,10 @@ def main() -> int:
                 etq_ios = _anclada
 
     fabrica = None
+    motivos_cbct: list[str] = []
     if args.modelo and args.fdi and caso.mesh and caso.cbct:
         try:
-            fabrica = _fabrica_segmentador(caso, args, almacen, etq_ios)
+            fabrica = _fabrica_segmentador(caso, args, almacen, etq_ios, motivos_cbct)
         except ValueError as exc:
             print(f"  ✗ No se ejecuta el caso con estos datos de entrada: {exc}")
             return 1
@@ -1001,6 +1040,8 @@ def main() -> int:
 
     if motivos_margen:
         fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_margen])
+    if motivos_cbct:
+        fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_cbct])
 
     print("\n--- 4 · EXPORTACIÓN ---")
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
