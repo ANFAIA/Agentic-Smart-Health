@@ -339,3 +339,50 @@ def test_sin_diezmar_el_paso_declarado_es_UNO(
     assert (np.asarray(campo["paso"]) == 1).all()
     assert int(campo["n_origen"]) == len(campo["centers"])
     assert entero.provenance is not None and entero.provenance.confidence >= 0.9
+
+
+def test_tramo_regular_se_queda_con_el_bloque_seguido_mas_largo() -> None:
+    from ingestion_agents.cbct_agent import cuenta_huecos, tramo_regular
+
+    # 0,3 mm de paso, un corte ausente tras el índice 9 y otro tras el 39.
+    z = np.concatenate([np.arange(10) * 0.3, 3.3 + np.arange(30) * 0.3, 12.6 + np.arange(5) * 0.3])
+    assert cuenta_huecos(z) == 2
+    inicio, fin = tramo_regular(z)
+    assert (inicio, fin) == (10, 40)
+    assert cuenta_huecos(z[inicio:fin]) == 0
+
+
+def test_tramo_regular_de_una_serie_sin_huecos_es_entera() -> None:
+    from ingestion_agents.cbct_agent import tramo_regular
+
+    z = np.arange(50) * 0.15
+    assert tramo_regular(z) == (0, 50)
+
+
+def test_recortar_no_toca_pixeles_ni_posiciones(cbct_dir: Path) -> None:
+    import shutil
+    import tempfile
+
+    from ingestion_agents.cbct_agent import recorta_serie, tramo_regular
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "gap"
+        shutil.copytree(cbct_dir, source)
+        ficheros = sorted(source.glob("*.dcm"))
+        ficheros[len(ficheros) - 3].unlink()
+        serie = _read_series(source)
+    assert serie.huecos == 1
+    inicio, fin = tramo_regular(serie.z)
+    recortada = recorta_serie(serie, inicio, fin)
+    assert recortada.huecos == 0
+    np.testing.assert_array_equal(recortada.volume, serie.volume[inicio:fin])
+    np.testing.assert_array_equal(recortada.z, serie.z[inicio:fin])
+    assert recortada.spacing == serie.spacing
+    assert recortada.origin_xy == serie.origin_xy
+
+
+def test_un_tramo_con_hueco_dentro_lo_sigue_declarando() -> None:
+    from ingestion_agents.cbct_agent import cuenta_huecos
+
+    z = np.array([0.0, 0.3, 0.6, 1.2, 1.5, 1.8])
+    assert cuenta_huecos(z) == 1
