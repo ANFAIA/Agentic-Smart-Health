@@ -783,7 +783,10 @@ SegmentationOutput
   cervical crease, and declines tooth by tooth when the crease is unclear. It runs **last**,
   after the interior holes are closed: a gum hole inside a crown is gum to the cut. It stays
   off because it failed the over-trim criterion on the held-out set; see
-  [the research note](docs/research/segmentacion-fdi-escaner.md).
+  [the research note](docs/research/segmentacion-fdi-escaner.md). `aplica-experto` lowers the
+  crease bar to the expert margin's 5th percentile, **upper arch only**: it fixes most
+  declined teeth but damaged lower molars on `dev`, and it was chosen on one maxillary case's
+  annotations, which therefore no longer measure it.
 - ⚠️ **The scanner's labels are SEEDS, so a mislabelled island there becomes a whole
   tooth here.** Measured on a real case: the scanner's segmenter put a third molar's code
   on 275 vertices stuck to the distal face of its neighbour — median 0.85 mm — and that
@@ -797,6 +800,7 @@ SegmentationOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-11-10 | 0.1.0 | `--margen-gingival aplica-experto`: the crease bar drops to the expert's 5th percentile (`analysis_agents.frontera.umbrales_de_pliegue`), only when every labelled tooth is maxillary. Tested once on the clinical upper arch at the project lead's request, declared as the deciding test: teeth 11 and 12 go from 3.54 and 4.14 mm to 0.22 and 0.15 mm from the blind line, no crown below 98 %, 22 still declined. Confirming it needs a new blind annotation. Default stays `no`. No contract change. |
 | 2026-11-10 | 0.1.0 | Third margin attempt, for the teeth the method declines: on `dev` they are 193 of 544 and carry almost all the remaining error (median 2.16 mm against 0.08 for moved teeth). `M9` accepts a crease as clear as the expert's own 5th percentile; with criteria fixed beforehand against `M5`, it brings 41 declined teeth from 1.57 to 0.12 mm but damages 5 of 520 crowns against a 0.5 % limit, so it is not applied and the annotators' lines were not used. No contract change. |
 | 2026-11-09 | 0.1.0 | Second attempt at the margin method's over-trim: two gentler variants of `ancla_al_pliegue` were added to the benchmark with a selection rule fixed before running them. Neither met it on `dev`, so `eval` was not touched. On the clinical case, against a periodontist's blind margin line, the method as shipped brings the margin from 3.53 to 0.19 mm with no tooth losing over 6% of its crown, against 0.15 mm between the two annotations. One case and one annotator, so the method stays off by default. No contract change. |
 | 2026-11-09 | 0.1.0 | `segmentar_fdi.py` can canonicalise against several references (`--referencia` repeatable, `--referencias-entrenamiento N`) and vote per vertex among the three most confident segmentations (`analysis_agents.pose_votada`), recording each reference's confidence. Scored once on 80 held-out arches with [`scripts/benchmark_pose.py`](scripts/benchmark_pose.py): 979 of 1065 teeth correctly numbered against a median of 896 with one reference, but 38 short of the native Teeth3DS+ pose, so **three of six pre-registered criteria fail**. On the clinical case it numbers 12 of 14 teeth as the reviewed curves, none shifted, against 7 and 4 with the August reference. Opt-in. No contract change. |

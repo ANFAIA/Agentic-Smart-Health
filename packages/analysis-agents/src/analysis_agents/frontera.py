@@ -235,6 +235,46 @@ MARGEN_YA_EN_PLIEGUE = 1.0
 # precio es declinar más (193 de 544) y corregir menos: un surco dudoso se deja como está.
 FUERZA_MINIMA_PLIEGUE = 1.5
 COBERTURA_MINIMA_PLIEGUE = 0.75
+# El surco del margen de un EXPERTO en su percentil 5, medido en `dev`: el listón con que
+# `aplica-experto` acepta una pieza. Solo en el maxilar, y está medido por qué: en `dev`
+# acepta 41 piezas declinadas y las lleva de 1,57 a 0,12 mm del experto, pero daña 5 de 520
+# coronas, TODAS en la arcada inferior (cuatro molares y un canino). Esa restricción salió de
+# mirar el resultado, y la elección se confirmó sobre las líneas de dos dentistas en un solo
+# caso maxilar (11: 3,54 → 0,22 mm, 12: 4,14 → 0,15, ninguna corona por debajo del 98 %).
+# Ver §6.8-6.9 de `docs/research/segmentacion-fdi-escaner.md`.
+FUERZA_PLIEGUE_EXPERTO = 1.34
+COBERTURA_PLIEGUE_EXPERTO = 0.65
+
+# Cuadrantes FDI del maxilar, permanentes y temporales.
+_CUADRANTES_MAXILAR = {1, 2, 5, 6}
+
+
+def umbrales_de_pliegue(
+    etq: np.ndarray, criterio: str = "metodo"
+) -> tuple[float, float, str | None]:
+    """`(fuerza_minima, cobertura_minima, aviso)` para `ancla_al_pliegue`.
+
+    `criterio="metodo"` da los umbrales de siempre. `criterio="experto"` da los del
+    percentil 5 del experto **solo si todas las piezas etiquetadas son del maxilar**; si hay
+    alguna de la mandíbula se quedan los de siempre y `aviso` dice por qué. La arcada se lee
+    de los códigos FDI, no del nombre del fichero.
+    """
+    if criterio == "metodo":
+        return FUERZA_MINIMA_PLIEGUE, COBERTURA_MINIMA_PLIEGUE, None
+    if criterio != "experto":
+        raise ValueError(f"criterio desconocido: {criterio!r}")
+    cuadrantes = {int(c) // 10 for c in np.unique(etq) if c > 0}
+    if not cuadrantes:
+        return FUERZA_MINIMA_PLIEGUE, COBERTURA_MINIMA_PLIEGUE, (
+            "no hay piezas etiquetadas: se usan los umbrales de siempre")
+    if not cuadrantes <= _CUADRANTES_MAXILAR:
+        return FUERZA_MINIMA_PLIEGUE, COBERTURA_MINIMA_PLIEGUE, (
+            "el listón del experto solo se usa en el maxilar —en la mandíbula dañó coronas "
+            "de molares en Teeth3DS+—: esta arcada tiene piezas mandibulares y se usan los "
+            "umbrales de siempre")
+    return FUERZA_PLIEGUE_EXPERTO, COBERTURA_PLIEGUE_EXPERTO, None
+
+
 # La parte de la corona que NUNCA se corta: los vértices cuya distancia a la encía, medida
 # sobre la malla, es al menos esta fracción de la máxima de su pieza.
 #

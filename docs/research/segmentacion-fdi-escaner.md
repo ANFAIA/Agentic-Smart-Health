@@ -445,6 +445,35 @@ canino (43), con un surco aceptado de cobertura 0,65-0,74 que no es el cuello. E
 superior no se daña ninguna. Esa observación es posterior al resultado: una regla que la use
 estaría ajustada sobre `dev`, y su única prueba independiente que queda es el caso clínico.
 
+### 6.9 · `M9` en el maxilar, probado sobre el caso clínico (2026-11-10)
+
+Por decisión del responsable del proyecto, `M9` se probó una vez sobre el caso clínico, que
+es maxilar, aun habiendo fallado R2 en `dev`. Se declara como lo que es: **la prueba que
+decide**, con las dos anotaciones que hasta ahora solo habían medido.
+
+| Contra la línea a ciegas | `M5` | `M9` |
+|---|---:|---:|
+| 11, margen → línea | 3,54 mm | 0,22 mm |
+| 12 | 4,14 mm | 0,15 mm |
+| 22, sigue declinado | 1,75 mm | 1,75 mm |
+| Caso, mediana | 0,19 mm | 0,15 mm |
+| Encía marcada diente | 21,1 % | 15,9 % |
+| Corona marcada encía | 1,6 % | 1,7 % |
+| Piezas < 85 % | 0 de 14 | 0 de 14 |
+
+Contra la segunda anotación sale lo mismo (11: 3,62 → 0,34 mm; 12: 4,23 → 0,14 mm). La pieza
+que más corona pierde conserva el 98 %.
+
+**Qué se adopta.** `--margen-gingival aplica-experto` en `scripts/caso_completo.py`: el listón
+del surco baja al del experto (`analysis_agents.frontera.umbrales_de_pliegue`) solo si todas
+las piezas etiquetadas son del maxilar; si no, se usan los umbrales de siempre y se dice.
+`aplica` sigue igual y el valor por defecto sigue siendo `no`.
+
+**Lo que no se sabe.** La restricción al maxilar sale de mirar el daño en `dev` después del
+resultado, y la elección se hizo sobre las dos anotaciones de este caso, que dejan de servir
+para medirla. Confirmarla exige una línea nueva trazada a ciegas, sobre este caso u otro
+maxilar. Es un caso.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
