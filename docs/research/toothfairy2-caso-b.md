@@ -143,8 +143,9 @@ umbral de 9,5). Todos los criterios se calculan ahora **en la misma ventana de a
   clase que no pertenece a ningún grupo.
 - **C2.** Mandíbula con altura en (0, +10] mm: **≤ el p95 de los volúmenes de
   entrenamiento que llegan a +10 mm**, medido en esa misma franja
-  (`lower_jawbone_in_window_mm3` de `medidas-ventana.json`). El número se escribe aquí
-  antes de ejecutar. Los volúmenes de entrenamiento no están recortados en el plano y la
+  (`lower_jawbone_in_window_mm3` de `medidas-ventana.json`, commit d8f27df): **≤ 5.042
+  mm³**, p95 de los 180 volúmenes que llegan a +10 mm (mediana 3.739). La ejecución 1 da
+  5.647 en esa franja: el criterio la habría rechazado. Los volúmenes de entrenamiento no están recortados en el plano y la
   caja sí, así que el umbral es, si acaso, indulgente.
 - **C3.** `orientation_premises.holds == true` en `resumen.json`:
   - izquierda menos derecha > 0 en x LPS, con los dientes 21–28 y 31–38 frente a 11–18 y
