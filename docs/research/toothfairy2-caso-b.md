@@ -1,10 +1,11 @@
 # Numeración FDI en el CBCT con el modelo oficial de ToothFairy2: caso B
 
-> **Estado (2026-11-19):** la ejecución 1 es técnicamente correcta y **no sirve** para la
-> identidad de los dientes superiores: el modelo mezcla las dos arcadas. Se atribuye a que
-> el caso queda fuera de lo que vio al entrenar. El experimento 2 queda **escrito antes de
-> ejecutarse** (§3). Nada de esto es un TRE ni una validación clínica: es la salida de un
-> modelo externo (Capa 3) descrita con números.
+> **Estado (2026-11-19): resultado negativo.** El checkpoint oficial de ToothFairy2 no
+> separa las arcadas de este CBCT, ni con la caja a la altura del entrenamiento ni con los
+> grises recortados a su rango (§4). La inferencia y la orientación están verificadas; lo
+> que falla es el modelo fuera de su distribución. Para este caso no sirve sin reentrenar.
+> Nada de esto es un TRE ni una validación clínica: es la salida de un modelo externo
+> (Capa 3) descrita con números.
 
 ## 1 · Qué se probó y por qué
 
@@ -165,4 +166,43 @@ primera ejecución completa de cada una es su resultado.
 
 ## 4 · Resultados del experimento 2
 
-Pendiente.
+Una ejecución por variante, en GPU, con el árbol limpio en el commit 00b5041 y los
+umbrales ya escritos (commits d8f27df y 00b5041). Todo se mide en la ventana común
+[−42,5, +10,0] mm, que son 175 cortes en las cuatro filas. Los números se recalcularon con
+una implementación independiente a partir de las etiquetas guardadas y coinciden.
+
+| Variante | Caja | Grises | C1 contactos (≤ 593) | C1b 8–10 (≤ 643 mm³) | C2 mandíbula (≤ 5.042 mm³) | C3 | Maxilar–mandíbula |
+|---|---|---|---:|---:|---:|---|---:|
+| 1 (referencia) | −45/+40 | sin recortar | 5.932 | 643 | 5.647 | sí | 22 |
+| 2a | −42,5/+10 | sin recortar | 2.021 ✗ | 466 ✓ | 5.529 ✗ | sí | 0 |
+| 2b | −45/+40 | recortados | 6.138 ✗ | 994 ✗ | 5.741 ✗ | sí | 89 |
+| **2c (principal)** | −42,5/+10 | recortados | **3.784 ✗** | **873 ✗** | **5.656 ✗** | sí | 0 |
+
+**2c no pasa: falla C1, C1b y C2.** Según §3, el resultado es negativo y se escribe así: el
+checkpoint `onlyMirror01` no sirve para numerar las piezas de este CBCT sin reentrenar. Lo
+que funciona es lo que no depende del modelo: la orientación (C3) se cumple en las tres
+variantes.
+
+**Lo que dicen las variantes**, solo como descripción, porque no se eligió ninguna con
+ellas:
+
+- **Acortar la caja (2a) es lo que más ayuda.** Los contactos entre arcadas bajan de 5.932
+  a 2.021 y desaparecen los del maxilar con la mandíbula. Aun así quedan el triple del
+  umbral.
+- **Recortar los grises no ayuda.** Solo (2b), empeora los contactos y aumenta lo que el
+  modelo llama puente, corona o implante, de 643 a 994 mm³. Combinado con la caja corta
+  (2c), queda peor que la caja corta sola. El problema no se explica solo por los grises
+  extremos.
+- **La mandíbula por encima del plano oclusal apenas cambia** entre variantes (5.529–5.741
+  mm³), siempre algo por encima del p95 de entrenamiento (5.042; mediana 3.739). Con
+  estos datos no se puede saber si es anatomía de este paciente o hueso del maxilar
+  etiquetado como mandíbula. Eso lo tiene que mirar una persona.
+- 2b se ejecutó con el volumen entero en memoria de GPU insuficiente y nnU-Net pasó los
+  resultados a CPU. En la ejecución 1 se comprobó que CPU y GPU coinciden en el 99,995 % de
+  los vóxeles.
+
+**Lo que queda abierto.** La separación de piezas en el CBCT sigue saliendo de las
+semillas del escáner. Para que el CBCT numere por sí mismo haría falta reentrenar o
+ajustar un modelo. ToothFairy2 sirve como datos para eso, pero tiene un límite medido: la
+mitad de sus volúmenes no llega a 10 mm por encima del plano oclusal superior, así que
+casi no enseña raíces superiores.
