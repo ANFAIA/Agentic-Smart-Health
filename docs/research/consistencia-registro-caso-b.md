@@ -27,9 +27,12 @@ más cercano se infla unos 0,2 mm por la resolución de la malla.
 
 | Par (coronas) | Mediana | p95 | Escala relativa |
 |---|---:|---:|---:|
-| PREVIO ↔ ESCANEADO PREVIO | **0,052 mm** | 0,53 | 0,999 |
-| POST HIGIENE ↔ Visualization 18-28 | 0,11 mm | 0,52 | 1,002 |
-| POST HIGIENE ↔ PREVIO | 0,52 mm | 2,24 | 0,976 |
+| PREVIO → ESCANEADO PREVIO | **0,063 mm** | 0,59 | 0,999 |
+| POST HIGIENE → Visualization 18-28 | 0,11 mm | 0,53 | 1,002 |
+| POST HIGIENE → PREVIO | 0,53 mm | 2,28 | 0,976 |
+
+Los números son los del procedimiento de §3 y en la dirección del par (A → B); en la
+primera versión de esta tabla venían de una exploración previa con otro método (0,052).
 
 - **Par principal: PREVIO y ESCANEADO PREVIO.** La ficha
   [`dataset-histora.md`](dataset-histora.md) los documenta como dos adquisiciones
@@ -38,9 +41,12 @@ más cercano se infla unos 0,2 mm por la resolución de la malla.
   es el segundo: el repositorio lo llama «derivado del CBCT» en un sitio y «réplica virtual
   del molde» en otro, y es un sólido cerrado. Si sale del propio CBCT o de POST, el par no
   es independiente.
-- **Los escaneos PREVIO salen un 2,4 % más pequeños que POST** y no encajan con él ni
-  admitiendo escala. No se sabe por qué. Afecta igual a los dos escaneos del par principal,
-  así que se cancela en la medida, pero se declara.
+- **PREVIO y POST no tienen la misma forma.** Un ajuste con escala da 0,976, pero no es una
+  escala uniforme: las distancias entre centroides de dientes van de 0,91 a 1,02 de una a
+  otra (11–21: 0,915; 16–26: 0,965; 12–22: 1,019). La discrepancia se concentra en el 11 y
+  el 26. No se sabe por qué. Lo que comparten los dos escaneos del par se cancela, pero la
+  precisión que se mida es la de escaneos de la sesión PREVIO y **no se traslada a POST**.
+- **No se sabe de qué sesión es el CBCT.**
 - POST HIGIENE se registra además para comprobar que el procedimiento es el de la
   ejecución de referencia (§3, V1).
 
@@ -57,7 +63,10 @@ Cada escaneo entra en su propia carpeta de caso con el mismo nombre de malla
 y sin ajuste de campo, que corren después del registro y no lo cambian. Mismo CBCT
 (`CASE-64A77C`), semilla 0, entorno `~/.venvs/dental-gpu` como run-5.
 
-**Coronas de cada escaneo.** Solo POST tiene etiquetas FDI. Para los demás se transfieren:
+**Coronas de cada escaneo.** Solo POST tiene etiquetas FDI. Primero se limpian como hace
+`caso_completo.py` antes de usarlas: se rellenan huecos y se absorben islas. Eso quita el
+«17» de 198 vértices que es parte del 16, como en run-5. Para los demás escaneos se
+transfieren:
 - POST se alinea al otro escaneo con un ajuste de similitud (con escala) sobre el 70 % de
   correspondencias más cercanas. Se arranca de dos poses, el ICP desde la identidad y el
   barrido global de SO(3) (`icp_global`), y se queda la de menor residuo. Medido al
@@ -78,8 +87,13 @@ en ningún registro contra el CBCT.
 
 **La medida.** Para cada vértice de corona `x` de A:
 `d(x) = ‖A→CBCT(x) − B→CBCT(A→B(x))‖` en mm DICOM. Se informa:
-- por diente y para todo, mediana y p95 de `d`;
-- por grupos: anteriores (13–23) y posteriores (14–17 y 24–27);
+- por diente, mediana y p95 de `d`, su suelo y su **cobertura**: vértices de corona
+  transferidos a A frente a los de POST para esa pieza, corregido por la densidad de cada
+  malla;
+- **una pieza es legible solo si su cobertura es ≥ 0,5 y la mediana de su suelo ≤ 0,2
+  mm.** Las cifras de conjunto y de grupo se calculan solo sobre piezas legibles. La cifra
+  sobre todas las piezas se da aparte;
+- por grupos, solo con piezas legibles: anteriores (13–23) y posteriores (14–17 y 24–27);
 - la diferencia rígida entre los dos caminos, como ángulo en grados y como traslación en
   el centroide de las coronas;
 - el suelo por diente;
@@ -98,15 +112,45 @@ en ningún registro contra el CBCT.
 - la comprobación corona→esmalte de run-5: posteriores 0,2–0,6 mm, incisivos y 26 a
   1–2 mm.
 
-Si `d` es pequeño en los incisivos, el error de 1–2 mm que se ve allí no viene de qué
-escaneo se use: es común a los dos y la medida no lo alcanza.
+**Lo que la medida puede decir:** cuánto varía la pose del CBCT entre dos escaneos de la
+sesión PREVIO, pieza por pieza, en las piezas legibles. **Lo que no puede decir:** de dónde
+viene el error de 1–2 mm que run-5, registrado con POST, muestra en los incisivos y el 26.
+- Precisamente en esas piezas PREVIO difiere más de POST: 1,05 mm en el 11 y 0,80 en el 26,
+  frente a 0,26–0,53 en el resto.
+- La transferencia solo cubre allí el 18–29 % de la corona.
+- El suelo del par sube a 0,34 mm.
+
+Con las cifras de la exploración, el 11 y el 26 saldrán no legibles. Se escribe antes de
+ejecutar, para que no parezca una decisión tomada a la vista del resultado.
 
 **Lo que no se hará:**
 - usar esto para ajustar el registro de ningún caso que luego se puntúe con puntos;
 - cambiar el par, el procedimiento o los grupos después de ver un resultado;
 - ejecutar más de una vez, salvo que una ejecución aborte antes de escribir resultados.
+  El script no muestra ningún número de la medida antes de escribirlo, y comprueba V1 antes
+  de registrar ningún otro escaneo, así que un fallo de V1 aborta sin resultados.
 
 Código: [`scripts/consistencia_registro.py`](../../scripts/consistencia_registro.py).
+Se ejecuta con `--par previo,repetido --par post,vis`: A = PREVIO y B = ESCANEADO PREVIO en
+el par principal.
+
+### Enmienda del 2026-11-19, antes de ejecutar
+
+Una revisión del script y del protocolo, hecha antes de registrar ningún escaneo salvo POST
+(V1), encontró nueve defectos. Se corrigieron todos antes de la ejecución. **V1 ya se
+comprobó en la revisión: POST reproduce run-5 a 1,8·10⁻¹⁴ mm.** Lo que cambió:
+
+- **La lectura se acota.** El par principal no puede hablar del error de run-5 en incisivos
+  y en el 26 (§4). Se añade la regla de piezas legibles.
+- **Las etiquetas se limpian** como en el pipeline.
+- **V1 va primero** y aborta sin resultados.
+- **Ningún número se muestra antes de escribirse.**
+- **La distancia es exacta también junto a triángulos largos.** La primera versión fallaba en
+  3 de cada 3000 puntos del modelo Visualization, por hasta 0,11 mm.
+- **La tabla de §2 usa el procedimiento y la dirección fijados.**
+- **La afirmación del 2,4 % se sustituye por lo medido.**
+- **El caso de cada escaneo se crea con un enlace duro**, para que no quede escrito el nombre
+  del fichero del proveedor.
 
 ## 5 · Resultados
 
