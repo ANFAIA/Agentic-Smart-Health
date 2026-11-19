@@ -97,8 +97,10 @@ las figuras embebidas.
 > | `public-training-set-2` | 300 | entrenamiento del modelo de noviembre, en npz (`data/processed/teeth3ds-osf-npz/`) |
 > | `private-testing-set` | 300 | 60 son la **reserva** ([`teeth3ds-reserva.txt`](teeth3ds-reserva.txt)), en `data/raw/teeth3ds-osf/` |
 >
-> [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py) los baja paciente a
-> paciente por HTTP Range, sin descargar los zips. Ver §6.10 de
+> [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py) lee el índice de
+> cada zip por HTTP Range y luego baja los zips **de uno en uno**, extrae lo que hace falta y
+> los borra: OSF limita el número de peticiones (429 a los pocos minutos de leer paciente a
+> paciente), no el ancho de banda, que ronda los 2,5 MB/s. Ver §6.10 de
 > `segmentacion-fdi-escaner.md`.
 
 ## 4. Licencia — RESUELTA: CC-BY 4.0 (con matiz documentado)
