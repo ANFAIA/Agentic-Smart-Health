@@ -61,7 +61,7 @@ def espaciado(z: zipfile.ZipFile, nombre: str) -> tuple[float, float, float]:
     return sx, sy, sz
 
 
-def mide(a: np.ndarray, sp: tuple[float, float, float]) -> dict:
+def mide(a: np.ndarray, sp: tuple[float, float, float], sobre_mm: float) -> dict:
     sx, sy, sz = sp
     sup = np.isin(a, DIENTES_SUPERIORES)
     fila: dict = {"shape_zyx": list(a.shape), "spacing_xyz": [sx, sy, sz],
@@ -74,6 +74,12 @@ def mide(a: np.ndarray, sp: tuple[float, float, float]) -> dict:
     mand = a[:k_oclusal] == 1
     fila["lower_jawbone_above_occlusal_mm3"] = round(float(mand.sum()) * sx * sy * sz, 1)
     fila["upper_lower_contact_faces"] = contactos(a, SUPERIOR, INFERIOR)
+    # La misma cantidad, pero solo hasta `sobre_mm` por encima del plano y solo si el
+    # volumen llega a esa altura: es lo comparable con una caja que termina ahí.
+    if fila["top_above_occlusal_mm"] >= sobre_mm:
+        n = int(np.floor(sobre_mm / sz + 1e-9))
+        ventana = a[k_oclusal - n:k_oclusal] == 1
+        fila["lower_jawbone_in_window_mm3"] = round(float(ventana.sum()) * sx * sy * sz, 1)
     return fila
 
 
@@ -81,6 +87,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--zip", type=Path, required=True)
     ap.add_argument("--salida", type=Path, required=True)
+    ap.add_argument("--ventana-sobre-mm", type=float, default=10.0,
+                    help="Altura sobre el plano oclusal hasta la que se mide la mandíbula "
+                         "comparable con la caja del experimento.")
     args = ap.parse_args()
     if args.salida.exists():
         raise SystemExit(f"{args.salida} ya existe: una medida no se pisa.")
@@ -92,14 +101,15 @@ def main() -> int:
                          and n.endswith(".mha"))
         for i, nombre in enumerate(nombres):
             caso = Path(nombre).stem
-            casos[caso] = mide(lee_mha_etiquetas(z, nombre), espaciado(z, nombre))
+            casos[caso] = mide(lee_mha_etiquetas(z, nombre), espaciado(z, nombre),
+                               args.ventana_sobre_mm)
             if i % 40 == 0:
                 print(f"  {i + 1}/{len(nombres)} {caso} {casos[caso]}", flush=True)
 
     con_plano = {k: v for k, v in casos.items() if "top_above_occlusal_mm" in v}
 
     def pct(clave: str) -> dict:
-        x = np.array([v[clave] for v in con_plano.values()], dtype=np.float64)
+        x = np.array([v[clave] for v in con_plano.values() if clave in v], dtype=np.float64)
         return {p: round(float(np.percentile(x, q)), 2)
                 for p, q in (("p05", 5), ("p25", 25), ("p50", 50), ("p75", 75),
                              ("p95", 95), ("max", 100))}
@@ -110,7 +120,13 @@ def main() -> int:
         **{clave: pct(clave) for clave in ("top_above_occlusal_mm",
                                            "bottom_below_occlusal_mm",
                                            "lower_jawbone_above_occlusal_mm3",
-                                           "upper_lower_contact_faces")},
+                                           "upper_lower_contact_faces",
+                                           "lower_jawbone_in_window_mm3")},
+        "window_above_occlusal_mm": args.ventana_sobre_mm,
+        "cases_reaching_window": sum("lower_jawbone_in_window_mm3" in v
+                                     for v in con_plano.values()),
+        "upper_teeth_per_case": {str(n): sum(v["upper_teeth"] == n for v in con_plano.values())
+                                 for n in range(1, 17)},
     }
     args.salida.parent.mkdir(parents=True, exist_ok=True)
     args.salida.write_text(json.dumps({

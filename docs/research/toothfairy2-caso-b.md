@@ -103,6 +103,65 @@ y se escribe aquí: el checkpoint no sirve para este caso sin reentrenar.
 criterios. Las dos son salidas de modelos; la referencia para decidir cuál acierta son los
 puntos anatómicos marcados por una persona, que todavía no existen.
 
+### 3.1 · Enmienda del 2026-11-19, antes de ejecutar ninguna variante
+
+Una revisión del código, hecha después de medir el entrenamiento y **antes de ninguna
+inferencia del experimento 2**, encontró que el protocolo de arriba no medía lo que dice.
+Se corrige así; lo que no se menciona queda como estaba.
+
+**Lo que midió el entrenamiento** (`data/processed/toothfairy2-entrenamiento/medidas.json`,
+commit 9bbd4c3): de 480 volúmenes, 356 tienen algún diente superior y con ellos se calcula
+la regla. Por encima del plano oclusal llegan a una mediana de **10,2 mm** (p95 26,7; máx.
+32,1); por debajo, 42,6 mm. **La caja de la regla es, por tanto, de −42,5 a +10,0 mm.**
+Consecuencia que hay que decir: deja fuera casi todas las raíces superiores. El modelo
+apenas las vio al entrenar, así que este experimento solo puede responder si separa las
+arcadas y numera **coronas**, no raíces superiores.
+
+La regla se mantiene como se escribió, aunque tiene defectos conocidos, porque cambiarla
+ahora sería elegir a la vista de los datos:
+- un diente mal etiquetado mueve el plano oclusal (P_061, P_067, P_101);
+- 30 de los 356 casos tienen solo 1–3 dientes superiores;
+- contando solo los casos con al menos 10 dientes superiores, la mediana sube a 13,2 mm.
+
+**1. Ventana común.** Medir cada variante en su propia caja premiaba a la caja corta: la
+ejecución 1, que es el fallo, recortada a la caja nueva ya cumplía C2 (5,6 cm³ frente a un
+umbral de 9,5). Todos los criterios se calculan ahora **en la misma ventana de alturas,
+[−42,5, +10,0] mm**, en las tres variantes (`--ventana-criterios -42.5 10.0`, bloque
+`arch_separation.window` de `resumen.json`). En esa ventana, la ejecución 1 da:
+- 5.932 caras de contacto entre grupos;
+- 22 entre maxilar y mandíbula;
+- 5.647 mm³ de mandíbula por encima del plano oclusal;
+- 643 mm³ de puente, corona e implante.
+
+**2. Criterios corregidos.** 2c pasa si cumple todos:
+
+- **C1.** Contactos entre grupo superior (maxilar y 11–28) e inferior (mandíbula y 31–48)
+  en la ventana: **≤ 593**, el 10 % de la ejecución 1 en la misma ventana. El 1.785 de
+  arriba era el 30 % de lo comparable.
+- **C1b.** Puente, corona e implante (8, 9, 10) en la ventana: **≤ 643 mm³**, lo de la
+  ejecución 1. Sin esto, C1 podría cumplirse con solo reetiquetar la zona confusa como una
+  clase que no pertenece a ningún grupo.
+- **C2.** Mandíbula con altura en (0, +10] mm: **≤ el p95 de los volúmenes de
+  entrenamiento que llegan a +10 mm**, medido en esa misma franja
+  (`lower_jawbone_in_window_mm3` de `medidas-ventana.json`). El número se escribe aquí
+  antes de ejecutar. Los volúmenes de entrenamiento no están recortados en el plano y la
+  caja sí, así que el umbral es, si acaso, indulgente.
+- **C3.** `orientation_premises.holds == true` en `resumen.json`:
+  - izquierda menos derecha > 0 en x LPS, con los dientes 21–28 y 31–38 frente a 11–18 y
+    41–48;
+  - incisivos (11, 21, 31, 41) menos primeros molares (16, 26, 36, 46) < 0 en y;
+  - superiores menos inferiores > 0 en z;
+  - todo con centroides ponderados por vóxeles, sin las etiquetas de menos de 50 mm³, y
+    falla si falta algún grupo.
+
+**3. Comprobación del registro.** Exigir el 50 % de coronas junto a tejido denso abortaba
+las tres variantes: el caso B da 0,470, medido antes de inferir. Pasa a exigir **≥ 0,30 y
+al menos 10 veces más que si se hubiera leído el registro del marco centrado** (que da
+0,005). Lo que distingue las dos hipótesis es la razón, no el umbral absoluto.
+
+**4. Una ejecución por variante**, en GPU, en `toothfairy2-run-2a`, `-2b` y `-2c`. La
+primera ejecución completa de cada una es su resultado.
+
 ## 4 · Resultados del experimento 2
 
 Pendiente.

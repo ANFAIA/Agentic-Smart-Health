@@ -106,8 +106,15 @@ ALTURA_FUERA_DE_ENTRENAMIENTO_MM = 30.0
 PIEZA_PEQUENA_MM3 = 50.0
 """Por debajo, una etiqueta de diente se informa aparte: no es una pieza, es un resto."""
 
-FRACCION_DENSA_MINIMA = 0.5
-"""Coronas registradas cuyo entorno de 0,9 mm alcanza el p99 de grises del volumen."""
+FRACCION_DENSA_MINIMA = 0.3
+"""Coronas registradas cuyo entorno de 0,9 mm alcanza el p99 de grises del volumen.
+
+Fijado en 0,3 tras medir 0,470 en el caso B antes de ninguna inferencia del experimento 2;
+el primer valor (0,5) lo rechazaba. Lo que separa las dos hipótesis es `VENTAJA_SOBRE_CENTRADO`:
+0,470 frente a 0,005 si se hubiera leído el registro del marco centrado."""
+
+VENTAJA_SOBRE_CENTRADO = 10.0
+"""Cuántas veces más coronas densas que con el marco centrado, como mínimo."""
 
 CASOS_ORIENTACION = ("ToothFairy2F_001", "ToothFairy2F_027", "ToothFairy2F_050",
                      "ToothFairy2P_001", "ToothFairy2P_100", "ToothFairy2P_250",
@@ -449,6 +456,30 @@ def contactos(etiqueta: np.ndarray, a: list[int], b: list[int]) -> int:
     return total
 
 
+def separacion_en_ventana(etiqueta: np.ndarray, altura: np.ndarray, bajo: float,
+                          sobre: float) -> dict:
+    """Separación de arcadas solo en los cortes con altura en `[bajo, sobre]` mm.
+
+    Es la ventana común en que se puntúan todas las variantes de un experimento: medir
+    cada una en su propia caja premiaría a la caja más corta, no al modelo.
+    """
+    dentro = np.nonzero((altura >= bajo) & (altura <= sobre))[0]
+    if len(dentro) == 0:
+        return {"window_mm": [bajo, sobre], "slices": 0}
+    e = etiqueta[dentro.min():dentro.max() + 1]
+    h = altura[dentro.min():dentro.max() + 1]
+    vox = ESPACIADO_MODELO ** 3
+    return {
+        "window_mm": [bajo, sobre], "slices": int(len(dentro)),
+        "slice_heights_mm": [round(float(h[0]), 2), round(float(h[-1]), 2)],
+        "upper_group_lower_group_contact_faces": contactos(e, SUPERIOR, INFERIOR),
+        "upper_lower_jawbone_contact_faces": contactos(e, [2], [1]),
+        "lower_jawbone_above_occlusal_mm3": round(
+            float(((e == 1) & (h[:, None, None] > 0)).sum()) * vox, 1),
+        "bridge_crown_implant_mm3": round(float(np.isin(e, [8, 9, 10]).sum()) * vox, 1),
+    }
+
+
 def describe(etiqueta, pmax, gris, altura_mm, nombres, a_mm, max_entrenamiento) -> list[dict]:
     from scipy.ndimage import label as componentes
 
@@ -532,6 +563,10 @@ def main() -> int:
                     help="'entrenamiento' lleva los grises al rango de primer plano del "
                          "entrenamiento antes del preprocesado. Desviación declarada.")
     ap.add_argument("--dispositivo", choices=("cuda", "cpu"), default="cuda")
+    ap.add_argument("--ventana-criterios", type=float, nargs=2, metavar=("BAJO", "SOBRE"),
+                    default=None,
+                    help="Alturas (mm, respecto al plano oclusal) de la ventana común en que "
+                         "se calculan los criterios del experimento, p. ej. -42.5 10.0.")
     args = ap.parse_args()
 
     if args.salida.exists():
@@ -605,8 +640,12 @@ def ejecuta(args, salida: Path, registro: dict) -> int:
     oclusal = float(puntos[:, 2].min())
     z_lo, z_hi = oclusal - args.bajo_oclusal_mm, oclusal + args.sobre_oclusal_mm
     tramos = tramos_regulares(serie.z)
-    validos = [(i, f) for i, f in tramos
-               if serie.z[i] <= max(z_lo, serie.z[0]) and serie.z[f - 1] >= min(z_hi, serie.z[-1])]
+    # Los cortes que la caja tomará de verdad, sobre la serie entera: el tramo tiene que
+    # contenerlos, no las cotas nominales de la caja (que pueden caer en un hueco).
+    z_todo = np.asarray(serie.z, dtype=np.float64)
+    k_lo = int(np.searchsorted(z_todo, z_lo, side="left"))
+    k_hi = int(np.searchsorted(z_todo, z_hi, side="right"))
+    validos = [(i, f) for i, f in tramos if i <= k_lo and k_hi <= f]
     if not validos:
         raise SystemExit(f"Ningún tramo de cortes seguidos contiene la caja (z {z_lo:.1f} a "
                          f"{z_hi:.1f} mm). Tramos: {tramos}. No se interpola.")
@@ -629,7 +668,8 @@ def ejecuta(args, salida: Path, registro: dict) -> int:
     otra = "—" if densa_alt is None else f"{densa_alt:.0%}"
     print(f"  registro: {densa:.0%} de vértices de corona junto a tejido denso "
           f"(con el marco centrado serían {otra})")
-    if densa < FRACCION_DENSA_MINIMA or (densa_alt is not None and densa < 2 * densa_alt):
+    if densa < FRACCION_DENSA_MINIMA or (
+            densa_alt is not None and densa < VENTAJA_SOBRE_CENTRADO * densa_alt):
         raise SystemExit("Las coronas registradas no caen sobre tejido denso, o no claramente "
                          "mejor que con el marco centrado. No se recorta a ciegas.")
 
@@ -688,6 +728,9 @@ def ejecuta(args, salida: Path, registro: dict) -> int:
             etiqueta, [*range(11, 19), *range(21, 29)], [*range(31, 39), *range(41, 49)]),
         "lower_jawbone_above_occlusal_mm3": round(mandibula_sobre * ESPACIADO_MODELO ** 3, 1),
     }
+
+    if args.ventana_criterios is not None:
+        arcadas["window"] = separacion_en_ventana(etiqueta, altura, *args.ventana_criterios)
 
     np.savez_compressed(
         salida / "etiquetas-tf2.npz", etiqueta=etiqueta, prob_max=pmax,
