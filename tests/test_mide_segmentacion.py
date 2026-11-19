@@ -190,3 +190,20 @@ def test_la_boca_de_cubos_no_declara_frontera(tmp_path):
     r = ms.mide(caso)
     assert r["razon_concavidad"] is None
     assert r["frontera_en_el_pliegue"] is None
+
+
+def test_un_npz_de_segmentar_fdi_se_mide_igual_que_el_contenedor(tmp_path):
+    """`segmentacion_<arcada>.npz` lleva la malla y las etiquetas: misma medida, sin `.uos`."""
+    piezas = dict(SANAS)
+    piezas[21] = ((12, 0, 0), (17.0, 14.0, 21.0))
+    caso = _boca(tmp_path, piezas)
+    desde_uos = ms.mide(caso)
+    with zipfile.ZipFile(caso) as z:
+        etq = np.frombuffer(z.read("derived/seg_teeth.bin"), dtype="<i2")
+        pos, tri = ms.lee_escena(z.read("scene/scene.glb"))
+    npz = tmp_path / "segmentacion_upper.npz"
+    np.savez(npz, V=pos, F=tri, limpias=etq, etiquetas=np.zeros_like(etq))
+    desde_npz = ms.mide_npz(npz, "limpias")
+    assert desde_npz["piezas"] == desde_uos["piezas"]
+    assert desde_npz["descartadas"] == desde_uos["descartadas"] == [11, 21]
+    assert desde_npz["caso"] == "segmentacion_upper:limpias"

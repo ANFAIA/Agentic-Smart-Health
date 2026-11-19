@@ -420,6 +420,18 @@ def main() -> int:
     etiquetas = (etiquetas_de(instancias, len(V)) if etiquetas_votadas is None
                  else etiquetas_votadas.astype(np.int16))
     np.save(args.salida / f"etiquetas_{args.arcada}.npy", etiquetas)
+    # La malla tal como se ingirió y las etiquetas tras la limpieza de `caso_completo.py`,
+    # juntas: es lo que miden `mide_segmentacion.py` y `puntua_margen.py` sin un `.uos`.
+    spec = importlib.util.spec_from_file_location("benchmark_margen",
+                                                  RAIZ / "scripts/benchmark_margen.py")
+    assert spec and spec.loader
+    bm = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, bm)
+    spec.loader.exec_module(bm)
+    np.savez_compressed(args.salida / f"segmentacion_{args.arcada}.npz", V=V,
+                        F=np.asarray(arte["faces"], dtype=np.int64),
+                        etiquetas=etiquetas.astype(np.int16),
+                        limpias=bm.limpieza_actual(V, etiquetas).astype(np.int16))
     np.save(args.salida / f"logprob_{args.arcada}.npy", logp.astype(np.float32))
     destino_json = args.salida / f"fdi_{args.arcada}.json"
     destino_json.write_text(

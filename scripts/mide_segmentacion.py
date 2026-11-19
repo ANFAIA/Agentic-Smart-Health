@@ -155,6 +155,18 @@ def _diagonal_propia(puntos: np.ndarray) -> float:
     return float(np.linalg.norm(alto - bajo))
 
 
+def mide_npz(ruta: Path, clave: str) -> dict:
+    """Lo mismo que `mide`, sobre un `.npz` con `V`, `F` y las etiquetas en `clave`.
+
+    Es lo que deja `segmentar_fdi.py` (`segmentacion_<arcada>.npz`): sirve para falsar una
+    segmentación sin construir antes el contenedor entero.
+    """
+    z = np.load(ruta)
+    return mide_etiquetas(np.asarray(z["V"], dtype=np.float64),
+                          np.asarray(z["F"], dtype=np.int64),
+                          np.asarray(z[clave], dtype=np.int64), f"{ruta.stem}:{clave}")
+
+
 def mide(ruta: Path) -> dict:
     with zipfile.ZipFile(ruta) as z:
         nombres = set(z.namelist())
@@ -168,7 +180,11 @@ def mide(ruta: Path) -> dict:
             f"`{SEGMENTACION}` indexa {len(etq):,} vertices y la escena declara "
             f"{len(pos):,}: el cruce por indice no es valido."
         )
+    return mide_etiquetas(pos, tri, etq, ruta.stem)
 
+
+def mide_etiquetas(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray, caso: str) -> dict:
+    """Las tres pruebas de falsación sobre una malla y su código FDI por vértice."""
     a, b, c = pos[tri[:, 0]], pos[tri[:, 1]], pos[tri[:, 2]]
     area = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
     porcara = etq[tri]
@@ -213,7 +229,7 @@ def mide(ruta: Path) -> dict:
     con_fdi = float(area[(porcara > 0).all(axis=1)].sum())
     razon_frontera = razon_de_concavidad(pos, tri, etq)
     return {
-        "caso": ruta.stem,
+        "caso": caso,
         "piezas": piezas,
         "espejos": espejos,
         "n_piezas": len(piezas),
@@ -234,11 +250,14 @@ def mide(ruta: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("caso", type=Path, help="contenedor `.uos` con `derived/seg_teeth.bin`")
+    ap.add_argument("caso", type=Path, help="contenedor `.uos` con `derived/seg_teeth.bin`, "
+                    "o `.npz` de `segmentar_fdi.py` (con `--clave`)")
+    ap.add_argument("--clave", default="limpias",
+                    help="en un `.npz`, qué etiquetas medir (por defecto, las limpias)")
     ap.add_argument("--json", type=Path, default=None, help="escribe el resultado ahi")
     args = ap.parse_args()
 
-    r = mide(args.caso)
+    r = mide_npz(args.caso, args.clave) if args.caso.suffix == ".npz" else mide(args.caso)
     print(f"segmentacion FDI · {r['n_piezas']} piezas · "
           f"{r['area_etiquetada_pct']} % del area con nombre\n")
     print(f"{'FDI':>4} {'area':>9} {'diag':>7} {'anatom':>8} {'razon':>6}")
