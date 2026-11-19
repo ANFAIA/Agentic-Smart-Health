@@ -474,6 +474,69 @@ resultado, y la elección se hizo sobre las dos anotaciones de este caso, que de
 para medirla. Confirmarla exige una línea nueva trazada a ciegas, sobre este caso u otro
 maxilar. Es un caso.
 
+### 6.10 · La separación entre dientes, y un modelo reentrenado para ella (2026-11-20)
+
+**Diagnóstico, sobre `dev` y antes de proponer nada.** Con el pipeline real —voto entre 3
+de 18 referencias y la limpieza de `caso_completo.py`— y las predicciones ya cacheadas, se
+contó cada fallo por pieza del experto (40 arcadas, 520 piezas):
+
+| Fallo | Medida | Piezas afectadas |
+|---|---|---:|
+| Numeración | etiqueta emparejada con otra pieza, o pieza sin etiqueta | 22 (4 %) |
+| **Separación** | la pieza cede o toma más del 10 % de su área a una vecina | **165 (32 %)** |
+| | … más del 30 % | 36 |
+| Frontera interproximal | distancia a la del experto, mediana por contacto | 0,72 mm; 146 de 439 contactos > 1 mm |
+
+La pose no lo explica: con la pose original de Teeth3DS+ salen 147 piezas y 0,72 mm. El
+sangrado es una franja pegada al vecino (mediana 0,4-0,5 mm de la pieza dueña), no
+fragmentos sueltos. Y es lo que cabe esperar de cómo ve el modelo la arcada: trozos de
+2.048 puntos, que sobre unos 9.500 mm² dejan ~2,15 mm entre puntos, cuando la malla tiene
+0,17 mm entre vértices. El error de frontera crece con ese espaciado (Spearman 0,36 sobre
+40 arcadas): es una correlación modesta y se toma como hipótesis, no como causa probada.
+
+Así que el fallo que se ataca es la **separación**, y por la vía de la causa: reentrenar el
+mismo Point Transformer con más puntos por trozo. La numeración y el margen no son el
+objetivo, pero no pueden empeorar.
+
+**El conjunto reservado.** Los 300 pacientes descargados son todos el
+`public-training-set-1` de 3DTeethSeg'22 y están gastados: 240 entrenaron el modelo y 60 son
+`dev` y `eval`. El proyecto OSF `xctdy` tiene el dataset entero en siete zips (ver
+`dataset-teeth3ds.md` §3); de los 600 pacientes que faltan, 300 son el `private-testing-set`
+del reto, que no ha visto **nadie** con datos públicos. La reserva son 60 de ellos, elegidos
+con semilla fija por [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py)
+y versionados en [`teeth3ds-reserva.txt`](teeth3ds-reserva.txt) antes de bajar ninguno. Los
+otros 300, el `public-training-set-2`, se usan para entrenar.
+
+**El candidato.** [`scripts/entrena_fdi_escaner.py`](../../scripts/entrena_fdi_escaner.py):
+la arquitectura, la entrada y la pérdida del notebook; trozos de 8.192 puntos, giros
+aleatorios de hasta ±N° (nunca espejo, que cambiaría el lado FDI) y 1.080 arcadas en vez de
+480. Se prueban como mucho tres valores de giro y se elige en `dev`.
+
+**La métrica nueva.** `margen_metricas.separacion_interproximal`: por cada par de piezas del
+experto que se tocan, la distancia simétrica entre su frontera y la predicha; por pieza, el
+área cedida y tomada. Empareja las etiquetas con las piezas por solape, como
+`identidad_de_piezas`, así que un número cambiado no cuenta como frontera mal puesta.
+
+**Criterios, fijados en este commit antes de entrenar** (`scripts/benchmark_separacion.py`).
+C = candidato, B = `normales-ce-baseline.pt`, los dos en el pipeline real:
+
+| | Criterio |
+|---|---|
+| K1 | mediana de todos los contactos de C ≤ 0,75 × la de B, y mejora en ≥ 70 % de las arcadas |
+| K2 | piezas que sangran > 10 %: C ≤ 0,75 × B |
+| K3 | piezas bien numeradas C ≥ B, y fantasmas C ≤ B |
+| K4 | la distancia del voto al techo de la pose nativa no crece |
+| K5 | falso diente ≤ B + 0,01, falsa encía ≤ B + 0,5 puntos, piezas que pasan a < 85 % de corona ≤ 0,5 % |
+| K6 | acierto FDI por vértice de diente ≥ B − 0,005 |
+
+Si C no los cumple todos en `dev`, la reserva no se toca y esto se cierra como negativo. La
+reserva se evalúa **una vez** (el script se niega a repetirlo). Si cumple todo, C pasa a ser
+el checkpoint por defecto de `segmentar_fdi.py`; si no, queda disponible y declarado.
+
+Las anotaciones de las doctoras (14 curvas del maxilar del caso A) solo entran al final,
+como falsación: dan la identidad de cada pieza pero no la frontera entre dientes que se
+tocan, y ya se usaron para numerar.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

@@ -399,7 +399,7 @@ def predice(args: argparse.Namespace) -> int:
         torch.manual_seed(0)
         # Sin canonizar: Teeth3DS+ YA está en la pose de entrenamiento.
         logp, instancias = seg.infiere(modelo, codigos, n_clases, pos, pos, normales,
-                                       arcada, dev)
+                                       arcada, dev, trozo=meta["num_points"])
         etiquetas = seg.etiquetas_de(instancias, len(pos))
         # ⚠️ Rehacer una predicción no puede cambiar la línea base sin que se note: si
         # las etiquetas no salen idénticas a las guardadas, se dice cuánto difieren.
