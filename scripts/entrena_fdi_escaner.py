@@ -190,7 +190,7 @@ def main() -> int:
             loss.backward()
             opt.step()
             sched.step()
-            perdida += float(loss) * len(b_l)
+            perdida += loss.item() * len(b_l)
             diente = y_t != 0
             aciertos += float((salida.argmax(1)[diente] == y_t[diente]).sum())
             total += float(diente.sum())

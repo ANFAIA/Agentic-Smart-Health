@@ -17,10 +17,12 @@ pacientes etiquetados. Los otros 600 son el `public-training-set-2` y el
 - `entrenamiento`: los 300 del `public-training-set-2`, convertidos a npz (posiciones,
   normales y etiquetas) para no ocupar 10 GB de OBJ.
 
-**Sin bajar los zips.** Pesan 1,3-1,5 GB cada uno y el disco no da. El índice central de
-un zip está al final y cada fichero se puede leer por separado, así que se piden por HTTP
-Range solo los bytes de los pacientes que hacen falta. `zipfile` comprueba el CRC de cada
-uno al leerlo.
+**Un zip cada vez.** El índice central de cada zip se lee por HTTP Range, sin bajarlo,
+para saber en qué parte está cada paciente. Para extraer, en cambio, se baja el zip entero
+de una sola petición, se saca lo que hace falta y se borra: medido, OSF limita el número de
+peticiones (429 a los pocos minutos de leer paciente a paciente), no el ancho de banda. En
+disco nunca hay más de un zip (1,5 GB como mucho). `zipfile` comprueba el CRC de cada
+fichero al leerlo.
 
 ⚠️ La reserva va a un árbol APARTE (`data/raw/teeth3ds-osf/`). Meterla en
 `data/raw/teeth3ds/` cambiaría la lista de pacientes de la que `benchmark_margen.particion`
@@ -87,9 +89,15 @@ class FicheroRemoto(io.RawIOBase):
         import requests
 
         self.sesion = sesion or requests.Session()
-        r = self.sesion.head(url, allow_redirects=True, timeout=60)
+        self.origen = url
+        self._resuelve()
+        self.pos = 0
+
+    def _resuelve(self) -> None:
+        """La URL de OSF redirige a una firmada que caduca: se vuelve a pedir si hace falta."""
+        r = self.sesion.head(self.origen, allow_redirects=True, timeout=60)
         r.raise_for_status()
-        self.url, self.tamano, self.pos = r.url, int(r.headers["Content-Length"]), 0
+        self.url, self.tamano = r.url, int(r.headers["Content-Length"])
 
     def seekable(self) -> bool:
         return True
@@ -111,17 +119,25 @@ class FicheroRemoto(io.RawIOBase):
         n = min(n, self.tamano - self.pos)
         if n <= 0:
             return b""
-        for intento in range(5):
+        import time
+
+        # OSF limita la tasa (429) y a veces corta: se espera cada vez más y se reintenta.
+        # Un 403 es la URL firmada caducada, y se resuelve de nuevo.
+        estado = None
+        for intento in range(12):
             try:
                 r = self.sesion.get(self.url, timeout=300,
                                     headers={"Range": f"bytes={self.pos}-{self.pos + n - 1}"})
-                if r.status_code == 206:
+                estado = r.status_code
+                if estado == 206 and len(r.content) == n:
                     break
+                if estado in (401, 403):
+                    self._resuelve()
             except Exception:  # noqa: BLE001 — red: se reintenta y, si no, se dice
-                if intento == 4:
-                    raise
+                pass
+            time.sleep(min(2 ** intento, 120))
         else:
-            raise OSError(f"el servidor no respeta Range ({r.status_code})")
+            raise OSError(f"OSF no sirvió el rango tras 12 intentos (último estado {estado})")
         self.pos += len(r.content)
         return r.content
 
@@ -193,13 +209,30 @@ def elige_reserva(candidatos: list[str], n: int = PACIENTES_RESERVA,
 
 
 def lista_oficial(nombre: str) -> str:
+    """La lista oficial, comprobada contra su sha256. Se guarda junto a los datos.
+
+    OSF limita la tasa y, cuando lo hace, responde 429 con una página HTML: sin la
+    comprobación del hash esa página pasaría por una lista vacía.
+    """
+    import time
+
     import requests
 
     url, sha = LISTAS[nombre]
-    datos = requests.get(url, timeout=60).content
-    if hashlib.sha256(datos).hexdigest() != sha:
-        raise SystemExit(f"⚠ la lista {nombre} de OSF ya no es la que se fijó; no sigo.")
-    return datos.decode()
+    cache = DESTINO / "listas" / f"{nombre}.txt"
+    if cache.is_file() and hashlib.sha256(cache.read_bytes()).hexdigest() == sha:
+        return cache.read_text()
+    for intento in range(10):
+        r = requests.get(url, timeout=60)
+        if r.status_code == 200:
+            break
+        time.sleep(min(2 ** intento, 120))
+    if hashlib.sha256(r.content).hexdigest() != sha:
+        raise SystemExit(f"⚠ la lista {nombre} de OSF ya no es la que se fijó "
+                         f"(HTTP {r.status_code}); no sigo.")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(r.content)
+    return r.content.decode()
 
 
 # ── Extracción ──────────────────────────────────────────────────────────────────
@@ -212,18 +245,6 @@ def extrae(zf: zipfile.ZipFile, ruta_zip: str, destino: Path) -> str:
     return hashlib.sha256(datos).hexdigest()
 
 
-class Partes:
-    """Un `ZipFile` remoto por parte, abierto la primera vez que hace falta."""
-
-    def __init__(self) -> None:
-        self.abiertas: dict[str, zipfile.ZipFile] = {}
-
-    def __getitem__(self, parte: str) -> zipfile.ZipFile:
-        if parte not in self.abiertas:
-            self.abiertas[parte] = zipfile.ZipFile(FicheroRemoto(PARTES[parte]))
-        return self.abiertas[parte]
-
-
 def ficheros_del_paciente(idx: dict, paciente: str) -> dict[str, tuple[str, str]]:
     esperados = [f"{paciente}_{a}.{e}" for a in ARCADAS for e in ("obj", "json")]
     tiene = idx.get(paciente, {})
@@ -233,31 +254,116 @@ def ficheros_del_paciente(idx: dict, paciente: str) -> dict[str, tuple[str, str]
     return {f: tuple(tiene[f]) for f in esperados}  # type: ignore[misc]
 
 
-def reserva(args: argparse.Namespace) -> int:
+def descarga_parte(parte: str, destino: Path) -> Path:
+    """El zip entero de una parte, en UNA petición (reanudable).
+
+    ⚠️ OSF limita las peticiones, no el ancho de banda: leer paciente a paciente por Range
+    son unas diez por paciente y a los pocos minutos todo es 429. Un zip entero son 1,5 GB
+    como mucho y se borra en cuanto se ha extraído lo que hacía falta.
+    """
+    import time
+
+    import requests
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    parcial = destino.with_suffix(".parcial")
+    for intento in range(12):
+        hecho = parcial.stat().st_size if parcial.is_file() else 0
+        try:
+            cabecera = {"Range": f"bytes={hecho}-"} if hecho else {}
+            with requests.get(PARTES[parte], headers=cabecera, stream=True,
+                              timeout=300) as r:
+                if r.status_code == 416:
+                    break
+                if r.status_code not in (200, 206):
+                    raise OSError(f"HTTP {r.status_code}")
+                if r.status_code == 200:
+                    hecho = 0
+                with parcial.open("ab" if hecho else "wb") as f:
+                    for trozo in r.iter_content(1 << 22):
+                        f.write(trozo)
+            break
+        except Exception as e:  # noqa: BLE001 — red: se reintenta y, si no, se dice
+            print(f"  {parte}: {e}; reintento {intento + 1}", flush=True)
+            time.sleep(min(2 ** intento, 300))
+    else:
+        raise OSError(f"no se pudo bajar {parte}")
+    parcial.replace(destino)
+    return destino
+
+
+def trae(reserva: list[str], entrenamiento: list[str]) -> None:
+    """Baja cada parte que haga falta, extrae la reserva y convierte el entrenamiento."""
+    if set(reserva) & set(entrenamiento):
+        raise SystemExit("⚠ un paciente de la reserva está en el entrenamiento; no sigo.")
+    idx = indice()
+    pendiente: dict[str, list[tuple[str, str, str]]] = {}
+    for paciente in reserva:
+        for nombre, (parte, _ruta) in ficheros_del_paciente(idx, paciente).items():
+            arbol = MALLAS if nombre.endswith(".obj") else ETIQUETAS
+            if not (arbol / paciente / nombre).is_file():
+                pendiente.setdefault(parte, []).append(("reserva", paciente, nombre))
+    for paciente in entrenamiento:
+        ficheros = ficheros_del_paciente(idx, paciente)
+        for arcada in ARCADAS:
+            if not (NPZ / f"{paciente}_{arcada}.npz").is_file():
+                parte = ficheros[f"{paciente}_{arcada}.obj"][0]
+                if ficheros[f"{paciente}_{arcada}.json"][0] != parte:
+                    raise SystemExit(f"⚠ {paciente}_{arcada}: OBJ y JSON en partes distintas")
+                pendiente.setdefault(parte, []).append(("entrenamiento", paciente, arcada))
+    for parte in sorted(pendiente):
+        tareas = pendiente[parte]
+        print(f"{parte}: {len(tareas)} tareas; bajando el zip", flush=True)
+        local = descarga_parte(parte, DESTINO / "zips" / f"{parte}.zip")
+        with zipfile.ZipFile(local) as zf, tempfile.TemporaryDirectory() as tmp:
+            for tipo, paciente, cosa in tareas:
+                if tipo == "reserva":
+                    arbol = MALLAS if cosa.endswith(".obj") else ETIQUETAS
+                    extrae(zf, idx[paciente][cosa][1], arbol / paciente / cosa)
+                    continue
+                rutas = {}
+                for ext in ("obj", "json"):
+                    nombre = f"{paciente}_{cosa}.{ext}"
+                    rutas[ext] = Path(tmp) / nombre
+                    extrae(zf, idx[paciente][nombre][1], rutas[ext])
+                a_npz(rutas["obj"], rutas["json"], NPZ / f"{paciente}_{cosa}.npz")
+                for r in rutas.values():
+                    r.unlink()
+        local.unlink()
+        print(f"{parte}: hecho", flush=True)
+    if reserva:
+        huellas = {f"{p}/{n}": hashlib.sha256(
+            ((MALLAS if n.endswith(".obj") else ETIQUETAS) / p / n).read_bytes()).hexdigest()
+            for p in reserva for n in ficheros_del_paciente(idx, p)}
+        (DESTINO / "reserva-sha256.json").write_text(json.dumps(huellas, indent=1) + "\n")
+
+
+def reserva_derivada(solo_lista: bool = False) -> list[str]:
+    """La reserva derivada de la lista oficial; tiene que coincidir con la versionada."""
     elegidos = elige_reserva(pacientes_de_lista(lista_oficial("private-testing-set")))
-    versionada = ids_reserva() if LISTA_RESERVA.is_file() else None
-    if args.solo_lista or versionada is None:
+    if solo_lista or not LISTA_RESERVA.is_file():
         LISTA_RESERVA.write_text(
             "# Reserva de Teeth3DS+: 60 pacientes del private-testing-set de 3DTeethSeg'22,\n"
             "# elegidos por scripts/fetch_teeth3ds_osf.py (semilla 20261120). Ver §6.10 de\n"
             "# docs/research/segmentacion-fdi-escaner.md. Se evalúa sobre ellos UNA vez.\n"
             + "\n".join(elegidos) + "\n")
         print(f"→ {LISTA_RESERVA} ({len(elegidos)} pacientes)")
-        if args.solo_lista:
-            return 0
-    elif versionada != elegidos:
+    elif ids_reserva() != elegidos:
         raise SystemExit("⚠ la reserva derivada no coincide con la versionada; no sigo.")
-    idx, partes, huellas = indice(), Partes(), {}
-    for k, paciente in enumerate(elegidos, 1):
-        for nombre, (parte, ruta) in ficheros_del_paciente(idx, paciente).items():
-            arbol = MALLAS if nombre.endswith(".obj") else ETIQUETAS
-            destino = arbol / paciente / nombre
-            if not destino.is_file():
-                huellas[nombre] = extrae(partes[parte], ruta, destino)
-            else:
-                huellas[nombre] = hashlib.sha256(destino.read_bytes()).hexdigest()
-        print(f"  [{k}/{len(elegidos)}] {paciente}", flush=True)
-    (DESTINO / "reserva-sha256.json").write_text(json.dumps(huellas, indent=1) + "\n")
+    return elegidos
+
+
+def entrenamiento_osf() -> list[str]:
+    return pacientes_de_lista(lista_oficial("public-training-set-2"))
+
+
+def baja(args: argparse.Namespace) -> int:
+    if args.orden == "reserva" and args.solo_lista:
+        reserva_derivada(solo_lista=True)
+        return 0
+    reserva = reserva_derivada() if args.orden in ("reserva", "todo") else []
+    entrena = entrenamiento_osf() if args.orden in ("entrenamiento", "todo") else []
+    trae(reserva, entrena)
     return 0
 
 
@@ -288,33 +394,6 @@ def a_npz(obj: Path, etiquetas: Path, destino: Path) -> int:
     return len(pos)
 
 
-def entrenamiento(args: argparse.Namespace) -> int:
-    pacientes = pacientes_de_lista(lista_oficial("public-training-set-2"))
-    if args.limite:
-        pacientes = pacientes[: args.limite]
-    reservados = set(ids_reserva()) if LISTA_RESERVA.is_file() else set()
-    if reservados & set(pacientes):
-        raise SystemExit("⚠ un paciente de la reserva está en el entrenamiento; no sigo.")
-    idx, partes = indice(), Partes()
-    with tempfile.TemporaryDirectory() as tmp:
-        for k, paciente in enumerate(pacientes, 1):
-            ficheros = ficheros_del_paciente(idx, paciente)
-            for arcada in ARCADAS:
-                destino = NPZ / f"{paciente}_{arcada}.npz"
-                if destino.is_file():
-                    continue
-                rutas = {}
-                for ext in ("obj", "json"):
-                    parte, ruta = ficheros[f"{paciente}_{arcada}.{ext}"]
-                    rutas[ext] = Path(tmp) / f"{paciente}_{arcada}.{ext}"
-                    extrae(partes[parte], ruta, rutas[ext])
-                a_npz(rutas["obj"], rutas["json"], destino)
-                for r in rutas.values():
-                    r.unlink()
-            print(f"  [{k}/{len(pacientes)}] {paciente}", flush=True)
-    return 0
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -322,12 +401,10 @@ def main() -> int:
     r = ordenes.add_parser("reserva")
     r.add_argument("--solo-lista", action="store_true",
                    help="Escribe la lista versionada y no baja nada.")
-    r.set_defaults(funcion=reserva)
-    e = ordenes.add_parser("entrenamiento")
-    e.add_argument("--limite", type=int)
-    e.set_defaults(funcion=entrenamiento)
+    ordenes.add_parser("entrenamiento")
+    ordenes.add_parser("todo", help="Las dos cosas, bajando cada zip una sola vez.")
     args = ap.parse_args()
-    return args.funcion(args)
+    return baja(args)
 
 
 if __name__ == "__main__":
