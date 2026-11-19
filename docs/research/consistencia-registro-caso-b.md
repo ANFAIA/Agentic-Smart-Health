@@ -1,7 +1,10 @@
 # Consistencia del registro escáner↔CBCT con dos escaneos: caso B
 
-> **Estado (2026-11-19):** protocolo escrito **antes de registrar nada contra el CBCT**.
-> Resultados en §5, pendientes. Esto mide la **precisión** del registro, no su exactitud:
+> **Estado (2026-11-20): ejecutada una vez; la lectura prevista NO se sostiene (§5).** La
+> discrepancia entre escaneos (2,1 mm) cae dentro de la variabilidad del propio registro
+> con el mismo escaneo, que depende de la submuestra aleatoria y a veces da la vuelta a la
+> arcada (≈180°) sin que el residuo lo note. Lo que la ejecución sí establece es que el
+> registro escáner↔CBCT de este caso tiene una precisión de **1–3 mm**. Esto mide la **precisión** del registro, no su exactitud:
 > un sesgo que comparta los dos caminos (el mismo CBCT, el mismo algoritmo) se cancela y no
 > aparece. No sustituye al TRE con puntos anatómicos marcados por una persona.
 
@@ -154,4 +157,66 @@ comprobó en la revisión: POST reproduce run-5 a 1,8·10⁻¹⁴ mm.** Lo que c
 
 ## 5 · Resultados
 
-Pendiente.
+Ejecución única: `data/processed/caso-agosto/consistencia-registro-1/`, commit 126d83c, árbol
+limpio. Verificada por tres revisiones independientes. Una recalculó la medida sin el
+script; otra contrastó cada registro con la imagen; la tercera hizo controles sintéticos.
+
+**Lo que salió, tal como estaba previsto medirlo:**
+
+| | Par principal (PREVIO → ESCANEADO PREVIO) | Par secundario (POST → Visualization) |
+|---|---:|---:|
+| V1 (POST reproduce run-5) | 1,8·10⁻¹⁴ mm ✓ | — |
+| Suelo directo (V2) | 0,063 mm ✓ (p95 0,59) | 0,11 mm (p95 0,53) |
+| Piezas legibles | 12–16, 21–25, 27 (el 11 y el 26 no) | 11–15, 21–25, 27 |
+| Discrepancia en piezas legibles | **2,14 mm** (p95 2,74) | 2,20 mm (p95 3,67) |
+| Anteriores / posteriores | 2,27 / 1,96 mm | 2,23 / 2,12 mm |
+| Diferencia rígida | 3,8° · 1,59 mm en el centroide | 7,0° · 1,86 mm |
+
+La aritmética es correcta:
+- una copia idéntica de POST da 1,5·10⁻⁸ mm;
+- un recálculo independiente da 2,138 mm;
+- los cuatro registros usan el mismo campo del CBCT, con un solo blob en el almacén.
+
+**Desviación descubierta después de ejecutar: el suelo no era el que se fijó.** El protocolo
+tomó como suelo el registro directo entre escaneos (0,063 mm). Ese número acota solo un
+tramo de los dos caminos. El suelo que importa es la variabilidad del propio registro
+contra el CBCT **con el mismo escaneo**, y no se midió antes. Se midió después, cambiando
+solo la semilla de la submuestra de 4.000 vértices que usa el registro (20 semillas por
+escaneo):
+
+| Comparación | Vueltas de ≈180° | Discrepancia sin vueltas, mediana (RIC) |
+|---|---:|---:|
+| PREVIO consigo mismo, otra semilla | 53 de 190 | 1,00 mm (0,62–1,53) |
+| ESCANEADO PREVIO consigo mismo | 75 de 190 | 1,85 mm (0,76–3,05) |
+| PREVIO frente a ESCANEADO PREVIO | 139 de 400 | 2,31 mm (1,93–2,77) |
+
+El valor de la ejecución (2,09 mm sobre todos los vértices) cae en el percentil 36 de la
+distribución entre escaneos. Con este ruido, la medida **no puede** ver si cambiar de
+escaneo añade error: la lectura de §4 no se sostiene, y se dice así en vez de repetir la
+medida con otro número.
+
+**Lo que sí queda establecido sobre el registro de este caso:**
+
+- **Precisión de 1–3 mm y unos 4° sobre las coronas.** En una fracción grande de semillas
+  el registro cae girado ≈180°. Depende de detalles arbitrarios: la semilla, el orden de los
+  vértices (leer un STL movido los reordena) y el arranque desde la identidad.
+- **El árbitro elige otro umbral de densidad según la semilla y el escaneo:** 1200 en POST,
+  1400 en PREVIO, y 1600–1900 en algunas semillas. Por eso los dos caminos no registran
+  contra el mismo objetivo.
+- **El residuo no avisa.** Una vuelta da rms 0,679 mm, igual que una pose buena (0,664–0,680).
+  El solapamiento sí avisa: 3–9 % en las vueltas frente al 13–16 % en las buenas, y todos
+  quedan por debajo del 20 % del gate, con confianza 0.
+- **Ninguna pose encaja todas las piezas a la vez.** Medido como distancia al esmalte (≥900):
+  - PREVIO queda 0,7–1,2 mm por fuera en 21, 22, 23 y 26;
+  - ESCANEADO PREVIO lo corrige desplazándose 1,4 mm hacia posterior y se hunde 1 mm en
+    11, 12 y 24;
+  - POST queda 1–2 mm por delante en 11, 21, 22 y 26.
+- **La comprobación corona→esmalte de run-5 no distingue poses.** Es de un solo lado: un
+  vértice hundido en el diente da ≈0 igual que uno sobre la superficie. En 11–15 puntúa
+  igual dos poses separadas 2 mm.
+
+**Consecuencia para el artículo:** el registro tal como está no sirve para afirmar nada por
+debajo de unos 2 mm en este caso. Arreglarlo es el paso siguiente: que no dependa de la
+semilla ni del marco del fichero, que detecte las vueltas y que lo elija un criterio que
+discrimine poses. Después, esta medida se repite con otro número y su suelo correcto
+medido antes.
