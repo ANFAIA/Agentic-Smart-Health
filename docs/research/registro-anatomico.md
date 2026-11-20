@@ -425,8 +425,13 @@ verdad.
 2. **La encía etiquetada en la banda sesga la altura sin que salte el veto** (§11):
    - 0,4–1,1 mm en serie dispersa;
    - hasta 0,8–4,4 mm en las sondas con encía vestibular, incluso en serie densa.
-   Es lo primero a corregir, con uno de los dos remedios geométricos de §11, verificado
-   contra el fantasma con el criterio fijado antes. El modelo FDI reentrenado, que baja la
+   **Corregido en parte el 2026-11-20 a las 13:00** con el remedio (b), §11.1: en el
+   fantasma, 0,41 → 0,04 mm en disperso y 3,31 → 0,07 mm en denso con encía vestibular, y
+   sin desborde idéntico. El margen se eligió viendo el fantasma, y con coronas de 4 mm y
+   papila que llena la franja de referencia vuelve a deslizar 1,3–4,3 mm **sin avisar**.
+   Falta: un test que fije K2, otro que fije ese límite, y un motivo de puerta cuando la
+   franja de referencia de un diente está contaminada. El remedio (a) falló un criterio
+   fijado antes (§11.2) y no se integra. Ninguno de los dos se ha corrido en el caso A. El modelo FDI reentrenado, que baja la
    encía etiquetada como diente del 45 % al 28 % en `dev`, ataca la misma causa por el otro
    lado. Si su evaluación en la reserva lo confirma, hay que reetiquetar A y B con él.
 3. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
@@ -653,6 +658,7 @@ En las sondas del verificador K2 salía 0,8–4,4 mm; aquí, con estos valores, 
 **K3.** Con la cinta de siempre y con desborde 0 (coronas de 9 y de 6,5 mm, densa y
 dispersa) el filtro no quita **ninguna** cara: emparejamiento y S son idénticos por
 construcción. Búsquedas completas con la mediana + 0,20:
+
 | Escaneo | CBCT | Antes (§8.1 / §11): veto, mediana (p95) | Con filtro: veto, mediana (p95), C |
 |---|---|---|---|
 | Cinta de siempre | denso | no, 0,081 (0,083) | no, 0,081 (0,083), 0,974 |
@@ -680,8 +686,41 @@ entera, encía incluida; la pose es buena y elegible, pero C ya no mide solo la 
   hacia fuera el grosor de la encía) sigue entrando. Aquí no tira de la altura, porque es
   vertical, pero sí podría tirar en planta.
 - No dice nada de por qué C = 0,43 en el caso A: C no cambia con el filtro.
+- **Hay un acantilado fuera de muestra, y es silencioso** (medido por el verificador, no
+  por quien eligió la regla). Cuando la papila desbordada llena más de la mitad de la franja
+  de referencia de un diente, la mediana cae en encía y el filtro quita poco o nada. Con
+  coronas de 4,0 mm y 3 mm de desborde, afinar desde la verdad desliza igual que sin filtro:
+  denso 4,26 mm con encía de 3 mm, 3,72 con 2 mm, 1,33 con 1 mm (1,45 sin filtro); disperso
+  2,66 mm con encía de 1 mm. En este último C en la verdad es 0,95, así que el veto no salta.
+  Con 4,5 mm todavía aguanta (0,090 mm). **Ningún test fija ese límite** y el filtro no manda
+  nada a la puerta cuando la franja de referencia está contaminada: es lo primero que falta.
+- K2 no lo fija ningún test; solo K1. Una vuelta a una regla de percentil alto pasaría CI.
 - Ni el caso A ni el B se han corrido con el filtro.
 
 Tests: `test_sin_las_caras_inclinadas_la_encia_desbordada_ya_no_desliza_el_ajuste` (K1) y
 `test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c`, que ahora fija
 la debilidad con el filtro apagado.
+
+### 11.2 · Remedio (a), cortar la banda en el pliegue cervical: resultado negativo
+
+Probado en paralelo con (b), con los mismos K1–K5 fijados antes de medir. Por diente y por
+sector de 30° en planta, el pliegue es el primer vértice, bajando de 1,5 a 6 mm bajo la
+cúspide, cuya normal gira hacia oclusal al menos 20°; la banda acaba una arista mediana por
+encima. Verificado de forma independiente, todos los números se reproducen:
+
+- K1 pasa: 0,412 → 0,073 mm con encía de 1 mm y 1,119 → 0,083 con 2 mm.
+- K2 pasa: 3,310 → 0,082 mm.
+- **K3 falla en una celda**: serie dispersa, coronas de 6,5 mm, sin desborde, afinar desde la
+  verdad 0,041 → 0,074 mm (mediana de corona 0,025 → 0,076). El criterio estaba fijado
+  antes; que 0,041 sea la rareza es una lectura, no una medida.
+- La «no regresión» en la cinta de siempre y en coronas de 9 mm no dice nada del método:
+  allí no encuentra pliegue en ningún sector y no se ejecuta.
+- Una sonda del verificador con una fosa oclusal de 2 mm en premolares y molares intactos
+  declara pliegue en 14 y 24 y les recorta la banda: falsos pliegues en coronas reales,
+  que el fantasma de elipsoides convexos no tiene.
+- Un diente sin pliegue claro va al informe, no a la puerta.
+
+**No se integra.** El código queda en el commit `d6f2704` de la rama local
+`worktree-wf_c0df66f7-9fa-1` (sin publicar), con el interruptor apagado. Cortar en el
+pliegue tira además mucha banda de corona verdadera (K2 conserva 2316 de 3700 vértices de
+corona), que es lo que (b) evita: (b) quita caras inclinadas y no altura.
