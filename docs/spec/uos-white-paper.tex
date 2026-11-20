@@ -371,10 +371,11 @@ nearest-neighbour distance at the converged pose over the scanner points that li
 describes the fit and is not a target registration error (TRE). In case~A it was 0.666\,mm,
 computed on a CBCT extraction later found to mix two series (\S\ref{sec:endtoend}).
 
-In case~B a pre-specified consistency measurement showed how little such a residual
+In case~B, a consistency measurement pre-specified to compare two independent scans could
+not be read, and a seed analysis added after that run showed how little such a residual
 constrains the pose. Changing only the random subsample seed of the production registration
-moved the crowns by 1--3\,mm, and in about 30\,\% of seeds the arch converged rotated by
-roughly $180^\circ$. A rotated pose gave an RMS of 0.679\,mm, within the 0.664--0.680\,mm
+moved the crowns by 1--3\,mm, and in 53 and 75 of the 190 seed pairs of the two scans the two
+poses differed by a rotation of roughly $180^\circ$. A rotated pose gave an RMS of 0.679\,mm, within the 0.664--0.680\,mm
 range of the unrotated ones; only the overlap fraction differed (3--9\,\% against
 13--16\,\%, all below the 20\,\% gate). This is a precision result for one case and one
 method, not an accuracy figure.
@@ -382,9 +383,11 @@ method, not an accuracy figure.
 The contract supports \code{max\_error\_mm}, \code{target\_registration\_error\_mm} and
 \code{tre\_region}. A written landmark protocol and a tool that computes TRE from points
 marked outside the system exist, but no specialist landmarks have been collected, so no TRE
-is reported for either case. The registration in case~A declares the use
-\code{visualization} and is unverified; neither the residual nor that declaration certifies
-suitability for a clinical task. The contract declares each transform rigid; the reference
+is reported for either case. The current writer declares every automatic registration fit
+for \code{visualization} unconditionally, including that of case~A's 100-slice series
+(\S\ref{sec:evidence}), whose residual is 16.8\,mm with no accepted overlap; the August
+container predates that field. The declaration is not an assessment, and neither it nor the
+residual certifies suitability for a clinical task. The contract declares each transform rigid; the reference
 writer emits rigid transforms, but the validator does not yet check rigidity. Covariance and
 uncertainty propagation are not implemented.
 
@@ -752,7 +755,7 @@ does not include.
 % =============================================================================
 \section{What has been measured}\label{sec:evidence}
 
-The following figures are project measurements taken between August and October 2026 and
+The following figures are project measurements taken between August and November 2026 and
 not re-run for this document. Each row names its data: case~A, case~B, the licensed CBCT
 cohort (V1--V3) or the public Teeth3DS+ corpus \cite{teeth3ds}. Figures obtained before
 10 October 2026 have no machine-written run record; the complete-case runner has written one
@@ -857,8 +860,8 @@ interpolated. This is a repeatability experiment for that protocol, not for new 
 training or clinical segmentation.
 
 All source audits passed. Within each series, all eight binary payloads, processing records
-and registration matrices were identical across the three runs. Container bytes differed;
-JSON payload bytes were inventoried separately, without claiming semantic equivalence.
+and registration matrices were identical across the three runs. Container byte identity was
+not claimed, because the ZIP carries time metadata; JSON payload bytes were inventoried separately, without claiming semantic equivalence.
 The regenerated STL and PLY outputs were identical across all six runs. These observations
 are limited to the tested input, configuration and environment; they are not a guarantee
 for other hardware or software versions.
@@ -883,7 +886,9 @@ starts from anatomical axes (FDI labels on the scan, patient axes in the DICOM h
 fits CBCT tooth contours to the scan within a band 1.5--6\,mm above the occlusal plane. On
 the 301-instance series of case~A, the median distance from scan crown vertices to CBCT
 enamel fell from 4.92 to 1.59\,mm, and the pose moved by about 2\,mm (median) across three
-contour thresholds. That check reuses the same DICOM and is one-sided: in case~B a check of
+contour thresholds. The method's starting pose, fitting direction and band were chosen on
+this same series, so these figures describe the fit it was tuned to, not an independent test.
+That check reuses the same DICOM and is one-sided: in case~B a check of
 the same kind scored two poses 2\,mm apart equally. It is not a TRE. \todo{Registration accuracy for cases A and
 B: landmark TRE pending specialist annotations; update after the robust-registration
 protocol is frozen and run.}
@@ -934,7 +939,8 @@ the criterion it was judged against.
 14-tooth maxillary arch in monotone arch order, but order is not identity: against
 clinician-reviewed tooth curves, 7 were correct and 4 were shifted by one position. Voting
 among the three most confident of 18 canonicalisation references later numbered 12 of 14 as
-the reviewed curves, with none shifted. On 80 held-out Teeth3DS+ arches \cite{teeth3ds} the
+the reviewed curves, with none shifted; the approach was suggested by comparing references
+against these same curves, so this is not an independent test. On 80 held-out Teeth3DS+ arches \cite{teeth3ds} the
 same voting numbered 979 of 1{,}065 teeth correctly, against 1{,}017 in the dataset's native
 pose, and failed three of six criteria fixed before the run.
 
@@ -946,10 +952,11 @@ calibrated on expert-labelled crowns ($\pm1.9$\,mm, their 95th percentile), 4 of
 within range. The learned segmenter placed the crown--gingiva margin where the surface shows
 no crease. A geometric method that moves the margin to the cervical crease
 (\code{ancla\_al\_pliegue}) was then evaluated once on 80 held-out Teeth3DS+ arches: the
-median margin distance to the expert fell from 2.42 to 0.17\,mm, but crown labelled as
+per-arch median margin distance to the expert, averaged over arches, fell from 2.42 to
+0.17\,mm, but crown labelled as
 gingiva rose by 1.51 points against a pre-registered limit of 1.0, so the method is disabled
-by default. On case~A, against a margin line traced blind by one periodontist, the default
-pipeline's margin lay a median 3.53\,mm away and the method's 0.19\,mm. The blind line and a
+by default. On case~A, against a margin line traced blind by one periodontist, the pipeline's
+margin without the method (with the voted numbering) lay a median 3.53\,mm away and the method's 0.19\,mm. The blind line and a
 second annotation (proposed by software and reviewed by another dentist) lie 0.15\,mm apart,
 which is the floor of this measurement. This is one case and one blind annotator. A later variant
 for teeth the method declines was chosen using these same two annotations, which therefore no
@@ -972,13 +979,15 @@ up to 40.5\,mm where anatomical tables give 20--25\,mm for a whole tooth; the ex
 alveolar bone below the apex. The first CBCT tooth segmenter had recall 0.948 and precision
 0.588 on whole ToothFairy2 volumes \cite{toothfairy2}, so a more precise model was expected to
 trim the bone. A second model raised volume-level precision to 0.724 (F1 from 0.726 to 0.822)
-but left the longest piece at 40.2\,mm, at every decision threshold from 0.5 to 0.9. It also named fewer teeth (20
+but left the longest piece at 39.9--40.2\,mm at every decision threshold from 0.5 to 0.9
+(37.5\,mm at 0.95). It also named fewer teeth (20
 against 27), because the registration target was then derived from the segmentation mask;
 once that coupling was removed both models named 27 teeth, and the over-long roots remained.
 
 \paragraph{What follows.} Voxel-level precision and apex localisation are different
-objectives, and the benchmark rewarded the first. A table-length truncation was tried: along
-one arch axis it barely trimmed inclined molars, and the per-tooth axis estimated from the CBCT
+objectives, and the benchmark rewarded the first. A table-length truncation was tried earlier on case~A's maxillary
+arch: along one arch axis it barely trimmed inclined molars (after trimming to 22\,mm the 16
+stayed at 36\,mm and the 26 at 41\,mm), and the per-tooth axis estimated from that case's CBCT
 deviated by about $60^\circ$, so it was withdrawn and the exporter declares over-long roots
 instead of trimming them. At case~B's 0.30\,mm voxels the periodontal ligament that separates root from bone is not
 sampled (\S\ref{sec:rmeasure}). A truncation criterion
