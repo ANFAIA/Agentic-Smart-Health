@@ -27,7 +27,12 @@ medidos a lo largo del eje oclusal (`banda_escaner`). Sigue la curva de Spee y c
 inclinación de la cabeza, que una losa axial sobre el CBCT no sigue. En el CBCT, los
 **bordes** del diente en cada corte (`por_cortes.contornos_con_normales`, umbral fijo 1400),
 no el volumen: una corona hundida 1 mm deja el borde a 1 mm de la superficie del escáner,
-y la comprobación corona→esmalte de una cara no lo veía.
+y la comprobación corona→esmalte de una cara no lo veía. Desde 2026-11-20 eso se cumple en
+el marco del ESCÁNER y no en una losa fija del CBCT: en cada iteración un punto de contorno
+solo cuenta si, llevado por la pose actual, cae a la altura de la banda bajo la cúspide de
+su diente (`MARGEN_VENTANA_MM`), y si mira hacia fuera del diente como la malla (los bordes
+interiores del isonivel, como la unión amelodentinaria, no tienen pareja en el escáner).
+Ver `docs/research/registro-anatomico.md` §8.
 
 3 · **El ajuste va del contorno al escáner, punto a plano.** Cada punto de contorno busca
 el vértice más próximo entre TODOS los del escáner; solo cuenta si ese vértice es de la

@@ -2,7 +2,9 @@
 
 > **Estado (2026-11-20): implementado en `fusion_agents.anatomico` y opcional
 > (`--registro anatomico`). Funciona en el fantasma y FALLA en el caso A (§7).** El
-> protocolo del caso B está suspendido sin congelar hasta corregirlo.
+> protocolo del caso B está suspendido sin congelar hasta corregirlo. La corrección de §8
+> (ventana en el marco del escáner, filtro de sentido, valle y cobertura) corrige en el
+> fantasma un deslizamiento de 1,2 mm que sí tiene verdad, pero el caso A **sigue vetado**.
 > El caso B no se ha registrado con este método: su evaluación de precisión está
 > pre-registrada en [`registro-anatomico-protocolo.md`](registro-anatomico-protocolo.md) y
 > se ejecuta después de commitear ese protocolo. `registro="auto"` no cambia hasta que el
@@ -251,3 +253,107 @@ desarrollo, y a ~22 min por registro serían unas 50 h. Antes hace falta:
 - corregirlos contra el fantasma;
 - volver a pasar el caso A, solo como comprobación de que no hay veto y de lo que declara;
 - reducir el tiempo por registro.
+
+## 8 · Corrección: comparar en el marco del escáner, y solo lo que mira hacia fuera
+
+Cambios del 2026-11-20, tras §7. **Todo lo que decide se midió contra la verdad del
+fantasma**; el caso A solo se usa para comprobar si hay veto, qué incertidumbre declara y
+cuánto tarda. Su distancia al registro por cortes se da como información, nunca como
+criterio.
+
+**Lo que cambia en el ajuste (`empareja`, `afina`):**
+- **Ventana que sigue a la pose.** Un punto de contorno, llevado al marco del escáner por
+  la pose de *esa* iteración, solo cuenta si su profundidad bajo la cúspide de su diente
+  cae en la banda (1,5–6 mm), con 1 mm de rampa a cada lado (`MARGEN_VENTANA_MM`). La rampa
+  es para que entrar y salir de la ventana no haga saltar el objetivo. La losa fija del
+  CBCT ya no decide qué se compara: solo acota cuánto contorno se calcula.
+- **Guarda contra una ventana que encoge.** Si la suma de pesos cae por debajo de la mitad
+  de la inicial (`FRACCION_VENTANA_MIN`), se para, se devuelve la última pose con la
+  ventana llena y no se declara convergida.
+- **Filtro de sentido.** La pareja solo vale si la normal hacia fuera del contorno y la de
+  la malla hacia fuera del diente forman menos de 90°. Las normales de la malla se orientan
+  por diente y por mayoría contra la dirección radial de su banda, porque el sentido del
+  fichero no es anatómico.
+
+**Lo que cambia en la elección:**
+- **S y C no cuentan bordes interiores** (mismo filtro de sentido) ni contorno a más de
+  `TOPE_SECCION_MM` de la sección. Antes, el lado del contorno de C contaba cualquier punto
+  cuyo punto de sección más próximo fuera de banda, a cualquier distancia.
+- **El valle solo es ancla si los dos picos de esmalte caben a una altura de corona de él.**
+  La altura de corona es la del escáner (`Escaner.alto_corona`): la mediana entre dientes de
+  la cúspide menos el percentil 1 de su altura. Si el valle fuera el contacto entre arcadas,
+  cada pico sería el esmalte de una de ellas, y ese esmalte no puede quedar más lejos del
+  contacto de lo que mide la corona.
+
+### 8.1 · Lo que encontró el fantasma
+
+El fantasma de raíces anchas no reproducía el fallo (§7 y el test de raíces). **Lo
+reproduce una cáscara de esmalte**: la corona con 1,2 mm de esmalte a 2200 y dentina a 1200,
+por debajo del umbral de contorno de 1400 (`campo_cbct(..., dentina=1200, esmalte_mm=1.2)`).
+Entonces el isonivel dibuja también la unión amelodentinaria, por dentro de cada corona. Esos
+puntos tienen como más próximo una pared de banda a ~1,2 mm, tiran de ella hacia dentro, y la
+única forma rígida de acercarlas es subir hasta donde la corona del escáner es más estrecha:
+
+| Fantasma (verdad conocida) | Código | C en la verdad | Afinando desde la verdad: corona, mediana | vertical |
+|---|---|---|---|---|
+| Cáscara de esmalte, dentina 1200 | anterior | 0,73 | **1,19 mm** | +1,17 mm (hacia la raíz) |
+| Cáscara de esmalte, dentina 1200 | solo la ventana | 0,98 | 1,20 mm | +1,18 mm |
+| Cáscara de esmalte, dentina 1200 | este | 0,98 | 0,067 mm | +0,066 mm |
+| Raíces anchas, todo ≥ 1600 | anterior | 0,975 | 0,085 mm | +0,080 mm |
+| Raíces anchas, todo ≥ 1600 | este | 0,975 | 0,088 mm | +0,082 mm |
+
+La dirección (hacia la raíz) es la del caso A. **Lo que corrige el deslizamiento es el filtro
+de sentido, no la ventana**: con la ventana sola la cáscara se sigue deslizando lo mismo,
+porque la unión amelodentinaria está a la altura de la banda y la ventana la deja pasar.
+
+### 8.2 · Búsqueda completa en el fantasma, contra la verdad
+
+Rejilla de 0,4 mm, escaneo movido 97° y 85 mm. Error en vértices de corona; vertical = +z,
+hacia la raíz de la arcada superior.
+
+| Fantasma | Veto | S / C elegida | S / C en la verdad | Corona: mediana · p95 | Vertical (mediana) | Afinando desde la verdad | Margen de la vuelta (S) |
+|---|---|---|---|---|---|---|---|
+| Raíces anchas, denso | no | 0,148 / 0,974 | 0,148 / 0,975 | 0,084 · 0,085 mm | +0,078 mm | 0,087 mm | +0,009 mm |
+| Raíces anchas, disperso (0,45 mm, hueco 2,2–3,9) | no | 0,150 / 0,977 | 0,148 / 0,976 | 0,085 · 0,096 mm | +0,082 mm | 0,083 mm | +0,008 mm |
+| Cáscara de esmalte, dentina 1200 | no | 0,150 / 0,983 | 0,151 / 0,983 | 0,065 · 0,073 mm | +0,064 mm | 0,066 mm | **−0,0015 mm** |
+
+En la cáscara, la vuelta puntúa 0,0015 mm mejor que la buena y solo la descarta la anatomía;
+`motivos` lo manda al gate. Ya pasaba en el fantasma cónico con el código anterior (§7).
+
+### 8.3 · Caso A: sigue vetado
+
+Misma ejecución de desarrollo que §7, con este código. **No hay verdad.**
+
+- El valle (+11,6 mm) queda fuera como ancla: un pico está a 11,6 mm de él y la corona del
+  escáner mide 11,2 mm. **El margen es de 0,4 mm.** La regla no se eligió mirando el caso A,
+  pero con una corona medida medio milímetro más alta el valle habría entrado.
+- **Veto otra vez.** Ninguna de las 44 cuencas es elegible. La devuelta tiene S 0,91, C 0,48
+  y las cúspides a +8,8 mm de la moda. Queda a 7,8 mm (rms de la banda) del registro por
+  cortes, frente a 14 mm antes; es solo información.
+- **Una vuelta puntúa mejor** (S 0,036 mm menor), como antes.
+- **El método no ve la altura en este caso.** Trasladando la pose devuelta en vertical de −12
+  a +4 mm, S se queda entre 0,85 y 1,03 y C entre 0,43 y 0,48. En el fantasma S tiene un
+  mínimo claro en 0,15. Ni el filtro de sentido ni la ventana dan al caso A una señal
+  vertical que no tiene.
+- Una comprobación ajena a la referencia: en la pose devuelta, la corona del escáner queda a
+  5,7 mm de mediana del esmalte ≥ 1800 (0,5 % a menos de 1 mm); en la del registro por cortes,
+  a 1,6 mm (33 %). Apunta a que la devuelta está mal, pero es el criterio del árbitro antiguo
+  (§3) y no se usa para elegir.
+- **Tiempo: 577 s** de búsqueda (frente a ~22 min de búsqueda más incertidumbre antes), con la
+  máquina compartida con otros dos procesos de registro.
+
+Lo que no se ha resuelto: por qué S no distingue alturas en el caso A cuando en el fantasma
+sí. La cáscara de esmalte reproduce el deslizamiento y su dirección, pero no ese S plano.
+Candidatos sin probar: etiquetas FDI votadas que desbordan a la encía (la corona mide 11,2 mm
+según ellas), el desenfoque del CBCT y su umbral sin calibrar, o una mordida abierta en el
+CBCT.
+
+### 8.4 · Constantes nuevas
+
+| Constante | Valor | De dónde sale |
+|---|---|---|
+| `MARGEN_VENTANA_MM` | 1,0 mm | A priori: la tolerancia de cobertura (`DEFAULT_OVERLAP_MM`), dos o tres vóxeles. |
+| `FRACCION_VENTANA_MIN` | 0,5 | A priori: la mitad. En un fantasma recortado a propósito, la masa baja legítimamente a 0,53: hay poco margen. |
+| `Escaner.alto_corona` | medido | No es una constante: sale de las etiquetas FDI de cada escáner. |
+
+No cambia ninguna constante existente. La losa sigue en −4 a +14 mm.
