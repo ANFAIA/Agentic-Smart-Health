@@ -564,7 +564,65 @@ resolución ganadora fue 8.192 (0,16 frente a 0,22 mm) y el candidato final es *
 resolución sería mejor. Con una sola semilla no se puede saber si es una diferencia real o
 ruido de entrenamiento, y no se ha investigado.
 
-C2 pasó la puerta, así que la reserva se predice con B y con C2 y se evalúa una vez.
+C2 pasó la puerta, así que la reserva se predijo con B y con C2 y se evaluó una vez.
+
+**Resultado en la reserva (2026-11-20): negativo, por un criterio.** 120 arcadas de 60
+pacientes del `private-testing-set`, evaluadas con `benchmark_separacion.py evalua --split
+reserva` desde `6602771` con el árbol limpio (`run-record.json` junto a cada predicción):
+
+| Criterio | B | C2 | |
+|---|---:|---:|---|
+| K1 contacto p50 | 0,86 mm | 0,17 mm; mejora en las 118 arcadas con contactos | cumple |
+| K2 piezas que sangran > 10 % | 789 de 1.657 | 103 | cumple |
+| K3 bien numeradas · fantasmas | 1.365 · 106 | 1.531 · 95 | cumple |
+| K4 techo − voto | 42 | 14 | cumple |
+| K5 falso diente · falsa encía | 0,358 · 0,065 | 0,255 · 0,019 | cumple |
+| K5 piezas que **pasan** a < 85 % de corona | — | **10 de 1.657 (0,60 %)** | **no cumple** (límite 0,5 %) |
+| K6 FDI por vértice de diente | 0,738 | 0,888 | cumple |
+
+Cinco criterios y medio se cumplen con holgura. Lo que falla es la cláusula de daño de K5:
+10 piezas que con la base conservaban al menos el 85 % de su corona bajan de ese umbral con
+C2, cuando el límite era 8 (0,5 % de 1.657). El total de piezas por debajo del 85 % baja de
+152 a 33, pero el criterio contaba solo las que empeoran, a propósito: un método que arregla
+muchas piezas y estropea unas pocas no debe compensar unas con otras. Así que, por la regla
+fijada, **C2 no pasa a ser el checkpoint por defecto**. Queda disponible y declarado
+(`segmentar_fdi.py --checkpoint`), igual que `M9` y `ancla_al_pliegue`.
+
+Dos cosas que se ven en la reserva y no estaban previstas. La base rinde mucho peor aquí que
+en `dev`: el 82 % de las piezas bien numeradas frente al 96 %, y 74 de 120 arcadas con algún
+fantasma. Son pacientes del test privado del reto, que nadie ha visto con datos públicos, y es
+la primera medida de la base fuera de la distribución con la que se entrenó. Lo que C2 gana
+también es mayor aquí: 166 piezas bien numeradas más, frente a 10 en `dev`. Y el margen
+mejora sin tocarlo: la mediana pasa de 2,23 a 0,96 mm del experto, efecto secundario de las
+1.080 arcadas y de los trozos más finos, no de ninguna regla de margen. No se ha separado qué
+parte de la mejora viene de los trozos y qué parte del doble de datos. Para eso haría falta
+entrenar 2.048 puntos con las 1.080 arcadas, y ese experimento no estaba en el protocolo.
+
+**Falsación en los casos clínicos, sin ajustar nada.** Se segmentaron el maxilar del caso A
+y las dos arcadas del caso B con B y con C2. Las 14 curvas de margen de las dos anotadoras del
+caso A ya estaban gastadas, así que no se leen como validación:
+
+- **Identidad, caso A.** Con C2 las 14 piezas anotadas se emparejan con su propio número y
+  ninguna queda sin etiqueta. Con B se emparejaban por solape igual, pero a la 21 (y a la 17,
+  según una de las anotaciones) no le quedaba etiqueta mayoritaria. C2 añade además una
+  **18** de 109 mm² que ninguna anotadora marcó. No se sabe si existe esa pieza; si no existe,
+  es un fantasma del tipo que K3 cuenta.
+- **Margen, caso A.** Hay 3,53 y 3,64 mm de la línea con B, y 0,88 y 0,98 mm con C2, sin
+  ninguna pieza por debajo del 85 % de corona. Entre las dos anotadoras hay unos 0,15 mm.
+  Coincide en dirección con la reserva; no es una medida independiente.
+- **Caso B**, sin anotación. Las piezas que superan el ancho anatómico pasan de 8 a 5 en el
+  maxilar y de 2 a 1 en la mandíbula. C2 añade una **38** de 35 mm² en la mandíbula, de nuevo
+  sin forma de saber si es real.
+
+Nada de lo clínico contradice la reserva. La pega coincide con la que la reserva ya cuenta:
+los fantasmas bajan poco (106 → 95) y en los dos casos aparece un tercer molar que nadie ha
+confirmado.
+
+**Lo que queda abierto.** (1) El daño de corona de K5: mirar las 10 piezas de la reserva no
+vale para ajustar, porque la reserva ya está gastada; un intento nuevo necesita su propio
+conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resolución de
+datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
+entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
 
 ## 7 · Consecuencia sobre el producto
 
