@@ -252,6 +252,15 @@ actually been measured}, including what did not work. It addresses the clinician
 what a case in this format is worth to them, and the partner or investor who needs to know
 what exists, what is measured, and what is still a design rather than a result.
 
+\paragraph{Clinical material.} Two pseudonymised clinical cases are used, and every figure
+below names the one it comes from. \textbf{Case~A}, from which the container examples are
+drawn, is a maxillary arch with one intraoral scan, a CBCT exported as two series of 100 and
+301 instances with irregular slice spacing, nine image files and three reports.
+\textbf{Case~B} is a second patient with a dense CBCT series (578 slices at 0.30\,mm) and
+several intraoral scans of both arches, including two independent acquisitions from the
+same session. Neither case has landmark-based ground truth for registration.
+\todo{State consent and ethics review for each case (see Ethics and consent).}
+
 We follow one rule throughout, and state it here so the rest can be read against it.
 
 \begin{finding}{Two things that are not the same must never look the same}
@@ -354,17 +363,30 @@ position is undefined, and a viewer that draws it anyway is inventing a pose. Th
 in Appendix~\ref{app:math}.
 
 
-The reference CBCT-to-scanner edge was estimated using point-to-plane ICP. The reported
-0.666\,mm is a point-to-point RMS over accepted correspondences, not the objective being
-minimised and not a clinical error bound. A fit can have a small residual and still be
-misplaced at a landmark outside its effective support.
+The CBCT-to-scanner edges reported here were estimated by point-to-point ICP with a
+closed-form (Kabsch) update, registering scanner vertices to CBCT Gaussian centres above an
+intensity threshold (Appendix~\ref{app:icp}). The residual stored with the edge is the RMS
+nearest-neighbour distance at the converged pose over the scanner points that lie within
+1\,mm of the target. It is the minimised criterion evaluated on its own support, so it
+describes the fit and is not a target registration error (TRE). In case~A it was 0.666\,mm,
+computed on a CBCT extraction later found to mix two series (\S\ref{sec:endtoend}).
 
-The contract separately supports \code{max\_error\_mm}, optional
-\code{target\_registration\_error\_mm} and \code{tre\_region}. No independent TRE is
-reported for this reference case. Its declared use is \code{visualization} and its automatic
-registration is unverified. Neither a residual nor that declared use certifies suitability
-for a clinical task. Covariance, support fractions and uncertainty propagation are not
-implemented as a complete registration contract.
+In case~B a pre-specified consistency measurement showed how little such a residual
+constrains the pose. Changing only the random subsample seed of the production registration
+moved the crowns by 1--3\,mm, and in about 30\,\% of seeds the arch converged rotated by
+roughly $180^\circ$. A rotated pose gave an RMS of 0.679\,mm, within the 0.664--0.680\,mm
+range of the unrotated ones; only the overlap fraction differed (3--9\,\% against
+13--16\,\%, all below the 20\,\% gate). This is a precision result for one case and one
+method, not an accuracy figure.
+
+The contract supports \code{max\_error\_mm}, \code{target\_registration\_error\_mm} and
+\code{tre\_region}. A written landmark protocol and a tool that computes TRE from points
+marked outside the system exist, but no specialist landmarks have been collected, so no TRE
+is reported for either case. The registration in case~A declares the use
+\code{visualization} and is unverified; neither the residual nor that declaration certifies
+suitability for a clinical task. The contract declares each transform rigid; the reference
+writer emits rigid transforms, but the validator does not yet check rigidity. Covariance and
+uncertainty propagation are not implemented.
 
 \begin{finding}{Why retain the registration graph}
 Keeping registrations explicit preserves their direction, method, residual and review
@@ -557,8 +579,9 @@ A distance between structures observed in different modalities depends on regist
 landmark extraction and acquisition errors. UOS records the fitted transform and its
 residual, and provides optional fields for independently assessed TRE. It does not yet
 compute a complete uncertainty budget or a validated cross-modal measurement.
-The gingival-margin-to-alveolar-crest experiment in \S\ref{sec:roadmap} remains unsuccessful;
-the 0.666\,mm fit residual must not be displayed as its error bar.
+The gingival-margin-to-alveolar-crest experiment in \S\ref{sec:rmeasure} remains
+unsuccessful, and a fit residual such as case~A's 0.666\,mm must not be displayed as the
+error bar of a cross-modal distance.
 
 \subsection{A case that can be verified instead of trusted}
 
@@ -733,9 +756,10 @@ runs 120 meshes at \textbf{100\,\%}.
 \textbf{Measurement} & \textbf{Value} & \textbf{What it establishes}\\
 \midrule
 \endhead
-CBCT $\to$ scanner registration & \code{icp\_surface},
-$\varepsilon_{\mathrm{RMS}} = 0.666$\,mm over the matched correspondences, unverified &
-Fit consistency over accepted correspondences; independent target error remains unmeasured.\\
+CBCT $\to$ scanner registration (case~A, August 2026) & point-to-point ICP (label
+\code{icp\_surface}), $\varepsilon_{\mathrm{RMS}} = 0.666$\,mm over scanner points within
+1\,mm, unverified & Fit on the overlapping points, computed on the mixed two-series
+extraction; target error remains unmeasured.\\
 
 Mesh reversibility & $4.59\times10^{-6}$\,mm against a 0.1\,mm budget &
 Numerical preservation relative to the input surface. This does not establish clinical
@@ -1126,7 +1150,10 @@ for once they saw the twin, plus what the measurements above say it would take t
 them. We separate the two deliberately: a request is a requirement, and whether it is
 currently reachable is a measurement.
 
-\subsection{The measurement clinicians actually want}
+\subsection{The measurement clinicians actually want}\label{sec:rmeasure}
+
+Unless stated otherwise, the measurements in this section come from case~B, whose CBCT is
+dense, and are single-patient results.
 
 Validating whether a vertical gingiva-to-enamel dimension of the kind shown in commercial
 2D demos is reproducible on a twin turned out to reveal that it is not one measurement but
@@ -1140,10 +1167,11 @@ Validating whether a vertical gingiva-to-enamel dimension of the kind shown in c
 1 & Gingival margin $\to$ incisal edge & Scanner only & \textbf{Available.} Everything
 happens inside a single mesh within the scan, with no cross-modal registration; landmark and acquisition error remain
 to be assessed. This is the well-conditioned rung and it is implemented.\\
-2 & Cemento-enamel junction $\to$ alveolar crest & CBCT only & Blocked on locating the CEJ;
-see \S\ref{sec:roadmap}.2.\\
-3 & Gingival margin $\to$ alveolar crest & Scanner \emph{and} CBCT & \textbf{The cross-modal experiment}, and therefore the one that justifies a fused twin at all. Blocked on
-registration accuracy.\\
+2 & Cemento-enamel junction $\to$ alveolar crest & CBCT only & Blocked on locating the CEJ
+(\S\ref{sec:cej}).\\
+3 & Gingival margin $\to$ alveolar crest & Scanner \emph{and} CBCT & The cross-modal
+measurement. Blocked on identifying the crest at the available CBCT resolution, and
+dependent on a registration error that has not been measured.\\
 \bottomrule
 \end{longtable}
 
@@ -1152,19 +1180,24 @@ from a radiograph, because the gingival margin is soft tissue and does not appea
 it cannot be taken from a scan, because the alveolar crest is under the gingiva. The experiment combines the two sources; it has not established superiority over other
 clinical measurement workflows.
 
-\begin{finding}{And it does not yet work, in a way worth stating}
-Computed today across the two modalities, the margin-to-crest distance comes out
-\textbf{negative} on part of the arch: the extracted crest is placed above the identified gingival margin in the chosen coordinate
-convention. This flags a failure of the current measurement procedure; it does not yield
-a quantitative bound on registration error or isolate it from landmark-extraction error. Dedicated
-per-tooth registration measures 0.45\,mm and its positive control does not yet close.
+\begin{finding}{Rung 3 does not yet produce a measurement}
+On case~B's mandibular arch (whole-arch registration RMS about 0.49\,mm), rays were cast
+apically from 21 detected gingival-margin sites. On the buccal side 1 of 21 rays reached
+mineralised tissue. On the lingual side 6 of 21 did, but the detected crest moved by
+3.4--8.7\,mm when the ray offset changed by 1.5\,mm, which fails a stability criterion fixed
+before the run. The nearest hard tissue lay 0.7--1.05\,mm coronal to each margin and is
+attributed to the tooth rather than to bone. Separating root from crest requires the
+periodontal ligament (0.15--0.38\,mm wide), which 0.30\,mm voxels do not sample.
 
-The immediate work is therefore not a new measurement but the two things it rests on:
-tightening the alignment where the measurement is taken, and evaluating anatomical criteria for crest extraction. Further annotations or validation data
-may be needed.
+The documented limit is therefore crest identification at this resolution; tighter
+registration alone would not remove it. A better-resolved acquisition and anatomical
+criteria for the crest would be needed. Separately, a whole-arch scanner-to-CBCT
+registration of case~B's maxilla gives an RMS of 0.452\,mm over the 27\,\% of scanner points
+within 1\,mm of CBCT enamel (4.98\,mm over the whole cloud). Its positive control, which
+should return zero, returns 0.486\,mm, so the procedure has no clean floor.
 \end{finding}
 
-\subsection{What is measurably out of reach, and what replaces it}
+\subsection{What is measurably out of reach, and what replaces it}\label{sec:cej}
 
 Absolute gingival recession is defined against the cemento-enamel junction, and we measured
 that the CEJ is not recoverable from either of our modalities. Not from CBCT by density:
@@ -1182,20 +1215,25 @@ not a photograph, a trajectory. Two visits registered to a suitable reference pe
 is to establish the clinical threshold at which a displacement is reportable rather than
 noise.
 
-\subsection{Per-tooth motion, and a reference that does not move}
+\subsection{Per-tooth motion, and a reference that does not move}\label{sec:pertooth}
 
 Orthodontic follow-up asks a narrower question: did \emph{this} tooth move, and by how much.
-Per-tooth registration gives a robustly small residual, but the displacement it yields is
-currently unusable, and the reason is instructive. Displacement is measured against the
-global arch registration, and that registration itself shifts with the ICP trimming
-parameter: the median displacement moves from \textbf{0.171 to 0.738\,mm} on that
-hyperparameter alone. Every tooth appears to move because the frame moved. A leave-one-out frame estimated without the target tooth is a candidate to test. It does
-not guarantee a stable reference if the other teeth also move.
+On two intraoral scans of case~B's mandibular arch (scanner to scanner, no CBCT), per-tooth
+rigid registration lowered the held-out residual relative to the whole-arch registration in
+13 of 13 teeth. The displacement it yields depends on the reference frame. Measured against
+the whole-arch registration, the median displacement moved from \textbf{0.171 to
+0.738\,mm} when only the ICP trimming parameter changed: every tooth appeared to move
+because the frame moved. Re-estimating the frame from all teeth except the target
+(leave-one-out) reduced this to 0.158--0.182\,mm, and the largest per-tooth change to
+0.107\,mm. Two independent scans from the same session, between which no tooth moved, gave
+displacements of up to 0.39--0.54\,mm, so displacements below about 0.4\,mm are not
+distinguishable from zero with this procedure. The leave-one-out frame assumes that the other
+teeth are stable.
 
-One shortcut is worth recording as measurably wrong, because it is the kind of simplification
-a roadmap adopts for performance reasons without checking: estimating the transform for three
-teeth and averaging it for the rest is \emph{worse than doing nothing} in 2{,}629 of 2{,}860
-comparisons, against simply using the global registration.
+Averaging is measurably worse than not correcting. Estimating the transform for three teeth
+and applying their average to the others was worse than the whole-arch registration in
+2{,}071 of 2{,}860 evaluations (all 286 triples of 13 teeth) when the rotation was averaged
+about each tooth's centroid, and in 2{,}629 when the matrices were averaged directly.
 
 \subsection{Modalities that are not geometry}
 
@@ -1376,24 +1414,39 @@ registration identifiers, and warns about discrepancies between alternatives.
 
 \subsection{Registration as an estimator with a reported error}\label{app:icp}
 
-The CBCT-to-scanner edge is obtained by point-to-plane ICP over the extracted bone--enamel
-surface. Given source points $\{p_k\}$ and target points $\{q_k\}$ with target normals
-$\{n_k\}$, the estimate minimises
-
+The CBCT-to-scanner edge is estimated by multiscale point-to-point ICP. Let
+$\{p_i\}_{i=1}^{N}$ be the scanner vertices (source) and $Q$ the CBCT Gaussian centres
+retained by an intensity threshold (target), in millimetres. In the production path the
+source is a seeded random subsample of 4\,000 scanner vertices, and the threshold is chosen
+among several candidates by registering against each and scoring the result against CBCT
+enamel. At iteration $k$, with
+estimate $T_k$, each source point is paired with its nearest target point,
 \[
-  \hat{T} \;=\; \arg\min_{T \in SE(3)} \;
-  \sum_k \Big( \big( T p_k - q_k \big) \cdot n_k \Big)^{\!2},
+  c_i = \arg\min_{q\in Q}\lVert T_k p_i - q\rVert, \qquad d_i = \lVert T_k p_i - c_i\rVert,
 \]
-
-and the number the container ships alongside it is the root-mean-square residual
-
+and a set $A_k$ keeps the $\lceil \rho N\rceil$ smallest $d_i$, with trimming fraction
+$\rho\in(0,1]$ ($\rho=1$ is classical ICP). The update
 \[
-  \varepsilon_{\mathrm{RMS}} \;=\; \sqrt{\tfrac{1}{K}\textstyle\sum_k \lVert \hat{T} p_k - q_k \rVert^2},
+  (\Delta R,\Delta t) \;=\; \arg\min_{R\in SO(3),\,t\in\mathbb{R}^3}
+  \sum_{i\in A_k}\big\lVert R\,T_k p_i + t - c_i\big\rVert^2
 \]
-
-reported on the reference case at $\varepsilon_{\mathrm{RMS}} = 0.666$\,mm over the
-accepted correspondences. This point-to-point residual differs from the point-to-plane
-objective and is not an independently measured TRE.
+has the closed-form Kabsch solution: with centroids $\bar x,\bar c$ of the paired points and
+$H=\sum_{i\in A_k}(T_k p_i-\bar x)(c_i-\bar c)^{\!\top}=U S V^{\!\top}$,
+$\Delta R = V\,\mathrm{diag}\big(1,1,\det(VU^{\!\top})\big)\,U^{\!\top}$ and
+$\Delta t=\bar c-\Delta R\,\bar x$. Iterations run on random subsamples of 10, 35 and
+100\,\% of the source and stop when the RMS over $A_k$ changes by less than
+$10^{-6}$\,mm. At the converged pose $\hat T$, with distances $d_i$ over all source points,
+the implementation reports the overlap set $O=\{i : d_i<1\,\mathrm{mm}\}$, the overlap
+fraction $f=|O|/N$ and
+\[
+  \varepsilon_{\mathrm{RMS}} \;=\; \sqrt{\tfrac{1}{|O|}\textstyle\sum_{i\in O} d_i^{2}}
+\]
+(the full-cloud RMS when $O$ is empty). The review-gate confidence is $0$ if $f<0.2$ and
+otherwise $\mathrm{clamp}(1-\varepsilon_{\mathrm{RMS}}/\varepsilon,0,1)$, with
+$\varepsilon=1.5$\,mm for intraoral--CBCT pairs. $\varepsilon_{\mathrm{RMS}}$ is the
+minimised point-to-point criterion restricted to the overlapping points; it is not a TRE.
+In case~B, poses rotated by about $180^\circ$ reached the same $\varepsilon_{\mathrm{RMS}}$
+as correct ones (\S\ref{sec:relations}), and only $f$ separated them.
 
 
 \subsection{Identity of a directory asset}\label{app:hash}
