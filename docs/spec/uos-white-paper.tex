@@ -97,32 +97,23 @@ hash; it carries converted geometry, derived representations, metadata and views
 specification, JSON Schema, validator and synthetic conformance fixtures accompany the
 implementation. Access to referenced originals still requires an external repository.
 
-\noindent\textbf{What has been demonstrated.} A reported mesh round trip differs by
-$4.59\times10^{-6}$\,mm from its input, a numerical preservation result rather than a
-measurement of scanner accuracy. A subsequent source audit found two DICOM series in
-the reference case's downloaded archive, with 100 and 301 instances. Four shared filenames
-had reduced the earlier extraction to 397 files. The historical 0.666\,mm alignment residual
-therefore does not validate a coherent single-series volume. Experimental exports add
-regional photograph-based colour estimates, tooth
-labels and closed surfaces. Their limitations are material: crown boundaries fail anatomical
-checks for 11 of 14 teeth, some reconstructed roots are too long, and closure adds synthetic
-faces. These are prototype outputs, not validated laboratory or diagnostic deliverables.
+\noindent\textbf{What has been measured.} On public Teeth3DS+ meshes, regenerating the
+mesh through the pipeline differs from its input by at most $4.59\times10^{-6}$\,mm, a
+numerical-preservation result rather than scanner accuracy. In case~A, a source audit found
+that the historical 0.666\,mm registration residual was computed on two DICOM series mixed
+together; registered separately, neither series reaches the overlap the review gate requires.
+In case~B, the production registration's pose varies by 1--3\,mm with its random seed and
+can flip by about $180^\circ$ at an unchanged residual. No landmark-based registration error
+exists for either case. Experimental tooth labels, photograph-based regional colour and
+reconstructed roots remain prototypes: in case~A the default crown--gingiva margin lies a
+median 3.5\,mm from a periodontist's blind line, and reconstructed roots in case~B reach
+40\,mm.
 
-\noindent\textbf{The discipline behind every design decision.} Two things that are not the
-same must never look the same. An automatic alignment nobody reviewed and one reviewed by a
-clinician. A colour sampled from the patient and one from a fallback gradient. A tooth
-boundary drawn by a network and one drawn by a person. Each distinction costs a field in a
-manifest and buys a recipient the ability to decide what to trust, which is the only thing
-that makes a case worth sending at all.
-
-\noindent\textbf{What we are not claiming.} This is a proposal with a published schema and
-a validator, not a standard, and interoperability still needs a second independent implementation
-opening a container written by the first. Model outputs require explicit provenance and review; validation does not establish clinical
-correctness. The figures here come from one real case and three CBCT volumes; none of them is a
-clinical study, and no claim is validated against patient outcomes. We report three lines
-of work that did not reach their objective alongside the ones that did, because a format
-whose purpose is to keep measurement and inference apart earns nothing if its authors
-exempt themselves from the rule.
+\noindent\textbf{What we are not claiming.} UOS is a proposal with one implementation, not
+a standard. Validation of a container does not establish clinical correctness. The figures
+come from two clinical cases, three CBCT volumes of a licensed cohort and the public
+Teeth3DS+ corpus; none of this is a clinical study. Results that did not reach their
+pre-specified criteria are reported with the same weight as those that did.
 
 \vspace{0.25cm}
 \noindent\emph{Keywords:} dental informatics, interoperability, digital twin, provenance,
@@ -322,8 +313,10 @@ separation rules; the implementation limitations below qualify what that enforce
 without a model. Immutable: a writer never edits an asset in place.\\
 \textbf{Presentation} & \code{views.json} & What the clinician was looking at --- camera,
 visible layers, clipping. Disposable and cheap to rewrite.\\
-\textbf{Inference} & \code{derived/} & Anything a model produced. \textbf{Removable}:
-deleting the directory and its manifest entries leaves a valid, complete case.\\
+\textbf{Inference} & \code{derived/} & Anything a model produced. \textbf{Removable}: the
+reference implementation writes a validated successor without these assets, updating
+dependent manifest entries and the chain and clearing saved views that may depend on
+inferred labels.\\
 \bottomrule
 \end{longtable}
 
@@ -403,30 +396,40 @@ The reference container used throughout this document holds a real maxillary cas
 intraoral scan, a CBCT, nine image files (six intraoral photographs and three digital
 radiographs) and three reports, contributed by the collaborating practice and processed
 pseudonymised. The scan, the images and the reports are identified by SHA-256 and are not
-stored in the ZIP. Opening it, this is what a reader meets.
+stored in the ZIP. Table~\ref{tab:inside} describes that container as written in August 2026
+by writer versions before 0.6.0. Its CBCT density field and its 397-slice volume were built
+from an extraction that, as audited later, merged two DICOM series (\S\ref{sec:endtoend}), so
+they do not describe a coherent single-series volume.
 
 \begin{longtable}{L{6.2cm} L{9.0cm}}
+\caption{Case~A's container as written in August 2026.}\label{tab:inside}\\
 \toprule
 \textbf{Item} & \textbf{What is there}\\
 \midrule
 \endhead
-ZIP entries & 12 --- the acquired originals are referenced, everything UOS composes is
-inside. Measured on the container as last written, before 0.6.0 gave the per-Gaussian tooth
-labels their own \code{derived/} entries\\
+ZIP entries & 12; the acquired originals are referenced, not carried\\
 Assets declared & 18, of which 13 are referenced rather than carried\\
 Stored views & 18: four anatomical, the rest one per annotated tooth\\
 Mesh & 112{,}067 vertices, 220{,}085 triangles, a single unpartitioned primitive\\
-Appearance layer & 113{,}827 Gaussians, spherical harmonics degree 1,
+Appearance layer & 113{,}827 Gaussians declared, spherical harmonics degree 1,
 \code{srgb\_rec709\_display}\\
 CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
-12{,}072{,}785\\
+12{,}072{,}785; built from the mixed extraction\\
 Declared extensions & 3, all listed as \emph{used}, none \emph{required}\\
 Provenance chain & 3 versions, each pointing at the hash of the one before\\
-Conformance & UOS-Core + UOS-Vol, 0 errors\\
+Conformance & UOS-Core + UOS-Vol, 0 errors under the validator of that date\\
 \bottomrule
 \end{longtable}
 
-Two of those rows carry more than they appear to. \textbf{None of the three extensions is
+The most recent inventoried container of case~A (2 October 2026, archived appearance
+restored) declares 24 assets, 13 of them external, and validates at UOS-Core with 0 errors
+and 42 warnings. It carries no volume and does not yet resolve the DICOM source of its CBCT
+field, which still derives from the mixed extraction. Its appearance layer is reported with
+113{,}540 Gaussians, although it is declared bit-identical to the August artefact for which
+the table gives 113{,}827; the discrepancy is unresolved. The source-separated runs of
+7 October 2026 were not inventoried at this level of detail.
+
+Two properties of the table matter beyond the numbers. \textbf{None of the three extensions is
 required}: everything we add adds information, and a conforming reader that understands none
 of them must still be able to open the case --- otherwise an open format is one only its
 issuer can read in full. And the container is \textbf{logically append-only}: modifying a
@@ -480,9 +483,9 @@ The argument so far is structural. This section walks one real case through the 
 because the value of a composition format is not visible in any single stage of it --- it
 is visible in what the sixth reader can do that the first could not.
 
-\paragraph{Source audit, 7 October 2026.} The walkthrough below records the earlier
-prototype execution. Inspection of the downloaded ZIP later found 401 instances in two
-series and two reference frames. Four filenames occur in both series with different
+\paragraph{Source audit, 7 October 2026.} The walkthrough below records the August 2026
+execution on case~A. An audit of the downloaded ZIP on 7 October 2026 found 401 instances in
+two series and two reference frames. Four filenames occur in both series with different
 contents; flattening the export into one directory overwrote four instances. The original
 archive is preserved. Current preparation retains both series separately, and ingestion
 rejects a mixed directory. Both series have nonuniform slice positions. Historical
@@ -497,43 +500,44 @@ PDFs.
 
 \paragraph{2. The container is written.} The pipeline ingests the four modalities, aligns
 the CBCT to the scan, labels the teeth, composes the scene and writes the \code{.uos}.
-Ingestion of STL, CBCT and report was measured at \textbf{12.7\,s} against a 60\,s budget; this excludes fitting and export. The pipeline is invoked with
-one command. The acquired originals stay where the clinic keeps them and are named inside
-the container by their content hash --- the CBCT series with a hash per slice, all 397 of
-them.
+The pipeline is invoked with one command; its ingestion stage, without fitting or export,
+took at most 12.7\,s in August 2026 against a 60\,s budget. The acquired originals stay where
+the clinic keeps them and are named inside the container by their content hash, the CBCT
+export with a hash per file (397 files in the mixed extraction).
 
-What that historical container held that did not exist before the run was the relational layer: the
-CBCT-to-scanner transform with its 0.666\,mm residual and the statement that nobody has
-verified it, the visit each asset belongs to, a tooth code on every vertex sitting in the
-removable inference plane, and the report's findings anchored to the teeth they name.
+What the container added was the relations between the inputs: the CBCT-to-scanner transform
+with its 0.666\,mm residual and the statement that nobody has verified it, the visit each
+asset belongs to, per-vertex tooth codes in the removable inference plane, and the report's
+findings anchored to the teeth they name. In that container per-Gaussian tooth codes were
+also embedded in two PLY payloads declared processing layer~1; writer 0.6.0 moved them to
+\code{derived/}, and that container was not re-exported.
 
-\paragraph{3. It is validated, by anyone, without trusting the writer.} Validation is not a
-courtesy the writer performs on itself. A reader runs the published validator over the file
-and gets back a report with stable codes: whether the manifest matches its own schema,
-whether carried assets are present and hash as declared, whether the frame graph is
-connected, whether declared inference and checked label payloads escaped \code{derived/}, whether the provenance chain tells
-the same story as the manifests. On the historically reported reference case: \textbf{0 errors}, conformance
-UOS-Core + UOS-Vol.
-
-The warnings are as informative as the errors, and the one this case raises is the right
-one: the CBCT-to-scanner registration is automatic and unverified, so the validator names it
-rather than leaving the obligation to whoever remembers to look.
+\paragraph{3. It is validated without trusting the writer.} A reader runs the published
+validator over the file and gets a report with check-derived codes. It covers whether the
+manifest parses against the contract (schema conformance is reported as a warning), whether
+carried assets are present and hash as declared, whether the frame graph is connected,
+whether declared layer-3 assets and checked label payloads lie outside \code{derived/}, and
+whether the provenance chain matches the manifests. The August container gave 0 errors,
+conformance UOS-Core + UOS-Vol, and two warnings: one counting the 13 referenced originals
+and one flagging the automatic, unverified CBCT-to-scanner registration. That validation
+predates the check for tooth labels in PLY payloads, which the container would now fail.
 
 
-\paragraph{4. A second reader inspects it.} The project's earlier demonstration reports a
+\paragraph{4. A second reader inspects it.} The project's August 2026 demonstration reports a
 browser viewer with layer controls, stored views and tooth cards. This repository exports
 scene data, views and viewer-oriented PLY/JSON; it does not establish an independently
 validated browser reader for arbitrary UOS files. A recipient needs a compatible reader
 and separate access to any originals required for their task. Tooth highlighting depends
 on experimental segmentation and does not validate anatomical boundaries.
 
-\paragraph{5. Experimental laboratory exports.} The reported mesh round trip has a
-$4.59\times10^{-6}$\,mm discrepancy from its input. This checks numerical preservation,
-not scanner trueness. Regional colour estimates and model-generated labels can be assigned
-to that geometry, with the limitations in \S\ref{sec:negative}. A closed arch was produced
-with 12{,}025 added faces in 3.2\,s; those faces are synthetic. Per-tooth exports combine a
-scanner-derived crown with a reconstructed root, but abnormal root lengths prevent claiming
-validated laboratory use. Each composite STL now has a \code{.provenance.json} companion
+\paragraph{5. Experimental laboratory exports.} Case~A's scan is a binary STL, which stores
+\code{float32} coordinates, so regenerating it through the pipeline is exact by construction;
+the $4.59\times10^{-6}$\,mm figure of \S\ref{sec:evidence} comes from decimal OBJ meshes of
+a public corpus. Regional colour estimates and model-generated labels can be assigned to
+that geometry, with the limitations in \S\ref{sec:negative}. A closed arch was produced
+with 12{,}025 added faces in 3.2\,s in a single August 2026 run; those faces are synthetic.
+Per-tooth exports combine a scanner-derived crown with a reconstructed root, and over-long
+roots prevent laboratory use. Each composite STL has a \code{.provenance.json} companion
 bound to its SHA-256, mapping triangle ranges to scanner geometry, synthetic closure or
 reconstructed root. The map requires the unmodified STL and its companion; it does not
 accompany a physical print or validate the inferred tooth assignments.
@@ -735,12 +739,12 @@ does not include.
 % =============================================================================
 \section{What has been measured}\label{sec:evidence}
 
-The following figures are historical project measurements, not reruns performed for this
-revision. They are stated with their reported data source, because the project has several and they are not interchangeable. Unless a row
-says otherwise, the source is \textbf{the reference case}: one maxillary arch with an
-intraoral scan, a CBCT, nine photographs and three reports, contributed by the
-collaborating practice and processed pseudonymised. The volumetric figures below come
-from three CBCT volumes of a licensed cohort that cannot be redistributed. Figures from the public Teeth3DS+ corpus are named as such.
+The following figures are project measurements taken between August and October 2026 and
+not re-run for this document. Each row names its data: case~A, case~B, the licensed CBCT
+cohort (V1--V3) or the public Teeth3DS+ corpus \cite{teeth3ds}. Figures obtained before
+10 October 2026 have no machine-written run record; the complete-case runner has written one
+(\code{run-record.json}, with command line, seed, git revision, a hash of uncommitted
+changes and software versions) since then.
 
 \subsection{The four commitments the project was set}
 
@@ -749,23 +753,27 @@ from three CBCT volumes of a licensed cohort that cannot be redistributed. Figur
 \textbf{Commitment} & \textbf{Target} & \textbf{Measured} & \\
 \midrule
 \endhead
-Ingestion latency, complete set (STL + CBCT + report) & $<60$\,s & \textbf{12.7\,s} & met\\
-Numerical preservation of the regenerated mesh & $<0.1$\,mm &
+Ingestion-stage latency, STL + CBCT + report, worst case (clinical data, August 2026;
+excludes fusion, fitting and export) & $<60$\,s & \textbf{12.7\,s} & met\\
+Mesh regeneration, worst case over Teeth3DS+ OBJ meshes & $<0.1$\,mm &
 {\small $4.59\times10^{-6}$\,mm} & met\\
-Automated test coverage & $>80\,\%$ & \textbf{95.1\,\%} & met\\
-Reliability of the ingestion agents & $>95\,\%$ & \textbf{93.8\,\%} ($N=16$) &
-\textbf{not met}\\
+Statement coverage of the test suite (August 2026; CI gate $\geq 80\,\%$) & $>80\,\%$ &
+\textbf{95.1\,\%} & met\\
+Reliability of the ingestion agents (clinical files, August 2026) & $>95\,\%$ &
+\textbf{93.8\,\%} (15 of 16 attempts) & \textbf{not met}\\
 \bottomrule
 \end{longtable}
 
-The fourth is published as it came out. The single failure is a clinical report scanned
-\emph{without a text layer}: the agent extracts nothing and declares itself failed, which is
-the correct behaviour. With $N = 16$ real cases one failure is 6.2 points, so the figure
-sits below target by one case. The current ingestion agent includes an OCR fallback,
-but this historical cohort result has not been remeasured here. Both $N$ and
-the percentage travel together on purpose --- a small $N$ that is declared is defensible;
-hidden behind a percentage it is not. On the public Teeth3DS+ corpus the same mesh agent
-runs 120 meshes at \textbf{100\,\%}.
+Reliability was counted per ingested file: 16 attempts that ended OK or failed, with absent
+modalities excluded. The single failure was a clinical report scanned without a text layer:
+the agent extracted nothing and declared itself failed, which is the intended behaviour, and
+with 16 attempts one failure moves the figure by 6.2 points. The report agent has since
+gained an OCR fallback; the figure has not been remeasured. On 120 Teeth3DS+ meshes the mesh
+agent completed every ingestion. Both reliability figures report whether an agent behaved as
+declared, not whether its output was correct. The mesh figure is the largest per-vertex
+distance between an ingested OBJ mesh and the binary STL regenerated from it, so it measures
+\code{float32} rounding of decimal coordinates. The run outputs behind the four rows were not
+archived.
 
 \subsection{Composition and geometry}
 
@@ -779,21 +787,22 @@ CBCT $\to$ scanner registration (case~A, August 2026) & point-to-point ICP (labe
 1\,mm, unverified & Fit on the overlapping points, computed on the mixed two-series
 extraction; target error remains unmeasured.\\
 
-Mesh reversibility & $4.59\times10^{-6}$\,mm against a 0.1\,mm budget &
-Numerical preservation relative to the input surface. This does not establish clinical
-accuracy; a binary STL already stores coordinates as \code{float32}.\\
+Mesh regeneration (Teeth3DS+ OBJ meshes) & $4.59\times10^{-6}$\,mm against a 0.1\,mm
+budget & \code{float32} rounding of decimal coordinates. For a binary STL input such as
+case~A's, the path is exact by construction. Not an accuracy figure.\\
 
-Per-slice verification & 397 slices, 419 entries, 0 errors, 0 warnings &
-Historical series-check result, separate from validation of a ZIP that references external
-originals. Synthetic embedded fixtures exercise missing, altered and extra files.\\
+Per-file verification (case~A, August 2026) & 397 files, 419 entries, 0 errors, 0 warnings &
+File integrity of the extraction later found to merge two series; it does not show series
+coherence. Synthetic embedded fixtures exercise missing, altered and extra files.\\
 
-Watertight arch export & 12\,025 closing faces, 11\,936\,mm$^3$, 3.2\,s &
+Watertight arch export (case~A, one run) & 12\,025 closing faces, 11\,936\,mm$^3$, 3.2\,s &
 A closed prototype surface with synthetic closing faces; anatomical and manufacturing
 suitability were not validated.\\
 
-Container overhead of uncompressed storage & 183.2\,MB stored vs.\ 37.3\,MB deflated &
-The storage cost of the current STORE policy; no range-access benefit was benchmarked: the \code{.ply} layers
-compress to 13--15\,\%, the \code{.glb} only to 81\,\%.\\
+Uncompressed storage (case~A, August 2026 container) & 183.2\,MB stored vs.\ 37.3\,MB
+deflated & The cost of the STORE policy on that container; no range-access benefit was
+benchmarked. The \code{.ply} layers compressed to 13--15\,\%, the \code{.glb} only to
+81\,\%. Later containers of the case store about 191--193\,MB.\\
 \bottomrule
 \end{longtable}
 
@@ -849,10 +858,21 @@ conservation, not acquisition accuracy or physical calibration. The original DIC
 and the centred field now have separate frames, with their relationship explicitly composed
 from the recorded origin and ICP transform.
 
-The tests used Python 3.13.9, NumPy 2.5.1, SciPy 1.18.0, PyTorch 2.11.0 with CUDA 12.8,
-and an NVIDIA RTX 5070. The implementation suite passed 1{,}175 tests, with two skipped
-and two pre-existing numerical warnings. The writer version for this experiment is 0.18.0;
-the container format remains UOS 0.3.
+The runs used Python 3.13.9, NumPy 2.5.1, SciPy 1.18.0, PyTorch 2.11.0 with CUDA 12.8 and
+an NVIDIA RTX 5070. At that verification the implementation suite passed 1{,}175 tests, with
+two skipped and two pre-existing numerical warnings. The writer version was 0.18.0 and the
+container format UOS 0.3. These six runs predate the per-run record described at the start
+of this section.
+
+A registration restricted to slices for sparse series was added on 9 November 2026. It
+starts from anatomical axes (FDI labels on the scan, patient axes in the DICOM header) and
+fits CBCT tooth contours to the scan within a band 1.5--6\,mm above the occlusal plane. On
+the 301-instance series of case~A, the median distance from scan crown vertices to CBCT
+enamel fell from 4.92 to 1.59\,mm, and the pose moved by about 2\,mm (median) across three
+contour thresholds. That check reuses the same DICOM and is one-sided: in case~B a check of
+the same kind scored two poses 2\,mm apart equally. It is not a TRE. \todo{Registration accuracy for cases A and
+B: landmark TRE pending specialist annotations; update after the robust-registration
+protocol is frozen and run.}
 
 \subsection{Appearance estimated from clinical photographs}
 
@@ -1059,7 +1079,9 @@ Image selections & FHIR R5's \code{ImagingSelection} is a candidate for selectio
 imaging data. An actual connector must verify source identifiers, supported references
 and anatomical semantics; it is not an implemented mapping here.\\
 The scene & Binary \textbf{glTF} with optional Gaussian layers. The upstream
-\code{KHR\_gaussian\_splatting} specification now reports ratified status~\cite{khrgs}.
+\code{KHR\_gaussian\_splatting} specification was listed as ratified when consulted on
+20 November 2026~\cite{khrgs}; the reference implementation was written against the release
+candidate.
 Compatibility with that revision and retirement of fallback payloads require explicit testing.\\
 The clinical findings & A coding structure \code{\{system, code, display\}} with unassigned SNOMED CT codes and
 tooth numbering to ISO 3950 \cite{iso3950}.\\
@@ -1070,11 +1092,11 @@ tooth numbering to ISO 3950 \cite{iso3950}.\\
 Findings carry a coding structure, but the SNOMED \code{code} is \code{null}; they are not
 yet terminology-coded findings. Assigning one is
 clinical terminology work, and a guessed code is indistinguishable from a correct one to
-the connector that resolves it. The same discipline applies to the FHIR mapping: UOS
-declares the resource \emph{type} --- \code{Media} for the photographs, \code{ImagingStudy}
-for the volume, \code{DocumentReference} for the mesh and for the case --- and leaves the
-reference empty, because this case has not been through any practice-management system and
-there is no identifier to cite. Inventing one would make a connector try to resolve it.
+the connector that resolves it. The FHIR mapping follows the same rule: UOS declares the
+resource \emph{type} (\code{Media} for the photographs, \code{ImagingStudy} for the volume,
+\code{DocumentReference} for the mesh, the reports and the case, \code{Observation} for the
+clinical and inferred layers) and leaves the reference empty, because the case has not been
+through any practice-management system and there is no identifier to cite. Inventing one would make a connector try to resolve it.
 \end{finding}
 
 
@@ -1102,11 +1124,14 @@ what is a statement of intent.
 \textbf{The specification} & \emph{UOS Format Specification v0.3} \cite{uosspec}: a draft,
 with the container, the data model, the manifest field by field, the conformance levels, the
 validation algorithm and a cookbook of implementation recipes.\\
-\textbf{The JSON Schema} & Published per version, one file for the manifest and one for the
-validation report, generated from the implementation contract. Synchronisation and behaviour still require
-checks; a generated schema alone does not validate the writer or the payload semantics.\\
-\textbf{The validator} & Open source, numbered checks and subchecks, each finding carrying a stable code
-(\code{UOS-E-005}) so that a report can be cited and diffed rather than read.\\
+\textbf{The JSON Schemas} & A manifest schema and a validation-report schema per format
+version, and one for the optional fidelity-provenance extension 1.0. The manifest and
+extension schemas are generated from the implementation's models; the report schema is
+written by hand and checked against the implementation in CI. A schema alone does not
+validate the writer or the payload semantics.\\
+\textbf{The validator} & Open source, with numbered checks whose findings carry a
+check-derived code (\code{UOS-E-005}). The codes have not yet been reconciled with the
+specification's check table for every check, and some codes cover more than one rule.\\
 \textbf{The conformance fixture} & Thirteen containers: two expected valid, nine expected errors, one expected warning,
 and one exercising forward compatibility --- with the expected verdict and the
 reason stated beside each. Built by running the real writer over synthetic data, and
@@ -1129,15 +1154,15 @@ and each must state the rule, where a validator would check it and at what sever
 what it does to a container written under the previous version. The editor named on the cover
 decides, in the open, on the record of the request.
 
-\paragraph{And how a version is published.} The schema's identifier is pinned to a git tag
-rather than to a branch, because an identifier that returns different content depending on
-the day does not identify. That leaves a version under development needing an identifier that
-resolves while its content is still changing, and a published one needing an identifier that
-never changes --- two requirements that cannot share a name. So there are two tags: a
-pre-release pointer, which is what the identifier names while the title page says
-\emph{draft} and which may move, and the release tag, created once when the version is
-published and never moved. Publishing is therefore an explicit act rather than a side effect
-of pushing a tag, which is what it used to be, and once is what it costs.
+\paragraph{How a version is published.} The manifest and validation-report schema
+identifiers are pinned to a git tag rather than to a branch, so that an identifier always
+returns the same content. A version under development needs an identifier that resolves
+while its content changes, and a published version one that never changes, so each version
+has two tags. The pre-release pointer \code{uos-spec-v0.3-draft} is named by the identifiers
+while the specification is a draft and may move. The release tag \code{uos-spec-v0.3} is
+created once at publication and never moved; it does not exist yet. The fidelity-extension
+schema has the non-resolvable identifier \code{uos-fidelity-provenance/1.0} and is published
+alongside the others at the pre-release tag.
 
 \begin{finding}{What ``open'' does and does not buy, and why we say ``not a standard''}
 This is a proposal with one implementation, not a standard with a committee, and calling it
@@ -1158,11 +1183,12 @@ external originals remain available.
 \section{Limitations}\label{sec:limitations}
 
 \begin{itemize}
-  \item \textbf{One clinical case.} The composition figures come from a single real case.
-  The Gaussian-field results come from three CBCT volumes of a licensed cohort that cannot
-  be redistributed. Neither is a clinical study, and no claim here is validated on
-  patient outcomes. No clinical accuracy figure exists, because there is no ground truth for
-  these patients: the reported fit residuals and reconstruction scores do not bound clinical error.
+  \item \textbf{Two clinical cases, no ground truth.} The clinical figures come from two
+  patients; the Gaussian-field results come from three volumes of a licensed cohort that
+  cannot be redistributed. None of this is a clinical study. Neither case has landmark-based
+  ground truth for registration, and the only clinical annotations are margin lines on
+  case~A, two of which have already been used to choose a method. Fit residuals and
+  reconstruction scores do not bound clinical error.
   \item \textbf{No distributable fixture of a real case.} The conformance fixture bank is
   synthetic. The measured container holds a real patient's case and is not published, so an
   implementer can check a reader against the fixtures but not against a clinical container.
