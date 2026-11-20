@@ -126,6 +126,15 @@ serie dispersa). Es un artefacto ya generado; se puntúa tal cual.
 - Si la ejecución no reproduce el veto de §8.2 (C = 0,43), se declara la diferencia y se
   puntúa lo que salga; no se repite hasta obtener el valor esperado.
 
+**R2, ejecutado el 2026-11-20, 13:03–13:25.** `run-record.json`: `git_head` `543e2895…`,
+`git_dirty: false`. `registro.json` existe, con `method` `fusion_agents.anatomico` y
+`constants_sha256` igual a la `huella_constantes` de arriba; no hay `sin_anatomico`.
+Contenedor `data/processed/verification-20261120/series-c1bd42bdd9d7/anatomico-543e289/export/another_patient.uos`,
+SHA-256 `c84b978db2b83bd62c8268be05df44d0a05d5c9ed4d47af359833494fcc15b50`.
+**Diferencia declarada:** la búsqueda queda vetada, como en §8.2, pero el motivo dice
+cobertura 0,50 (mínimo 0,5) y no 0,43. No se ha investigado ni se repite: se puntúa esta
+pose.
+
 **R2b · Registro anatómico con el filtro de inclinación** (§11.1 de `registro-anatomico.md`).
 Añadido el 2026-11-20 a las 13:05, **antes de enviar la petición y sin ninguna entrega**. El
 filtro deja de emparejar las caras de banda más inclinadas que la pared de su corona, que en
@@ -145,6 +154,8 @@ cual: R2b no lo sustituye.
   el filtro por defecto. El margen del filtro se eligió viendo el fantasma, y el filtro tiene
   un límite medido (coronas de 4 mm con la franja de referencia contaminada) en el que no
   quita nada.
+- **R2b sin ejecutar todavía**: se lanzó a las 13:25 y se paró en el corte de las 13:30, antes
+  de terminar; su salida parcial se borró. Se ejecuta entero antes de abrir ninguna entrega.
 
 **Secundario, no es un tercer método.** `--ajuste 16-mv,26-mv,13-c,23-c`, en la ejecución
 de R1 (no depende del registro del contenedor), calcula un registro rígido con esos cuatro
