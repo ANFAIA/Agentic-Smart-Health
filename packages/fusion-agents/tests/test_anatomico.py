@@ -210,6 +210,35 @@ def test_recupera_la_pose_en_una_serie_dispersa(fichero, mundo) -> None:
     assert float(np.median(np.linalg.norm(error[:, :2], axis=1))) < 0.15
 
 
+def test_raices_tan_anchas_como_el_cuello_no_arrastran_la_banda(fichero, mundo) -> None:
+    """Fija lo que HOY hace el registro con raíces realistas (`raices="realistas"`).
+
+    En el caso A (`docs/research/registro-anatomico.md` §7) el ajuste se desliza hacia las
+    raíces desde la pose del registro por cortes, que no es verdad. La hipótesis era que el
+    fantasma no lo mostraba por sus raíces cónicas finas. Medido al escribir este test, con
+    raíces del ancho del cuello de su corona y 13 mm de largo: **no lo reproduce**. Desde la
+    pose verdadera el ajuste fino se queda a 0,08 mm (lo mismo que con conos), la búsqueda
+    elige la cuenca correcta a 0,08 mm de mediana y sin veto, y C en la verdad es 0,97.
+    Si un cambio del método rompe esto, ha empeorado el caso que sí tiene verdad.
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    V, F, etq = fichero
+    origen, destino, registrador, _, _ = registra(V, F, etq, campo, hu)
+    R, t, r = pose(registrador, origen, destino)
+    assert r.veto is None
+    corona = etq > 0
+    error = _en_cbct(V[corona], R, t) - mundo[0][corona]
+    assert float(np.median(np.linalg.norm(error, axis=1))) < 0.3
+
+    # Desde la verdad, el ajuste fino no se va hacia la raíz.
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    ra, ta, _, convergido = registrador.afina(*verdad, destino)
+    assert convergido
+    assert registrador.rms_desplazamiento((ra, ta), verdad) < 0.2
+    puntuacion = registrador.puntua_secciones(*verdad, anatomico._por_corte(destino, None))
+    assert puntuacion["C"] >= anatomico.COBERTURA_MIN
+
+
 # --------------------------------------------------------------------------- #
 # 2 · Sin azar, y 3 · byte a byte entre procesos
 # --------------------------------------------------------------------------- #

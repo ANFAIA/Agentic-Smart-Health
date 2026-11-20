@@ -7,6 +7,10 @@ necesita un fichero que CI no tiene no prueba nada en CI.
   −y, que en LPS es anterior), en oclusión: las cúspides se entrelazan a z ≈ 0.
 - Raíces cónicas por encima de las coronas superiores y por debajo de las inferiores,
   con densidad de dentina, para que el contorno de la losa traiga raíz que el escáner no ve.
+  Por defecto son conos finos (1,8 mm de radio en el cuello, ápice en punta a 12 mm).
+  Con `raices="realistas"` tienen la anchura del cuello de su corona y se estrechan
+  despacio (ver `_en_raiz_realista`): así son en una boca real, y así compiten con la
+  corona por la banda del escáner (`docs/research/registro-anatomico.md` §7).
 - El «CBCT» es un campo de tejido duro en rejilla (`centers`, `origin`, HU), como el que
   deja el `cbct-agent`; con `paso_z` distinto del de planta, y cortes que se pueden quitar.
 - El «escaneo» superior es la superficie de las coronas superiores por debajo de la encía,
@@ -85,11 +89,58 @@ def _en_raiz(p: np.ndarray, centros: np.ndarray, arriba: bool) -> np.ndarray:
     return dentro
 
 
+# Raíz realista: altura del cuello sobre el centro de la corona (el corte de `_dentro`),
+# longitud del cono hasta el ápice y radio del ápice relativo al del cuello. Una raíz de
+# incisivo central superior mide ~13 mm, y la de un molar algo menos por raíz pero con el
+# tronco igual de ancho que el cuello; el ápice no es una punta sino un muñón romo.
+CUELLO_MM = 3.0
+LARGO_RAIZ_MM = 13.0
+APICE_RELATIVO = 0.4
+
+
+def _en_raiz_realista(
+    p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool
+) -> np.ndarray:
+    """Raíz con la anchura del cuello de SU corona, que se estrecha despacio hasta el ápice.
+
+    En el cuello el radio es el de la sección del elipsoide de la corona en el corte
+    (`CUELLO_MM` sobre su centro); baja linealmente hasta `APICE_RELATIVO` de ese radio a
+    `LARGO_RAIZ_MM`, y el ápice se cierra con media esfera de ese radio. Una sola raíz
+    circular por pieza: no imita la anatomía de un molar, solo lo que la losa del CBCT ve
+    de ella, que es un tubo de dentina casi tan ancho como la corona cerca de la encía.
+    """
+    dentro = np.zeros(len(p), dtype=bool)
+    for c, f in zip(centros, fdi, strict=True):
+        semi = semiejes(int(f))
+        r0 = float(semi[0] * np.sqrt(1.0 - (CUELLO_MM / semi[2]) ** 2))
+        r_apice = APICE_RELATIVO * r0
+        h = ((p[:, 2] - c[2]) if arriba else (c[2] - p[:, 2])) - CUELLO_MM
+        s = np.clip(h / LARGO_RAIZ_MM, 0.0, 1.0)
+        r = r0 + (r_apice - r0) * s
+        casquete = h > LARGO_RAIZ_MM
+        r = np.where(
+            casquete,
+            r_apice * np.sqrt(np.clip(1.0 - ((h - LARGO_RAIZ_MM) / r_apice) ** 2, 0.0, 1.0)),
+            r,
+        )
+        dentro |= (h > 0.0) & (h < LARGO_RAIZ_MM + r_apice) & (
+            np.hypot(p[:, 0] - c[0], p[:, 1] - c[1]) < r
+        )
+    return dentro
+
+
 def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
-    inclinacion: np.ndarray | None = None,
+    inclinacion: np.ndarray | None = None, raices: str = "conicas",
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
-    """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen."""
+    """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
+
+    `raices`: `"conicas"` (por defecto, lo de siempre: conos finos) o `"realistas"` (tan
+    anchas como el cuello de la corona, ver `_en_raiz_realista`). En los dos casos la raíz
+    es dentina (1600) y la corona esmalte (2200).
+    """
+    if raices not in ("conicas", "realistas"):
+        raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
     paso_z = paso if paso_z is None else paso_z
     xs = np.arange(-32, 32, paso)
     ys = np.arange(-16, 20, paso)
@@ -102,7 +153,11 @@ def campo_cbct(
     sup, f_sup = centros_coronas("upper")
     inf, f_inf = centros_coronas("lower")
     corona = _dentro(q, sup, f_sup, True) | _dentro(q, inf, f_inf, False)
-    raiz = (_en_raiz(q, sup, True) | _en_raiz(q, inf, False)) & ~corona
+    if raices == "realistas":
+        raiz = _en_raiz_realista(q, sup, f_sup, True) | _en_raiz_realista(q, inf, f_inf, False)
+    else:
+        raiz = _en_raiz(q, sup, True) | _en_raiz(q, inf, False)
+    raiz &= ~corona
     duro = corona | raiz
     hu = np.where(corona, 2200.0, 1600.0)[duro]
     centros = p[duro]
