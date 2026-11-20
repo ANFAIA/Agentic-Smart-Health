@@ -1,7 +1,8 @@
+\pdfoutput=1
 % !TeX program = pdflatex
 % =============================================================================
-%  UOS — Unified Oral Scene. Product white paper.
-%  Single-file LaTeX source. Compiles on Overleaf with pdfLaTeX.
+%  UOS — Unified Oral Scene. White paper (arXiv preprint draft).
+%  Single-file LaTeX source. Compiles with pdfLaTeX.
 % =============================================================================
 \documentclass[11pt,a4paper]{article}
 
@@ -11,7 +12,7 @@
 \usepackage[english]{babel}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath}
-\usepackage{amssymb}   % \mathbb, usado en SE(3), SO(3) y R^3
+\usepackage{amssymb}   % \mathbb, for SE(3), SO(3) and R^3
 \usepackage{microtype}
 \usepackage{booktabs}
 \usepackage{longtable}
@@ -28,28 +29,33 @@
 
 \usepackage[colorlinks=true,linkcolor=uosblue,urlcolor=uosblue,citecolor=uosblue]{hyperref}
 
-% Identificadores como `extensions_required` no se parten, y en una linea estrecha se
-% salen al margen. Esto deja a TeX estirar el espaciado en la linea desesperada en vez
-% de desbordarla: una linea algo suelta se lee, una que invade el margen no.
+% Identifiers such as `extensions_required` do not hyphenate and can overrun a narrow
+% line. This lets TeX stretch the spacing of such a line instead of overrunning it.
 \setlength{\emergencystretch}{3em}
 
 \setlist{itemsep=2pt,topsep=4pt,parsep=0pt}
 \renewcommand{\arraystretch}{1.25}
 \setlength{\tabcolsep}{3.5pt}
 
-% Encabezados de seccion sobrios, en serif y sin color: es un preprint, no un folleto.
+% Plain serif section headings, without colour.
 \titleformat{\section}{\normalsize\bfseries}{\thesection.}{0.6em}{}
 \titlespacing*{\section}{0pt}{1.6ex plus .6ex minus .2ex}{1.0ex plus .2ex}
 \titleformat{\subsection}{\normalsize\itshape}{\thesubsection.}{0.6em}{}
 \titlespacing*{\subsection}{0pt}{1.2ex plus .4ex minus .2ex}{0.7ex plus .2ex}
 
-% Sin encabezado; el numero de pagina va CENTRADO AL PIE.
+% No running head; page number centred in the footer.
 \pagestyle{fancy}\fancyhf{}
 \fancyfoot[C]{\small\thepage}
 \renewcommand{\headrulewidth}{0pt}
 \renewcommand{\footrulewidth}{0pt}
 
 \newcommand{\code}[1]{\texttt{\small #1}}
+
+% Visible marker for anything that waits on a result or on an author decision.
+% Set \finaltrue before submission: any marker left then stops compilation.
+\newif\iffinal \finalfalse
+\newcommand{\todo}[1]{\iffinal\errmessage{Unresolved TODO left in the paper}\else
+  {\color{red}\bfseries[TODO:~#1]}\fi}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 
@@ -68,7 +74,7 @@
 {\large an open format for cases that arrive in pieces}\\[0.9cm]
 {\large Luis Garbayo Fernández\textsuperscript{a,b}}\\[0.5cm]
 {\small\itshape In collaboration with \textsuperscript{a}ANFAIA \& \textsuperscript{b}Histora}\\[0.3cm]
-{\small September 30, 2026 --- revised draft}
+{\small Draft, 20 November 2026}
 \end{center}
 
 \vspace{0.6cm}
@@ -1632,7 +1638,7 @@ that other renderers, objectives or acquisition regimes share the same limit.
 
 % =============================================================================
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 
 \bibitem{uosspec}
 L. Garbayo Fernández.
