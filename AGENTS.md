@@ -658,7 +658,10 @@ FusionOutput
   registration instead of 14, declares 1.6–4 mm uncertainty per tooth and takes 11 min. It is
   still **vetoed by coverage (0.43 < 0.5)**, and with no ground truth there is no honest way
   to tell a bad registration from a miscalibrated guard. A proposed change to coverage that
-  made it pass was reverted: it only helped wrong poses on the phantom. So the case B
+  made it pass was reverted: it only helped wrong poses on the phantom. ⚠️ On the phantom,
+  scanner FDI labels that overflow onto the gingiva put gum into the band and pull the fit
+  0.4–4.4 mm toward the root with no veto (research note §11), an accuracy bias still to be
+  fixed. So the case B
   protocol ([`registro-anatomico-protocolo.md`](docs/research/registro-anatomico-protocolo.md))
   is still suspended and not frozen, and the default `auto` is unchanged. See
   [the research note](docs/research/registro-anatomico.md) §7–§8.

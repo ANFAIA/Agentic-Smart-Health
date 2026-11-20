@@ -394,7 +394,8 @@ verdad.
 
 **Estado.**
 - La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
-  267 tests verdes, y ruff, mypy y los guardianes limpios.
+  264 tests verdes en la última pasada completa más los 3 de §11 por separado, y ruff, mypy
+  y los guardianes limpios.
 - El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
   anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
 
@@ -403,15 +404,27 @@ verdad.
    guarda hace falta verdad. Hay dos caminos:
    - puntos anatómicos del caso A, marcados por una persona según el protocolo de puntos.
      Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario;
-   - un fantasma que dé C ≈ 0,4 en la pose verdadera. Ni la sobremordida (§10) ni las
-     etiquetas FDI desbordadas sobre la encía (§11) lo reproducen; no queda ningún
-     candidato medido. El desborde sí deja un sesgo vertical que el veto no ve (§11).
-2. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
+   - un fantasma que dé C ≈ 0,4 en la pose verdadera.
+     - La sobremordida queda descartada (§10).
+     - Las etiquetas FDI desbordadas sobre la encía (§11) son el único candidato abierto:
+       bajan el lado del contorno hasta 0,63–0,84 cuando entra encía vestibular en la
+       banda, sin llegar a 0,5.
+     - **Primer diagnóstico al retomar:** desglosar el C = 0,43 del caso A por lado, por
+       altura en la banda y por vecindad con vértices de etiqueta 0. Es una medida, no una
+       regla, y no elige nada.
+2. **La encía etiquetada en la banda sesga la altura sin que salte el veto** (§11):
+   - 0,4–1,1 mm en serie dispersa;
+   - hasta 0,8–4,4 mm en las sondas con encía vestibular, incluso en serie densa.
+   Es lo primero a corregir, con uno de los dos remedios geométricos de §11, verificado
+   contra el fantasma con el criterio fijado antes. El modelo FDI reentrenado, que baja la
+   encía etiquetada como diente del 45 % al 28 % en `dev`, ataca la misma causa por el otro
+   lado. Si su evaluación en la reserva lo confirma, hay que reetiquetar A y B con él.
+3. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
    σ = 0,3–0,4 mm). Es exactitud, no precisión, así que no bloquea el protocolo de
    precisión, pero tiene que estar declarado en el artículo.
-3. **Tiempo:** 11 min por registro con incertidumbre en el caso A. El protocolo del caso B
-   son ~125 registros, la mayoría sin incertidumbre. Hay que medir cuánto tarda uno sin ella
-   antes de estimar.
+4. **Tiempo:** en el caso A, 255 s por registro sin incertidumbre y 11 min con ella. El
+   protocolo del caso B son ~125 registros, casi todos sin incertidumbre: unas 9–10 h, más
+   si la serie densa de B trae más contorno.
 
 **Ramas locales del workflow del 2026-11-20, no fusionadas y no subidas:**
 - `fix/losa-sigue-pose` (5c24a77…67b29ba): un filtro de orientación de normales que en el
@@ -479,7 +492,7 @@ fosas ni incisivos en pala: son elipsoides. Una oclusión más fiel cambiaría e
 tabla, pero difícilmente lo bastante para pasar de 0,95 a 0,4.
 
 
-## 11 · Etiquetas FDI desbordadas sobre la encía: no bajan C, pero sesgan la altura
+## 11 · Etiquetas FDI desbordadas sobre la encía: candidato abierto para C, y un sesgo de altura que el veto no ve
 
 **Pregunta.** En Teeth3DS+ el segmentador del escáner etiqueta como diente el 45 % de la
 encía del experto (`scripts/benchmark_margen.py`), típicamente 1–3 mm más allá del margen.
@@ -533,31 +546,49 @@ elegido: la encía palatina real tiene 2–3 mm.
 - Ídem en serie dispersa con 2 mm: C 0,949, desliza **1,12 mm**, y la búsqueda da 1,16 mm
   (vertical +1,12) sin veto, C 0,96.
 
-**Lectura.**
-1. **El desborde no reproduce C ≈ 0,4 en la verdad.** El lado del escáner no baja nada
-   (0,99–1,00): con coronas de 9 mm la encía etiquetada empieza por encima de la banda, y
-   con coronas de 6,5 mm lo que entra en la banda es sobre todo **papila**, entre dos
-   coronas y a menos de 1 mm del contorno de alguna. Por alturas, en la verdad, la encía de
-   la banda está a 3,5–6 mm bajo la cúspide y cubre el 100 % con 1 mm de grosor; con 3 mm,
-   el 84 % en la franja de 5,5–6 mm. El lado del contorno baja de 1,0 a 0,96–0,98. Como en
-   §10, nada de esto acerca C a 0,43.
-2. **Sí aparece otro fallo, que el veto no ve: la encía etiquetada tira de la altura.** Sus
-   caras están inclinadas (|n·oclusal| 0,60 frente a 0,21–0,24 de las paredes de la corona) y
-   todas tiran en el mismo sentido. En denso son el 9 % de las parejas recortadas del ajuste
-   y el efecto es de 0,02 mm. En la serie dispersa el hueco quita cortes de la mitad de la
-   banda, la encía pasa al 17 % y el ajuste baja la arcada 0,41 mm hacia la raíz desde la
-   verdad (1,1 mm con encía de 2 mm). Basta 1 mm de desborde: la papila ya está en la banda.
-   C sigue en 0,96, así que **el veto no lo detecta**.
-3. **En el caso A el lado bajo era el del contorno** (0,40 en §7, antes de la máscara), y el
-   desborde actúa sobre todo en el otro. No hay nada en esta tabla que permita leer el
-   C = 0,43 del caso A como desborde.
+**Lectura** (corregida tras la verificación independiente, que reprodujo la tabla exacta):
+1. **Con esta geometría el desborde no lleva C a 0,4 en la verdad, pero no queda
+   descartado.**
+   - El lado del escáner no baja (0,99–1,00). El que baja es el del **contorno**, de 1,0 a
+     0,96–0,98: la encía etiquetada queda encima del esmalte del CBCT y se lleva como punto
+     de sección más próximo contornos que están a más de 1 mm.
+   - Es el mismo lado que estaba bajo en el caso A en §7. Una primera redacción de esta
+     sección decía lo contrario; era un error.
+   - Si se descarta es solo por magnitud, y esa magnitud depende de la geometría probada.
+     Con coronas de 6,5 mm y la banda acabando 6 mm bajo la cúspide, solo entra la
+     **papila**.
+   - El verificador probó coronas clínicas de 4–5 mm y encía de 3 mm, que meten encía
+     vestibular y palatina en la banda. C en la verdad baja a **0,84–0,63**, siempre por el
+     lado del contorno.
+   - Esas sondas exageran: en este fantasma la unión amelocementaria está 9,5 mm bajo la
+     cúspide, así que bajo esa encía queda esmalte que en una corona corta real sería en
+     buena parte dentina.
+   - La tendencia va hacia el veto sin llegar a 0,5. Queda como **candidato debilitado pero
+     abierto** para el C = 0,43 del caso A.
+   - Tampoco se sabe qué lado es el bajo en el caso A después de la máscara: §8.2 no lo
+     desglosa. Es el primer diagnóstico que hay que sacar al retomar.
+2. **Sí aparece otro fallo, que el veto no ve: la encía etiquetada tira de la altura.**
+   - Sus caras están inclinadas (|n·oclusal| 0,60, frente a 0,21–0,24 en las paredes de la
+     corona) y todas tiran en el mismo sentido.
+   - En la serie densa, con solo papila en la banda, son el 9 % de las parejas y el efecto es
+     de 0,02 mm.
+   - En la serie dispersa el hueco quita cortes de la mitad de la banda y la encía pasa al
+     17 % de las parejas. El ajuste baja entonces la arcada 0,41 mm hacia la raíz desde la
+     verdad, y 1,1 mm con encía de 2 mm. Basta 1 mm de desborde, porque la papila ya está en
+     la banda.
+   - En las sondas del verificador con encía vestibular en la banda, el deslizamiento desde
+     la verdad llega a **0,8–4,4 mm incluso en serie densa**. Ahí C queda en 0,75–0,93, la
+     pose es elegible y **el veto no salta**.
+   - Este sesgo es más grave que lo que la tabla sola sugiere, y es exactitud, no
+     precisión: un protocolo de precisión entre dos escaneos con el mismo tipo de desborde
+     no lo vería.
 
 **Qué no se ha cambiado, y qué se podría decidir después.** No se toca ninguna regla: no
 hay tiempo de diseñar y verificar una antes del corte, y la pregunta de C sigue abierta. Un
 remedio con principio para el punto 2 no debería salir del caso A sino del escáner mismo:
 la encía desbordada se distingue por geometría (normal inclinada respecto al eje oclusal,
 fuera del contorno convexo de la corona en planta, o más allá del pliegue cervical que ya
-busca `analysis_agents.frontera.ancla_al_pliegue`). Candidatos a probar contra el fantasma,
+busca `analysis_agents.frontera.ancla_al_pliegue`). Es lo primero a corregir al retomar. Candidatos a probar contra el fantasma,
 con el criterio fijado antes: (a) recortar la banda de cada diente al pliegue cervical en
 vez de a 6 mm fijos; (b) no emparejar contra caras de la banda con |n·oclusal| por encima de
 lo que tienen las paredes de la corona del propio diente. Cualquiera de los dos tiene que
