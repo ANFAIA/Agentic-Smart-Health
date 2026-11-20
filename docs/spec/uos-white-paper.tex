@@ -148,9 +148,7 @@ can produce inconsistent results.
 
 \subsection{What it costs, and who pays it}\label{sec:cost}
 
-It is worth being concrete about the cost of the fragmentation, because ``the data is not
-integrated'' is the kind of statement everyone agrees with and nobody acts on. In each of
-the four cases below, the person who loses is not the person who could have prevented it.
+The cost of fragmentation falls in four places.
 
 \paragraph{The second reader.} The clinician who acquired the case has the relations in
 their head and does not need them written down, which is exactly why they never get
@@ -204,23 +202,18 @@ connectors must declare their FHIR version and mapping.\\
 UOS proposes a particular composition contract across these representations.
 \S\ref{sec:related} distinguishes intended mappings from implemented connectors.
 
-\subsection{Why now}
-
-Three things changed recently enough that the problem is worth attacking today rather than
-five years ago.
+\subsection{Motivation}
 
 \begin{enumerate}
-  \item \textbf{Multimodal acquisition became ordinary.} A practice that had a CBCT and an
-  intraoral scanner in different buildings a decade ago now has both, routinely, on the same
-  patient in the same week. The relation between them stopped being an exotic research
-  problem and became a daily one.
+  \item \textbf{Cases combine modalities.} Implant and orthodontic planning, among other
+  workflows, can involve both a CBCT and an intraoral scan of the same patient, and the
+  relation between them then has to be established for each case. We report no adoption
+  figures.
 
-  \item \textbf{A representation appeared that can hold surfaces and volumes in one
-  substrate.} 3D Gaussian splatting is fast, differentiable, and web-renderable, and it
-  gives the project a common primitive for things that were previously meshes or voxels and
-  never both. Whether that unification actually helps is an empirical question, and
-  \S\ref{sec:gs} is our answer to it.
-
+  \item \textbf{One representation can hold surfaces and volumes.} 3D Gaussian splatting
+  \cite{kerbl2023} and its attenuation variants \cite{xgaussian,r2gaussian} give a common
+  primitive for data that was previously either a mesh or a voxel grid. Whether that helps is
+  an empirical question; \S\ref{sec:gs} reports what was measured.
 
   \item \textbf{Automated processing needs explicit provenance.} Recipients need to know
   whether a result was acquired, calculated or inferred, and whether it was reviewed.
@@ -237,11 +230,8 @@ conformance levels and the validation algorithm, and which is accompanied by a p
 JSON Schema, a reference implementation and a conformance fixture bank (\S\ref{sec:status}).
 An engineer writing a reader should work from those.
 
-What follows is the case for the format: the problem it exists to solve, the decisions
-behind it and what they cost, and --- most of the document by weight --- \textbf{what has
-actually been measured}, including what did not work. It addresses the clinician or practice decision-maker who needs to know
-what a case in this format is worth to them, and the partner or investor who needs to know
-what exists, what is measured, and what is still a design rather than a result.
+What follows describes the problem the format addresses, the design decisions behind it
+and what has been measured, including results that did not reach their criteria.
 
 \paragraph{Clinical material.} Two pseudonymised clinical cases are used, and every figure
 below names the one it comes from. \textbf{Case~A}, from which the container examples are
@@ -252,19 +242,15 @@ several intraoral scans of both arches, including two independent acquisitions f
 same session. Neither case has landmark-based ground truth for registration.
 \todo{State consent and ethics review for each case (see Ethics and consent).}
 
-We follow one rule throughout, and state it here so the rest can be read against it.
-
-\begin{finding}{Two things that are not the same must never look the same}
-An automatic alignment nobody reviewed and one reviewed by a clinician. A colour estimate derived from
-a patient photograph's photographs and one from a fallback gradient. A tooth boundary drawn by a
-network and one drawn by a person. A DICOM series held inside a container and one merely
-identified by hash.
-
-Each pair is easy to store identically and expensive to confuse. Where the format can
-enforce the distinction it does; where it cannot, it is required to \emph{name} it. Most of
-what looks like bookkeeping in \cite{uosspec} --- a residual on every registration, a
-verification field defaulting to ``nobody'', a per-value declaration of how a clinical
-figure was extracted --- is this one rule applied.
+\begin{finding}{Design rule: distinguishable provenance}
+Data of different origin must not be stored identically: an automatic alignment and one
+reviewed by a clinician; a colour estimated from the patient's photographs and one from a
+fallback gradient; a tooth boundary drawn by a network and one drawn by a person; a DICOM
+series held inside a container and one identified only by hash. Where the format can enforce
+the distinction it does, and where it cannot it requires the distinction to be declared. The
+residual on every registration, the verification field that defaults to unverified and the
+per-value declaration of how a clinical figure was extracted all follow from this rule
+\cite{uosspec}.
 \end{finding}
 
 % =============================================================================
@@ -281,9 +267,9 @@ what any of it is worth.
 
 
 A \code{.uos} is an uncompressed ZIP whose first entry is \code{manifest.json}.
-Version 0.3 requires \code{STORE}; the writer and validator enforce that choice.
-It permits direct access within an entry, but is not necessary merely to fetch a complete
-entry using HTTP ranges: a separately compressed ZIP entry can also be fetched and then
+Version 0.3 requires \code{STORE}, and the writer and validator enforce it. Uncompressed
+storage permits direct access within an entry; it is not needed merely to fetch a complete
+entry with HTTP range requests, since a compressed entry can also be fetched and then
 decompressed. No end-to-end range-access benchmark is reported here. The storage cost is
 measured in \S\ref{sec:evidence}; a different compression policy would require a format change.
 
@@ -330,7 +316,7 @@ bitwise reproducibility. The optional \code{uos\_fidelity\_provenance} extension
 records per-asset processing, software, parameters, seeds and scoped repeatability evidence;
 an unknown result remains unknown. Model-dependent appearance and segmentation-conditioned
 fitted fields are separated as inference. Report ingestion distinguishes rules, OCR and LLM
-provenance. Inferred regional findings now travel separately under \code{derived/}, one
+provenance. Inferred regional findings travel separately under \code{derived/}, one
 asset per observation, with layer 3 and model metadata. Sources are linked to supplied
 reports when resolvable; otherwise an explicit unresolved status, validator warning and
 human-review reason preserve the limitation. Independently computed colour stays in layer 2.
@@ -448,8 +434,9 @@ forces every such datum into a PDF, which is where clinical information goes to 
 unqueryable.
 
 ``Extensible'' is easy to claim, so it deserves a concrete answer. Suppose a study wants to
-attach microbial load per periodontal site to a case. Nothing about that is geometry, and it needs explicit clinical semantics as well as an attachment mechanism. In UOS it requires four declarations and no
-change to the format:
+attach microbial load per periodontal site to a case. None of it is geometry. Attaching it
+takes four declarations and no change to the format; defining its clinical semantics is a
+separate task that the format does not perform:
 
 \begin{enumerate}
   \item An \textbf{asset} carrying the measurements, with its own hash, media type and the
@@ -469,12 +456,9 @@ an intraoral sensor. This describes an extension route, not an implemented inter
 Shared periodontal and odontogram profiles, writers and independent readers remain to be
 validated; inventing a different extension at each site would recreate fragmentation.
 
-\begin{finding}{What this does not solve}
-Declaring a modality is not validating it. UOS makes microbial load carryable, addressable
-by anatomy, and traceable to whoever measured it. Whether that measurement means anything
-clinically is outside a container format, and a format that implied otherwise would be
-making exactly the category error it exists to prevent.
-\end{finding}
+Declaring a modality is not validating it: UOS makes such a measurement carryable,
+addressable by anatomy and traceable to whoever produced it, and says nothing about its
+clinical meaning.
 
 % =============================================================================
 \section{A case, end to end}\label{sec:endtoend}
@@ -595,7 +579,7 @@ error bar of a cross-modal distance.
 
 Carried assets have hashes checked against their bytes. A directory asset can declare a
 per-file inventory; the validator tests embedded synthetic series for missing, altered and
-extra files. The real case's 397-slice inventory was reported previously, but the reference
+extra files. Case~A's 397-file inventory was checked in August 2026, but the reference
 writer leaves its original CBCT outside the ZIP. Validating that ZIP does not verify the
 external series: the report explicitly counts external assets and warns that their contents
 were not checked.
@@ -855,7 +839,7 @@ whole cloud. Neither result establishes clinically correct alignment. A numerica
 against the source headers found maximum coordinate discrepancies below
 $2\times10^{-6}$\,mm for the transported seed positions. This verifies coordinate
 conservation, not acquisition accuracy or physical calibration. The original DICOM frame
-and the centred field now have separate frames, with their relationship explicitly composed
+and the centred field are separate frames, with their relationship explicitly composed
 from the recorded origin and ICP transform.
 
 The runs used Python 3.13.9, NumPy 2.5.1, SciPy 1.18.0, PyTorch 2.11.0 with CUDA 12.8 and
@@ -1058,9 +1042,8 @@ those guarantees.
 
 The failure mode for a new format is to reinvent what a standard already defines and then
 discover the incompatibility at integration. UOS is designed to sit \emph{between} the
-standards rather than in place of them, and the specification names the destination for each
-piece even where no connector exists yet --- naming it costs nothing now and saves an
-incompatible extension later.
+standards rather than in place of them, and the specification names the intended mapping
+for each piece even where no connector exists yet.
 
 \begin{longtable}{L{4.6cm} L{10.8cm}}
 \toprule
@@ -1081,8 +1064,8 @@ and anatomical semantics; it is not an implemented mapping here.\\
 The scene & Binary \textbf{glTF} with optional Gaussian layers. The upstream
 \code{KHR\_gaussian\_splatting} specification was listed as ratified when consulted on
 20 November 2026~\cite{khrgs}; the reference implementation was written against the release
-candidate.
-Compatibility with that revision and retirement of fallback payloads require explicit testing.\\
+candidate. Compatibility with the ratified text and retirement of fallback payloads require
+explicit testing.\\
 The clinical findings & A coding structure \code{\{system, code, display\}} with unassigned SNOMED CT codes and
 tooth numbering to ISO 3950 \cite{iso3950}.\\
 \bottomrule
@@ -1096,7 +1079,7 @@ the connector that resolves it. The FHIR mapping follows the same rule: UOS decl
 resource \emph{type} (\code{Media} for the photographs, \code{ImagingStudy} for the volume,
 \code{DocumentReference} for the mesh, the reports and the case, \code{Observation} for the
 clinical and inferred layers) and leaves the reference empty, because the case has not been
-through any practice-management system and there is no identifier to cite. Inventing one would make a connector try to resolve it.
+through any practice-management system and there is no identifier to cite.
 \end{finding}
 
 
@@ -1105,9 +1088,9 @@ connector would use \code{DocumentReference} for this media role; volume referen
 \code{ImagingStudy}, and mesh/case attachments can use \code{DocumentReference} in either
 version~\cite{fhir}. No bidirectional, version-specific connector is demonstrated here.
 
-DICOM already represents acquisitions and several relations UOS needs. UOS's proposed value
-is its particular packaging, scene and provenance conventions. DICOM round-trip mappings
-and independent-reader tests remain work to do, rather than evidence already obtained.
+DICOM already represents acquisitions and several relations UOS needs. The contribution UOS
+proposes is its packaging, scene and provenance conventions; DICOM round-trip mappings have
+not been tested.
 
 % =============================================================================
 
@@ -1137,8 +1120,8 @@ and one exercising forward compatibility --- with the expected verdict and the
 reason stated beside each. Built by running the real writer over synthetic data, and
 re-verified by the test suite on every run.\\
 \textbf{The reference implementation} & A Python package that writes, reads and validates,
-and the experimental pipeline. Historical figures require their corresponding run records;
-not every measurement has been reproduced in this revision.\\
+and the experimental pipeline. Figures obtained before 10 October 2026 have no
+machine-written run record, and not every measurement has been reproduced.\\
 \textbf{The licence} & Apache~2.0, covering the document and the reference implementation
 alike.\\
 \textbf{The media type} & \code{application/vnd.histora.uos}, \textbf{proposed and not
@@ -1151,8 +1134,8 @@ requests against the public repository that hosts both this source and the imple
 change to the format and the change to the implementation that realises it belong in the same
 request --- a proposal that does not say how it would be validated is not yet a proposal ---
 and each must state the rule, where a validator would check it and at what severity, and
-what it does to a container written under the previous version. The editor named on the cover
-decides, in the open, on the record of the request.
+what it does to a container written under the previous version. The specification's editor,
+currently the author, decides in the open, on the record of the request.
 
 \paragraph{How a version is published.} The manifest and validation-report schema
 identifiers are pinned to a git tag rather than to a branch, so that an identifier always
@@ -1164,19 +1147,14 @@ created once at publication and never moved; it does not exist yet. The fidelity
 schema has the non-resolvable identifier \code{uos-fidelity-provenance/1.0} and is published
 alongside the others at the pre-release tag.
 
-\begin{finding}{What ``open'' does and does not buy, and why we say ``not a standard''}
-This is a proposal with one implementation, not a standard with a committee, and calling it
-either would be the same category error the format exists to prevent. Two things would change
-that, in order. First, a \textbf{second, independent implementation} opening a container
-written by the first --- until that happens, independent interoperability has not been demonstrated,
-which is why the fixture bank exists and why a distributable fixture built on openly
-licensed data is on the roadmap. Second, a \textbf{registered media type} and a home for the
-schema at a domain somebody holds.
-
-What openness already buys is smaller and real: a recipient can validate a container without
-trusting whoever wrote it, an integrator can implement a reader from a document rather than
-from a support call, and the documented container can be independently interpreted provided its payloads and
-external originals remain available.
+\begin{finding}{What ``open'' does and does not provide}
+UOS is a proposal with one implementation and no governing body, not a standard. Two steps
+would change that, in order: a \textbf{second, independent implementation} that opens
+containers written by the first, without which interoperability has not been demonstrated;
+and a \textbf{registered media type} with the schemas hosted at a domain the project
+controls. Openness already allows a recipient to validate a container without trusting its
+writer and an integrator to implement a reader from the specification, provided the payloads
+and external originals remain available.
 \end{finding}
 
 % =============================================================================
@@ -1202,18 +1180,15 @@ external originals remain available.
   who performed the study, under what protocol. That is a different axis from software
   provenance, and \S\ref{sec:roadmap} explains why it is a design decision rather than a
   field.
-  \item \textbf{The media type is unregistered} and the format is not a standard. It is a
-  proposal with a published schema and a validator, and interoperability remains unproven across independent implementations until a second
-  reader successfully opens a container written by the first.
+  \item \textbf{One implementation, unregistered media type.} Interoperability across
+  independent implementations has not been tested (\S\ref{sec:status}).
 \end{itemize}
 
 % =============================================================================
 \section{Roadmap and outlook}\label{sec:roadmap}
 
-What follows is not a list of features we would like to build. It is what clinicians asked
-for once they saw the twin, plus what the measurements above say it would take to give it to
-them. We separate the two deliberately: a request is a requirement, and whether it is
-currently reachable is a measurement.
+This section lists measurements requested by the collaborating clinicians and what the
+results above imply about reaching them.
 
 \subsection{The measurement clinicians actually want}\label{sec:rmeasure}
 
@@ -1221,7 +1196,7 @@ Unless stated otherwise, the measurements in this section come from case~B, whos
 dense, and are single-patient results.
 
 Validating whether a vertical gingiva-to-enamel dimension of the kind shown in commercial
-2D demos is reproducible on a twin turned out to reveal that it is not one measurement but
+2D demos is reproducible on a composed case turned out to reveal that it is not one measurement but
 \textbf{three}, and that they differ in what they need and in what they are worth.
 
 \begin{longtable}{C{0.6cm} L{5.4cm} L{3.2cm} L{5.2cm}}
@@ -1296,16 +1271,12 @@ about each tooth's centroid, and in 2{,}629 when the matrices were averaged dire
 
 \subsection{Modalities that are not geometry}
 
-\paragraph{The oral microbiome.} The clinical interest is not the bacteria as a curiosity but
-which species are present and at what concentration, because several are associated with
-conditions well outside the mouth and periodontal disease is the pathway through which that
-association is thought to act. This is the concrete instance the extension mechanism of
-\S\ref{sec:newmodality} was written for. Three requirements follow and only the first is
-satisfied today: it must be addressable by anatomical site, which the container supports; it
-must be temporally located, which the visit mechanism supports but no writer yet exercises;
-and it must be declared \textbf{with its detection limit}, because a reported zero and a
-concentration below the assay's threshold are different facts, and storing them identically
-would repeat, on a new modality, exactly the confusion this project exists to avoid.
+\paragraph{Per-site microbial measurements.} This is the instance the extension mechanism of
+\S\ref{sec:newmodality} was written for. Three requirements follow, and only the first is
+met today: the value must be addressable by anatomical site, which the container supports;
+it must be located in time, which the visit mechanism supports but no writer exercises; and
+it must be declared with its detection limit, because a reported zero and a concentration
+below the assay's threshold are different facts.
 
 \paragraph{Occlusal force.} Clinicians also asked for bite force distributed over the
 occlusal surface rather than as one number per patient. Mechanically this is the same shape
@@ -1332,8 +1303,8 @@ So the work is a design decision with three parts: an actor identifier that can 
 by an institution and not by a recipient; a protocol reference that names how an acquisition
 was performed rather than who performed it, since that is what a second reader needs in order
 to reproduce it; and an extension of the declared PHI state to say whether professional
-identities are present, so that the same honesty applied to the patient applies to everybody
-in the record. Signatures are the natural carrier for the first, and are themselves
+identities are present, so that the declaration made for the patient covers every person in
+the record. Signatures are the natural carrier for the first, and are themselves
 unspecified for the same reason: the missing piece is a decision about keys and custody, not
 code.
 \end{finding}
@@ -1356,8 +1327,9 @@ clinical reference.
   threshold and early termination of the photometric rasteriser used here. Its effect on
   quality and numerical stability needs a controlled comparison; it does not remove the need
   to characterise acquisition calibration.
-  \item \textbf{A distributable conformance fixture of a realistic case}, built from an
-  openly licensed dataset, so that interoperability can be tested rather than asserted.
+  \item \textbf{A second implementation and a realistic distributable fixture.} A reader
+  written independently of the reference writer, tested against a fixture of a realistic case
+  built from an openly licensed dataset.
   \item \textbf{Root truncation scored on tooth length} rather than voxel overlap
   (\S\ref{sec:negative}).
   \item \textbf{Photographic colour as a second boundary signal.} A first mask-based
@@ -1371,43 +1343,25 @@ clinical reference.
   \item \textbf{Ratified-extension compatibility.} Compare the implementation against the
   ratified \code{KHR\_gaussian\_splatting} specification before changing the external-layer
   fallback or claiming compatibility with the final extension.
-  \item \textbf{A second implementation}, ours or somebody else's, reading a container it did
-  not write. This would provide evidence of interoperability beyond the reference implementation.
 \end{enumerate}
-
-\begin{finding}{The pattern across all of these}
-Several geometric measurement tasks above depend on the accuracy of a
-cross-modality alignment, and reliable anatomical landmarks. Other open items concern data access,
-clinical semantics, provenance and validation; they cannot be reduced to representation
-capacity. They are the reasons the format records a residual on every registration
-and refuses to let an inferred landmark pass for a measured one, and they are where the next
-year of work belongs.
-\end{finding}
 
 % =============================================================================
 
 \section{Conclusion}
 
-UOS proposes an explicit composition contract for a multimodal dental case: acquisitions,
-spatial relations, processing provenance and presentation state can be described together.
-A specification, schemas, reference implementation and synthetic conformance fixtures exist.
-The reference case illustrates the structure and exposes limitations that must accompany
-any claim about its usefulness.
+UOS describes a multimodal dental case as one composition: acquisitions referenced by hash,
+spatial relations with their residuals, per-asset processing provenance and presentation
+state, with model output separable from the rest. A specification, schemas, a reference
+implementation and synthetic conformance fixtures exist.
 
-The reported mesh round trip supports numerical preservation. Registration residuals
-support inspection of fit, without establishing target accuracy. Regional colour estimates,
-segmentation and reconstructed roots remain experimental, and longitudinal measurements
-need further validation. The Gaussian experiments show improvements in projection scores
-under the tested conditions; they do not demonstrate diagnostic fidelity or a universal
-limit of the representation.
-
-Per-asset fidelity records and source hashing are implemented, while independent
-calibration, trustworthy clinical registration and independent-reader evaluation remain
-necessary. Reliable access to external originals also requires an external repository.
-Hash chains and
-layer separation already support auditing, but do not replace authentication, clinical
-validation or assessment of the software's intended purpose. These boundaries define what
-the current proposal can honestly offer.
+The measurements bound what can be claimed. Mesh regeneration preserves coordinates to
+\code{float32} rounding. Registration residuals describe the fit, not target accuracy: in
+case~A the historical residual came from mixed series, and in case~B the residual did not
+detect a $180^\circ$ flip. Tooth labels, regional colour and reconstructed roots remain
+experimental. The Gaussian experiments improved projection scores on a research cohort but
+not on case~A with segmented classes. No landmark-based registration error exists yet for
+either case, and independent calibration, independent readers and clinical evaluation remain
+to be done.
 
 % =============================================================================
 \newpage
@@ -1465,7 +1419,7 @@ mapping homogeneous points from frame $i$ into frame $j$, in millimetres, right-
 Placing an asset in the canonical frame is composition along any path to $f_0$,
 
 \[
-  T_{i \to 0} \;=\; T_{i_k 0} \, T_{i_{k-1} i_k} \cdots T_{i i_1},
+  T_{i \to 0} \;=\; T_{i_k 0} \, T_{i_{k-1} i_k} \cdots T_{i i_1}.
 \]
 
 A path must exist for a placement to be defined. Connectivity alone does not make all
@@ -1529,7 +1483,7 @@ syntax change and does not by itself check geometric equivalence. UID changes du
 specified de-identification workflows also need explicit handling. Per-frame multiframe
 identity and a canonical semantic hash remain unimplemented. For external originals,
 container validation reports that their content was not checked. For embedded series, a
-whole-file hash or size mismatch now fails validation even when UID and stored PixelData
+whole-file hash or size mismatch fails validation even when UID and stored PixelData
 match. Rewritten DICOM requires a regenerated manifest; semantic equivalence is not assumed.
 
 \subsection{Notation}
