@@ -16,6 +16,11 @@ necesita un fichero que CI no tiene no prueba nada en CI.
   Por defecto la corona es esmalte macizo y el borde es nítido; con `esmalte="capa"` el
   esmalte es una capa que se adelgaza hasta el cuello sobre dentina, y `desenfoque_mm`
   desenfoca el volumen como la PSF de un equipo real.
+- Por defecto las dos arcadas apenas se tocan: las puntas quedan a ±0,5 mm de z = 0, la
+  inferior desplazada media pieza hacia distal y sin resalte en los incisivos. Con
+  `oclusion="sobremordida"` la inferior sube y se mete por dentro como en una mordida
+  normal (ver `desplazamiento_oclusion`): así hay esmalte de la otra arcada a las alturas
+  de la banda del escáner, que la máscara de esmalte no quita.
 - El «escaneo» superior es la superficie de las coronas superiores por debajo de la encía,
   más una cinta de encía, teselada por su cuenta y con etiquetas FDI.
 """
@@ -47,12 +52,53 @@ def semiejes(fdi: int) -> np.ndarray:
     return SEMI * np.array([ANCHO[fdi % 10 - 1], ANCHO[fdi % 10 - 1], 1.0])
 
 
-def centros_coronas(arcada: str = "upper") -> tuple[np.ndarray, np.ndarray]:
+# Oclusión con sobremordida (`oclusion="sobremordida"`), valores de libro de una mordida
+# normal, fijados antes de medir nada con ellos:
+# - incisivos: los inferiores quedan `RESALTE_MM` por lingual de los superiores (resalte,
+#   centro a centro; con incisivos redondos es también cara labial a cara labial) y suben
+#   hasta que su borde queda `SOBREMORDIDA_MM` por encima del borde superior;
+# - posteriores: la cúspide vestibular inferior entra `INTERCUSPIDACION_MM` en la fosa
+#   superior. El desplazamiento lingual de los posteriores es el que ya trae la arcada
+#   inferior, más estrecha (~1,8 mm en los molares).
+# El canino reparte a medias entre los dos regímenes.
+RESALTE_MM = 2.5
+SOBREMORDIDA_MM = 3.0
+INTERCUSPIDACION_MM = 1.5
+# Cuánto de «anterior» es cada pieza, de incisivo central a segundo molar.
+PESO_ANTERIOR = np.array([1.0, 1.0, 0.5, 0.0, 0.0, 0.0, 0.0])
+
+
+def desplazamiento_oclusion(t: np.ndarray, fdi: np.ndarray, radio: float) -> np.ndarray:
+    """Desplazamiento de cada corona inferior para pasar de `"plana"` a `"sobremordida"`.
+
+    Lo vertical es el que deja el borde inferior a la altura pedida sobre el superior (en
+    `"plana"` ya lo pasa 1 mm: −0,5 frente a +0,5). Lo horizontal va hacia lingual por la
+    normal de la curva de la arcada, solo en la parte anterior: en los posteriores el
+    desplazamiento lingual ya lo da que la arcada inferior es más estrecha.
+    """
+    w = PESO_ANTERIOR[np.asarray(fdi) % 10 - 1]
+    solape_plano = 2 * SEMI[2] - 2 * CENTRO_Z
+    dz = w * SOBREMORDIDA_MM + (1 - w) * INTERCUSPIDACION_MM - solape_plano
+    # Normal hacia vestibular de la curva (−R·sen t, −(22·cos t − 12)) es (−22·sen t, −R·cos t).
+    vestibular = np.c_[-22 * np.sin(t), -radio * np.cos(t)]
+    vestibular /= np.linalg.norm(vestibular, axis=1)[:, None]
+    xy = -(w * RESALTE_MM)[:, None] * vestibular
+    return np.c_[xy, dz]
+
+
+def centros_coronas(
+    arcada: str = "upper", oclusion: str = "plana"
+) -> tuple[np.ndarray, np.ndarray]:
     """`(centros, fdi)` en LPS. Derecha del paciente = −x.
 
     La arcada inferior va media pieza desplazada hacia distal y algo más estrecha, como en
     una oclusión real: así darle la vuelta a la de arriba no la deja encima de la de abajo.
+    `oclusion` solo mueve la inferior (ver `desplazamiento_oclusion`).
     """
+    if oclusion not in ("plana", "sobremordida"):
+        raise ValueError(
+            f"oclusión desconocida: {oclusion!r} (se espera 'plana' o 'sobremordida')"
+        )
     t = np.linspace(-1.25, 1.25, 2 * N_LADO)
     if arcada == "lower":
         t = t * 1.08
@@ -68,7 +114,10 @@ def centros_coronas(arcada: str = "upper") -> tuple[np.ndarray, np.ndarray]:
             fdi.append((10 if lado_derecho else 20) + numero)
         else:
             fdi.append((40 if lado_derecho else 30) + numero)
-    return np.c_[x, y, z], np.array(fdi)
+    centros, fdi_arr = np.c_[x, y, z], np.array(fdi)
+    if arcada == "lower" and oclusion == "sobremordida":
+        centros = centros + desplazamiento_oclusion(t, fdi_arr, radio)
+    return centros, fdi_arr
 
 
 def _dentro(p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool) -> np.ndarray:
@@ -166,7 +215,7 @@ def _es_esmalte(
 def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
     inclinacion: np.ndarray | None = None, raices: str = "conicas",
-    esmalte: str = "macizo", desenfoque_mm: float = 0.0,
+    esmalte: str = "macizo", desenfoque_mm: float = 0.0, oclusion: str = "plana",
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
 
@@ -179,6 +228,8 @@ def campo_cbct(
     `desenfoque_mm`: σ de un desenfoque gaussiano isótropo del volumen (la PSF del equipo;
     0,425 mm de anchura a media altura son σ ≈ 0,18 mm), con el fondo blando a 0 y solo lo
     que queda por encima de `PISO_HU` como tejido duro. Se aplica antes de quitar cortes.
+    `oclusion`: `"plana"` (por defecto) o `"sobremordida"` (ver `desplazamiento_oclusion`).
+    Donde las coronas se tocan el volumen las une, como en un CBCT con la boca cerrada.
     """
     if raices not in ("conicas", "realistas"):
         raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
@@ -194,7 +245,7 @@ def campo_cbct(
     p = np.c_[gx.ravel(), gy.ravel(), gz.ravel()]
     q = p if inclinacion is None else p @ inclinacion  # coordenadas de la boca sin inclinar
     sup, f_sup = centros_coronas("upper")
-    inf, f_inf = centros_coronas("lower")
+    inf, f_inf = centros_coronas("lower", oclusion)
     corona = _dentro(q, sup, f_sup, True) | _dentro(q, inf, f_inf, False)
     if raices == "realistas":
         raiz = _en_raiz_realista(q, sup, f_sup, True) | _en_raiz_realista(q, inf, f_inf, False)

@@ -613,6 +613,63 @@ def test_sin_cobertura_una_pose_no_es_elegible(referencia) -> None:
     assert any("cobertura" in m for m in poca["why_not"])
 
 
+def test_la_sobremordida_del_fantasma_es_la_de_una_mordida_normal() -> None:
+    """La opción `oclusion="sobremordida"` es anatomía de libro, no un valor buscado.
+
+    Incisivos inferiores 2–3 mm por lingual de los superiores y solapados 2–4 mm en altura;
+    cúspides inferiores posteriores 1–2 mm por encima de las puntas superiores. Por defecto
+    la arcada inferior es la de siempre, así que el resto de los tests no cambia.
+    """
+    from fantasma_arcada import centros_coronas, semiejes
+
+    sup, f_sup = centros_coronas("upper")
+    plana, f_inf = centros_coronas("lower")
+    np.testing.assert_array_equal(plana, centros_coronas("lower", "plana")[0])
+    inf, _ = centros_coronas("lower", "sobremordida")
+    alto = np.array([semiejes(int(f))[2] for f in f_inf])
+    punta_inf = inf[:, 2] + alto
+    punta_sup = sup[:, 2] - np.array([semiejes(int(f))[2] for f in f_sup])
+    for i, f in enumerate(f_inf):
+        j = int(np.argmin(np.linalg.norm(sup[:, :2] - inf[i, :2], axis=1)))
+        solape = punta_inf[i] - punta_sup[j]
+        if f % 10 in (1, 2):
+            assert 2.0 <= solape <= 4.0
+            assert 2.0 <= float(np.linalg.norm(inf[i, :2] - sup[j, :2])) <= 3.0
+            assert inf[i, 1] > sup[j, 1]  # lingual: hacia +y, que en LPS es posterior
+        elif f % 10 >= 4:
+            assert 1.0 <= solape <= 2.0
+    with pytest.raises(ValueError, match="oclusión"):
+        centros_coronas("lower", "abierta")
+
+
+def test_la_sobremordida_no_baja_la_cobertura_en_la_verdad(fichero) -> None:
+    """Hipótesis descartada: la sobremordida no explica la C ≈ 0,43 del caso A.
+
+    Con sobremordida y resalte, la otra arcada tiene esmalte a las alturas de la banda y la
+    máscara no la quita, así que podía contar contra el lado del contorno de C. Medido
+    (`docs/research/registro-anatomico.md` §10): en la pose verdadera C baja de 0,975 a
+    0,972, y a 0,94–0,95 en el peor caso plausible con capa de esmalte, desenfoque y serie
+    dispersa; lejos de 0,4. El ajuste fino desde la verdad no se mueve. Si un fantasma
+    con sobremordida algún día baja C en la verdad, este test lo dice.
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas", oclusion="sobremordida")
+    centros = campo["centers"] + campo["origin"]
+    V, F, etq = fichero
+    ejes, _ = anatomical_frame(V, etq)
+    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    reg = RegistroAnatomico(escaner=escaner, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    puntuacion = reg.puntua_secciones(*verdad, anatomico._por_corte(P, None))
+    assert puntuacion["C"] >= 0.9
+    assert reg.coherencia(*verdad, puntuacion)["eligible"]
+    r, t, _, convergido = reg.afina(*verdad, P)
+    assert convergido
+    assert reg.rms_desplazamiento((r, t), verdad) < 0.2
+
+
 def _snap() -> TwinSnapshot:
     return TwinSnapshot(
         acquisition_id="A1",

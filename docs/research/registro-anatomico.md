@@ -384,9 +384,9 @@ verdad.
   excluyen la cobertura y la altura de las cúspides, no S. Con una sola ancla eso aguanta
   mientras las cúspides queden a más de 5 mm del plano, pero es un margen que antes daba S y
   ahora da solo la anatomía.
-- **La sobremordida no está en el fantasma.** La otra arcada en las alturas de la banda es
-  esmalte y la máscara no la quita, y cuenta en contra de C. Puede ser parte de por qué el
-  caso A no llega a 0,5.
+- **La sobremordida no explica el veto.** Se pensó que la otra arcada en las alturas de la
+  banda, que es esmalte y la máscara no quita, bajaría C. Probado en §10: en la pose
+  verdadera C pasa de 0,975 a 0,94–0,97, no a 0,4.
 - **El desenfoque es un sesgo de exactitud de 0,3–0,4 mm** en el fantasma con σ = 0,3 mm,
   que U declara a través del umbral pero el método no corrige.
 
@@ -403,9 +403,8 @@ verdad.
    guarda hace falta verdad. Hay dos caminos:
    - puntos anatómicos del caso A, marcados por una persona según el protocolo de puntos.
      Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario;
-   - un fantasma que dé C ≈ 0,4 en la pose verdadera. La sobremordida es el candidato no
-     probado: la otra arcada a la altura de la banda es esmalte, la máscara no la quita y
-     cuenta contra C.
+   - un fantasma que dé C ≈ 0,4 en la pose verdadera. La sobremordida era el candidato y
+     **no lo reproduce** (§10); no queda ningún candidato medido.
 2. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
    σ = 0,3–0,4 mm). Es exactitud, no precisión, así que no bloquea el protocolo de
    precisión, pero tiene que estar declarado en el artículo.
@@ -423,3 +422,58 @@ verdad.
   en cosmético y debilita las guardas; descartado.
 - Los informes completos de los agentes y verificadores están en el diario del workflow
   `wf_3f408c80-68c` de la sesión.
+
+## 10 · Sobremordida: probada en el fantasma, no baja C
+
+**Pregunta.** En una mordida real los incisivos inferiores quedan 2–3 mm por lingual de los
+superiores y los solapan 2–4 mm en altura, y las cúspides vestibulares inferiores entran
+1–2 mm en las fosas superiores. Esa otra arcada es esmalte a las alturas de la banda: la
+máscara de §8 no la quita y podía contar contra el lado del contorno de C. En el fantasma las
+dos arcadas apenas se tocaban (puntas a ±0,5 mm de z = 0, incisivos borde a borde).
+
+**La opción.** `fantasma_arcada.campo_cbct(oclusion="sobremordida")`, por defecto
+`"plana"` (lo de siempre). Solo mueve la arcada inferior, con valores de libro fijados
+antes de medir: resalte de 2,5 mm por lingual en los incisivos, sobremordida de 3 mm,
+intercuspidación posterior de 1,5 mm, y el canino a medias. El desplazamiento lingual de los
+posteriores es el que ya da la arcada inferior, más estrecha. Donde las coronas se tocan el
+volumen las une, como en un CBCT con la boca cerrada. Test de la geometría y test del
+resultado en `test_anatomico.py`.
+
+**Medido con el código actual** (rejilla de 0,4 mm, raíces realistas). C es el mínimo de
+los dos lados, y S va en mm. Cada fila es la pose verdadera, y la búsqueda completa como
+el orquestador, sin incertidumbre:
+
+| Fantasma | Verdad: S / C | Lado escáner / contorno | Búsqueda: veto, error mediano | Afinar desde la verdad |
+|---|---|---|---|---|
+| Sin sobremordida | 0,148 / 0,975 | 0,975 / 1,000 | — (§8.1: no, 0,081 mm) | 0,084 mm |
+| Sobremordida 3 mm, resalte 2,5, posterior 1,5 | 0,149 / 0,972 | 0,975 / 0,972 | no, 0,061 mm | 0,044 mm |
+| Peor plausible: 4 mm, resalte 2, posterior 2 | 0,150 / 0,954 | 0,970 / 0,954 | — | 0,043 mm |
+| Ídem + capa de esmalte, σ = 0,3 mm, serie dispersa | 0,160 / 0,940 | 0,969 / 0,940 | no, 0,304 mm (vertical +0,30) | 0,300 mm |
+| Capa, σ = 0,18 mm, serie dispersa, valores de libro | 0,153 / 0,950 | 0,976 / 0,950 | — | 0,037 mm |
+| Cota: incisivos separados del todo (resalte 4,5 mm, fuera de lo plausible) | 0,150 / 0,892 | 0,975 / 0,892 | — | — |
+
+La serie dispersa es paso 0,45 mm con un hueco de 2,2 a 3,9 mm, como en §8.1. El 0,30 mm de
+la fila con desenfoque es el sesgo vertical de §8.1, no la sobremordida.
+
+**Lectura.** La sobremordida baja el lado del contorno de 1,0 a 0,94–0,97, y ni separando
+los incisivos del todo baja de 0,89. Afecta solo a 4–6 dientes de 14, y solo a la parte
+baja de la banda (desde 1,5 mm sobre la punta). **No reproduce C ≈ 0,4 en la verdad.** Por
+eso no se propone ninguna regla nueva de cobertura: no hay una pose verdadera con C baja
+contra la que diseñarla, y cambiar C sin ella sería volver a la regla 3 de §8.
+
+De paso, sobre las poses equivocadas, con y sin sobremordida:
+- Un deslizamiento en planta de 2 mm en x da C ≈ 0,57–0,58 y es elegible.
+- Uno de 4,5 mm en −x da C 0,49–0,52, y es elegible en tres de los cinco fantasmas.
+- Los de 3 mm en y, 4,5 en −y y 3+3 en xy dan C 0,22–0,47 y no lo son.
+- 4 mm hacia la raíz conserva C 0,64–0,95. Con una sola ancla lo veta la altura de las
+  cúspides; con dos es elegible, y solo S lo deja atrás (0,23 frente a 0,15).
+
+C no es lo que separa una pose a 2 mm de la buena; lo hace S. El mínimo de 0,5 está cerca de
+lo que da un deslizamiento de 3–4,5 mm. Bajarlo dejaría pasar esos deslizamientos en el
+fantasma, que es la única verdad.
+
+**Qué queda.** La C = 0,43 del caso A sigue sin explicación con verdad. El camino limpio es
+el TRE con puntos anatómicos marcados por una persona (§8.2). El fantasma tampoco tiene
+fosas ni incisivos en pala: son elipsoides. Una oclusión más fiel cambiaría el detalle de la
+tabla, pero difícilmente lo bastante para pasar de 0,95 a 0,4.
+
