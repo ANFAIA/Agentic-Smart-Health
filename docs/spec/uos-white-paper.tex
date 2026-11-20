@@ -1364,6 +1364,37 @@ either case, and independent calibration, independent readers and clinical evalu
 to be done.
 
 % =============================================================================
+\section*{Data and code availability}
+
+The specification source, the JSON Schemas, the reference implementation, the synthetic
+conformance fixtures and the scripts behind most reported measurements (not the volumetric
+fitting code, \S\ref{sec:gs}) are in the public
+repository \url{https://github.com/ANFAIA/Agentic-Smart-Health} under the Apache~2.0
+licence; schema identifiers resolve at the tag \code{uos-spec-v0.3-draft}.
+\todo{Give the commit or release tag that matches this version of the paper.} The two
+clinical cases are not distributed: no DICOM data, scans, photographs, reports or containers
+of either patient are published. The cohort volumes (V1--V3) are available from their
+providers under a non-commercial licence after registration, and neither the volumes nor
+fields derived from them are redistributed. \todo{Decide whether to name and cite the cohort;
+the CBCT segmentation benchmark already cites ToothFairy2.} Teeth3DS+ \cite{teeth3ds} is
+available from its authors under CC~BY~4.0.
+
+\section*{Ethics and consent}
+
+Both cases come from patients of a collaborating dental practice and were processed
+pseudonymised. For case~B, the project's dataset record states that the clinical team
+confirmed the patient's consent to use and publication of derived results.
+\todo{State the consent obtained for case~A, and whether an ethics committee approved or
+waived review of this secondary use.} No direct identifiers, slice images or DICOM headers of
+either case are published, and no clinical decision was based on the system.
+
+\section*{Funding and competing interests}
+
+\todo{State the ANFAIA programme or grant and any support from Histora.} The author
+collaborates with Histora, which contributed the clinical cases and whose name appears in the
+proposed media type \code{application/vnd.histora.uos} and the extension prefix
+\code{histora\_}. \todo{Declare any financial interest, or state that there is none.}
+
 \newpage
 
 \section*{Acknowledgements}
@@ -1388,8 +1419,11 @@ surgeon and founder of Centro Médico Odontológico Guitián, and \textbf{Dr.\ E
 Alvar}, oral surgeon, set out what a clinician actually needs to measure and, just as
 usefully, what a plausible-looking number is worth when nobody can say how it was obtained.
 
-Any errors, and every claim that turned out to be measurable rather than merely arguable,
-remain the author's.
+\todo{Thank by name, with their consent, the periodontist who traced the blind margin line
+on case~A and the dentist who reviewed the second annotation, and any specialists who mark
+landmarks for the TRE protocol. They are acknowledged, not listed as authors.}
+
+Any errors remain the author's.
 
 
 % =============================================================================
