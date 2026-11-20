@@ -48,12 +48,35 @@ def test_la_lista_versionada_tiene_60_pacientes_sin_repetir() -> None:
     assert ids == sorted(ids)
 
 
+def test_la_segunda_reserva_no_repite_ninguno_de_la_primera() -> None:
+    privados = [f"P{k:03d}" for k in range(300)]
+    primera = osf.elige_reserva(privados)
+    segunda = osf.elige_reserva_2(privados, primera)
+    assert len(segunda) == osf.PACIENTES_RESERVA == len(set(segunda))
+    assert not set(segunda) & set(primera)
+    assert segunda == osf.elige_reserva_2(list(reversed(privados)), primera)
+
+
+def test_la_segunda_reserva_exige_que_la_primera_salga_de_la_misma_lista() -> None:
+    with pytest.raises(ValueError):
+        osf.elige_reserva_2(["A", "B"], ["Z"])
+
+
+def test_las_dos_reservas_versionadas_son_disjuntas() -> None:
+    segunda = osf.ids_reserva_2()
+    assert len(segunda) == osf.PACIENTES_RESERVA == len(set(segunda))
+    assert segunda == sorted(segunda)
+    assert not set(segunda) & set(osf.ids_reserva())
+
+
 def test_la_reserva_no_esta_en_los_datos_locales() -> None:
     """Los 300 locales son el public-training-set-1; la reserva sale del private-testing-set."""
     mallas = _RAIZ / "data/raw/teeth3ds/3D_scans_per_patient_obj_files"
     if not mallas.is_dir():
         pytest.skip("Teeth3DS+ no está descargado en este checkout")
-    assert not set(osf.ids_reserva()) & {d.name for d in mallas.iterdir()}
+    locales = {d.name for d in mallas.iterdir()}
+    assert not set(osf.ids_reserva()) & locales
+    assert not set(osf.ids_reserva_2()) & locales
 
 
 def _zip_en_memoria(miembros: dict[str, bytes]) -> zipfile.ZipFile:

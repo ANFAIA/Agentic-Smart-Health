@@ -3,6 +3,7 @@
 
     uv run python scripts/fetch_teeth3ds_osf.py reserva
     uv run python scripts/fetch_teeth3ds_osf.py entrenamiento
+    uv run python scripts/fetch_teeth3ds_osf.py reserva-2
 
 **Por qué existe.** `fetch_teeth3ds.sh` baja los zips del Google Drive del reto, que son
 300 pacientes: exactamente el `public-training-set-1` de 3DTeethSeg'22. Con ellos se
@@ -14,6 +15,9 @@ pacientes etiquetados. Los otros 600 son el `public-training-set-2` y el
 - `reserva`: 60 pacientes del `private-testing-set`, elegidos con semilla fija. **Nadie
   los ha visto**: ni nuestro modelo ni ningún modelo entrenado con los datos públicos del
   reto. Es el conjunto donde se mide una sola vez lo que se elija en `dev`.
+- `reserva-2`: otros 60 del `private-testing-set`, elegidos con otra semilla entre los 240
+  que la primera dejó. La primera reserva se gastó el 2026-11-20 (§6.10 de
+  `segmentacion-fdi-escaner.md`) y pasa a ser desarrollo; esta es la que la sustituye.
 - `entrenamiento`: los 300 del `public-training-set-2`, convertidos a npz (posiciones,
   normales y etiquetas) para no ocupar 10 GB de OBJ.
 
@@ -73,6 +77,11 @@ ARCADAS = ("upper", "lower")
 SEMILLA_RESERVA = 20261120
 PACIENTES_RESERVA = 60
 LISTA_RESERVA = RAIZ / "docs/research/teeth3ds-reserva.txt"
+
+# ── Segunda reserva, fijada el 2026-11-20, después de gastar la primera y antes de bajar
+# ni mirar ninguno de sus pacientes. Sale de los que la primera dejó en el private-testing-set.
+SEMILLA_RESERVA_2 = 20261121
+LISTA_RESERVA_2 = RAIZ / "docs/research/teeth3ds-reserva-2.txt"
 
 DESTINO = RAIZ / "data/raw/teeth3ds-osf"
 MALLAS = DESTINO / "3D_scans_per_patient_obj_files"
@@ -188,6 +197,10 @@ def ids_reserva() -> list[str]:
     return ids_de_fichero(LISTA_RESERVA)
 
 
+def ids_reserva_2() -> list[str]:
+    return ids_de_fichero(LISTA_RESERVA_2)
+
+
 def pacientes_de_lista(texto: str) -> list[str]:
     """Pacientes con sus dos arcadas en una lista oficial (`ID_upper`, `ID_lower`)."""
     arcadas: dict[str, set[str]] = {}
@@ -292,7 +305,8 @@ def descarga_parte(parte: str, destino: Path) -> Path:
     return destino
 
 
-def trae(reserva: list[str], entrenamiento: list[str]) -> None:
+def trae(reserva: list[str], entrenamiento: list[str],
+         huellas_de: str = "reserva-sha256.json") -> None:
     """Baja cada parte que haga falta, extrae la reserva y convierte el entrenamiento."""
     if set(reserva) & set(entrenamiento):
         raise SystemExit("⚠ un paciente de la reserva está en el entrenamiento; no sigo.")
@@ -335,7 +349,7 @@ def trae(reserva: list[str], entrenamiento: list[str]) -> None:
         huellas = {f"{p}/{n}": hashlib.sha256(
             ((MALLAS if n.endswith(".obj") else ETIQUETAS) / p / n).read_bytes()).hexdigest()
             for p in reserva for n in ficheros_del_paciente(idx, p)}
-        (DESTINO / "reserva-sha256.json").write_text(json.dumps(huellas, indent=1) + "\n")
+        (DESTINO / huellas_de).write_text(json.dumps(huellas, indent=1) + "\n")
 
 
 def reserva_derivada(solo_lista: bool = False) -> list[str]:
@@ -353,11 +367,40 @@ def reserva_derivada(solo_lista: bool = False) -> list[str]:
     return elegidos
 
 
+def elige_reserva_2(privados: list[str], primera: list[str]) -> list[str]:
+    """La segunda reserva: de los privados que NO están en la primera, con otra semilla."""
+    if not set(primera) <= set(privados):
+        raise ValueError("la primera reserva no sale de esta lista de privados")
+    return elige_reserva(sorted(set(privados) - set(primera)), semilla=SEMILLA_RESERVA_2)
+
+
+def reserva_2_derivada(solo_lista: bool = False) -> list[str]:
+    """La segunda reserva derivada de la lista oficial; tiene que coincidir con la versionada."""
+    elegidos = elige_reserva_2(pacientes_de_lista(lista_oficial("private-testing-set")),
+                               reserva_derivada())
+    if solo_lista or not LISTA_RESERVA_2.is_file():
+        LISTA_RESERVA_2.write_text(
+            "# Segunda reserva de Teeth3DS+: 60 pacientes del private-testing-set de\n"
+            "# 3DTeethSeg'22 que no están en teeth3ds-reserva.txt, elegidos por\n"
+            "# scripts/fetch_teeth3ds_osf.py (semilla 20261121). Ver §6.11 de\n"
+            "# docs/research/segmentacion-fdi-escaner.md. Se evalúa sobre ellos UNA vez.\n"
+            + "\n".join(elegidos) + "\n")
+        print(f"→ {LISTA_RESERVA_2} ({len(elegidos)} pacientes)")
+    elif ids_reserva_2() != elegidos:
+        raise SystemExit("⚠ la segunda reserva derivada no coincide con la versionada; no sigo.")
+    return elegidos
+
+
 def entrenamiento_osf() -> list[str]:
     return pacientes_de_lista(lista_oficial("public-training-set-2"))
 
 
 def baja(args: argparse.Namespace) -> int:
+    if args.orden == "reserva-2":
+        elegidos = reserva_2_derivada(solo_lista=args.solo_lista)
+        if not args.solo_lista:
+            trae(elegidos, [], huellas_de="reserva-2-sha256.json")
+        return 0
     if args.orden == "reserva" and args.solo_lista:
         reserva_derivada(solo_lista=True)
         return 0
@@ -401,6 +444,9 @@ def main() -> int:
     r = ordenes.add_parser("reserva")
     r.add_argument("--solo-lista", action="store_true",
                    help="Escribe la lista versionada y no baja nada.")
+    r2 = ordenes.add_parser("reserva-2")
+    r2.add_argument("--solo-lista", action="store_true",
+                    help="Escribe la lista versionada y no baja nada.")
     ordenes.add_parser("entrenamiento")
     ordenes.add_parser("todo", help="Las dos cosas, bajando cada zip una sola vez.")
     args = ap.parse_args()
