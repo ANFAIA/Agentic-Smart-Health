@@ -290,10 +290,13 @@ tienen esmalte por corte del mismo orden; en el fantasma de dos arcadas la propo
 pocas gaussianas sobre un perfil casi vacío. Cualquier umbral entre 0,01 y 0,9 decide lo
 mismo en los dos.
 
-**3 · El lado del contorno de C se cuenta sobre lo que S asigna a un diente**, a ≤ 3 mm
-(`TOPE_SECCION_MM`) de la sección del escáner. Es la misma frontera que S ya usaba («a más
-de eso no es corona de esta arcada»); C contaba también lo que S descartaba: la otra
-arcada en sobremordida, un cordal que el escaneo no trae.
+**3 · Propuesta y revertida: contar el lado del contorno de C solo sobre lo que S asigna a
+un diente** (a ≤ 3 mm de la sección). La verificación independiente midió que en el
+fantasma, la única verdad, eso solo sube C en poses equivocadas (deslizamientos de 3 a
+4,5 mm en planta) y nunca en la verdadera. Además, la motivación escrita era que la pose del
+registro por cortes del caso A no llegaba al mínimo, y elegir una guarda por la pose del
+método antiguo es justo lo que no se permite. Se revirtió en un commit propio: C sigue
+siendo el de §2.
 
 ### 8.1 · En el fantasma (la única verdad)
 
@@ -333,31 +336,38 @@ hacia la raíz. Rejilla de 0,4 mm.
 
 ### 8.2 · En el caso A (sin verdad: solo veto, U y tiempo)
 
-Misma serie y etiquetas que §7, con `prepara_anatomico` completo (búsqueda e
-incertidumbre):
-- **Sin veto.** Ancla única en la moda (el valle de §7 queda descartado por la regla 2).
-  21 825 puntos de contorno a 1400 frente a 45 040 sin máscara.
-- Elegida: S 0,617 mm, C 0,558 (lado del escáner 0,82, del contorno 0,56). Ejes a 4,0 /
-  4,0 / 1,1° del CBCT. Tres cuencas elegibles de catorce; la siguiente, a 0,115 mm de S.
-- La vuelta puntúa ahora **peor** (S +0,093 mm, C −0,07); en §7 puntuaba 0,71 mm mejor.
-- **U mediana 2,14 mm** (p95 3,92; vertical 1,69). Por diente, de 1,26 mm (12) a 3,96 mm
-  (17); la domina la navaja (1,1–3,1 mm), y los segundos molares son los peores. El
-  reajuste a 1100 no converge en 200 iteraciones y mueve 0,98 mm de mediana; a 1900, 0,35.
-  El radio de la máscara mueve 0,24 mm (1,0 mm) y 0,47 mm (2,0 mm) de mediana, hasta 1,1 mm
-  en el 27: aquí sí es una elección que pesa, y por eso entra en U. En §7 la U declarada era
-  de 20 a 43 mm.
-- **Tiempo: 882–908 s** con la máquina compartida (registros del fantasma y la batería de
-  tests en paralelo), frente a 22–24 min en §7. Sigue siendo lento.
-- Solo como información, nunca como criterio: la pose queda a 3,2 mm rms de banda del
-  registro por cortes. Desde esa pose, el ajuste se mueve 3,1 mm con la máscara y 7,6 mm
-  sin ella (cúspides a +8,7 mm del plano: la banda sobre las raíces otra vez).
+Misma serie y etiquetas que §7, por el camino del orquestador (`prepara_registro`,
+`registro="anatomico"`), desde el commit con las reglas 1 y 2 y la 3 revertida:
+- **Vetado otra vez, ahora solo por cobertura:** C = 0,43 frente al mínimo de 0,5.
+  - Ancla única en la moda: el valle de §7 queda descartado por la regla 2.
+  - Se devuelve la cuenca más cercana a la orientación anatómica, con confianza 0.
+- **La pose ya no se va a las raíces.** Queda a 3,1 mm de mediana del registro por cortes
+  (p95 5,4), frente a 14 mm en §7. Es solo información, no un criterio.
+- **U de 1,6 a 4,0 mm** por diente (en §7, de 20 a 43); los peores son los segundos
+  molares, 17 y 27. Residuo con signo de −0,62 mm en el 21.
+- **Una vuelta puntúa casi igual** (S −0,039 mm, C −0,02): la descarta la anatomía, no los
+  datos.
+- **Tiempo: 666 s** con incertidumbre, frente a 22–24 min en §7.
+
+Con la regla 3 (la ejecución del agente que la propuso, antes de revertirla) el caso A no
+salía vetado: C = 0,558, S = 0,617 mm, U mediana 2,14 mm, a 3,2 mm del registro por cortes,
+en 882–908 s. La diferencia entre vetado y no vetado es solo esa regla, y la regla no se
+sostiene en el fantasma.
+
+**Lectura.** La máscara de esmalte quita el mecanismo que llevaba la banda a las raíces, y
+el método pasa de no saber dónde está (U de 20–43 mm) a declarar 1,6–4 mm. Lo que queda es
+una pregunta que el caso A no puede contestar sin verdad: si C < 0,5 en este caso es un
+registro malo o una guarda mal calibrada para series reales. La única forma limpia de
+saberlo es medir el TRE del caso A con puntos anatómicos marcados por una persona
+([`uos-protocolo-puntos-anatomicos.md`](../spec/uos-protocolo-puntos-anatomicos.md)), o un
+fantasma que reproduzca C ≈ 0,4 en la pose verdadera, que ninguno de los probados
+(raíces anchas, serie dispersa, capa de esmalte, desenfoque) hace: todos dan C ≈ 0,97 en la
+verdad.
 
 ### 8.3 · Lo que sigue débil
 
-- **C queda a 0,06 del mínimo en el caso A**, y varias cuencas no elegidas rondan 0,47–0,52.
-  Otro caso con peor acuerdo entre modalidades puede volver a vetarse. No se ha bajado el
-  mínimo: no hay verdad con la que fijarlo. Afinando desde la pose del registro por cortes
-  (solo información), C sale 0,57, 0,56 y 0,52 con radio 1,0, 1,5 y 2,0 mm.
+- **El caso A sigue vetado por cobertura (C = 0,43).** No se ha bajado el mínimo: no hay
+  verdad con la que fijarlo, y cambiar la guarda hasta que el caso pase sería elegir con él.
 - **El fantasma no reproduce el fallo de §7** ni con esto: con o sin máscara la pose desde
   la verdad es la misma. Que la máscara sea lo que quita el deslizamiento en el caso A es
   una lectura de su mecanismo (sin máscara, 7,6 mm y las cúspides sobre la raíz; con ella,
@@ -375,7 +385,41 @@ incertidumbre):
   mientras las cúspides queden a más de 5 mm del plano, pero es un margen que antes daba S y
   ahora da solo la anatomía.
 - **La sobremordida no está en el fantasma.** La otra arcada en las alturas de la banda es
-  esmalte y la máscara no la quita; la regla 3 solo deja de contarla en C si está a más de
-  3 mm.
+  esmalte y la máscara no la quita, y cuenta en contra de C. Puede ser parte de por qué el
+  caso A no llega a 0,5.
 - **El desenfoque es un sesgo de exactitud de 0,3–0,4 mm** en el fantasma con σ = 0,3 mm,
   que U declara a través del umbral pero el método no corrige.
+
+## 9 · Dónde se quedó (2026-11-20, corte de las 13:30) y cómo retomar
+
+**Estado.**
+- La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
+  262 tests verdes, y ruff, mypy y los guardianes limpios.
+- El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
+  anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
+
+**Lo que bloquea el caso B**, en orden:
+1. **El veto por cobertura en el caso A (C = 0,43).** Para decidir si es el registro o la
+   guarda hace falta verdad. Hay dos caminos:
+   - puntos anatómicos del caso A, marcados por una persona según el protocolo de puntos.
+     Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario;
+   - un fantasma que dé C ≈ 0,4 en la pose verdadera. La sobremordida es el candidato no
+     probado: la otra arcada a la altura de la banda es esmalte, la máscara no la quita y
+     cuenta contra C.
+2. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
+   σ = 0,3–0,4 mm). Es exactitud, no precisión, así que no bloquea el protocolo de
+   precisión, pero tiene que estar declarado en el artículo.
+3. **Tiempo:** 11 min por registro con incertidumbre en el caso A. El protocolo del caso B
+   son ~125 registros, la mayoría sin incertidumbre. Hay que medir cuánto tarda uno sin ella
+   antes de estimar.
+
+**Ramas locales del workflow del 2026-11-20, no fusionadas y no subidas:**
+- `fix/losa-sigue-pose` (5c24a77…67b29ba): un filtro de orientación de normales que en el
+  fantasma con capa de esmalte de 1,2 mm baja el deslizamiento de 1,19 a 0,067 mm,
+  confirmado por ablación. Con esmalte de 0,6–1,0 mm deja 0,22–0,32 mm. La «ventana que
+  sigue a la pose» de esa misma rama no aporta nada y su guarda empeora un arranque; no
+  debe entrar. Es el candidato siguiente para el sesgo de capa fina.
+- `worktree-wf_3f408c80-68c-3` (b0f6720): S bilateral con desfase. La verificación lo dejó
+  en cosmético y debilita las guardas; descartado.
+- Los informes completos de los agentes y verificadores están en el diario del workflow
+  `wf_3f408c80-68c` de la sesión.
