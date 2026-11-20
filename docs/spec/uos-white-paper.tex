@@ -400,8 +400,10 @@ a propagated uncertainty bound.
 \subsection{What is inside one, in practice}\label{sec:inside}
 
 The reference container used throughout this document holds a real maxillary case: an
-intraoral scan, a CBCT, nine photographs and three reports, contributed by the collaborating
-practice and processed pseudonymised. Opening it, this is what a reader meets.
+intraoral scan, a CBCT, nine image files (six intraoral photographs and three digital
+radiographs) and three reports, contributed by the collaborating practice and processed
+pseudonymised. The scan, the images and the reports are identified by SHA-256 and are not
+stored in the ZIP. Opening it, this is what a reader meets.
 
 \begin{longtable}{L{6.2cm} L{9.0cm}}
 \toprule
@@ -490,7 +492,7 @@ single-series reconstruction or clinical accuracy.
 \paragraph{1. Acquisition, unchanged.} The practice scans, takes the CBCT, shoots the
 photographs and writes the report exactly as it does today. Nothing about UOS asks a
 clinician to change how they work, and a format that did would not be adopted. The four
-artefacts land as they always have: STL, a directory of 397 DICOM slices, nine JPEGs, three
+artefacts land as they always have: an STL, a DICOM export, nine image files and three
 PDFs.
 
 \paragraph{2. The container is written.} The pipeline ingests the four modalities, aligns
@@ -554,24 +556,25 @@ in cross-modal and per-tooth measurements, including sensitivity to registration
 
 \subsection{Geometry with regional appearance and explicit limitations}
 
-The reference input is an STL without colour. This is a property of that export, not of
-intraoral scanners in general. The prototype estimates CIELAB medians per crown third
-from clinical photographs, then assigns those regional estimates to mesh vertices. The
-reported coverage is about 97.2\,\% of vertices; this does not imply an independently
-measured colour sample at each vertex. Remaining vertices can use projected pixels,
-interpolation or a fallback gradient, whose origin must remain distinguishable.
+Case~A's scan is an STL without colour, which is a property of that export rather than of
+intraoral scanners in general. The prototype estimates CIELAB medians per crown third from
+the clinical photographs and assigns those regional estimates to mesh vertices
+(\S\ref{sec:evidence}). Vertices can instead carry a projected pixel, an interpolated value
+or a fallback gradient, and the origin of each is recorded.
 
 \begin{finding}{Photograph-derived estimates, not calibrated shade measurements}
-The pipeline uses gingival colour to estimate flash falloff. That correction enables
-exploratory comparison under its assumptions, but does not establish colourimetric accuracy
-or a certified shade match. Camera processing, JPEG encoding and illumination affect the
-source. A controlled capture protocol with suitable colour references would support a
-calibration study; a grey card alone does not establish a complete dental colour calibration.
+The pipeline discounts flash falloff with a per-channel (linear RGB) Theil--Sen slope of log
+tooth colour against log adjacent-gingiva colour, fitted across the photographs of a case,
+clipped to $[0,1]$ and skipped when fewer than four crowns have a valid gingival probe. It
+assumes that adjacent gingiva shares the tooth's illumination, it also removes part of any
+genuine positional chroma gradient, and it leaves the absolute level uncalibrated. It
+supports comparison between crowns of one case, not colourimetric accuracy or a shade match.
+Camera processing, JPEG encoding and illumination affect the source, and colour measurement
+is outside the intended use (\S\ref{sec:intended-use}).
 \end{finding}
 
-Tooth labels and closed-surface exports are available experimentally. Label boundaries fail
-anatomical checks in the reference case, and surface closure inserts unmeasured geometry.
-These outputs require evaluation before laboratory use.
+Tooth labels and closed-surface exports are available experimentally. Their limitations are
+reported in \S\ref{sec:negative}, and surface closure inserts unmeasured geometry.
 
 \subsection{Registration metadata for cross-modal measurements}
 
@@ -853,81 +856,99 @@ the container format remains UOS 0.3.
 
 \subsection{Appearance estimated from clinical photographs}
 
-The earlier report assigns 108{,}922 of 112{,}067 vertices (about 97.2\,\%) regional
-colour from their own tooth. These are crown-third estimates, not 108{,}922 independent
-photographic samples. The code distinguishes regional assignment, projected samples,
-nearest-neighbour interpolation and fallback colour. The previous draft's detailed counts
-omitted seven vertices; without rechecking the original run, this revision does not assert
-an exact allocation of the remaining 3{,}145 vertices. Test literals are not a substitute
-for that experimental record.
+In the archived appearance run of case~A (August 2026), 108{,}922 of 112{,}067 vertices
+(97.2\,\%) take a regional colour: the median of their crown third in the photograph that
+sees that crown best, for 13 of the 14 crowns. These are regional summaries, not
+independent per-vertex samples. The remaining 3{,}145 vertices, according to the output
+header recorded in the test suite, comprise 7 with a projected pixel, 97 interpolated from
+the nearest measured vertex and 3{,}041 painted with a fallback gradient that is not patient
+colour; the run log itself was not archived. A later run without per-tooth shade extraction
+projected colour onto 86{,}142 vertices and interpolated 14{,}004, so the coverage figure
+belongs to that archived run.
 
-The reported flash-correction slopes are 0.649 / 0.577 / 0.677. They describe this processing
-step, not its colourimetric accuracy. The optional fidelity extension records detectable
-JPEG loss and per-asset encoding, lineage and inherited losses. It preserves unknown prior
-history and does not establish colour calibration from these declarations.
+The flash-correction slopes recorded for case~A are 0.649 / 0.577 / 0.677. They come from the
+specification's example record; the producing run log was not archived, and the code
+documentation gives 0.63 / 0.59 / 0.69 for an earlier iteration on the same case. They
+describe a processing step, not colourimetric accuracy. The optional fidelity extension
+identifies JPEG encoding from the file bytes and records it as lossy, together with per-asset
+lineage and inherited losses, and keeps prior history unknown unless evidence is supplied.
 
-\subsection{The gingival boundary, without a model}
+\subsection{The gingival boundary in the photographs}
 
-Otsu thresholding on the $a^\star$ channel of the clinical photographs referenced by the container separates tooth from gingiva at \textbf{3.4--4.3\,$\sigma$} across four views, and
-traces the gingival scallop tooth by tooth. No model, no training, no labels: a threshold.
-
-We report it here rather than among the segmentation work because of what it establishes
-jointly with \S\ref{sec:negative}: these experiments suggest that local geometry alone was insufficient to locate the crown
-boundary reliably in this case, and the signal that does carry it is
-already inside the container. That is an argument for composition made by measurement
-rather than by design.
+An Otsu threshold on the CIELAB $a^\star$ channel of four full-arch photographs of case~A
+gives a two-class partition in each view, with a standardised distance of 3.4--4.3 between
+the two classes (Appendix~\ref{app:otsu}). Because Otsu chooses the threshold that maximises
+that separation, the figure shows that the $a^\star$ histogram is bimodal; it does not show
+that the two modes are tooth and gingiva. On visual inspection the mask edge follows the
+gingival scallop, with false positives on a plastic retractor, specular highlights and the
+tongue. After projecting colour onto scan vertices with estimated camera poses, $a^\star$
+differed between the pipeline's tooth and gingiva labels by 0.85 pooled standard deviations
+overall and 0.61 per tooth. Relocating the crown boundary with the colour mask reduced the
+mean excess crown width from 2.36 to 1.94\,mm, but 9 of 14 crowns remained too wide. Both
+comparisons use the pipeline's own labels, not an anatomical reference: colour carries a
+weak boundary signal in the expected direction, and its localisation accuracy is unknown.
 
 % =============================================================================
 \section{What did not work, and what it cost the format}\label{sec:negative}
 
-Three lines of work did not reach the outcome they were set up for. We report them with the
-same weight as the rest, because a format whose purpose is to keep measurement and inference
-apart earns nothing if its authors report only what worked, and because in each case the
-measurement identified the next step more precisely than the success would have.
+Three lines of work did not reach the outcome they were set up for. Each is reported with
+the criterion it was judged against.
 
 \subsection{Per-tooth segmentation on the intraoral scan}
 
-\paragraph{What we measure.} The pipeline produces FDI codes for all 14 teeth of a maxillary
-arch \emph{in the correct anatomical order}, and the boundaries are wrong. Eleven of the
-fourteen crowns can be rejected on anatomy alone, comparing measured mesiodistal width
-against anatomical tables, without needing ground truth at all.
+\paragraph{Identity.} In August 2026 the pipeline assigned 14 FDI codes to case~A's
+14-tooth maxillary arch in monotone arch order, but order is not identity: against
+clinician-reviewed tooth curves, 7 were correct and 4 were shifted by one position. Voting
+among the three most confident of 18 canonicalisation references later numbered 12 of 14 as
+the reviewed curves, with none shifted. On 80 held-out Teeth3DS+ arches \cite{teeth3ds} the
+same voting numbered 979 of 1{,}065 teeth correctly, against 1{,}017 in the dataset's native
+pose, and failed three of six criteria fixed before the run.
 
+\paragraph{Boundaries.} Without ground truth, 11 of case~A's 14 crowns failed an anatomical
+plausibility test in August 2026: bounding-box size against tabulated crown dimensions
+(threshold 1.30, not calibrated) or contralateral asymmetry. That bounds correctly delimited
+crowns at 21\,\%. Such a test can reject a crown but not confirm one; with a width tolerance
+calibrated on expert-labelled crowns ($\pm1.9$\,mm, their 95th percentile), 4 of 14 fall
+within range. The learned segmenter placed the crown--gingiva margin where the surface shows
+no crease. A geometric method that moves the margin to the cervical crease
+(\code{ancla\_al\_pliegue}) was then evaluated once on 80 held-out Teeth3DS+ arches: the
+median margin distance to the expert fell from 2.42 to 0.17\,mm, but crown labelled as
+gingiva rose by 1.51 points against a pre-registered limit of 1.0, so the method is disabled
+by default. On case~A, against a margin line traced blind by one periodontist, the default
+pipeline's margin lay a median 3.53\,mm away and the method's 0.19\,mm. The blind line and a
+second annotation (proposed by software and reviewed by another dentist) lie 0.15\,mm apart,
+which is the floor of this measurement. This is one case and one blind annotator. A later variant
+for teeth the method declines was chosen using these same two annotations, which therefore no
+longer measure it; confirming it needs a new blind annotation.
 
-\paragraph{Why, and what follows.} The tested geometric segmenter did not locate the
-crown boundary reliably. Colour separation in the photographs motivates testing a fused
-approach; it does not prove that all geometric methods lack useful information or that the
-photographic boundary has validated anatomical accuracy. Anatomical width comparisons can
-flag implausible output but do not replace patient-specific ground truth.
+\paragraph{Consequence for the format.} Tooth labels come from a model, so they belong to
+the inference plane, while picking in a generic glTF viewer is defined over per-primitive
+metadata in the scene. Writer version 0.4.0 split the mesh into one primitive per tooth so
+that any glTF viewer could select one; that placed model output inside an asset declared
+processing layer~1, and deleting \code{derived/} no longer removed the inference. The current
+writer keeps the mesh unpartitioned, the labels live only in \code{derived/}, and a UOS-aware
+reader rebuilds picking from the vertex index \cite{uosspec}. A generic glTF viewer can open
+the scene but cannot select a tooth.
 
-\paragraph{What it cost the format.} Because tooth labels come from a model they belong to
-the inference plane, while semantic picking in a foreign viewer is conventionally defined
-over per-primitive metadata in the scene. For one version the container split the mesh into
-one primitive per tooth so that any glTF viewer could select one --- and that put model
-output inside a layer-1 asset, so deleting \code{derived/} no longer removed the inference.
-It was reverted. The mesh now travels \textbf{unpartitioned}, the labels live only in
-\code{derived/}, and picking is rebuilt by the reader from vertex index \cite{uosspec}.
+\subsection{A more precise classifier did not shorten the roots}
 
-The price is real and is accepted deliberately: a compatible glTF viewer can open the extracted scene,
-but needs additional UOS-aware logic to interpret the tooth labels. Paying it is what makes the three-plane
-separation of \S\ref{sec:planes} a property rather than a paragraph.
+\paragraph{What we measure.} On case~B (both arches), the composite CBCT$+$scan export
+delivers each tooth with a reconstructed root, and about half the pieces come out too long,
+up to 40.5\,mm where anatomical tables give 20--25\,mm for a whole tooth; the excess is
+alveolar bone below the apex. The first CBCT tooth segmenter had recall 0.948 and precision
+0.588 on whole ToothFairy2 volumes \cite{toothfairy2}, so a more precise model was expected to
+trim the bone. A second model raised volume-level precision to 0.724 (F1 from 0.726 to 0.822)
+but left the longest piece at 40.2\,mm, at every decision threshold from 0.5 to 0.9. It also named fewer teeth (20
+against 27), because the registration target was then derived from the segmentation mask;
+once that coupling was removed both models named 27 teeth, and the over-long roots remained.
 
-\subsection{A better classifier that made the real task worse}
-
-\paragraph{What we measure.} The composite CBCT$+$scan pipeline delivers each tooth with its
-root, and half the pieces come out too long: 27--37\,mm where a whole tooth measures 20--25.
-The excess is alveolar bone attached below the apex. The hypothesis was precision, since the
-first segmenter had recall 0.948 with moderate precision, so a more precise model should
-trim the bone. The model that won the benchmark lost on the real task, and the defect that
-motivated training it was unchanged.
-
-\paragraph{Why, and what follows.} Voxel-level precision and apex localisation are different
-objectives, and the benchmark rewards the first. In this experiment the classifier retained bone near the apex. This does not establish
-that the acquired signal contains no distinguishing information. The information that separates them is anatomical: roots
-terminate, alveolar crest has a shape, and both have population statistics. The next step is
-therefore a truncation criterion fitted on anatomy, evaluated on the quantity that actually
-matters (tooth length against tables), rather than a further classification run scored on
-voxel overlap. Choosing the evaluation metric to match the clinical quantity is the part
-that was wrong, and whether the proposed correction works needs independent evaluation.
+\paragraph{What follows.} Voxel-level precision and apex localisation are different
+objectives, and the benchmark rewarded the first. A table-length truncation was tried: along
+one arch axis it barely trimmed inclined molars, and the per-tooth axis estimated from the CBCT
+deviated by about $60^\circ$, so it was withdrawn and the exporter declares over-long roots
+instead of trimming them. At case~B's 0.30\,mm voxels the periodontal ligament that separates root from bone is not
+sampled (\S\ref{sec:rmeasure}). A truncation criterion
+evaluated on tooth length rather than voxel overlap remains open.
 
 \subsection{Sharpness of the appearance field}
 
@@ -939,37 +960,23 @@ primitives the criterion is not met, and more primitives do not move it: the med
 footprint measures 845.9\,$\mu$m, 46.5\,\% of primitives sit more than 1\,mm from the
 surface, and the field is anisotropic by $3.0\times$.
 
-\paragraph{Why, and what follows.} The experiment used a restricted supervision signal; it does not establish a general limit
-of Gaussian splatting. \textbf{The colour supervision is flat albedo}: the
-training views are renders of the mesh painted with regional colour summaries described in
-\S\ref{sec:evidence} --- one measured median per crown per third, plus gingiva --- rather
-than the photographs themselves, because
-the direct photograph-projection path did not provide adequate coverage in this experiment.
-The current code contains a PnP-based projection path; its existence does not establish
-sufficient pose accuracy or coverage for this run. Against a piecewise-constant target the image loss cannot
-distinguish a large diffuse disc from a small sharp one, which is consistent with the diffuse results observed under the tested capacities,
-strategies and render resolutions. This does not prove a unique optimum or rule out better
-objectives and regularisation. Increasing capacity did not meet the sharpness criterion in three
-formulations, including a run at 2048\,px with 1.09\,M primitives that reached 34.15\,dB
-and still measured a 906\,$\mu$m footprint.
+\paragraph{What was tried.} The first runs used flat-albedo supervision: training views
+were renders of the mesh painted with the regional colour summaries of \S\ref{sec:evidence}.
+Against such a target the image loss cannot distinguish a large diffuse primitive from a
+small sharp one. Three training variants failed the criterion: depth supervision with axis
+ratio flattening (1{,}344\,$\mu$m), MCMC densification with antialiasing (827\,$\mu$m, with
+an unstable spatial extent) and 2048\,px renders with 1.09\,M primitives (34.15\,dB,
+906\,$\mu$m). Supervision with the photographs' own pixels was then tested. Camera poses
+within the 0.9\,mm gate were obtained for two of the nine images, giving projected colour on
+76.2\,\% of vertices. Retraining reached 35.97\,dB with a median footprint of
+842.4\,$\mu$m; in the occlusal region, where the new texture landed, the footprint changed
+from 870.6 to 866.9\,$\mu$m. The criterion was not met. The diffuse result is therefore not
+explained by the flat target alone in this experiment, and it does not establish a general
+limit of Gaussian splatting. Supervision with validated poses for most of the arch, and a
+direct penalty on the median major axis, remain untested.
 
-The consequence is that this result does \emph{not} measure what a photometric field can
-resolve from real clinical views; it measures what one can resolve from a target that
-carries no texture. A route that could add information is therefore to improve and validate camera poses
-and supervise on the photographs' own pixels, which requires pose and coverage evaluation rather than only a capacity sweep. Two cheaper routes reallocate existing information rather than
-adding any: regularise the footprint directly, penalising the median major axis so the
-optimiser trades reconstruction error against the quantity we actually care about; or seed
-at a density matched to the view resolution rather than to the mesh.
-
-\begin{finding}{Why these three are in the paper}
-Each was expected to work, and reporting only the results that did would describe a pipeline
-that does not exist. More practically, each is load-bearing for a design decision: the
-segmentation boundary is why the format has a removable inference plane at all, and the
-sharpness measurement is why appearance layers are declared \emph{reconstructed} rather than
-\emph{measured}. A criterion fixed before running and not met is a result; the alternative,
-renegotiating it afterwards, would have produced a paper with three more successes
-and nothing to act on.
-\end{finding}
+These results determine one declaration in the format: appearance layers are declared
+\emph{reconstructed}, not \emph{measured}.
 
 
 % =============================================================================
@@ -1231,21 +1238,15 @@ should return zero, returns 0.486\,mm, so the procedure has no clean floor.
 
 \subsection{What is measurably out of reach, and what replaces it}\label{sec:cej}
 
-Absolute gingival recession is defined against the cemento-enamel junction, and we measured
-that the CEJ is not recoverable from either of our modalities. Not from CBCT by density:
-restorative metal dominates the neighbourhood, and cervical enamel is thinner than the voxel.
-Not from CBCT by shape: the detected point moves \textbf{6.6\,mm} depending on the threshold
-chosen, which is not a measurement but a choice, and that route was measured and discarded.
-Not from the intraoral scan: the cervical step lies below the triangulation noise of the
-mesh, checked on an arch \emph{with} visible recession, so the failure is not an absence of
-the feature.
-
-What is solid is the gingival margin itself, detected in 11 of 11 sections across the three
-arches tested. So the honest product is not absolute recession but \textbf{how far that
-margin has moved between two moments}, which is also what a digital twin exists to provide:
-not a photograph, a trajectory. Two visits registered to a suitable reference permit a displacement calculation; what remains
-is to establish the clinical threshold at which a displacement is reportable rather than
-noise.
+Absolute gingival recession is defined against the cemento-enamel junction (CEJ). In
+exploratory analyses on case~B we could not locate the CEJ reliably: in the CBCT, restorative
+metal dominates its neighbourhood and cervical enamel is thinner than the voxel, and a
+shape-based estimate depended strongly on the chosen threshold; on the scan, the cervical step
+was below the triangulation noise. Those analyses are not reproducible from the repository,
+so no figures are given. The gingival margin itself is detectable on the scan, which makes a
+change of margin position between two registered visits a candidate quantity. Its detection
+threshold would come from same-session null controls such as the one in
+\S\ref{sec:pertooth}; no clinical threshold has been established.
 
 \subsection{Per-tooth motion, and a reference that does not move}\label{sec:pertooth}
 
@@ -1331,11 +1332,12 @@ clinical reference.
   to characterise acquisition calibration.
   \item \textbf{A distributable conformance fixture of a realistic case}, built from an
   openly licensed dataset, so that interoperability can be tested rather than asserted.
-  \item \textbf{Anatomical root truncation}, following \S\ref{sec:negative}: fit the
-  truncation criterion on anatomy and score it on tooth length rather than voxel overlap.
-  \item \textbf{Fusing the photometric boundary into the geometric segmentation}, using the
-  colour separation of \S\ref{sec:evidence}, which is already measured and already inside the
-  container.
+  \item \textbf{Root truncation scored on tooth length} rather than voxel overlap
+  (\S\ref{sec:negative}).
+  \item \textbf{Photographic colour as a second boundary signal.} A first mask-based
+  relocation narrowed crowns by 0.42\,mm on average without bringing any over-wide crown into
+  tolerance (\S\ref{sec:evidence}). A fused method needs camera poses, access to the
+  referenced photographs and labelled boundaries for evaluation.
   \item \textbf{A controlled colour capture and calibration study}, including suitable references
   and evaluation of residual error before claiming calibrated shade measurements.
   \item \textbf{A non-geometric modality end to end}, microbial load or periodontal
@@ -1510,9 +1512,8 @@ one letter, and we keep both rather than renaming, so that a reader arriving fro
 finds the symbol where they expect it. Lowercase $\sigma_i$ is the \emph{density} of
 primitive $i$, the quantity that replaces opacity in the volumetric model. Uppercase
 $\Sigma_i$ is its \emph{covariance matrix}, and uppercase $\Sigma$ without a subscript is
-an ordinary summation. Standing alone, as in a ``$3\sigma$ cutoff'' or a separation of
-``$3.4$--$4.3\,\sigma$'', $\sigma$ is a \emph{standard deviation} and has nothing to do
-with density. Where a formula uses more than one of these, the surrounding text says which.
+an ordinary summation. Standing alone, as in a ``$3\sigma$ cut-off'', $\sigma$ is a \emph{standard deviation}
+and has nothing to do with density. Where a formula uses more than one of these, the surrounding text says which.
 
 \begin{center}
 \begin{tabular}{ll}
@@ -1666,21 +1667,20 @@ receives a declared neutral colour. A display-only fill from measured neighbours
 tooth does not change that flag. The expression has no visibility order or transmittance,
 so it is not the colour a camera necessarily sees at that vertex.
 
-\subsection{Thresholding the crown boundary}
+\subsection{Thresholding the crown boundary}\label{app:otsu}
 
-In the tested photographs, colour provided a useful tooth/gingiva separation signal.
-Its anatomical localisation accuracy has not been established against labelled boundaries. Otsu's method
-selects the threshold $t^\star$ on the CIELAB $a^\star$ channel maximising between-class
-variance,
+Otsu's method selects the threshold $t^\star$ on the CIELAB $a^\star$ channel that maximises
+the between-class variance,
 
 \[
   t^\star = \arg\max_t \; \omega_0(t)\,\omega_1(t)\,\big(\mu_0(t) - \mu_1(t)\big)^2 ,
 \]
 
-and we report the separation achieved as the standardised distance between the two class
-means, where $\sigma_0$ and $\sigma_1$ are the within-class standard deviations and not
-densities, $d = |\mu_0 - \mu_1| / \sqrt{(\sigma_0^2 + \sigma_1^2)/2}$, measured at
-$3.4$--$4.3\,\sigma$ on real clinical photographs. No model, no training, no labels.
+and the reported separation is the standardised distance between the resulting class
+means, $d = |\mu_0 - \mu_1| / \sqrt{(\sigma_0^2 + \sigma_1^2)/2}$, where $\sigma_0$ and
+$\sigma_1$ are within-class standard deviations, not densities. Values of 3.4--4.3 were
+obtained on four photographs of case~A. Since the classes are the ones Otsu chose, $d$
+measures bimodality of the histogram, not agreement with anatomy.
 
 \subsection{Reporting metric}
 
@@ -1744,6 +1744,14 @@ ECCV 2024. arXiv:2403.04116.
 R. Zha, T. J. Lin, Y. Cai, J. Cao, Y. Zhang and H. Li.
 \emph{R$^2$-Gaussian: Rectifying Radiative Gaussian Splatting for Tomographic
 Reconstruction}. NeurIPS 2024. arXiv:2405.20693.
+
+\bibitem{teeth3ds}
+A. Ben-Hamadou et al.
+\emph{Teeth3DS+: An Extended Benchmark for Intraoral 3D Scans Analysis}.
+arXiv:2210.06094.
+
+\bibitem{toothfairy2}
+F. Bolelli et al. \emph{ToothFairy2} \todo{verify full reference before submission}.
 
 \bibitem{gltf}
 Khronos Group. \emph{glTF 2.0 Specification}.
