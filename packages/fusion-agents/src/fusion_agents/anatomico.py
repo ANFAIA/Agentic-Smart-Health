@@ -27,7 +27,9 @@ medidos a lo largo del eje oclusal (`banda_escaner`). Sigue la curva de Spee y c
 inclinación de la cabeza, que una losa axial sobre el CBCT no sigue. En el CBCT, los
 **bordes** del diente en cada corte (`por_cortes.contornos_con_normales`, umbral fijo 1400),
 no el volumen: una corona hundida 1 mm deja el borde a 1 mm de la superficie del escáner,
-y la comprobación corona→esmalte de una cara no lo veía.
+y la comprobación corona→esmalte de una cara no lo veía. Y solo los de **corona**: los que
+tienen esmalte cerca en su corte (`junto_al_esmalte`). La raíz es dentina, tan ancha como
+el cuello, y en el caso A atraía la banda (`docs/research/registro-anatomico.md` §7–§8).
 
 3 · **El ajuste va del contorno al escáner, punto a plano.** Cada punto de contorno busca
 el vértice más próximo entre TODOS los del escáner; solo cuenta si ese vértice es de la
@@ -104,6 +106,27 @@ BANDA_PLANO_MM = 6.0
 SUAVIZADO_PERFIL_MM = 1.0
 SEPARACION_PICOS_MM = 3.0
 VALLE_RELATIVO = 0.75
+# Un segundo pico solo es la otra arcada si tiene al menos esta fracción de la altura del
+# primero. A priori: dos arcadas en oclusión tienen cantidades de esmalte por corte del
+# mismo orden —una a la que le faltaran tres de cada cuatro piezas seguiría pasando—, y un
+# pico de unas pocas gaussianas sueltas no es una arcada sino ruido sobre un perfil casi
+# vacío, que el suavizado normalizado por corte convierte en máximo local. Sin este mínimo,
+# el valle entre el plano y ese ruido entraba como ancla y ensanchaba la losa hasta la raíz
+# (`docs/research/registro-anatomico.md` §7–§8). En el fantasma de dos arcadas el segundo
+# pico es el 0,98 del primero.
+PICO_SECUNDARIO_RELATIVO = 0.25
+
+# Solo se ajusta contra contorno de CORONA: un punto de contorno cuenta si en su corte hay
+# esmalte (HU ≥ `HU_ESMALTE`) a menos de `RADIO_ESMALTE_MM`. La corona es esmalte y la raíz
+# dentina: el contorno a 1400 rodea a las dos, y la raíz, con la anchura del cuello y bajo
+# una encía que las etiquetas del escáner a veces cuentan como diente, es justo lo que el
+# ajuste confundía con la banda de corona (§7). El umbral es el mismo del árbitro y del
+# plano (`preparacion.HU_ARBITRO`). El radio es a priori: el grosor del esmalte en las
+# paredes axiales de una corona (1–2,5 mm, menos hacia el cuello) más un vóxel; una pared a
+# más de eso del esmalte más próximo de su corte no es pared de corona. No mueve ningún
+# punto: el contorno sigue a 1400, con su medio paso de 8 vecinos; solo elige cuáles cuentan.
+HU_ESMALTE = HU_ARBITRO
+RADIO_ESMALTE_MM = 1.5
 
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
@@ -251,6 +274,11 @@ def _perfil_z(z: np.ndarray) -> dict:
         (j for j in picos[1:] if abs(rejilla[j] - rejilla[picos[0]]) >= SEPARACION_PICOS_MM),
         None,
     )
+    if segundo is not None:
+        salida["second_peak_ratio"] = round(float(perfil[segundo] / perfil[picos[0]]), 4)
+        if perfil[segundo] < PICO_SECUNDARIO_RELATIVO * perfil[picos[0]]:
+            salida["second_peak_ignored_mm"] = round(float(rejilla[segundo]), 2)
+            segundo = None
     if picos and segundo is not None:
         a, b = sorted((picos[0], segundo))
         valle = a + int(np.argmin(perfil[a : b + 1]))
@@ -366,15 +394,50 @@ def limites_losa(arcada: str) -> tuple[float, float]:
     raise ValueError(f"arcada desconocida: {arcada!r} (se espera 'upper' o 'lower')")
 
 
+def junto_al_esmalte(
+    P: np.ndarray, centros: np.ndarray, hu: np.ndarray, radio: float = RADIO_ESMALTE_MM
+) -> np.ndarray:
+    """Máscara de los puntos de contorno `P` con esmalte a menos de `radio` EN SU CORTE.
+
+    En su corte y no en 3D: con una serie dispersa el corte vecino puede estar a 2 mm, y en
+    3D una pared de raíz justo por encima del cuello vería el esmalte del corte de abajo.
+    Los cortes se identifican por su z redondeada a la micra, como en `por_cortes`.
+    """
+    P = np.asarray(P, dtype=np.float64)
+    salida = np.zeros(len(P), dtype=bool)
+    if len(P) == 0:
+        return salida
+    centros = np.asarray(centros, dtype=np.float64)
+    esmalte = centros[np.asarray(hu) >= HU_ESMALTE]
+    if len(esmalte) == 0:
+        return salida
+    z_e = np.round(esmalte[:, 2], 3)
+    z_p = np.round(P[:, 2], 3)
+    for z in np.unique(z_p):
+        e = esmalte[z_e == z]
+        if len(e) == 0:
+            continue
+        m = np.flatnonzero(z_p == z)
+        d = cKDTree(e[:, :2]).query(P[m, :2], distance_upper_bound=radio)[0]
+        salida[m] = d <= radio
+    return salida
+
+
 def contornos_losa(
-    centros: np.ndarray, hu: np.ndarray, umbral: float, plano: Plano, arcada: str
+    centros: np.ndarray, hu: np.ndarray, umbral: float, plano: Plano, arcada: str,
+    *, solo_esmalte: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """`(P, N2)`: contornos de diente en la losa inclinada y dentro de la huella de la arcada.
+    """`(P, N2)`: contornos de corona en la losa inclinada y dentro de la huella de la arcada.
 
     ⚠️ El contorno se detecta sobre la envolvente AXIAL de la losa y solo después se filtra
     por la altura inclinada. Detectarlo dentro de la losa ya recortada crearía bordes
     falsos en sus caras: un punto de esmalte cuyo vecino quedó fuera de la losa parecería
     borde sin serlo.
+
+    Con `solo_esmalte` (por defecto) se quedan solo los puntos con esmalte cerca en su corte
+    (`junto_al_esmalte`): las paredes de raíz y de hueso no entran ni en el ajuste ni en la
+    puntuación. La misma regla se aplica a los contornos a 1100 y 1900 de la incertidumbre,
+    así que lo que mide la sensibilidad al umbral sigue siendo solo el umbral.
     """
     centros = np.asarray(centros, dtype=np.float64)
     hu = np.asarray(hu)
@@ -398,6 +461,8 @@ def contornos_losa(
     h = plano.altura(puntos)
     dentro = (h >= lo) & (h <= hi)
     dentro &= cKDTree(esmalte[:, :2]).query(puntos[:, :2])[0] < RADIO_ARCADA_MM
+    if solo_esmalte:
+        dentro &= junto_al_esmalte(puntos, centros, hu)
     return puntos[dentro], normales[dentro]
 
 
@@ -831,8 +896,9 @@ class RegistroAnatomico:
         contorno se asigna al diente de su punto de sección más próximo si ese punto es de
         banda y está a ≤ `TOPE_SECCION_MM`. S_t es la mediana sobre cortes; S, la mediana
         sobre dientes, todos pesando igual. C es el mínimo de (a) la fracción de la sección
-        de banda con contorno a ≤ 1 mm y (b) entre los puntos de contorno cuyo punto de
-        sección más próximo es de banda, la fracción a ≤ 1 mm.
+        de banda con contorno a ≤ 1 mm y (b) entre los puntos de contorno asignados —su
+        punto de sección más próximo es de banda y está a ≤ `TOPE_SECCION_MM`—, la fracción
+        a ≤ 1 mm.
 
         Con normales en `por_corte` se mide además el residuo con signo por diente:
         + la sección del escáner queda fuera del diente del CBCT (flota), − dentro (hundida).
@@ -860,9 +926,13 @@ class RegistroAnatomico:
             a_den += int(en_banda.sum())
             a_num += int((d_s[en_banda] <= TOL_COBERTURA_MM).sum())
             cerca_banda = en_banda[j_c]
-            b_den += int(cerca_banda.sum())
-            b_num += int((d_c[cerca_banda] <= TOL_COBERTURA_MM).sum())
             asignado = cerca_banda & (d_c <= TOPE_SECCION_MM)
+            # El lado del contorno se cuenta sobre los mismos puntos que S asigna a un
+            # diente: a más de `TOPE_SECCION_MM` de la sección no son corona de esta
+            # arcada (la otra arcada en sobremordida, un cordal que el escaneo no trae), y
+            # contarlos dejaba C por debajo del mínimo en la pose buena (§7–§8 de la nota).
+            b_den += int(asignado.sum())
+            b_num += int((d_c[asignado] <= TOL_COBERTURA_MM).sum())
             diente_c = lab[j_c]
             for f in np.unique(lab[en_banda]):
                 s_f = en_banda & (lab == f)
@@ -1325,6 +1395,7 @@ def prepara_anatomico(
         "contour": {
             "threshold": UMBRAL_CONTORNO,
             "slab_mm": [lo, hi],
+            "crown_only": {"enamel_hu": HU_ESMALTE, "radius_mm": RADIO_ESMALTE_MM},
             "n_points": {str(int(u)): int(len(p)) for u, (p, _) in contornos.items()},
             "n_coarse": int(len(rejilla_gruesa(destino))),
             **describe_cortes(cortes(centros), float(z_losa.min()), float(z_losa.max())),

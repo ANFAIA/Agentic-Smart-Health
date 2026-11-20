@@ -220,6 +220,10 @@ def test_raices_tan_anchas_como_el_cuello_no_arrastran_la_banda(fichero, mundo) 
     pose verdadera el ajuste fino se queda a 0,08 mm (lo mismo que con conos), la búsqueda
     elige la cuenca correcta a 0,08 mm de mediana y sin veto, y C en la verdad es 0,97.
     Si un cambio del método rompe esto, ha empeorado el caso que sí tiene verdad.
+
+    Desde la máscara de esmalte (§8 de la nota) la raíz ni siquiera entra en el contorno
+    (`test_solo_cuenta_el_contorno_de_corona_y_la_losa_deja_de_importar`); este test sigue
+    fijando que, con eso, la pose en el fantasma no empeora.
     """
     campo, hu = campo_cbct(paso=PASO, raices="realistas")
     V, F, etq = fichero
@@ -237,6 +241,113 @@ def test_raices_tan_anchas_como_el_cuello_no_arrastran_la_banda(fichero, mundo) 
     assert registrador.rms_desplazamiento((ra, ta), verdad) < 0.2
     puntuacion = registrador.puntua_secciones(*verdad, anatomico._por_corte(destino, None))
     assert puntuacion["C"] >= anatomico.COBERTURA_MIN
+
+
+def test_solo_cuenta_el_contorno_de_corona_y_la_losa_deja_de_importar(monkeypatch) -> None:
+    """La corona es esmalte y la raíz dentina: el contorno que se ajusta es solo el de corona.
+
+    Con raíces realistas y una losa que llega a todo lo alto de la raíz —como la de dos
+    anclas del caso A, §7 de la nota—, sin la máscara de esmalte el contorno trae paredes de
+    raíz; con ella no queda ningún punto por encima del cuello, y el contorno es el MISMO
+    que con la losa normal: ni la altura de la losa ni una raíz del ancho del cuello pueden
+    ya tirar de la banda.
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    centros = campo["centers"] + campo["origin"]
+    _, plano, _ = marco_cbct(centros, hu)
+    normal = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")[0]
+    monkeypatch.setattr(anatomico, "LOSA_CBCT_MM", (-4.0, 25.6))
+    alta = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")[0]
+    sin_mascara = anatomico.contornos_losa(
+        centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper", solo_esmalte=False
+    )[0]
+    # Cuello de las coronas: centro a ±6 mm y corte a 3 mm hacia la raíz (`fantasma_arcada`).
+    cuello = 6.0 + 3.0 + PASO
+    assert (np.abs(sin_mascara[:, 2]) > cuello).sum() > 1000
+    assert not (np.abs(alta[:, 2]) > cuello).any()
+    np.testing.assert_array_equal(normal, alta)
+
+
+def test_con_esmalte_fino_hacia_el_cuello_la_mascara_no_mueve_la_pose(fichero) -> None:
+    """El riesgo de la máscara: que el esmalte cervical, fino y desenfocado, no llegue a
+    `HU_ESMALTE` y la banda se quede sin su contorno de arriba.
+
+    Con una capa de esmalte de 1,5 mm que se adelgaza hasta cero en el cuello y un
+    desenfoque de σ = 0,3 mm (más que la PSF de 425 µm de un CBCT dental), el ajuste desde
+    la verdad acaba en el mismo sitio con la máscara que sin ella. El desenfoque sí deja un
+    sesgo vertical de ~0,3 mm hacia la raíz —el isonivel 1400 se mete en el diente—, pero
+    es del umbral, no de la máscara, y lo mide la sensibilidad a 1100/1900 de U.
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas", esmalte="capa", desenfoque_mm=0.3)
+    centros = campo["centers"] + campo["origin"]
+    V, F, etq = fichero
+    ejes, _ = anatomical_frame(V, etq)
+    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
+    base, plano, _ = marco_cbct(centros, hu)
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    poses = []
+    for mascara in (True, False):
+        P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper",
+                                         solo_esmalte=mascara)
+        reg = RegistroAnatomico(escaner=escaner, base_cbct=base, plano=plano,
+                                contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+        r, t, _, convergido = reg.afina(*verdad, P)
+        assert convergido
+        assert reg.rms_desplazamiento((r, t), verdad) < 0.5
+        poses.append((r, t))
+    assert reg.rms_desplazamiento(*poses) < 0.02
+
+
+def test_un_pico_de_ruido_en_el_perfil_no_es_la_otra_arcada() -> None:
+    """El valle solo entra como ancla si el segundo pico es de verdad otra arcada.
+
+    En el caso A el perfil tenía un «pico» 13,6 mm por encima con 3·10⁻⁴ de la altura del
+    primero —unas pocas gaussianas sobre un perfil casi vacío— y su valle ensanchaba la
+    losa hasta la raíz. Dos arcadas comparables sí dan dos anclas.
+    """
+    cortes_z = np.round(np.arange(-10.0, 20.0, 0.4), 3)
+
+    def perfil(alturas: dict[float, int]) -> dict:
+        z = [np.full(n, c) for c, n in alturas.items()]
+        return anatomico._perfil_z(np.concatenate([cortes_z, *z]))
+
+    una = {float(c): 400 for c in cortes_z if abs(c) <= 3}
+    ruido = perfil({**una, **{float(c): 2 for c in cortes_z if abs(c - 13) <= 0.5}})
+    assert not ruido["bimodal"]
+    assert ruido["second_peak_ignored_mm"] == pytest.approx(13.0, abs=0.6)
+    dos = perfil({**una, **{float(c): 300 for c in cortes_z if abs(c - 12) <= 3}})
+    assert dos["bimodal"]
+    assert dos["second_peak_ratio"] >= anatomico.PICO_SECUNDARIO_RELATIVO
+
+
+def test_esmalte_que_el_escaneo_no_ve_no_baja_la_cobertura(fichero) -> None:
+    """Una corona que el escaneo no trae (un cordal, la otra arcada en sobremordida) no es
+    falta de cobertura: el lado del contorno de C se cuenta sobre los puntos que S asigna a
+    un diente, a ≤ `TOPE_SECCION_MM` de la sección, no sobre todo el esmalte de la losa."""
+    campo, hu = campo_cbct(paso=PASO)
+    centros = campo["centers"] + campo["origin"]
+    # Un cilindro de esmalte de 1 mm de radio a la altura de la banda, 5 mm por palatino
+    # del centro de la arcada, lejos de cualquier corona escaneada.
+    xs, ys, zs = np.meshgrid(np.arange(-1.2, 1.21, PASO), np.arange(-1.2, 1.21, PASO),
+                             np.unique(np.round(centros[:, 2], 3)), indexing="ij")
+    extra = np.c_[xs.ravel(), ys.ravel() + 5.0, zs.ravel()]
+    extra = extra[(np.hypot(extra[:, 0], extra[:, 1] - 5.0) <= 1.0)
+                  & (extra[:, 2] > 1.0) & (extra[:, 2] < 5.5)]
+    V, F, etq = fichero
+    ejes, _ = anatomical_frame(V, etq)
+    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    cobertura = []
+    con_extra = (np.vstack([centros, extra]), np.r_[hu, np.full(len(extra), 2200.0)])
+    for c, h in ((centros, hu), con_extra):
+        base, plano, _ = marco_cbct(c, h)
+        P, N2 = anatomico.contornos_losa(c, h, anatomico.UMBRAL_CONTORNO, plano, "upper")
+        reg = RegistroAnatomico(escaner=escaner, base_cbct=base, plano=plano,
+                                contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+        cobertura.append(reg.puntua_secciones(*verdad, anatomico._por_corte(P, N2)))
+    assert cobertura[1]["C_contour_side"] == pytest.approx(cobertura[0]["C_contour_side"],
+                                                           abs=0.005)
+    assert cobertura[1]["C"] >= anatomico.COBERTURA_MIN
 
 
 # --------------------------------------------------------------------------- #

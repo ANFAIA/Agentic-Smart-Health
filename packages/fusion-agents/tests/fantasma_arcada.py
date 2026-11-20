@@ -13,6 +13,9 @@ necesita un fichero que CI no tiene no prueba nada en CI.
   corona por la banda del escáner (`docs/research/registro-anatomico.md` §7).
 - El «CBCT» es un campo de tejido duro en rejilla (`centers`, `origin`, HU), como el que
   deja el `cbct-agent`; con `paso_z` distinto del de planta, y cortes que se pueden quitar.
+  Por defecto la corona es esmalte macizo y el borde es nítido; con `esmalte="capa"` el
+  esmalte es una capa que se adelgaza hasta el cuello sobre dentina, y `desenfoque_mm`
+  desenfoca el volumen como la PSF de un equipo real.
 - El «escaneo» superior es la superficie de las coronas superiores por debajo de la encía,
   más una cinta de encía, teselada por su cuenta y con etiquetas FDI.
 """
@@ -129,23 +132,63 @@ def _en_raiz_realista(
     return dentro
 
 
+# Capa de esmalte (`esmalte="capa"`): grosor en las paredes de la corona hasta
+# `ESMALTE_PLENO_MM` sobre la cúspide, y desde ahí se adelgaza linealmente hasta cero en el
+# límite amelocementario, `LAC_MM` sobre la cúspide. Valores de libro para un molar: ~1,5 mm
+# de esmalte en las paredes axiales, una corona clínica de ~7–8 mm. Debajo, dentina.
+GROSOR_ESMALTE_MM = 1.5
+ESMALTE_PLENO_MM = 4.0
+LAC_MM = 8.0
+# Lo que el `cbct-agent` guarda como tejido duro tras el desenfoque.
+PISO_HU = 300.0
+
+
+def _es_esmalte(
+    p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool
+) -> np.ndarray:
+    """Puntos de corona que son esmalte: a menos del grosor local de la superficie.
+
+    La profundidad se aproxima por `(1 − ρ)·a`, con ρ el radio normalizado del elipsoide y
+    `a` su semieje en planta: exacta en las paredes axiales, que es donde está la banda.
+    """
+    salida = np.zeros(len(p), dtype=bool)
+    for c, f in zip(centros, fdi, strict=True):
+        semi = semiejes(int(f))
+        d = (p - c) / semi
+        rho = np.sqrt((d**2).sum(-1))
+        cuspide = c[2] - semi[2] if arriba else c[2] + semi[2]
+        s = (p[:, 2] - cuspide) if arriba else (cuspide - p[:, 2])
+        grosor = GROSOR_ESMALTE_MM * np.clip((LAC_MM - s) / (LAC_MM - ESMALTE_PLENO_MM), 0, 1)
+        salida |= (rho <= 1) & ((1 - rho) * semi[0] < grosor)
+    return salida
+
+
 def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
     inclinacion: np.ndarray | None = None, raices: str = "conicas",
+    esmalte: str = "macizo", desenfoque_mm: float = 0.0,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
 
     `raices`: `"conicas"` (por defecto, lo de siempre: conos finos) o `"realistas"` (tan
     anchas como el cuello de la corona, ver `_en_raiz_realista`). En los dos casos la raíz
-    es dentina (1600) y la corona esmalte (2200).
+    es dentina (1600).
+
+    `esmalte`: `"macizo"` (por defecto: toda la corona a 2200) o `"capa"` (una capa de
+    esmalte que se adelgaza hasta el cuello sobre dentina, ver `_es_esmalte`).
+    `desenfoque_mm`: σ de un desenfoque gaussiano isótropo del volumen (la PSF del equipo;
+    0,425 mm de anchura a media altura son σ ≈ 0,18 mm), con el fondo blando a 0 y solo lo
+    que queda por encima de `PISO_HU` como tejido duro. Se aplica antes de quitar cortes.
     """
     if raices not in ("conicas", "realistas"):
         raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
+    if esmalte not in ("macizo", "capa"):
+        raise ValueError(f"esmalte desconocido: {esmalte!r} (se espera 'macizo' o 'capa')")
     paso_z = paso if paso_z is None else paso_z
     xs = np.arange(-32, 32, paso)
     ys = np.arange(-16, 20, paso)
     zs = np.arange(-24, 24, paso_z)
-    if quita is not None:
+    if quita is not None and desenfoque_mm <= 0:
         zs = zs[(zs < quita[0]) | (zs > quita[1])]
     gx, gy, gz = np.meshgrid(xs, ys, zs, indexing="ij")
     p = np.c_[gx.ravel(), gy.ravel(), gz.ravel()]
@@ -158,8 +201,24 @@ def campo_cbct(
     else:
         raiz = _en_raiz(q, sup, True) | _en_raiz(q, inf, False)
     raiz &= ~corona
-    duro = corona | raiz
-    hu = np.where(corona, 2200.0, 1600.0)[duro]
+    if esmalte == "capa":
+        es = corona & (_es_esmalte(q, sup, f_sup, True) | _es_esmalte(q, inf, f_inf, False))
+    else:
+        es = corona
+    valor = np.where(es, 2200.0, np.where(corona | raiz, 1600.0, 0.0))
+    if desenfoque_mm > 0:
+        from scipy.ndimage import gaussian_filter
+
+        vol = gaussian_filter(valor.reshape(len(xs), len(ys), len(zs)),
+                              sigma=(desenfoque_mm / paso, desenfoque_mm / paso,
+                                     desenfoque_mm / paso_z))
+        valor = vol.ravel()
+        duro = valor >= PISO_HU
+        if quita is not None:
+            duro &= (p[:, 2] < quita[0]) | (p[:, 2] > quita[1])
+    else:
+        duro = corona | raiz
+    hu = valor[duro]
     centros = p[duro]
     origen = np.array([3.0, -2.0, 1.5])
     return {"centers": centros - origen, "origin": origen}, hu

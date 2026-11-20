@@ -1,8 +1,11 @@
 # Registro escáner↔CBCT anatómico por banda de escáner
 
 > **Estado (2026-11-20): implementado en `fusion_agents.anatomico` y opcional
-> (`--registro anatomico`). Funciona en el fantasma y FALLA en el caso A (§7).** El
-> protocolo del caso B está suspendido sin congelar hasta corregirlo.
+> (`--registro anatomico`). Funciona en el fantasma y FALLABA en el caso A (§7). La
+> corrección de §8 —solo contorno de corona, el valle solo con otra arcada de verdad, y
+> la cobertura contada sobre lo que S asigna— quita el veto en el caso A sin empeorar el
+> fantasma, pero el caso A no tiene verdad y su cobertura queda cerca del mínimo.** El
+> protocolo del caso B sigue suspendido sin congelar hasta revisar §8.
 > El caso B no se ha registrado con este método: su evaluación de precisión está
 > pre-registrada en [`registro-anatomico-protocolo.md`](registro-anatomico-protocolo.md) y
 > se ejecuta después de commitear ese protocolo. `registro="auto"` no cambia hasta que el
@@ -38,7 +41,8 @@ fija). Se eligió la primera y se le injertaron piezas de las otras dos (ver §6
      oclusal**. Se probó a estimarla y no es fiable (§4).
    - La altura del plano oclusal en el CBCT es la moda del perfil de altura del esmalte.
      Si el perfil tiene dos picos, el valle entra como **segunda ancla**, no como
-     sustituta: se arranca desde las dos y decide la puntuación (§4).
+     sustituta: se arranca desde las dos y decide la puntuación (§4). El segundo pico
+     tiene que llegar a la cuarta parte del primero para contar como otra arcada (§8).
    - La pose inicial es la rotación de unos ejes a otros. No hay submuestra aleatoria en
      ningún paso.
 2. **Solo se compara lo que las dos modalidades ven.**
@@ -48,6 +52,8 @@ fija). Se eligió la primera y se le injertaron piezas de las otras dos (ver §6
    - En el CBCT se toman los **bordes** del diente en cada corte, a un umbral fijo de 1400,
      dentro de una losa de −4 a +14 mm alrededor de las anclas. La losa es ancha a
      propósito: tiene que caber la banda aunque la boca esté inclinada unos 10°.
+   - De esos bordes solo cuentan los de **corona**: los que tienen esmalte (≥ 1800) a
+     menos de 1,5 mm en su corte. La raíz es dentina y no entra (§8).
    - El borde se sitúa a medio paso de vóxel hacia fuera también en diagonal (8 vecinos).
      Con solo 4 vecinos quedaba sesgado hacia dentro en las esquinas (§4).
 3. **El ajuste va del contorno al escáner, punto a plano, con recorte.**
@@ -76,7 +82,8 @@ fija). Se eligió la primera y se le injertaron piezas de las otras dos (ver §6
 
 **Elegibilidad de una cuenca.** Tiene que cumplir las tres condiciones:
 - los tres ejes anatómicos a ≤ 30° de los del CBCT;
-- cobertura C ≥ 0,5;
+- cobertura C ≥ 0,5, con el lado del contorno contado sobre los puntos que S asigna a un
+  diente (§8);
 - las cúspides a ≤ 5 mm de la altura de alguna ancla.
 
 Si ninguna cuenca las cumple, se devuelve la más cercana a la anatomía con un **veto**, que
@@ -251,3 +258,107 @@ desarrollo, y a ~22 min por registro serían unas 50 h. Antes hace falta:
 - corregirlos contra el fantasma;
 - volver a pasar el caso A, solo como comprobación de que no hay veto y de lo que declara;
 - reducir el tiempo por registro.
+
+## 8 · Corrección «esmalte»: la corona es esmalte y la raíz dentina
+
+Tres cambios, cada uno con una regla fijada a priori o sobre el fantasma. **Ninguna
+constante sale del caso A**, y su distancia al registro por cortes no se ha usado para
+elegir nada: se da abajo solo como información.
+
+**1 · Solo se ajusta contra contorno de corona** (`junto_al_esmalte`). El contorno sigue a
+1400 y en el mismo sitio (medio paso de 8 vecinos), pero un punto solo cuenta si en **su
+corte** hay esmalte (HU ≥ 1800, el umbral del árbitro y del plano) a menos de 1,5 mm. El
+radio es el grosor del esmalte en las paredes axiales (1–2,5 mm, menos hacia el cuello)
+más un vóxel. En su corte y no en 3D: en una serie dispersa el corte vecino puede estar a
+2 mm, y en 3D una pared de raíz justo encima del cuello vería el esmalte de abajo. La misma
+regla se aplica a los contornos a 1100 y 1900 de la incertidumbre.
+
+Se eligió esto y no subir el umbral del ajuste, por lo que mide el fantasma con una capa
+de esmalte que se adelgaza hasta el cuello y un desenfoque gaussiano (opciones
+`esmalte="capa"` y `desenfoque_mm` de `fantasma_arcada`): desde la verdad, con σ = 0,3 mm,
+ajustar contra el contorno a 1900 deja la corona **1,93 mm** hacia la raíz, y a 1400,
+0,28 mm. La máscara no mueve ningún punto, así que no cambia ese sesgo: en todos los
+umbrales y desenfoques probados (σ 0, 0,18 y 0,3 mm) la pose desde la verdad es la misma
+con máscara y sin ella.
+
+**2 · El valle solo es ancla si el segundo pico es otra arcada.** El segundo pico tiene que
+llegar a la cuarta parte del primero (`PICO_SECUNDARIO_RELATIVO`). Dos arcadas en oclusión
+tienen esmalte por corte del mismo orden; en el fantasma de dos arcadas la proporción es
+0,98. En el caso A el «pico» de 42,7 mm tenía **3·10⁻⁴** de la altura del primero: unas
+pocas gaussianas sobre un perfil casi vacío. Cualquier umbral entre 0,01 y 0,9 decide lo
+mismo en los dos.
+
+**3 · El lado del contorno de C se cuenta sobre lo que S asigna a un diente**, a ≤ 3 mm
+(`TOPE_SECCION_MM`) de la sección del escáner. Es la misma frontera que S ya usaba («a más
+de eso no es corona de esta arcada»); C contaba también lo que S descartaba: la otra
+arcada en sobremordida, un cordal que el escaneo no trae.
+
+### 8.1 · En el fantasma (la única verdad)
+
+Error de corona frente a la verdad, todos los vértices de corona; la vertical positiva va
+hacia la raíz. Rejilla de 0,4 mm.
+
+| Fantasma | Veto | Elegida: S / C | Mediana | p95 | Vertical | Desde la verdad |
+|---|---|---|---|---|---|---|
+| Raíces realistas (antes de §8) | no | 0,150 / 0,973 | 0,082 | 0,105 | +0,081 | 0,084 mm |
+| Raíces realistas | no | 0,148 / 0,974 | 0,081 | 0,083 | +0,076 | 0,084 mm |
+| Realistas, serie dispersa (0,45 mm, hueco 2,2–3,9) | no | 0,150 / 0,977 | 0,080 | 0,092 | +0,077 | 0,078 mm |
+| Realistas, capa de esmalte, σ = 0,3 mm | no | 0,150 / 0,970 | 0,436 | 0,503 | +0,434 | 0,285 mm |
+| Ídem sin máscara (comparación) | no | 0,150 / 0,970 | 0,437 | 0,503 | +0,435 | 0,285 mm |
+
+- En la verdad: S 0,148 y C 0,975 (lado del contorno 1,0) con raíces realistas; S 0,158 y
+  C 0,975 con desenfoque.
+- **Desde la verdad no hay deslizamiento**: con la losa normal y con una que llega a toda
+  la raíz (−4 a +25,6), y arrancando 2, 4 y 6 mm hacia la raíz, el ajuste vuelve a
+  0,085 mm. Con la máscara el contorno es **idéntico** con las dos losas: la altura de la
+  losa deja de importar (test).
+- **Vuelta**: con raíces realistas y sin desenfoque una vuelta puntúa 0,003 mm de S mejor,
+  como ya pasaba con los conos (−0,0023); la descarta la anatomía. Con desenfoque, la
+  máscara le baja la cobertura 0,29 respecto a la elegida (0,005 sin máscara): ahí ya la
+  excluyen los datos.
+- **U**: en el fantasma nítido, ~0,03 mm (navaja; el umbral no mueve nada porque el campo
+  es binario). Con σ = 0,3 mm, U ≈ 1,6 mm por diente, casi todo vertical y casi todo del
+  reajuste a 1900. Cubre el error real (0,44 mm) con holgura. Con y sin máscara sale igual.
+- **El desenfoque deja un sesgo vertical** de 0,28–0,44 mm hacia la raíz: el isonivel 1400
+  de un borde desenfocado cae dentro del diente, y con paredes casi verticales eso es
+  altura. §8 no lo corrige ni lo pretende; es exactitud (§5) y solo lo acotan los puntos
+  anatómicos.
+
+### 8.2 · En el caso A (sin verdad: solo veto, U y tiempo)
+
+Misma serie y etiquetas que §7, con `prepara_anatomico` completo (búsqueda e
+incertidumbre):
+- **Sin veto.** Ancla única en la moda (el valle de §7 queda descartado por la regla 2).
+  21 825 puntos de contorno a 1400 frente a 45 040 sin máscara.
+- Elegida: S 0,617 mm, C 0,558 (lado del escáner 0,82, del contorno 0,56). Ejes a 4,0 /
+  4,0 / 1,1° del CBCT. Tres cuencas elegibles de catorce; la siguiente, a 0,115 mm de S.
+- La vuelta puntúa ahora **peor** (S +0,093 mm, C −0,07); en §7 puntuaba 0,71 mm mejor.
+- **U mediana 1,98 mm** (p95 3,88; vertical 1,48). Por diente, de 1,25 mm (12) a 3,95 mm
+  (17); la domina la navaja (1,1–3,1 mm), y los segundos molares son los peores. El
+  reajuste a 1100 no converge en 200 iteraciones y mueve 0,98 mm de mediana; a 1900, 0,35.
+  En §7 la U declarada era de 20 a 43 mm.
+- **Tiempo: 908 s** con la máquina compartida (dos registros del fantasma y la batería de
+  tests en paralelo), frente a 22–24 min en §7. Sigue siendo lento.
+- Solo como información, nunca como criterio: la pose queda a 3,2 mm rms de banda del
+  registro por cortes. Desde esa pose, el ajuste se mueve 3,1 mm con la máscara y 7,6 mm
+  sin ella (cúspides a +8,7 mm del plano: la banda sobre las raíces otra vez).
+
+### 8.3 · Lo que sigue débil
+
+- **C queda a 0,06 del mínimo en el caso A**, y varias cuencas no elegidas rondan 0,47–0,52.
+  Otro caso con peor acuerdo entre modalidades puede volver a vetarse. No se ha bajado el
+  mínimo: no hay verdad con la que fijarlo.
+- **El fantasma no reproduce el fallo de §7** ni con esto: con o sin máscara la pose desde
+  la verdad es la misma. Que la máscara sea lo que quita el deslizamiento en el caso A es
+  una lectura de su mecanismo (sin máscara, 7,6 mm y las cúspides sobre la raíz; con ella,
+  3,1 mm), no una medida contra verdad.
+- **Depende de que el esmalte llegue a 1800.** En un equipo con valores de gris por debajo
+  (esmalte saturado bajo o mal calibrado) la máscara vaciaría el contorno y
+  `prepara_anatomico` fallaría por falta de puntos, que es un fallo declarado; si solo
+  quedara el esmalte de las cúspides, la banda perdería su parte cervical. En el sentido
+  contrario, hueso cortical ≥ 1800 junto a una raíz volvería a meter raíz.
+- **La sobremordida no está en el fantasma.** La otra arcada en las alturas de la banda es
+  esmalte y la máscara no la quita; la regla 3 solo deja de contarla en C si está a más de
+  3 mm.
+- **El desenfoque es un sesgo de exactitud de 0,3–0,4 mm** en el fantasma con σ = 0,3 mm,
+  que U declara a través del umbral pero el método no corrige.

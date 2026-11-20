@@ -651,10 +651,15 @@ FusionOutput
   precision, not accuracy.** ⚠️ **It works on the synthetic phantom and FAILS on clinical
   case A:** every basin is vetoed, and from the slice-registration pose the fit slides
   7–10 mm towards the roots, because a slab reaching 14 mm above the bite lets the crown band
-  fit root walls of similar width. A registration takes ~22 min there. So the case B
+  fit root walls of similar width. A registration takes ~22 min there. Since the §8
+  correction only crown contour is fitted (a contour point counts if its slice has enamel,
+  ≥ 1800, within 1.5 mm), the valley anchor needs a second peak a quarter the height of the
+  first, and the contour side of coverage counts only what the section distance assigns to a
+  tooth. Case A is then not vetoed and declares a median uncertainty of ~2 mm, but its
+  coverage sits 0.06 above the minimum and it has no ground truth. So the case B
   protocol ([`registro-anatomico-protocolo.md`](docs/research/registro-anatomico-protocolo.md))
-  is suspended and not frozen, and the default `auto` is unchanged. See
-  [the research note](docs/research/registro-anatomico.md) §7.
+  is still suspended and not frozen, and the default `auto` is unchanged. See
+  [the research note](docs/research/registro-anatomico.md) §7–§8.
 - `geometric-fusion-agent` — **the ICP residual is still not a TRE.** Since 2026-10-10,
   `fusion_agents.tre` and `scripts/tre_puntos.py` measure target registration error from
   landmarks that specialists mark outside the system, per
@@ -684,6 +689,7 @@ FusionOutput
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Initial registration. ADR 004; `RigidTransform` in `core-schemas` (contract 1.3.0); complete semantic fusion; geometric fusion with multiscale ICP (coarse stage missing); idempotent insertion into the time series; wired into the orchestrator. |
 | 2026-08-10 | 0.2.0 (geometric) | Registration measured against a real patient with CBCT + scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). Confidence now comes from the **overlapping population**, ε becomes **per modality pair** (0.5 mm volume-derived · 1.5 mm intraoral↔CBCT), a **minimum overlap** gate is added, and the **coarse stage** (`icp_global`) ADR 004 left pending is implemented. Additive: a registrar that does not measure overlap behaves exactly as before. |
+| 2026-11-20 | 0.3.0 (geometric) | Anatomical registration fits crown contour only (enamel within 1.5 mm in the same slice), ignores a second enamel peak below a quarter of the first, and counts the contour side of coverage over the points the section distance assigns. Phantom with realistic roots: crown error 0.081 mm median, as before; case A: no veto, ~2 mm declared uncertainty, no ground truth. Default `auto` unchanged. No contract change. |
 | 2026-11-20 | 0.3.0 (geometric) | Optional anatomical registration (`fusion_agents.anatomico`): per-tooth scanner band, CBCT contours at a fixed threshold, deterministic starts, flip hypotheses that cannot win, selection by section distance, and a `veto` field on `RegistrationResult` that sends contradictory anatomy to the gate with confidence 0. Fails on clinical case A (vetoed; the fit slides towards the roots), so the case B precision protocol is suspended and not frozen. Default `auto` unchanged. No contract change. |
 | 2026-11-09 | 0.2.0 (geometric) | Registration by slices for sparse CBCT series (`fusion_agents.por_cortes`): anatomical starting pose from FDI and DICOM axes, inverse ICP restricted to the band above the bite, and a gate reason with the slice count, the gaps and the pose spread across contour thresholds. Used only when the scanner has FDI labels and the series is sparse; dense series keep the old path, which is measured better there. No contract change. |
 | 2026-11-09 | 0.2.0 (geometric) | `tre_puntos.py --cbct-serie`: with a sparse series the viewer shows interpolated image in the gaps, so each CBCT landmark must sit on a real slice (within 0.05 mm); the rest are excluded and declared, and each kept point reports half its largest neighbouring gap as the floor of its height error. The landmark protocol gains a section on sparse series. No contract change. | <!--const:TOLERANCIA_CORTE_MM-->
