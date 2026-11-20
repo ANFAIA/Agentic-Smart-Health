@@ -68,13 +68,16 @@ def centros_coronas(arcada: str = "upper") -> tuple[np.ndarray, np.ndarray]:
     return np.c_[x, y, z], np.array(fdi)
 
 
-def _dentro(p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool) -> np.ndarray:
+def _dentro(
+    p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool, encoge: float = 0.0
+) -> np.ndarray:
     """Dentro de alguna corona: el elipsoide, cortado en el cuello (3 mm hacia la raíz).
 
     Sin el corte la corona sería simétrica de arriba abajo, y un escaneo vuelto del revés
-    encajaría contra su mitad de la raíz tan bien como contra la de la cúspide.
+    encajaría contra su mitad de la raíz tan bien como contra la de la cúspide. `encoge`
+    resta esos mm a cada semieje: el núcleo de dentina bajo una cáscara de esmalte.
     """
-    semi = np.stack([semiejes(int(f)) for f in fdi])
+    semi = np.stack([semiejes(int(f)) for f in fdi]) - encoge
     d = (p[:, None, :] - centros[None]) / semi[None]
     hacia_raiz = (p[:, None, 2] - centros[None, :, 2]) * (1 if arriba else -1)
     return (((d**2).sum(-1) <= 1) & (hacia_raiz < 3.0)).any(1)
@@ -132,12 +135,18 @@ def _en_raiz_realista(
 def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
     inclinacion: np.ndarray | None = None, raices: str = "conicas",
+    dentina: float = 1600.0, esmalte_mm: float | None = None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
 
     `raices`: `"conicas"` (por defecto, lo de siempre: conos finos) o `"realistas"` (tan
     anchas como el cuello de la corona, ver `_en_raiz_realista`). En los dos casos la raíz
-    es dentina (1600) y la corona esmalte (2200).
+    es dentina (`dentina`, 1600 por defecto) y la corona esmalte (2200).
+
+    `esmalte_mm`: si se da, la corona es una CÁSCARA de esmalte de ese grosor y por dentro
+    es dentina. Con `dentina` por debajo del umbral de contorno (1400), el isonivel dibuja
+    un segundo borde por dentro de la corona —la unión amelodentinaria—, que el escáner no
+    ve en ninguna pose. Por defecto no hay cáscara: todo lo de antes queda igual.
     """
     if raices not in ("conicas", "realistas"):
         raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
@@ -159,7 +168,12 @@ def campo_cbct(
         raiz = _en_raiz(q, sup, True) | _en_raiz(q, inf, False)
     raiz &= ~corona
     duro = corona | raiz
-    hu = np.where(corona, 2200.0, 1600.0)[duro]
+    esmalte = corona
+    if esmalte_mm is not None:
+        nucleo = (_dentro(q, sup, f_sup, True, encoge=esmalte_mm)
+                  | _dentro(q, inf, f_inf, False, encoge=esmalte_mm))
+        esmalte = corona & ~nucleo
+    hu = np.where(esmalte, 2200.0, dentina)[duro]
     centros = p[duro]
     origen = np.array([3.0, -2.0, 1.5])
     return {"centers": centros - origen, "origin": origen}, hu

@@ -352,23 +352,25 @@ class Cbct:
         return cls(c, np.asarray(hu))
 
     def prepara(self, arcada: str, umbrales: tuple[float, ...] = (UMBRAL_CONTORNO,), *,
-                fresco: bool = False) -> tuple[np.ndarray, Any, dict, dict]:
+                fresco: bool = False, alto_corona: float | None = None,
+                ) -> tuple[np.ndarray, Any, dict, dict]:
         """`(base, plano, informe_marco, contornos)` como en `prepara_anatomico`.
 
         `fresco` lo recalcula todo, sin memoria: P0-semilla quiere ver cualquier azar que
-        hubiera en el marco o en los contornos, no solo en la búsqueda.
+        hubiera en el marco o en los contornos, no solo en la búsqueda. `alto_corona` es
+        el del escáner (`Escaner.alto_corona`): decide si el valle del esmalte es ancla.
         """
-        if fresco or "marco" not in self._marcos:
-            marco = marco_cbct(self.centros, self.hu)
+        if fresco or ("marco", alto_corona) not in self._marcos:
+            marco = marco_cbct(self.centros, self.hu, alto_corona=alto_corona)
             if fresco:
                 contornos = {float(u): contornos_losa(self.centros, self.hu, u, marco[1],
                                                       arcada) for u in umbrales}
                 return (*marco, contornos)
-            self._marcos["marco"] = marco
-        base, plano, informe = self._marcos["marco"]
+            self._marcos[("marco", alto_corona)] = marco
+        base, plano, informe = self._marcos[("marco", alto_corona)]
         contornos = {}
         for u in umbrales:
-            clave = (arcada, float(u))
+            clave = (arcada, float(u), plano.anclas)
             if clave not in self._contornos:
                 self._contornos[clave] = contornos_losa(self.centros, self.hu, u, plano,
                                                         arcada)
@@ -500,7 +502,8 @@ def construye(cbct: Cbct, V: np.ndarray, F: np.ndarray, N: np.ndarray | None,
     if escaner.banda.sum() < MINIMO_CONTORNO:
         raise ValueError(
             f"la banda de corona del escáner tiene solo {int(escaner.banda.sum())} vértices")
-    base_cbct, plano, _, contornos = cbct.prepara(escaner.arcada, umbrales, fresco=fresco)
+    base_cbct, plano, _, contornos = cbct.prepara(escaner.arcada, umbrales, fresco=fresco,
+                                                  alto_corona=escaner.alto_corona)
     pose_inicial(escaner.base, base_cbct)
     destino = contornos[float(UMBRAL_CONTORNO)][0]
     if len(destino) < MINIMO_CONTORNO:

@@ -240,6 +240,162 @@ def test_raices_tan_anchas_como_el_cuello_no_arrastran_la_banda(fichero, mundo) 
 
 
 # --------------------------------------------------------------------------- #
+# 1b · La ventana que sigue a la pose, el valle y la cobertura
+# --------------------------------------------------------------------------- #
+VERDAD = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+
+
+@pytest.fixture(scope="module")
+def sin_busqueda(fichero, cbct) -> dict:
+    """El registrador como lo arma `prepara_anatomico`, pero sin buscar: segundos."""
+    V, F, etq = fichero
+    campo, hu = cbct
+    centros = campo["centers"] + campo["origin"]
+    ejes, motivo = anatomical_frame(V, etq)
+    assert ejes is not None, motivo
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    base, plano, marco = marco_cbct(centros, hu, esc.arcada, alto_corona=esc.alto_corona)
+    contornos = {
+        float(u): anatomico.contornos_losa(centros, hu, u, plano, esc.arcada)
+        for u in (anatomico.UMBRAL_CONTORNO, *anatomico.UMBRALES_INCERTIDUMBRE)
+    }
+    registrador = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                                    contornos=contornos)
+    P, N2 = contornos[float(anatomico.UMBRAL_CONTORNO)]
+    return {"registrador": registrador, "P": P, "N2": N2, "marco": marco}
+
+
+def test_la_ventana_pesa_en_rampa_bajo_la_cuspide_de_cada_diente(sin_busqueda) -> None:
+    """1 dentro de la banda, rampa lineal hasta 0 a `MARGEN_VENTANA_MM` fuera."""
+    esc = sin_busqueda["registrador"].escaner
+    diente = int(np.flatnonzero(esc.etiquetas > 0)[0])
+    punta = esc.punta_local[diente]
+    m = anatomico.MARGEN_VENTANA_MM
+    lo, hi = anatomico.MARGEN_MORDIDA_MM, anatomico.ALTO_BANDA_MM
+    profundidades = np.array([lo - m - 0.1, lo - m / 2, lo, 0.5 * (lo + hi), hi,
+                              hi + m / 2, hi + m + 0.1])
+    q = esc.centro + (punta - profundidades)[:, None] * esc.oclusal
+    peso = esc.peso_ventana(q, np.full(len(q), diente))
+    np.testing.assert_allclose(peso, [0.0, 0.5, 1.0, 1.0, 1.0, 0.5, 0.0], atol=1e-9)
+    # La encía hereda la cúspide del diente más próximo: ninguna se queda a 0.
+    assert np.all(esc.punta_local[esc.etiquetas == 0] != 0.0)
+
+
+def test_el_valle_solo_es_ancla_si_los_dos_picos_caben_en_una_corona(cbct, sin_busqueda) -> None:
+    """En el fantasma de dos arcadas los picos están a 6 mm del valle, y la corona del
+    escáner mide casi 9: el valle es el contacto y entra. Con una corona más baja que esa
+    distancia no puede serlo, y se dice por qué."""
+    campo, hu = cbct
+    centros = campo["centers"] + campo["origin"]
+    alto = sin_busqueda["registrador"].escaner.alto_corona
+    assert 7.0 < alto < 11.0
+    perfil = sin_busqueda["marco"]["enamel_profile"]
+    assert perfil["bimodal"]
+    assert len(sin_busqueda["registrador"].plano.anclas) == 2
+    lejos = max(abs(p - perfil["valley_mm"]) for p in perfil["peaks_mm"])
+    _, plano, marco = marco_cbct(centros, hu, alto_corona=lejos - 0.5)
+    assert plano.anclas == (0.0,)
+    assert "valley_rejected" in marco["enamel_profile"]
+    # Sin escáner, la regla de antes: el valle entra si el perfil es bimodal.
+    assert len(marco_cbct(centros, hu)[1].anclas) == 2
+
+
+@pytest.mark.parametrize(
+    "giro,mm", [(0.0, 1.5), (0.0, -1.5), (3.0, 1.0), (-3.0, -1.0)],
+    ids=["+1,5mm", "-1,5mm", "+3°+1mm", "-3°-1mm"],
+)
+def test_desde_poses_movidas_la_ventana_ni_oscila_ni_encoge(sin_busqueda, giro, mm) -> None:
+    """Mover la pose en altura mete y saca de la ventana una franja entera de contorno a
+    cada iteración. El ajuste tiene que converger (no agotar iteraciones ni pararse por
+    la masa) y al mismo sitio que desde la verdad."""
+    reg, P = sin_busqueda["registrador"], sin_busqueda["P"]
+    r_v, t_v, _, conv_v = reg.afina(*VERDAD, P)
+    assert conv_v
+    der, _, sup = reg.base_cbct
+    R0 = anatomico.rotacion_de_vector(der * math.radians(giro)) @ VERDAD[0]
+    t0 = VERDAD[1] + mm * sup
+    r, t, iteraciones, convergido = reg.afina(R0, t0, P)
+    assert convergido
+    assert iteraciones < anatomico.ITER_FINO
+    assert reg.rms_desplazamiento((r, t), (r_v, t_v)) < 0.05
+
+
+def test_la_ventana_que_encoge_para_el_ajuste_sin_darlo_por_convergido(
+    sin_busqueda, monkeypatch
+) -> None:
+    """Contorno solo a más de 3,5 mm bajo las cúspides y la pose subida 3 mm hacia la
+    raíz: al volver a la verdad, la ventana pierde masa (medido: de 5.695 a 3.046, un
+    0,53). Con el umbral por defecto (la mitad) eso es legítimo y converge; con uno que no
+    admite perder casi nada, se para y no se declara convergido.
+
+    ⚠️ Ese 0,53 dice también que el umbral por defecto no tiene mucho margen en un caso
+    así de recortado; con el contorno entero la masa baja a 0,83 de la inicial."""
+    reg, P = sin_busqueda["registrador"], sin_busqueda["P"]
+    esc = reg.escaner
+    ri, ti = VERDAD[0].T, -VERDAD[0].T @ VERDAD[1]
+    q = P @ ri.T + ti
+    j = esc.arbol.query(q)[1]
+    profundidad = esc.punta_local[j] - (q - esc.centro) @ esc.oclusal
+    alto = P[profundidad >= 3.5]
+    sup = reg.base_cbct[2]
+    inicio = (VERDAD[0], VERDAD[1] + 3.0 * sup)
+    r, t, _, convergido = reg.afina(*inicio, alto)
+    assert convergido
+    assert reg.rms_desplazamiento((r, t), VERDAD) < 0.3
+    monkeypatch.setattr(anatomico, "FRACCION_VENTANA_MIN", 0.99)
+    r, t, _, convergido = reg.afina(*inicio, alto)
+    assert not convergido
+    assert reg.rms_desplazamiento((r, t), VERDAD) > 0.3
+
+
+def test_la_cobertura_no_cuenta_bordes_interiores_que_el_escaner_no_puede_ver(
+    sin_busqueda
+) -> None:
+    """Un isonivel que cae entre esmalte y dentina dibuja un segundo borde por dentro de
+    la corona, con la normal hacia fuera del tejido denso apuntando hacia DENTRO del
+    diente. El escáner no lo ve en ninguna pose, así que no puede bajar C; un borde por
+    FUERA de la sección y mirando hacia fuera sí (un escáner hundido), y la baja."""
+    reg, P, N2 = sin_busqueda["registrador"], sin_busqueda["P"], sin_busqueda["N2"]
+    limpio = reg.puntua_secciones(*VERDAD, anatomico._por_corte(P, N2))
+    # 1,2 mm: un esmalte típico. Más hondo, en los dientes estrechos del fantasma el borde
+    # cruzaría el centro y su pared más próxima sería la de enfrente.
+    dentro = np.c_[P[:, :2] - 1.2 * N2, P[:, 2]]
+    fuera = np.c_[P[:, :2] + 2.0 * N2, P[:, 2]]
+    con_dentro = reg.puntua_secciones(
+        *VERDAD, anatomico._por_corte(np.vstack([P, dentro]), np.vstack([N2, -N2]))
+    )
+    con_fuera = reg.puntua_secciones(
+        *VERDAD, anatomico._por_corte(np.vstack([P, fuera]), np.vstack([N2, N2]))
+    )
+    assert limpio["C"] >= 0.9
+    assert con_dentro["C_contour_side"] >= limpio["C_contour_side"] - 0.05
+    assert con_fuera["C_contour_side"] < limpio["C_contour_side"] - 0.3
+
+
+def test_una_cascara_de_esmalte_no_arrastra_el_ajuste_hacia_la_raiz(fichero, mundo) -> None:
+    """Corona = cáscara de esmalte de 1,2 mm sobre dentina a 1200, bajo el umbral de 1400:
+    el contorno trae la unión amelodentinaria por dentro de cada corona. Medido al escribir
+    este test, con el código anterior el ajuste desde la verdad se iba 1,19 mm hacia la raíz
+    (y C en la verdad era 0,73); con el filtro de sentido de `empareja`, 0,07 mm y 0,98."""
+    campo, hu = campo_cbct(paso=PASO, raices="realistas", dentina=1200.0, esmalte_mm=1.2)
+    V, F, etq = fichero
+    centros = campo["centers"] + campo["origin"]
+    ejes, _ = anatomical_frame(V, etq)
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    base, plano, _ = marco_cbct(centros, hu, esc.arcada, alto_corona=esc.alto_corona)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, esc.arcada)
+    reg = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                            contornos={float(anatomico.UMBRAL_CONTORNO): (P, N2)})
+    puntuacion = reg.puntua_secciones(*VERDAD, anatomico._por_corte(P, N2))
+    assert puntuacion["C"] >= 0.9
+    r, t, _, convergido = reg.afina(*VERDAD, P)
+    assert convergido
+    corona = etq > 0
+    error = _en_cbct(V[corona], r, t) - mundo[0][corona]
+    assert float(np.median(np.linalg.norm(error, axis=1))) < 0.2
+
+
+# --------------------------------------------------------------------------- #
 # 2 · Sin azar, y 3 · byte a byte entre procesos
 # --------------------------------------------------------------------------- #
 def test_ni_el_registro_ni_la_incertidumbre_tocan_el_azar(referencia) -> None:
