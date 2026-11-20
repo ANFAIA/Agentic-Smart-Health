@@ -1338,6 +1338,12 @@ class RegistroAnatomico:
             if len(pu) < MINIMO_CONTORNO:
                 umbral[str(int(u))] = "sin contorno suficiente"
                 continue
+            # Sin parejas en la pose elegida el reajuste no arranca y la pose no se mueve:
+            # eso no es un umbral que no influye, es un umbral que no se ha podido medir.
+            # Visto en el caso A, con la pose vetada lejos del esmalte (§8.3 de la nota).
+            if len(self.correspondencias(rot, tras, pu)[0]) < CORRESPONDENCIAS_MINIMAS:
+                umbral[str(int(u))] = "sin parejas en la pose elegida: no medido"
+                continue
             r_u, t_u, _, conv = self.afina(rot, tras, pu)
             d = self.desplazamiento((r_u, t_u), (rot, tras))
             norma = np.linalg.norm(d, axis=1)

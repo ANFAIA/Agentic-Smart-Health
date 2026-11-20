@@ -339,8 +339,16 @@ Misma ejecución de desarrollo que §7, con este código. **No hay verdad.**
   5,7 mm de mediana del esmalte ≥ 1800 (0,5 % a menos de 1 mm); en la del registro por cortes,
   a 1,6 mm (33 %). Apunta a que la devuelta está mal, pero es el criterio del árbitro antiguo
   (§3) y no se usa para elegir.
-- **Tiempo: 577 s** de búsqueda (frente a ~22 min de búsqueda más incertidumbre antes), con la
-  máquina compartida con otros dos procesos de registro.
+- **Incertidumbre declarada: U de 2,2 mm de mediana** (p95 4,1 mm; vertical 1,05 mm), entre
+  1,7 y 4,0 mm por diente, frente a 20–43 mm antes. La escala que pediría una semejanza es
+  ×1,024: ningún modelo rígido encaja. **U está subestimada**: el reajuste a 1900 no tiene
+  ninguna pareja en esa pose (la corona queda lejos del esmalte), así que no mide nada; antes
+  eso se registraba como «0 mm», y ahora el informe dice «no medido». Y el ajuste fino desde la
+  pose devuelta no converge en 200 iteraciones: las parejas alternan entre dos conjuntos casi
+  iguales y la pose deriva despacio, sin volver a una anterior.
+- **Tiempo:** 577 s de búsqueda y 737 s de incertidumbre, unos 22 min en total, igual que
+  antes. La máquina estaba compartida con otros dos procesos de registro. En el fantasma, con
+  carga ajena de 10–14, son 95 s sin incertidumbre y 128 s con ella.
 
 Lo que no se ha resuelto: por qué S no distingue alturas en el caso A cuando en el fantasma
 sí. La cáscara de esmalte reproduce el deslizamiento y su dirección, pero no ese S plano.
