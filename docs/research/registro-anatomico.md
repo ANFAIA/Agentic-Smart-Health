@@ -409,9 +409,19 @@ verdad.
      - Las etiquetas FDI desbordadas sobre la encía (§11) son el único candidato abierto:
        bajan el lado del contorno hasta 0,63–0,84 cuando entra encía vestibular en la
        banda, sin llegar a 0,5.
-     - **Primer diagnóstico al retomar:** desglosar el C = 0,43 del caso A por lado, por
-       altura en la banda y por vecindad con vértices de etiqueta 0. Es una medida, no una
-       regla, y no elige nada.
+     - **Primer diagnóstico, hecho el 2026-11-20 a las 12:30.** Es una medida, no una
+       regla, y no elige nada. En la pose que devuelve el caso A, que está vetada:
+       - lado del escáner 0,74, lado del **contorno 0,43**: el bajo es el del contorno, como
+         en §7;
+       - desglose aproximado (vértice más próximo en 3D, no la sección por corte de
+         `puntua_secciones`): los contornos cuyo vértice de banda está a menos de 1,5 mm de
+         encía sin etiqueta quedan a ≤ 1 mm el 59 % de las veces (581 puntos), y el resto
+         el 49 % (11 851 puntos).
+       - Así que la falta de cobertura **no se concentra junto a la encía**: la mitad del
+         contorno de toda la banda queda a más de 1 mm del escáner.
+       - Eso apunta a una pose equivocada, o a una forma que no casa entre las dos
+         modalidades, más que al desborde de etiquetas. Al estar medido en una pose vetada,
+         no distingue entre las dos cosas. Se distinguirían con puntos anatómicos.
 2. **La encía etiquetada en la banda sesga la altura sin que salte el veto** (§11):
    - 0,4–1,1 mm en serie dispersa;
    - hasta 0,8–4,4 mm en las sondas con encía vestibular, incluso en serie densa.
