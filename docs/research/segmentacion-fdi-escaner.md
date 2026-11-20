@@ -544,6 +544,28 @@ Las anotaciones de las doctoras (14 curvas del maxilar del caso A) solo entran a
 como falsación: dan la identidad de cada pieza pero no la frontera entre dientes que se
 tocan, y ya se usaron para numerar.
 
+**Resultado en `dev` (2026-11-20).** Los tres candidatos entrenaron 60 épocas con semilla 0
+sobre las 1.080 arcadas y se midieron con `benchmark_separacion.py evalua --split dev` contra
+la base, desde `6602771` con el árbol limpio:
+
+| | Contacto p50 | Contactos > 1 mm | Sangran > 10 % | Correctas | Fantasmas | Falso diente | Falsa encía | FDI por vértice | K1-K6 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| B, base | 0,75 mm | 152 de 428 | 165 de 520 | 498 | 19 | 0,454 | 0,0070 | 0,884 | — |
+| C1, 16.384 pts, ±15° | 0,22 mm | 6 de 437 | 22 | 506 | 15 | 0,257 | 0,0021 | 0,936 | falla K4 |
+| **C2, 8.192 pts, ±15°** | **0,16 mm** | 11 de 438 | 19 | 508 | 13 | 0,283 | 0,0017 | 0,946 | **cumple** |
+| C3, 8.192 pts, ±30° | 0,23 mm | 13 de 439 | 18 | 509 | 14 | 0,305 | 0,0015 | 0,945 | falla K4 |
+
+Los tres mejoran el contacto en las 40 arcadas. C1 y C3 fallan solo K4, y por una pieza
+cada uno: el voto se queda una pieza por debajo de lo que daría la pose nativa (506 frente a
+507, 509 frente a 510), cuando con la base coincidían. El criterio pedía que esa distancia no
+creciera y creció, así que quedan fuera, aunque sea por poco. Por la regla fijada, la
+resolución ganadora fue 8.192 (0,16 frente a 0,22 mm) y el candidato final es **C2**. Que
+8.192 puntos separe mejor que 16.384 contradice la hipótesis de partida, según la cual más
+resolución sería mejor. Con una sola semilla no se puede saber si es una diferencia real o
+ruido de entrenamiento, y no se ha investigado.
+
+C2 pasó la puerta, así que la reserva se predice con B y con C2 y se evalúa una vez.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
