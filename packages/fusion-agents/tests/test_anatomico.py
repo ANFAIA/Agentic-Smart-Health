@@ -1,0 +1,566 @@
+"""Registro anatómico por banda de escáner (`fusion_agents.anatomico`), sobre el fantasma.
+
+Todo sintético (`fantasma_arcada`): corre en CI sin datos clínicos. La verdad es exacta
+porque el escaneo se fabrica en el mundo del CBCT y se lleva a su propio marco con un
+movimiento conocido; registrar tiene que deshacerlo.
+
+Cada registro completo cuesta del orden de 15–25 s de CPU (90 arranques + ajuste fino +
+incertidumbre), así que se hacen pocos y se reutilizan: un registro de referencia por
+módulo, y solo los tests que necesitan otra entrada (otro movimiento, otro teselado, otra
+serie) registran de nuevo, y sin la incertidumbre cuando no la miran.
+
+Lo que se comprueba es lo que P0 del protocolo (`docs/research/registro-anatomico-
+protocolo.md` §5) exige al software: sin azar, byte a byte entre procesos, equivariante
+ante el movimiento y el orden del fichero, estable ante el teselado; y que las vueltas, la
+cobertura, el espejo y la escala se declaran en vez de pasar en silencio.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import math
+import os
+import subprocess
+import sys
+import textwrap
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+from core_schemas import Modality, Provenance, TwinSnapshot
+from export_agents.anatomia import anatomical_frame
+from fantasma_arcada import campo_cbct, escaneo_superior, mueve, rotacion
+from fusion_agents import GeometricFusionAgent, anatomico
+from fusion_agents.anatomico import RegistroAnatomico, marco_cbct, motivos, prepara_anatomico
+from fusion_agents.registration import quaternion_to_matrix
+
+AQUI = Path(__file__).resolve().parent
+
+# El escáner en su propio marco: fichero = MOVIMIENTO(mundo). Registrar es deshacerlo.
+ROT_FICHERO = rotacion([0.3, 1.0, 0.2], 97.0)
+TRAS_FICHERO = np.array([40.0, -12.0, 80.0])
+PASO = 0.4
+
+
+# --------------------------------------------------------------------------- #
+# Sin azar
+# --------------------------------------------------------------------------- #
+_ALEATORIAS = ("default_rng", "seed", "choice", "rand", "random", "permutation")
+
+
+@contextlib.contextmanager
+def sin_azar() -> Iterator[list[str]]:
+    """Mientras dura, cualquier generador aleatorio de NumPy lanza y queda anotado.
+
+    Se anota además de lanzar por si algún `try/except` del código se tragara la
+    excepción: el test mira la lista, no solo que no haya volado nada.
+    """
+    llamadas: list[str] = []
+    with pytest.MonkeyPatch.context() as mp:
+        for nombre in _ALEATORIAS:
+            def prohibida(*_a: Any, _n: str = nombre, **_k: Any) -> None:
+                llamadas.append(_n)
+                raise AssertionError(f"np.random.{_n} llamado durante el registro")
+
+            mp.setattr(np.random, nombre, prohibida)
+        yield llamadas
+
+
+def registra(
+    V: np.ndarray, F: np.ndarray, etq: np.ndarray, campo: dict, hu: np.ndarray, *,
+    incertidumbre: bool = False, arranques: str | None = None,
+) -> tuple[np.ndarray, np.ndarray, RegistroAnatomico, dict, list[str]]:
+    """`prepara_anatomico` como lo llama el orquestador, sin azar.
+
+    `incertidumbre=False` la sustituye por un diccionario vacío —la mitad del coste— en
+    los tests que solo miran la pose. `arranques` deja solo los arranques cuyo nombre
+    empieza así, para los tests que miran un diagnóstico y no la búsqueda.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        if not incertidumbre:
+            mp.setattr(RegistroAnatomico, "incertidumbre", lambda self: {})
+        if arranques is not None:
+            todos = RegistroAnatomico.arranques
+
+            def pocos(self: RegistroAnatomico) -> list:
+                elegidos = [a for a in todos(self) if a[0].startswith(arranques)]
+                assert elegidos, f"ningún arranque se llama {arranques!r}"
+                return elegidos
+
+            mp.setattr(RegistroAnatomico, "arranques", pocos)
+        with sin_azar() as llamadas:
+            ejes, motivo = anatomical_frame(V, etq)
+            assert ejes is not None, motivo
+            origen, destino, registrador, informe = prepara_anatomico(
+                campo, hu, V, F, etq, ejes
+            )
+    return origen, destino, registrador, informe, llamadas
+
+
+def pose(registrador: RegistroAnatomico, origen: np.ndarray, destino: np.ndarray) -> tuple:
+    """`(R, t)` del registrador; la búsqueda está memorizada, así que no se repite."""
+    r = registrador(origen, destino)
+    return quaternion_to_matrix(r.rotation), np.asarray(r.translation), r
+
+
+def subdivide(
+    V: np.ndarray, F: np.ndarray, etq: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """1→4 por punto medio. Los vértices originales conservan su índice; un punto medio
+    hereda la etiqueta si sus dos extremos coinciden, y si no es 0 (protocolo P0)."""
+    aristas = np.sort(np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]]), axis=1)
+    unicas, inversa = np.unique(aristas, axis=0, return_inverse=True)
+    inversa = np.asarray(inversa).ravel()
+    n, m = len(V), len(F)
+    medio = n + inversa
+    ab, bc, ca = medio[:m], medio[m : 2 * m], medio[2 * m :]
+    a, b, c = F[:, 0], F[:, 1], F[:, 2]
+    F4 = np.concatenate([
+        np.c_[a, ab, ca], np.c_[ab, b, bc], np.c_[ca, bc, c], np.c_[ab, bc, ca],
+    ])
+    V4 = np.vstack([V, 0.5 * (V[unicas[:, 0]] + V[unicas[:, 1]])])
+    e = etq[unicas]
+    etq4 = np.r_[etq, np.where(e[:, 0] == e[:, 1], e[:, 0], 0)]
+    return V4, F4, etq4
+
+
+# --------------------------------------------------------------------------- #
+# Fixtures del módulo
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def mundo() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """El escaneo superior en el mundo del CBCT (la verdad)."""
+    return escaneo_superior()
+
+
+@pytest.fixture(scope="module")
+def fichero(mundo) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    Vw, F, etq = mundo
+    return mueve(Vw, ROT_FICHERO, TRAS_FICHERO), F, etq
+
+
+@pytest.fixture(scope="module")
+def cbct() -> tuple[dict, np.ndarray]:
+    return campo_cbct(paso=PASO)
+
+
+@pytest.fixture(scope="module")
+def referencia(fichero, cbct) -> dict:
+    """EL registro del módulo: completo, con incertidumbre, y con el azar prohibido."""
+    V, F, etq = fichero
+    origen, destino, registrador, informe, llamadas = registra(
+        V, F, etq, *cbct, incertidumbre=True
+    )
+    R, t, resultado = pose(registrador, origen, destino)
+    return {
+        "origen": origen, "destino": destino, "registrador": registrador,
+        "informe": informe, "llamadas": llamadas, "R": R, "t": t, "resultado": resultado,
+    }
+
+
+def _en_cbct(V: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    return V @ R.T + t
+
+
+# --------------------------------------------------------------------------- #
+# 1 · Recupera la pose conocida
+# --------------------------------------------------------------------------- #
+def test_recupera_la_pose_conocida_en_planta_y_deja_el_error_en_altura(
+    referencia, fichero, mundo
+) -> None:
+    """En planta casi exacto; lo que queda de error es vertical, la dirección peor medida.
+
+    Hoy son ~0,17 mm hacia la raíz con este teselado. ⚠️ Medido al escribir este test: no
+    es el medio paso del contorno (que `contornos` ya corrige), sino el recorte del ajuste
+    por distancia al VÉRTICE más próximo; con la malla subdividida baja a 0,03 mm y
+    recortando por residuo punto a plano a 0,015 (ver el test de teselado). Por eso la
+    cota vertical es holgada y sin signo: lo que se exige es que el error no salga de la
+    altura.
+    """
+    V, _, etq = fichero
+    Vw = mundo[0]
+    corona = etq > 0
+    error = _en_cbct(V[corona], referencia["R"], referencia["t"]) - Vw[corona]
+    norma = np.linalg.norm(error, axis=1)
+    assert referencia["resultado"].veto is None
+    assert float(np.median(norma)) < 0.3
+    media = error.mean(axis=0)
+    assert np.linalg.norm(media[:2]) < 0.03          # en planta, nada
+    assert abs(media[2]) < 0.3                       # en altura, acotado
+    assert float(np.median(np.linalg.norm(error[:, :2], axis=1))) < 0.1
+    # La rotación es la del movimiento, a menos de medio grado.
+    giro = referencia["R"] @ ROT_FICHERO
+    assert anatomico.angulo_rotacion_grados(giro) < 0.5
+
+
+def test_recupera_la_pose_en_una_serie_dispersa(fichero, mundo) -> None:
+    """Cortes cada 0,8 mm y un hueco de 2 mm en mitad de la banda: más laxo, mismo método."""
+    campo, hu = campo_cbct(paso=PASO, paso_z=0.8, quita=(2.0, 4.0))
+    V, F, etq = fichero
+    origen, destino, registrador, informe, _ = registra(V, F, etq, campo, hu)
+    assert informe["contour"]["sparse"]
+    R, t, r = pose(registrador, origen, destino)
+    assert r.veto is None
+    corona = etq > 0
+    error = _en_cbct(V[corona], R, t) - mundo[0][corona]
+    assert float(np.median(np.linalg.norm(error, axis=1))) < 0.5
+    assert float(np.median(np.linalg.norm(error[:, :2], axis=1))) < 0.15
+
+
+# --------------------------------------------------------------------------- #
+# 2 · Sin azar, y 3 · byte a byte entre procesos
+# --------------------------------------------------------------------------- #
+def test_ni_el_registro_ni_la_incertidumbre_tocan_el_azar(referencia) -> None:
+    """La referencia se calculó con todos los generadores de NumPy lanzando."""
+    assert referencia["llamadas"] == []
+    assert referencia["informe"]["uncertainty"]  # la incertidumbre corrió de verdad
+    with sin_azar() as llamadas, pytest.raises(AssertionError):
+        np.random.default_rng(0)
+    assert llamadas == ["default_rng"]  # y la trampa funciona
+
+
+_PROCESO = textwrap.dedent(
+    """
+    import sys
+    import numpy as np
+    np.random.seed(int(sys.argv[1]))
+    from export_agents.anatomia import anatomical_frame
+    from fusion_agents.anatomico import RegistroAnatomico, prepara_anatomico
+    from fantasma_arcada import campo_cbct, escaneo_superior, mueve, rotacion
+
+    RegistroAnatomico.incertidumbre = lambda self: {}
+    Vw, F, etq = escaneo_superior()
+    V = mueve(Vw, rotacion(%r, %r), np.array(%r))
+    campo, hu = campo_cbct(paso=%r)
+    ejes, _ = anatomical_frame(V, etq)
+    origen, destino, reg, _ = prepara_anatomico(campo, hu, V, F, etq, ejes)
+    r = reg(origen, destino)
+    print(np.asarray(r.rotation, dtype=np.float64).tobytes().hex(),
+          np.asarray(r.translation, dtype=np.float64).tobytes().hex())
+    """
+) % ([0.3, 1.0, 0.2], 97.0, TRAS_FICHERO.tolist(), PASO)
+
+
+def test_otro_proceso_con_otras_semillas_da_los_mismos_bytes(referencia) -> None:
+    """P0-semilla: lo antiguo daba la vuelta en ~30 % de semillas; esto no puede cambiar
+    ni un bit con `PYTHONHASHSEED` ni con `np.random.seed`.
+
+    El segundo proceso es el de pytest: la referencia del módulo, sin semilla fijada.
+    """
+    np.testing.assert_array_equal(rotacion([0.3, 1.0, 0.2], 97.0), ROT_FICHERO)
+    semilla_hash = "1" if os.environ.get("PYTHONHASHSEED") == "4242" else "4242"
+    env = {**os.environ, "PYTHONHASHSEED": semilla_hash,
+           "PYTHONPATH": os.pathsep.join([str(AQUI), os.environ.get("PYTHONPATH", "")])}
+    hecho = subprocess.run(
+        [sys.executable, "-c", _PROCESO, "987654"], env=env, capture_output=True,
+        text=True, timeout=900,
+    )
+    assert hecho.returncode == 0, hecho.stderr
+    r = referencia["resultado"]
+    aqui = (np.asarray(r.rotation, dtype=np.float64).tobytes().hex() + " "
+            + np.asarray(r.translation, dtype=np.float64).tobytes().hex())
+    assert hecho.stdout.strip() == aqui
+
+
+# --------------------------------------------------------------------------- #
+# 4 · Equivariancia ante movimiento y orden, 5 · teselado
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("eje", "grados", "traslacion", "permuta"),
+    [
+        ([1.0, 0.0, 0.0], 180.0, [100.0, -100.0, 100.0], True),
+        ([0.0, 0.0, 1.0], 90.0, [-100.0, 100.0, -100.0], False),
+    ],
+    ids=["180x+permutado", "90z"],
+)
+def test_mover_o_reordenar_el_fichero_no_mueve_las_coronas(
+    referencia, fichero, cbct, eje, grados, traslacion, permuta
+) -> None:
+    """P0-movimiento y P0-orden: las coronas en mm del DICOM no dependen del fichero.
+
+    Las etiquetas viajan con sus vértices. La permutación reordena vértices y caras y rota
+    el orden dentro de cada cara (sin cambiar su sentido).
+    """
+    V, F, etq = fichero
+    W = mueve(V, rotacion(eje, grados), np.asarray(traslacion))
+    F2, etq2, orden = F, etq, np.arange(len(V))
+    if permuta:
+        rng = np.random.default_rng(2001)
+        orden = rng.permutation(len(V))
+        inversa = np.empty_like(orden)
+        inversa[orden] = np.arange(len(V))
+        W, etq2 = W[orden], etq[orden]
+        F2 = inversa[F][rng.permutation(len(F))]
+        giro = rng.integers(0, 3, len(F2))
+        F2 = np.stack([np.roll(f, k) for f, k in zip(F2, giro, strict=True)])
+    origen, destino, registrador, _, _ = registra(W, F2, etq2, *cbct)
+    R, t, r = pose(registrador, origen, destino)
+    assert r.veto is None
+
+    corona = etq > 0
+    ref = _en_cbct(V[corona], referencia["R"], referencia["t"])
+    ahora = np.empty_like(V)
+    ahora[orden] = _en_cbct(W, R, t)  # de vuelta al orden original
+    d = np.linalg.norm(ahora[corona] - ref, axis=1)
+    assert float(d.max()) < 1e-6
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "anatomico.RegistroAnatomico.afina recorta por distancia al vértice más próximo "
+        "(`d` del árbol), no por residuo punto a plano: el recorte depende del teselado y "
+        "deja la altura 0,17 mm (malla original) frente a 0,03 mm (subdividida) desde la "
+        "pose verdadera; recortando por residuo punto a plano, 0,015 frente a −0,006"
+    ),
+)
+def test_subdividir_la_malla_no_mueve_las_coronas(referencia, fichero, cbct) -> None:
+    """P0-teselado: el mismo escaneo con cuatro veces más triángulos.
+
+    Un solo arranque (el anatómico) para no pagar 90 sobre una malla cuatro veces mayor:
+    lo que depende del teselado es el ajuste, no la búsqueda.
+    """
+    V, F, etq = fichero
+    V4, F4, etq4 = subdivide(V, F, etq)
+    origen, destino, registrador, _, _ = registra(
+        V4, F4, etq4, *cbct, arranques="rejilla(+0,+0,+0)"
+    )
+    R, t, r = pose(registrador, origen, destino)
+    assert r.veto is None
+    corona = etq > 0
+    d = np.linalg.norm(
+        _en_cbct(V[corona], R, t) - _en_cbct(V[corona], referencia["R"], referencia["t"]),
+        axis=1,
+    )
+    assert float(np.median(d)) <= 0.05
+    assert float(np.percentile(d, 95)) <= 0.10
+
+
+# --------------------------------------------------------------------------- #
+# 6 · Vueltas
+# --------------------------------------------------------------------------- #
+def test_las_hipotesis_de_vuelta_se_ajustan_y_nunca_ganan(referencia) -> None:
+    busqueda = referencia["registrador"].cache["ultima"]
+    elegida = busqueda["chosen"]
+    assert elegida["check"]["eligible"]
+    assert not elegida["flip_start"]
+    assert elegida["check"]["angle_to_start_deg"] < anatomico.ANGULO_ANATOMICO_MAX
+    # Las vueltas se ajustaron —hay cuencas a ~180° del arranque— y ninguna es elegible.
+    vueltas = [
+        c for c in busqueda["basins"]
+        if c["check"]["angle_to_start_deg"] > anatomico.ANGULO_VUELTA
+    ]
+    assert vueltas
+    assert not any(c["check"]["eligible"] for c in vueltas)
+    assert all(not c["check"]["eligible"] for c in busqueda["basins"] if c["flip_start"])
+    assert referencia["informe"]["search"]["veto"] is None
+
+
+def test_el_margen_de_vuelta_llega_al_gate_cuando_los_datos_no_la_excluyen(referencia) -> None:
+    """En el fantasma —simétrico de izquierda a derecha— una vuelta encaja casi igual.
+
+    Lo que se exige es coherencia: si el margen medido no la excluye, el gate lo dice.
+    """
+    informe = referencia["informe"]
+    margen = informe["search"]["flip_margin"]
+    assert margen is not None and margen["angle_deg"] > anatomico.ANGULO_VUELTA
+    no_excluida = (
+        margen["S_ratio"] <= 1 + anatomico.MARGEN_VUELTA_S
+        or margen["C_difference"] < anatomico.MARGEN_VUELTA_C
+    )
+    texto = " ".join(motivos(informe))
+    assert ("los datos no la excluyen" in texto) == no_excluida
+    assert "no un TRE" in texto
+
+
+# --------------------------------------------------------------------------- #
+# 7 · Cabeza inclinada
+# --------------------------------------------------------------------------- #
+INCLINACION = rotacion([1.0, 0.0, 0.0], 10.0)
+
+
+@pytest.fixture(scope="module")
+def cbct_inclinado() -> tuple[dict, np.ndarray]:
+    return campo_cbct(paso=PASO, inclinacion=INCLINACION)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "marco_cbct ajusta el plano al esmalte de una losa AXIAL de ±BANDA_PLANO_MM "
+        "alrededor de la moda; con dos picos la moda es el ecuador de una arcada (−6 mm "
+        "en el fantasma) y la losa horizontal recorta la arcada inclinada: mide 6,84° de "
+        "10°, 7,44° de −10°, 3,94° de 5° y 2,45° de 3° (≈70–80 % de la inclinación)"
+    ),
+)
+def test_con_la_boca_inclinada_el_marco_mide_la_inclinacion(cbct_inclinado) -> None:
+    campo, hu = cbct_inclinado
+    _, plano, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
+    assert "fallback_lps" not in marco
+    assert marco["tilt_deg"] == pytest.approx(10.0, abs=1.0)
+    assert anatomico.angulo_grados(plano.normal, INCLINACION @ np.array([0.0, 0.0, 1.0])) < 1.0
+
+
+def test_con_la_boca_inclinada_se_registra(fichero, mundo, cbct_inclinado) -> None:
+    """Aunque el plano salga corto de inclinación, la rejilla de arranques y el ajuste
+    cubren la diferencia: la pose se recupera igual que sin inclinar."""
+    campo, hu = cbct_inclinado
+    _, _, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
+    assert "fallback_lps" not in marco and marco["tilt_deg"] > 3.0  # algo mide
+
+    V, F, etq = fichero
+    origen, destino, registrador, _, _ = registra(V, F, etq, campo, hu)
+    R, t, r = pose(registrador, origen, destino)
+    assert r.veto is None
+    corona = etq > 0
+    verdad = mueve(mundo[0], INCLINACION, np.zeros(3))[corona]
+    error = np.linalg.norm(_en_cbct(V[corona], R, t) - verdad, axis=1)
+    assert float(np.median(error)) < 0.3
+    assert anatomico.angulo_rotacion_grados(R @ ROT_FICHERO @ INCLINACION.T) < 0.5
+
+
+def test_sin_inclinar_el_plano_sale_horizontal(cbct) -> None:
+    campo, hu = cbct
+    _, _, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
+    assert marco["tilt_deg"] < 1.0
+
+
+# --------------------------------------------------------------------------- #
+# 8 · Espejo
+# --------------------------------------------------------------------------- #
+def _cuadrantes_cambiados(V, F, etq):
+    cambia = np.where(etq // 10 == 1, etq + 10, np.where(etq // 10 == 2, etq - 10, etq))
+    return V, F, cambia
+
+
+def _escaneo_en_espejo(V, F, etq):
+    return V * np.array([-1.0, 1.0, 1.0]), F[:, ::-1].copy(), etq
+
+
+@pytest.mark.parametrize(
+    "espejo", [_cuadrantes_cambiados, _escaneo_en_espejo], ids=["etiquetas", "malla"]
+)
+def test_un_escaneo_o_unas_etiquetas_en_espejo_no_se_registran(fichero, cbct, espejo) -> None:
+    """Ninguna rotación corrige una reflexión: se dice, no se registra algo reflejado."""
+    V, F, etq = espejo(*fichero)
+    ejes, motivo = anatomical_frame(V, etq)
+    assert ejes is not None, motivo
+    base = np.stack([ejes.derecha, ejes.anterior, ejes.superior])
+    assert np.linalg.det(base) < 0
+    with pytest.raises(ValueError, match="espejo"):
+        prepara_anatomico(*cbct, V, F, etq, ejes)
+
+
+# --------------------------------------------------------------------------- #
+# 9 · Puntuación y 10 · cobertura
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("mm", [1.0, -1.0], ids=["hundida", "flotando"])
+def test_una_corona_desplazada_en_altura_puntua_peor(referencia, mm) -> None:
+    """S es lo que elige: 1 mm hacia la raíz (o hacia la cúspide) tiene que perder.
+
+    Y el residuo con signo dice hacia dónde: − hundida en el diente del CBCT, + flotando.
+
+    ⚠️ Medido sobre el fantasma, con paredes de corona casi verticales en la banda: hundir
+    1 mm sube S solo de 0,149 a 0,160 mm (+8 %, dentro de `MARGEN_AMBIGUEDAD_S`) y lleva
+    el residuo con signo de −0,02 a −0,09 mm, muy lejos de `RESIDUO_FIRMADO_MAX_MM`;
+    flotar 1 mm, a 0,237 y +0,14. Las cotas siguen eso: el signo y el orden, no el tamaño.
+    """
+    registrador = referencia["registrador"]
+    busqueda = registrador.cache["ultima"]
+    rot, tras = busqueda["chosen"]["pose"]
+    raiz = registrador.base_cbct[2]  # arcada superior: la raíz está hacia +S
+    buena = registrador.puntua_secciones(rot, tras, busqueda["por_corte"])
+    movida = registrador.puntua_secciones(rot, tras + mm * raiz, busqueda["por_corte"])
+    assert movida["S"] > buena["S"] + 0.005
+
+    def firmado(p: dict) -> float:
+        return float(np.median([v["median"] for v in p["signed_residual"].values()]))
+
+    if mm > 0:
+        assert firmado(movida) < firmado(buena) - 0.03
+    else:
+        assert firmado(movida) > firmado(buena) + 0.03
+
+
+def test_sin_cobertura_una_pose_no_es_elegible(referencia) -> None:
+    registrador = referencia["registrador"]
+    rot, tras = registrador.cache["ultima"]["chosen"]["pose"]
+    justo = registrador.coherencia(rot, tras, {"C": anatomico.COBERTURA_MIN})
+    assert justo["eligible"]
+    poca = registrador.coherencia(rot, tras, {"C": anatomico.COBERTURA_MIN - 0.01})
+    assert not poca["eligible"]
+    assert any("cobertura" in m for m in poca["why_not"])
+
+
+def _snap() -> TwinSnapshot:
+    return TwinSnapshot(
+        acquisition_id="A1",
+        timestamp=datetime.now(UTC),
+        gaussian_field_ref="sha256:abc",
+        provenance=Provenance(
+            source_file="caso/", modality=Modality.CBCT, agent="cbct-agent@1.0.0"
+        ),
+    )
+
+
+def test_sin_ninguna_cuenca_elegible_hay_veto_y_el_agente_da_confianza_cero(
+    fichero, cbct, monkeypatch
+) -> None:
+    """Se fuerza una cobertura imposible: ninguna cuenca pasa, y eso no se esconde.
+
+    Con un solo arranque, porque lo que se prueba es qué se hace sin elegibles, no la
+    búsqueda.
+    """
+    monkeypatch.setattr(anatomico, "COBERTURA_MIN", 1.01)
+    V, F, etq = fichero
+    origen, destino, registrador, informe, _ = registra(
+        V, F, etq, *cbct, arranques="rejilla(+0,+0,+0)"
+    )
+    resultado = registrador(origen, destino)
+    assert resultado.veto is not None and "cobertura" in resultado.veto
+    assert informe["search"]["veto"] == resultado.veto
+    assert resultado.veto in motivos(informe)
+
+    out = GeometricFusionAgent(registrar=registrador, epsilon_mm=1.5).fuse(
+        _snap(), source=origen, target=destino
+    )
+    assert out.ok
+    assert out.snapshot.provenance.confidence == 0.0
+    assert any(m.startswith("registro vetado") for m in out.hitl_reasons)
+
+
+# --------------------------------------------------------------------------- #
+# 11 · Escala
+# --------------------------------------------------------------------------- #
+def test_un_escaneo_a_otra_escala_se_declara(referencia, fichero, cbct) -> None:
+    """Un 2 % de escala no lo absorbe ninguna pose rígida, y el gate lo dice."""
+    assert not any("modelo rígido" in m for m in motivos(referencia["informe"]))
+    assert referencia["informe"]["uncertainty"]["scale_scanner_to_cbct"] == pytest.approx(
+        1.0, abs=anatomico.ESCALA_MAX
+    )
+
+    V, F, etq = fichero
+    centro = V[etq > 0].mean(axis=0)
+    grande = centro + 1.02 * (V - centro)
+    _, _, _, informe, _ = registra(
+        grande, F, etq, *cbct, incertidumbre=True, arranques="rejilla(+0,+0,+0)"
+    )
+    escala = informe["uncertainty"]["scale_scanner_to_cbct"]
+    assert escala == pytest.approx(1 / 1.02, abs=0.005)
+    assert any("ningún modelo rígido" in m for m in motivos(informe))
+
+
+# --------------------------------------------------------------------------- #
+# Constantes
+# --------------------------------------------------------------------------- #
+def test_la_huella_de_las_constantes_va_al_informe_y_cambia_con_ellas(
+    referencia, monkeypatch
+) -> None:
+    huella = referencia["informe"]["constants_sha256"]
+    assert huella == anatomico.huella_constantes()
+    monkeypatch.setattr(anatomico, "COBERTURA_MIN", 0.51)
+    assert anatomico.huella_constantes() != huella
+    assert math.isfinite(referencia["informe"]["search"]["chosen"]["S"])
