@@ -394,7 +394,7 @@ verdad.
 
 **Estado.**
 - La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
-  262 tests verdes, y ruff, mypy y los guardianes limpios.
+  264 tests verdes, y ruff, mypy y los guardianes limpios.
 - El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
   anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
 
