@@ -298,6 +298,16 @@ def test_con_esmalte_fino_hacia_el_cuello_la_mascara_no_mueve_la_pose(fichero) -
     assert reg.rms_desplazamiento(*poses) < 0.02
 
 
+def test_el_radio_de_la_mascara_de_corona_entra_en_la_incertidumbre(referencia) -> None:
+    """Qué cuenta como corona es una elección declarada, y U dice cuánto mueve la pose. En
+    el fantasma —corona maciza de esmalte— no mueve nada; en el caso A sí (§8)."""
+    inc = referencia["informe"]["uncertainty"]
+    radios = inc["crown_mask_radius"]
+    assert set(radios) == {str(r) for r in anatomico.RADIOS_ESMALTE_INCERTIDUMBRE}
+    assert all(v["converged"] and v["median_mm"] < 0.05 for v in radios.values())
+    assert all("crown_mask_median_mm" in v for v in inc["per_tooth"].values())
+
+
 def test_un_pico_de_ruido_en_el_perfil_no_es_la_otra_arcada() -> None:
     """El valle solo entra como ancla si el segundo pico es de verdad otra arcada.
 

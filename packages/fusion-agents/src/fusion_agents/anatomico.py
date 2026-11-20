@@ -127,6 +127,9 @@ PICO_SECUNDARIO_RELATIVO = 0.25
 # punto: el contorno sigue a 1400, con su medio paso de 8 vecinos; solo elige cuáles cuentan.
 HU_ESMALTE = HU_ARBITRO
 RADIO_ESMALTE_MM = 1.5
+# Qué cuenta como corona es una elección, y U dice cuánto mueve la pose: se reajusta con la
+# máscara a medio milímetro menos y más (un vóxel de 0,3–0,5 mm, a priori).
+RADIOS_ESMALTE_INCERTIDUMBRE = (1.0, 2.0)
 
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
@@ -395,14 +398,17 @@ def limites_losa(arcada: str) -> tuple[float, float]:
 
 
 def junto_al_esmalte(
-    P: np.ndarray, centros: np.ndarray, hu: np.ndarray, radio: float = RADIO_ESMALTE_MM
+    P: np.ndarray, centros: np.ndarray, hu: np.ndarray, radio: float | None = None
 ) -> np.ndarray:
     """Máscara de los puntos de contorno `P` con esmalte a menos de `radio` EN SU CORTE.
 
     En su corte y no en 3D: con una serie dispersa el corte vecino puede estar a 2 mm, y en
     3D una pared de raíz justo por encima del cuello vería el esmalte del corte de abajo.
     Los cortes se identifican por su z redondeada a la micra, como en `por_cortes`.
+    `radio=None` lee `RADIO_ESMALTE_MM` al llamar, no al importar: así la huella de las
+    constantes y lo que se ejecuta no pueden separarse.
     """
+    radio = RADIO_ESMALTE_MM if radio is None else float(radio)
     P = np.asarray(P, dtype=np.float64)
     salida = np.zeros(len(P), dtype=bool)
     if len(P) == 0:
@@ -425,7 +431,7 @@ def junto_al_esmalte(
 
 def contornos_losa(
     centros: np.ndarray, hu: np.ndarray, umbral: float, plano: Plano, arcada: str,
-    *, solo_esmalte: bool = True,
+    *, solo_esmalte: bool = True, radio: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """`(P, N2)`: contornos de corona en la losa inclinada y dentro de la huella de la arcada.
 
@@ -462,7 +468,7 @@ def contornos_losa(
     dentro = (h >= lo) & (h <= hi)
     dentro &= cKDTree(esmalte[:, :2]).query(puntos[:, :2])[0] < RADIO_ARCADA_MM
     if solo_esmalte:
-        dentro &= junto_al_esmalte(puntos, centros, hu)
+        dentro &= junto_al_esmalte(puntos, centros, hu, radio)
     return puntos[dentro], normales[dentro]
 
 
@@ -748,6 +754,10 @@ class RegistroAnatomico:
     plano: Plano
     contornos: dict[float, tuple[np.ndarray, np.ndarray]]
     cache: dict = field(default_factory=dict, compare=False, repr=False)
+    # Contorno a `UMBRAL_CONTORNO` con la máscara de corona a otros radios, por radio.
+    contornos_corona: dict[float, tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     # --- piezas -------------------------------------------------------- #
     @property
@@ -1184,7 +1194,8 @@ class RegistroAnatomico:
 
         Todas las reestimaciones parten de la pose elegida (solo ajuste fino, sin búsqueda).
         Por vértice de la banda: sensibilidad al umbral h, navaja dejando fuera cada diente
-        σ_J y ambigüedad de cuenca a; U = √(h² + σ_J² + a²). Además, el residuo con signo
+        σ_J, ambigüedad de cuenca a y radio de la máscara de corona c (reajuste con
+        `RADIOS_ESMALTE_INCERTIDUMBRE`); U = √(h² + σ_J² + a² + c²). Además, el residuo con signo
         por diente, el condicionamiento de la traslación y la escala que pediría un modelo
         de semejanza.
         """
@@ -1241,8 +1252,24 @@ class RegistroAnatomico:
         else:
             a = a_v = np.zeros_like(h_thr)
 
-        U = np.sqrt(h_thr**2 + sigma_j**2 + a**2)
-        U_v = np.sqrt(h_thr_v**2 + sigma_j_v**2 + a_v**2)
+        # Qué cuenta como corona: el radio de la máscara de esmalte.
+        c_cor = np.zeros_like(h_thr)
+        c_cor_v = np.zeros_like(h_thr)
+        corona: dict[str, Any] = {}
+        for radio, (pr, _) in sorted(self.contornos_corona.items()):
+            if len(pr) < MINIMO_CONTORNO:
+                corona[str(radio)] = "sin contorno suficiente"
+                continue
+            r_c, t_c, _, conv = self.afina(rot, tras, pr)
+            d = self.desplazamiento((r_c, t_c), (rot, tras))
+            norma = np.linalg.norm(d, axis=1)
+            c_cor = np.maximum(c_cor, norma)
+            c_cor_v = np.maximum(c_cor_v, np.abs(d @ sup))
+            corona[str(radio)] = {"median_mm": round(float(np.median(norma)), 3),
+                                  "max_mm": round(float(norma.max()), 3), "converged": conv}
+
+        U = np.sqrt(h_thr**2 + sigma_j**2 + a**2 + c_cor**2)
+        U_v = np.sqrt(h_thr_v**2 + sigma_j_v**2 + a_v**2 + c_cor_v**2)
         por_diente = {}
         for k in dientes:
             m = banda_fdi == k
@@ -1253,6 +1280,7 @@ class RegistroAnatomico:
                 "threshold_median_mm": round(float(np.median(h_thr[m])), 3),
                 "jackknife_median_mm": round(float(np.median(sigma_j[m])), 3),
                 "basin_median_mm": round(float(np.median(a[m])), 3),
+                "crown_mask_median_mm": round(float(np.median(c_cor[m])), 3),
                 "left_out_prediction": prediccion.get(k),
             }
 
@@ -1299,6 +1327,7 @@ class RegistroAnatomico:
             "U_p95_mm": round(float(np.percentile(U, 95)), 3),
             "U_vertical_median_mm": round(float(np.median(U_v)), 3),
             "threshold": umbral,
+            "crown_mask_radius": corona,
             "conditioning": condicionamiento,
             "scale_scanner_to_cbct": round(escala, 5),
             "signed_residual": busqueda["chosen"]["score"].get("signed_residual"),
@@ -1363,8 +1392,13 @@ def prepara_anatomico(
     if len(destino) < MINIMO_CONTORNO:
         raise ValueError(f"solo {len(destino)} puntos de contorno en la losa del CBCT")
 
+    corona = {
+        float(r): contornos_losa(centros, hu, UMBRAL_CONTORNO, plano, escaner.arcada, radio=r)
+        for r in RADIOS_ESMALTE_INCERTIDUMBRE
+    }
     registrador = RegistroAnatomico(
-        escaner=escaner, base_cbct=base_cbct, plano=plano, contornos=contornos
+        escaner=escaner, base_cbct=base_cbct, plano=plano, contornos=contornos,
+        contornos_corona=corona,
     )
     origen = escaner.V[escaner.banda]
     resultado = registrador(origen, destino)

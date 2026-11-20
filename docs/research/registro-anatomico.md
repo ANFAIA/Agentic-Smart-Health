@@ -96,12 +96,13 @@ deja la confianza en 0 y lo manda al gate (`RegistrationResult.veto`).
 | Sensibilidad al umbral | Cuánto se mueve la pose al reajustar contra contornos a 1100 y a 1900 |
 | Navaja | Cuánto se mueve al dejar fuera cada diente, y el error de predicción de ese diente |
 | Ambigüedad de cuenca | Si hay una segunda cuenca casi igual de buena |
+| Máscara de corona | Cuánto se mueve al reajustar con el radio de esmalte a 1,0 y a 2,0 mm en vez de 1,5 (§8) |
 | Residuo con signo | + si el escáner flota, − si se hunde |
 | Condicionamiento | La dirección de traslación peor restringida, en ejes anatómicos |
 | Escala | La que pediría una semejanza; solo se informa, nunca se aplica |
 | Inclinación | El ángulo entre el eje oclusal del escáner registrado y el superior del CBCT. Incluye el error del eje que sale de las etiquetas FDI (0,99° en el fantasma) |
 
-U = √(umbral² + navaja² + ambigüedad²) por vértice. La vertical con que se descompone es el
+U = √(umbral² + navaja² + ambigüedad² + máscara²) por vértice. La vertical con que se descompone es el
 eje superior del escáner ya registrado, que sí está medido (etiquetas FDI).
 
 Los márgenes de la vuelta y de la ambigüedad van en milímetros de S, no en proporción. S
@@ -271,7 +272,8 @@ corte** hay esmalte (HU ≥ 1800, el umbral del árbitro y del plano) a menos de
 radio es el grosor del esmalte en las paredes axiales (1–2,5 mm, menos hacia el cuello)
 más un vóxel. En su corte y no en 3D: en una serie dispersa el corte vecino puede estar a
 2 mm, y en 3D una pared de raíz justo encima del cuello vería el esmalte de abajo. La misma
-regla se aplica a los contornos a 1100 y 1900 de la incertidumbre.
+regla se aplica a los contornos a 1100 y 1900 de la incertidumbre. Y el radio es una
+elección, así que entra en U: se reajusta con 1,0 y 2,0 mm (`RADIOS_ESMALTE_INCERTIDUMBRE`).
 
 Se eligió esto y no subir el umbral del ajuste, por lo que mide el fantasma con una capa
 de esmalte que se adelgaza hasta el cuello y un desenfoque gaussiano (opciones
@@ -318,7 +320,10 @@ hacia la raíz. Rejilla de 0,4 mm.
   excluyen los datos.
 - **U**: en el fantasma nítido, ~0,03 mm (navaja; el umbral no mueve nada porque el campo
   es binario). Con σ = 0,3 mm, U ≈ 1,6 mm por diente, casi todo vertical y casi todo del
-  reajuste a 1900. Cubre el error real (0,44 mm) con holgura. Con y sin máscara sale igual.
+  reajuste a 1900. Cubre el error real (0,44 mm) con holgura. Con y sin máscara sale igual,
+  y cambiar el radio de la máscara a 1,0 o 2,0 mm no mueve la pose (0,000 mm).
+- **Tiempo**: 80–120 s por registro con incertidumbre, según la carga de la máquina; lo
+  mismo que antes de §8.
 - **El desenfoque deja un sesgo vertical** de 0,28–0,44 mm hacia la raíz: el isonivel 1400
   de un borde desenfocado cae dentro del diente, y con paredes casi verticales eso es
   altura. §8 no lo corrige ni lo pretende; es exactitud (§5) y solo lo acotan los puntos
@@ -333,11 +338,13 @@ incertidumbre):
 - Elegida: S 0,617 mm, C 0,558 (lado del escáner 0,82, del contorno 0,56). Ejes a 4,0 /
   4,0 / 1,1° del CBCT. Tres cuencas elegibles de catorce; la siguiente, a 0,115 mm de S.
 - La vuelta puntúa ahora **peor** (S +0,093 mm, C −0,07); en §7 puntuaba 0,71 mm mejor.
-- **U mediana 1,98 mm** (p95 3,88; vertical 1,48). Por diente, de 1,25 mm (12) a 3,95 mm
+- **U mediana 2,14 mm** (p95 3,92; vertical 1,69). Por diente, de 1,26 mm (12) a 3,96 mm
   (17); la domina la navaja (1,1–3,1 mm), y los segundos molares son los peores. El
   reajuste a 1100 no converge en 200 iteraciones y mueve 0,98 mm de mediana; a 1900, 0,35.
-  En §7 la U declarada era de 20 a 43 mm.
-- **Tiempo: 908 s** con la máquina compartida (dos registros del fantasma y la batería de
+  El radio de la máscara mueve 0,24 mm (1,0 mm) y 0,47 mm (2,0 mm) de mediana, hasta 1,1 mm
+  en el 27: aquí sí es una elección que pesa, y por eso entra en U. En §7 la U declarada era
+  de 20 a 43 mm.
+- **Tiempo: 882–908 s** con la máquina compartida (registros del fantasma y la batería de
   tests en paralelo), frente a 22–24 min en §7. Sigue siendo lento.
 - Solo como información, nunca como criterio: la pose queda a 3,2 mm rms de banda del
   registro por cortes. Desde esa pose, el ajuste se mueve 3,1 mm con la máscara y 7,6 mm
@@ -347,7 +354,8 @@ incertidumbre):
 
 - **C queda a 0,06 del mínimo en el caso A**, y varias cuencas no elegidas rondan 0,47–0,52.
   Otro caso con peor acuerdo entre modalidades puede volver a vetarse. No se ha bajado el
-  mínimo: no hay verdad con la que fijarlo.
+  mínimo: no hay verdad con la que fijarlo. Afinando desde la pose del registro por cortes
+  (solo información), C sale 0,57, 0,56 y 0,52 con radio 1,0, 1,5 y 2,0 mm.
 - **El fantasma no reproduce el fallo de §7** ni con esto: con o sin máscara la pose desde
   la verdad es la misma. Que la máscara sea lo que quita el deslizamiento en el caso A es
   una lectura de su mecanismo (sin máscara, 7,6 mm y las cúspides sobre la raíz; con ella,
