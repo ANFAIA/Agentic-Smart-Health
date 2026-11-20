@@ -403,37 +403,40 @@ The reference container used throughout this document holds a real maxillary cas
 intraoral scan, a CBCT, nine image files (six intraoral photographs and three digital
 radiographs) and three reports, contributed by the collaborating practice and processed
 pseudonymised. The scan, the images and the reports are identified by SHA-256 and are not
-stored in the ZIP. Table~\ref{tab:inside} describes that container as written in August 2026
-by writer versions before 0.6.0. Its CBCT density field and its 397-slice volume were built
-from an extraction that, as audited later, merged two DICOM series (\S\ref{sec:endtoend}), so
-they do not describe a coherent single-series volume.
+stored in the ZIP. Table~\ref{tab:inside} describes the last version of that container written
+in August 2026 (29 August, writer 0.4.0), re-read for this document from the archived file and
+re-validated with the validator of that date. It declares no volume asset, so the CBCT is
+present only through the density field fitted to it. That field was built from an extraction
+that, as audited later, merged two DICOM series (\S\ref{sec:endtoend}), so it does not
+describe a coherent single-series volume.
 
 \begin{longtable}{L{6.2cm} L{9.0cm}}
-\caption{Case~A's container as written in August 2026.}\label{tab:inside}\\
+\caption{Case~A's container, last version written in August 2026.}\label{tab:inside}\\
 \toprule
 \textbf{Item} & \textbf{What is there}\\
 \midrule
 \endhead
 ZIP entries & 12; the acquired originals are referenced, not carried\\
-Assets declared & 18, of which 13 are referenced rather than carried\\
+Assets declared & 18, of which 13 are referenced rather than carried (the scan, nine image
+files, three reports); no volume asset\\
 Stored views & 18: four anatomical, the rest one per annotated tooth\\
-Mesh & 112{,}067 vertices, 220{,}085 triangles, a single unpartitioned primitive\\
-Appearance layer & 113{,}827 Gaussians declared, spherical harmonics degree 1,
+Mesh & 112{,}067 vertices, 220{,}085 triangles, split into 15 primitives (14 teeth and a
+remainder), each tooth primitive carrying a model-assigned \code{extras.uos\_fdi}\\
+Appearance layer & 113{,}540 Gaussians declared, spherical harmonics degree 1,
 \code{srgb\_rec709\_display}\\
 CBCT density field & 1{,}341{,}990 Gaussians, subsampled $3\times3\times1$ from
 12{,}072{,}785; built from the mixed extraction\\
 Declared extensions & 3, all listed as \emph{used}, none \emph{required}\\
-Provenance chain & 3 versions, each pointing at the hash of the one before\\
-Conformance & UOS-Core + UOS-Vol, 0 errors under the validator of that date\\
+Provenance chain & 8 versions, each pointing at the hash of the one before\\
+Conformance & UOS-Core, 0 errors and 2 warnings under the validator of that date\\
 \bottomrule
 \end{longtable}
 
 The most recent inventoried container of case~A (2 October 2026, archived appearance
 restored) declares 24 assets, 13 of them external, and validates at UOS-Core with 0 errors
 and 42 warnings. It carries no volume and does not yet resolve the DICOM source of its CBCT
-field, which still derives from the mixed extraction. Its appearance layer is reported with
-113{,}540 Gaussians, although it is declared bit-identical to the August artefact for which
-the table gives 113{,}827; the discrepancy is unresolved. The source-separated runs of
+field, which still derives from the mixed extraction. Its appearance layer, restored from the
+archive, has the same 113{,}540 Gaussians as the table. The source-separated runs of
 7 October 2026 were not inventoried at this level of detail.
 
 Two properties of the table matter beyond the numbers. \textbf{None of the three extensions is
@@ -485,8 +488,7 @@ clinical meaning.
 \section{A case, end to end}\label{sec:endtoend}
 
 The argument so far is structural. This section walks one real case through the whole path,
-because the value of a composition format is not visible in any single stage of it --- it
-is visible in what the sixth reader can do that the first could not.
+because the value of a composition format is not visible in any single stage of it.
 
 \paragraph{Source audit, 7 October 2026.} The walkthrough below records the August 2026
 execution on case~A. An audit of the downloaded ZIP on 7 October 2026 found 401 instances in
@@ -506,26 +508,31 @@ PDFs.
 \paragraph{2. The container is written.} The pipeline ingests the four modalities, aligns
 the CBCT to the scan, labels the teeth, composes the scene and writes the \code{.uos}.
 The pipeline is invoked with one command; its ingestion stage, without fitting or export,
-took at most 12.7\,s in August 2026 against a 60\,s budget. The acquired originals stay where
-the clinic keeps them and are named inside the container by their content hash, the CBCT
-export with a hash per file (397 files in the mixed extraction).
+took at most 12.7\,s in August 2026, the worst case over the clinical cases then measured
+(not necessarily case~A), against a 60\,s budget. The scan, the photographs and the reports
+stay where the clinic keeps them and are named inside the container by their content hash.
+An earlier container of 25 August carried the CBCT export inside, with a hash per file
+(397 files in the mixed extraction); it was not archived. The last August version declares
+no volume asset at all.
 
 What the container added was the relations between the inputs: the CBCT-to-scanner transform
 with its 0.666\,mm residual and the statement that nobody has verified it, the visit each
 asset belongs to, per-vertex tooth codes in the removable inference plane, and the report's
-findings anchored to the teeth they name. In that container per-Gaussian tooth codes were
-also embedded in two PLY payloads declared processing layer~1; writer 0.6.0 moved them to
-\code{derived/}, and that container was not re-exported.
+findings anchored to the teeth they name. In that container the model's tooth codes were
+also embedded in assets declared processing layer~1: the scene GLB was split into one
+primitive per tooth carrying \code{extras.uos\_fdi}, its Gaussian-splat primitive carried
+\code{\_REGION\_ID}, and two PLY payloads carried a per-Gaussian \code{region\_id}.
+Writers 0.5.0 and 0.6.0 moved them to \code{derived/}; that container was not re-exported.
 
 \paragraph{3. It is validated without trusting the writer.} A reader runs the published
 validator over the file and gets a report with check-derived codes. It covers whether the
 manifest parses against the contract (schema conformance is reported as a warning), whether
 carried assets are present and hash as declared, whether the frame graph is connected,
 whether declared layer-3 assets and checked label payloads lie outside \code{derived/}, and
-whether the provenance chain matches the manifests. The August container gave 0 errors,
-conformance UOS-Core + UOS-Vol, and two warnings: one counting the 13 referenced originals
-and one flagging the automatic, unverified CBCT-to-scanner registration. That validation
-predates the check for tooth labels in PLY payloads, which the container would now fail.
+whether the provenance chain matches the manifests. The last August container gave 0 errors,
+conformance UOS-Core, and two warnings: one counting the 13 referenced originals and one
+flagging the automatic, unverified CBCT-to-scanner registration. That validation predates
+the checks for tooth labels in GLB and PLY payloads, which the container would now fail.
 
 
 \paragraph{4. A second reader inspects it.} The project's August 2026 demonstration reports a
@@ -600,8 +607,9 @@ error bar of a cross-modal distance.
 
 Carried assets have hashes checked against their bytes. A directory asset can declare a
 per-file inventory; the validator tests embedded synthetic series for missing, altered and
-extra files. Case~A's 397-file inventory was checked in August 2026, but the reference
-writer leaves its original CBCT outside the ZIP. Validating that ZIP does not verify the
+extra files. Case~A's 397-file inventory was reported as checked on 25 August 2026, in a
+container that carried the files and was not archived; the reference writer now leaves the
+original CBCT outside the ZIP. Validating that ZIP does not verify the
 external series: the report explicitly counts external assets and warns that their contents
 were not checked.
 
@@ -796,8 +804,9 @@ Mesh regeneration (Teeth3DS+ OBJ meshes) & $4.59\times10^{-6}$\,mm against a 0.1
 budget & \code{float32} rounding of decimal coordinates. For a binary STL input such as
 case~A's, the path is exact by construction. Not an accuracy figure.\\
 
-Per-file verification (case~A, August 2026) & 397 files, 419 entries, 0 errors, 0 warnings &
-File integrity of the extraction later found to merge two series; it does not show series
+Per-file verification (case~A, 25 August 2026) & 397 files, 419 entries, 0 errors, 0 warnings &
+As reported at the time; the container was not archived and could not be re-validated. File
+integrity of the extraction later found to merge two series; it does not show series
 coherence. Synthetic embedded fixtures exercise missing, altered and extra files.\\
 
 Watertight arch export (case~A, one run) & 12\,025 closing faces, 11\,936\,mm$^3$, 3.2\,s &
