@@ -906,9 +906,8 @@ class RegistroAnatomico:
         contorno se asigna al diente de su punto de sección más próximo si ese punto es de
         banda y está a ≤ `TOPE_SECCION_MM`. S_t es la mediana sobre cortes; S, la mediana
         sobre dientes, todos pesando igual. C es el mínimo de (a) la fracción de la sección
-        de banda con contorno a ≤ 1 mm y (b) entre los puntos de contorno asignados —su
-        punto de sección más próximo es de banda y está a ≤ `TOPE_SECCION_MM`—, la fracción
-        a ≤ 1 mm.
+        de banda con contorno a ≤ 1 mm y (b) entre los puntos de contorno cuyo punto de
+        sección más próximo es de banda, la fracción a ≤ 1 mm.
 
         Con normales en `por_corte` se mide además el residuo con signo por diente:
         + la sección del escáner queda fuera del diente del CBCT (flota), − dentro (hundida).
@@ -936,13 +935,14 @@ class RegistroAnatomico:
             a_den += int(en_banda.sum())
             a_num += int((d_s[en_banda] <= TOL_COBERTURA_MM).sum())
             cerca_banda = en_banda[j_c]
+            # El lado del contorno se cuenta sobre TODOS los puntos cuyo punto de sección
+            # más próximo es de banda, como antes de la máscara de esmalte. Restringirlo a
+            # los asignados (≤ `TOPE_SECCION_MM`) se propuso para que la pose del registro
+            # por cortes del caso A fuera elegible, y en el fantasma solo subía C en poses
+            # equivocadas: elegir así es elegir con el método antiguo (§8 de la nota).
+            b_den += int(cerca_banda.sum())
+            b_num += int((d_c[cerca_banda] <= TOL_COBERTURA_MM).sum())
             asignado = cerca_banda & (d_c <= TOPE_SECCION_MM)
-            # El lado del contorno se cuenta sobre los mismos puntos que S asigna a un
-            # diente: a más de `TOPE_SECCION_MM` de la sección no son corona de esta
-            # arcada (la otra arcada en sobremordida, un cordal que el escaneo no trae), y
-            # contarlos dejaba C por debajo del mínimo en la pose buena (§7–§8 de la nota).
-            b_den += int(asignado.sum())
-            b_num += int((d_c[asignado] <= TOL_COBERTURA_MM).sum())
             diente_c = lab[j_c]
             for f in np.unique(lab[en_banda]):
                 s_f = en_banda & (lab == f)

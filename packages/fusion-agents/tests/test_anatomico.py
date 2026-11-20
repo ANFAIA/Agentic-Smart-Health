@@ -330,36 +330,6 @@ def test_un_pico_de_ruido_en_el_perfil_no_es_la_otra_arcada() -> None:
     assert dos["second_peak_ratio"] >= anatomico.PICO_SECUNDARIO_RELATIVO
 
 
-def test_esmalte_que_el_escaneo_no_ve_no_baja_la_cobertura(fichero) -> None:
-    """Una corona que el escaneo no trae (un cordal, la otra arcada en sobremordida) no es
-    falta de cobertura: el lado del contorno de C se cuenta sobre los puntos que S asigna a
-    un diente, a ≤ `TOPE_SECCION_MM` de la sección, no sobre todo el esmalte de la losa."""
-    campo, hu = campo_cbct(paso=PASO)
-    centros = campo["centers"] + campo["origin"]
-    # Un cilindro de esmalte de 1 mm de radio a la altura de la banda, 5 mm por palatino
-    # del centro de la arcada, lejos de cualquier corona escaneada.
-    xs, ys, zs = np.meshgrid(np.arange(-1.2, 1.21, PASO), np.arange(-1.2, 1.21, PASO),
-                             np.unique(np.round(centros[:, 2], 3)), indexing="ij")
-    extra = np.c_[xs.ravel(), ys.ravel() + 5.0, zs.ravel()]
-    extra = extra[(np.hypot(extra[:, 0], extra[:, 1] - 5.0) <= 1.0)
-                  & (extra[:, 2] > 1.0) & (extra[:, 2] < 5.5)]
-    V, F, etq = fichero
-    ejes, _ = anatomical_frame(V, etq)
-    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
-    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
-    cobertura = []
-    con_extra = (np.vstack([centros, extra]), np.r_[hu, np.full(len(extra), 2200.0)])
-    for c, h in ((centros, hu), con_extra):
-        base, plano, _ = marco_cbct(c, h)
-        P, N2 = anatomico.contornos_losa(c, h, anatomico.UMBRAL_CONTORNO, plano, "upper")
-        reg = RegistroAnatomico(escaner=escaner, base_cbct=base, plano=plano,
-                                contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
-        cobertura.append(reg.puntua_secciones(*verdad, anatomico._por_corte(P, N2)))
-    assert cobertura[1]["C_contour_side"] == pytest.approx(cobertura[0]["C_contour_side"],
-                                                           abs=0.005)
-    assert cobertura[1]["C"] >= anatomico.COBERTURA_MIN
-
-
 # --------------------------------------------------------------------------- #
 # 2 · Sin azar, y 3 · byte a byte entre procesos
 # --------------------------------------------------------------------------- #
