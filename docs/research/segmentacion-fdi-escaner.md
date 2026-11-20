@@ -529,6 +529,13 @@ C = candidato, B = `normales-ce-baseline.pt`, los dos en el pipeline real:
 | K5 | falso diente ≤ B + 0,01, falsa encía ≤ B + 0,5 puntos, piezas que pasan a < 85 % de corona ≤ 0,5 % |
 | K6 | acierto FDI por vértice de diente ≥ B − 0,005 |
 
+**Precisión del protocolo, fijada antes de ver ningún candidato** (2026-11-20, mientras
+entrenaba el primero). Las configuraciones son tres y en este orden: 16.384 puntos con
+±15°; 8.192 con ±15°; y la resolución ganadora con ±30°. Gana la resolución con menor
+contacto p50 en `dev` entre las que cumplen K3; el candidato final es, de las tres, la de
+menor contacto p50 entre las que cumplen K1-K6 en `dev` (`benchmark_separacion.py elige`).
+La semilla extra que preveía el plan no se entrena, por tiempo.
+
 Si C no los cumple todos en `dev`, la reserva no se toca y esto se cierra como negativo. La
 reserva se evalúa **una vez** (el script se niega a repetirlo). Si cumple todo, C pasa a ser
 el checkpoint por defecto de `segmentar_fdi.py`; si no, queda disponible y declarado.

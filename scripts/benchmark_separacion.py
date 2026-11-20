@@ -30,6 +30,7 @@ import json
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -151,7 +152,7 @@ def predice(args: argparse.Namespace) -> int:
         pos, tri, _ = carga(args.split, paciente, arcada)
         normales = seg.normales_vtk(pos.astype(np.float32), tri).astype(np.float64)
         origen = marco_canonico(pos)
-        salida: dict[str, np.ndarray] = {"razon": np.float32(origen[2])}
+        salida: dict[str, Any] = {"razon": np.float32(origen[2])}
         for r in [NATIVA, *refs]:
             if r == NATIVA:
                 v_ent, n_ent = pos, normales
@@ -232,7 +233,7 @@ def criterios(filas: list[dict]) -> dict:
     fdi = {p: _medias(filas, p, "tooth_fdi_agreement") for p in ("B", "C")}
     cb, cc = sep["B"]["contact_p50_mm_pooled"], sep["C"]["contact_p50_mm_pooled"]
     hueco = {p: nativas[p] - ident[p]["correct"] for p in ("B", "C")}
-    k = {
+    k: dict[str, Any] = {
         "K1_contact": {"B": cb, "C": cc, "arches_improved": mejoran, "arches": len(pares),
                        "pass": bool(cc <= MEJORA_CONTACTO * cb
                                     and mejoran >= ARCADAS_QUE_MEJORAN)},
@@ -341,6 +342,50 @@ def evalua(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Elección en `dev`, fijada el 2026-11-20 antes de ver ningún candidato ────────────────
+#
+# Tres configuraciones como mucho, en este orden:
+#   1. 16.384 puntos, ±15°;   2. 8.192 puntos, ±15°;
+#   3. la resolución que gane entre 1 y 2, con ±30°.
+# Gana la resolución con menor contacto p50 en `dev` entre las que cumplen K3 (no numerar
+# peor); a igualdad, la de menos piezas que sangran. El candidato final es, de los tres, el
+# de menor contacto p50 entre los que cumplen K1-K6 en `dev`. Si ninguno los cumple todos,
+# la reserva no se toca. La semilla extra que preveía el plan no se entrena, por tiempo.
+
+def _resumen_dev(checkpoint: Path) -> dict:
+    ruta_resumen = SALIDA / f"resumen-dev-{sha_de(checkpoint)[:12]}.json"
+    if not ruta_resumen.is_file():
+        raise SystemExit(f"Falta {ruta_resumen}: ejecuta `evalua --split dev` con {checkpoint}.")
+    return json.loads(ruta_resumen.read_text())["acceptance"]
+
+
+def elige_candidato(resumenes: dict[str, dict], modo: str) -> dict:
+    """`resolucion`: el mejor que cumple K3. `final`: el mejor que cumple K1-K6."""
+    validos = {k: v for k, v in resumenes.items()
+               if (v["criteria"]["K3_numbering"]["pass"] if modo == "resolucion"
+                   else v["criteria"]["all_pass"])}
+    if not validos:
+        return {"mode": modo, "chosen": None,
+                "reason": "ninguno cumple " + ("K3" if modo == "resolucion" else "K1-K6")}
+    orden = sorted(validos, key=lambda k: (validos[k]["criteria"]["K1_contact"]["C"],
+                                           validos[k]["criteria"]["K2_bleeding"]["C"]))
+    return {"mode": modo, "chosen": orden[0], "ranking": orden,
+            "contact_p50_mm": {k: validos[k]["criteria"]["K1_contact"]["C"] for k in orden}}
+
+
+def elige(args: argparse.Namespace) -> int:
+    resumenes = {str(c): _resumen_dev(c) for c in args.candidatos}
+    eleccion = elige_candidato(resumenes, args.modo)
+    eleccion["candidates"] = {k: {"all_pass": v["criteria"]["all_pass"],
+                                  **{c: v["criteria"][c]["pass"] for c in v["criteria"]
+                                     if c.startswith("K")}}
+                              for k, v in resumenes.items()}
+    destino = SALIDA / f"eleccion-{args.modo}.json"
+    destino.write_text(json.dumps(eleccion, indent=2) + "\n")
+    print(json.dumps(eleccion, indent=2))
+    return 0 if eleccion["chosen"] else 4
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -351,6 +396,10 @@ def main() -> int:
     e.add_argument("--base", type=Path, default=bm.CHECKPOINT)
     e.add_argument("--candidato", type=Path, required=True)
     e.add_argument("--trabajos", type=int, default=8)
+    el = ordenes.add_parser("elige")
+    el.add_argument("--modo", choices=("resolucion", "final"), required=True)
+    el.add_argument("--candidatos", type=Path, nargs="+", required=True)
+    el.set_defaults(funcion=elige)
     for sub, funcion in ((p, predice), (e, evalua)):
         sub.add_argument("--split", choices=("dev", "reserva"), required=True)
         sub.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")

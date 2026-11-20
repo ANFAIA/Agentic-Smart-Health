@@ -120,6 +120,8 @@ def main() -> int:
     ap.add_argument("--sin-osf", action="store_true", help="Solo los 240 pacientes de siempre.")
     ap.add_argument("--limite", type=int, help="Solo N arcadas (prueba de humo).")
     ap.add_argument("--salida", type=Path, required=True)
+    ap.add_argument("--reanuda", action="store_true",
+                    help="Continúa desde `<salida>.estado.pt` si existe y es de esta orden.")
     args = ap.parse_args()
 
     import torch
@@ -165,8 +167,31 @@ def main() -> int:
     pasos = args.epocas * math.ceil(len(datos) / args.lote)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=pasos,
                                                 pct_start=0.05)
-    historia = []
-    for epoca in range(args.epocas):
+    historia: list[dict] = []
+    primera = 0
+    # ⚠️ El estado se guarda al final de CADA época, con todo lo que decide la siguiente:
+    # pesos, optimizador, planificador y los dos generadores aleatorios. Reanudar sigue la
+    # misma secuencia de muestras y giros que una ejecución sin cortes, salvo el
+    # no-determinismo de la GPU, así que el modelo no depende de si hubo un apagón.
+    estado = args.salida.with_suffix(".estado.pt")
+    firma = {k: v for k, v in vars(args).items() if k not in ("reanuda", "salida")}
+    firma["salida"] = str(args.salida)
+    if args.reanuda and estado.is_file():
+        e = torch.load(estado, map_location=dev, weights_only=False)
+        if e["firma"] != firma:
+            raise SystemExit(f"⚠ {estado} es de otra orden: {e['firma']}")
+        modelo.load_state_dict(e["modelo"])
+        opt.load_state_dict(e["opt"])
+        sched.load_state_dict(e["sched"])
+        rng.bit_generator.state = e["rng_numpy"]
+        torch.set_rng_state(e["rng_torch"].cpu())
+        if e.get("rng_cuda") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state(e["rng_cuda"].cpu())
+        historia, primera = e["historia"], e["epoca"]
+        registro.setdefault("resumed", []).extend(e.get("resumed", []))
+        registro["resumed"].append({"at_epoch": primera, "code": registro["code"]})
+        print(f"reanudado en la época {primera + 1} desde {estado}", flush=True)
+    for epoca in range(primera, args.epocas):
         modelo.train()
         orden = rng.permutation(len(datos))
         perdida = aciertos = total = 0.0
@@ -199,6 +224,14 @@ def main() -> int:
                 "seconds": round(time.perf_counter() - te, 1)}
         historia.append(fila)
         print(json.dumps(fila), flush=True)
+        temporal = estado.with_suffix(".tmp")
+        torch.save({"firma": firma, "epoca": epoca + 1, "modelo": modelo.state_dict(),
+                    "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "rng_numpy": rng.bit_generator.state, "rng_torch": torch.get_rng_state(),
+                    "rng_cuda": (torch.cuda.get_rng_state() if torch.cuda.is_available()
+                                 else None),
+                    "historia": historia, "resumed": registro.get("resumed", [])}, temporal)
+        temporal.replace(estado)
 
     nombres = sorted(n for n, *_ in datos)
     args.salida.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +247,7 @@ def main() -> int:
         "train_ids_sha256": hashlib.sha256("\n".join(nombres).encode()).hexdigest(),
         "history": historia, "run_record": registro,
     }, args.salida)
+    estado.unlink(missing_ok=True)
     print(f"→ {args.salida} ({(time.perf_counter() - t0) / 60:.0f} min)")
     return 0
 
