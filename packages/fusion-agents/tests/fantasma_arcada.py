@@ -129,15 +129,25 @@ def _en_raiz_realista(
     return dentro
 
 
+# Tejido que se conserva tras desenfocar: por debajo es aire o partes blandas.
+SUELO_DESENFOQUE = 300.0
+
+
 def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
     inclinacion: np.ndarray | None = None, raices: str = "conicas",
+    desenfoque_mm: float = 0.0,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
 
     `raices`: `"conicas"` (por defecto, lo de siempre: conos finos) o `"realistas"` (tan
     anchas como el cuello de la corona, ver `_en_raiz_realista`). En los dos casos la raíz
     es dentina (1600) y la corona esmalte (2200).
+
+    `desenfoque_mm` > 0 convoluciona el volumen (aire 0) con una gaussiana de esa σ antes de
+    quedarse con el tejido (≥ `SUELO_DESENFOQUE`), como hace la PSF de un CBCT. Con eso el
+    borde a 1400 deja de estar sobre la superficie: en la dentina (1600) cae bastante
+    dentro, en el esmalte (2200) algo dentro, y más en las cúspides, que son estrechas.
     """
     if raices not in ("conicas", "realistas"):
         raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
@@ -161,6 +171,17 @@ def campo_cbct(
     duro = corona | raiz
     hu = np.where(corona, 2200.0, 1600.0)[duro]
     centros = p[duro]
+    if desenfoque_mm > 0:
+        from scipy.ndimage import gaussian_filter
+
+        if quita is not None or len(np.unique(np.round(np.diff(zs), 6))) > 1:
+            raise ValueError("el desenfoque necesita una rejilla regular, sin cortes quitados")
+        vol = np.where(corona, 2200.0, np.where(raiz, 1600.0, 0.0)).reshape(gx.shape)
+        vol = gaussian_filter(vol, sigma=(desenfoque_mm / paso, desenfoque_mm / paso,
+                                          desenfoque_mm / paso_z))
+        v = vol.ravel()
+        duro = v >= SUELO_DESENFOQUE
+        hu, centros = v[duro], p[duro]
     origen = np.array([3.0, -2.0, 1.5])
     return {"centers": centros - origen, "origin": origen}, hu
 

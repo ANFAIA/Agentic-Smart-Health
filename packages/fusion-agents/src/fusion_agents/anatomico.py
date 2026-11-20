@@ -41,6 +41,15 @@ pierden. Las poses se agrupan en cuencas y se elige por `puntua_secciones`, que 
 función que se ajusta: la distancia simétrica, dentro de cada corte real del CBCT, entre
 la sección exacta del escáner y el contorno, con todos los dientes pesando igual.
 
+5 · **El borde del CBCT no es la superficie, y se estima cuánto.** El isonivel 1400 cae
+dentro o fuera del diente según la PSF y la calibración de grises, y más en la dentina y
+en las cúspides que en las paredes de esmalte. Un ajuste que lo toma por la superficie se
+desliza por el cono de la corona: hacia la raíz si el borde queda dentro, que es lo que
+hizo en el caso A (`docs/research/registro-anatomico.md` §7–8). S estima y descuenta un
+desfase común a lo largo de la normal (`DESFASE_EN_S`) y se mide sobre la corona entera,
+cúspide incluida, no solo sobre la banda. El ajuste puede estimarlo también
+(`DESFASE_EN_AJUSTE`), pero no lo hace por defecto: ver la constante.
+
 ⚠️ **Precisión, no exactitud.** Todo lo que este módulo declara —sensibilidad al umbral,
 navaja dejando fuera cada diente, ambigüedad de cuenca, condicionamiento, escala— mide
 cuánto se mueve la pose ante elecciones declaradas. Un sesgo común a todas ellas (el
@@ -82,9 +91,9 @@ from fusion_agents.preparacion import HU_ARBITRO, plano_oclusal_del_esmalte
 from fusion_agents.registration import (
     DEFAULT_OVERLAP_MM,
     RegistrationResult,
+    _sistema_punto_plano,
     informacion_6dof,
     matrix_to_quaternion,
-    paso_punto_plano,
     paso_similitud_punto_plano,
     rotacion_de_vector,
 )
@@ -104,6 +113,12 @@ BANDA_PLANO_MM = 6.0
 SUAVIZADO_PERFIL_MM = 1.0
 SEPARACION_PICOS_MM = 3.0
 VALLE_RELATIVO = 0.75
+# El valle solo es el contacto entre arcadas si cae en la mitad central entre los dos picos
+# (a ≤ 0,25 de la separación del punto medio). A priori: si cada pico es el esmalte de una
+# arcada, el contacto queda entre las dos coronas, que tienen alturas parecidas, y por
+# tanto cerca del punto medio. Un valle pegado a uno de los picos es un hombro del perfil
+# (un pico menor de dentina o de hueso denso por encima de las coronas), no un contacto.
+VALLE_CENTRAL = 0.25
 
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
@@ -119,6 +134,10 @@ DESPLAZAMIENTOS_VERTICALES_MM = (-2.0, 0.0, 2.0)
 
 # Etapa gruesa sobre un representante del contorno por vóxel de este lado.
 REJILLA_GRUESA_MM = 1.0
+# Sentido escáner→contorno: un vértice de corona por vóxel de este lado. A priori: del orden
+# del vóxel de un CBCT dental (0,2–0,4 mm), para que cada muestra del borde tenga más o menos
+# una del escáner enfrente; más fino solo repetiría parejas con el mismo punto de contorno.
+REJILLA_INVERSA_MM = 0.5
 # Dos poses son la misma cuenca si el rms del desplazamiento de la banda es menor que esto.
 RADIO_CUENCA_GRUESA_MM = 0.5
 RADIO_CUENCA_MM = 0.1
@@ -148,6 +167,28 @@ ESCALA_MAX = 0.005
 DISCREPANCIA_MARCOS_GRADOS = 30.0
 INCERTIDUMBRE_MAX_MM = DEFAULT_OVERLAP_MM
 RESIDUO_FIRMADO_MAX_MM = 0.5
+
+# Sentido escáner→contorno en el AJUSTE (`RegistroAnatomico.empareja_inverso`): corona del
+# escáner contra el borde del corte. Implementado y medido, y APAGADO: en el fantasma
+# desenfocado (σ 0,4 mm) deja la pose a 0,49–1,16 mm de la verdad, frente a 0,20–0,33 sin
+# él y con el desfase del isonivel; la erosión del borde en las cúspides, que son
+# estrechas, no es un desfase común y este sentido la lee como altura (§8 de la nota). La
+# puntuación S sí es bilateral y sobre la corona entera.
+BILATERAL = False
+# DESFASE común del isonivel: el borde a `UMBRAL_CONTORNO` no tiene por qué estar sobre la
+# superficie que mide el escáner. Con grises sin calibrar o con desenfoque queda dentro o
+# fuera del diente una fracción de milímetro, y lo que lo ignora lo compensa con la pose:
+# hacia oclusal si el borde queda fuera, hacia la raíz si queda dentro, por el cono de la
+# corona (§8 de la nota).
+# - En S (`DESFASE_EN_S`) se estima y se descuenta: S compara poses, y con él la verdad del
+#   fantasma desenfocado puntúa mejor que la pose deslizada (sin él, al revés).
+# - En el AJUSTE (`DESFASE_EN_AJUSTE`) está implementado y APAGADO. Con desenfoque lleva la
+#   pose de 0,71 a 0,31 mm de la verdad, pero en el cono de la corona subir se parece a
+#   encoger: el valle altura–desfase queda casi plano, y el mismo escaneo subdividido 1→4
+#   converge a 0,19 mm del original (−0,09 frente a +0,09 en altura). Eso rompe P0-teselado
+#   del protocolo, y una pose que depende del teselado no se puede declarar.
+DESFASE_EN_S = True
+DESFASE_EN_AJUSTE = False
 
 # Iteraciones y parada.
 ITER_GRUESO = 60
@@ -254,12 +295,23 @@ def _perfil_z(z: np.ndarray) -> dict:
     if picos and segundo is not None:
         a, b = sorted((picos[0], segundo))
         valle = a + int(np.argmin(perfil[a : b + 1]))
+        medio = 0.5 * (rejilla[a] + rejilla[b])
+        posicion = float(abs(rejilla[valle] - medio) / (rejilla[b] - rejilla[a]))
+        hondo = bool(perfil[valle] < VALLE_RELATIVO * min(perfil[a], perfil[b]))
+        central = posicion <= VALLE_CENTRAL
         salida.update(
-            bimodal=bool(perfil[valle] < VALLE_RELATIVO * min(perfil[a], perfil[b])),
+            bimodal=hondo and central,
             peaks_mm=[round(float(rejilla[a]), 2), round(float(rejilla[b]), 2)],
             valley_mm=round(float(rejilla[valle]), 2),
             valley_ratio=round(float(perfil[valle] / min(perfil[a], perfil[b])), 3),
+            # Distancia del valle al punto medio entre picos, en fracción de su separación.
+            valley_offcentre=round(posicion, 3),
         )
+        if hondo and not central:
+            salida["valley_rejected"] = (
+                f"valle a {posicion:.2f} de la separación del punto medio entre picos "
+                f"(máximo {VALLE_CENTRAL}): no es un contacto entre dos coronas"
+            )
     else:
         salida["bimodal"] = False
     return salida
@@ -524,6 +576,18 @@ class Escaner:
     normal_cara: np.ndarray = field(repr=False, compare=False)
     caras_de: np.ndarray = field(repr=False, compare=False)
     inicio: np.ndarray = field(repr=False, compare=False)
+    # Corona ENTERA de cada diente hasta la base de la banda (de la cúspide a
+    # `ALTO_BANDA_MM` por debajo): la banda más la parte oclusal. Es lo que el escáner pone
+    # frente al CBCT en el sentido escáner→contorno (`empareja_inverso`, `puntua_secciones`).
+    corona: np.ndarray = field(repr=False, compare=False)
+    corona_cara: np.ndarray = field(repr=False, compare=False)
+    # Un vértice de corona por vóxel de `REJILLA_GRUESA_MM` (etapa gruesa) y de
+    # `REJILLA_INVERSA_MM` (el resto), en los ejes anatómicos del propio escáner —no en los
+    # del fichero: moverlo no puede cambiar la submuestra—. Por vóxel y no por vértice para
+    # que el peso de cada zona sea su área y no su teselado: el polo de una corona del
+    # fantasma tiene la quinta parte de los vértices.
+    corona_gruesa: np.ndarray = field(repr=False, compare=False)
+    corona_fina: np.ndarray = field(repr=False, compare=False)
 
     def mas_cercano(
         self, q: np.ndarray, *, solo_banda: bool = False
@@ -595,9 +659,11 @@ class Escaner:
         banda, alturas_punta = banda_escaner(V, etq, oclusal, centro)
         h = (V - centro) @ oclusal
         puntas = {}
+        corona = np.zeros(len(V), dtype=bool)
         for c, punta in alturas_punta.items():
             m = (etq == c) & (h >= punta)
             puntas[c] = V[m].mean(axis=0)
+            corona |= (etq == c) & (h >= punta - ALTO_BANDA_MM)
         e = etq[F]
         etiqueta_cara = np.where((e[:, 0] == e[:, 1]) & (e[:, 1] == e[:, 2]), e[:, 0], 0)
         normal_cara = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
@@ -606,13 +672,53 @@ class Escaner:
                                 where=norma > 0)
         orden = np.argsort(F.ravel(), kind="stable")
         inicio = np.searchsorted(F.ravel()[orden], np.arange(len(V) + 1))
+        # Normales hacia FUERA del diente: en la cúspide, la normal exterior apunta hacia
+        # oclusal. Se orientan las de vértice y las de cara por separado (las de vértice
+        # pueden venir del fichero con otro convenio que el sentido de giro de las caras).
+        cima = np.zeros(len(V), dtype=bool)
+        for c, punta in alturas_punta.items():
+            cima |= (etq == c) & (h >= punta - MARGEN_MORDIDA_MM)
+        if cima.any():
+            if float(np.median(N[cima] @ oclusal)) < 0:
+                N = -N
+            caras_cima = cima[F].all(axis=1)
+            if caras_cima.any() and float(np.median(normal_cara[caras_cima] @ oclusal)) < 0:
+                normal_cara = -normal_cara
         base = np.stack([_unitario(ejes.derecha), _unitario(ejes.anterior),
                          _unitario(ejes.superior)])
+        indices_corona = np.flatnonzero(corona)
+        local = (V[indices_corona] - centro) @ base.T
+
+        def submuestra(paso: float) -> np.ndarray:
+            # Como `rejilla_gruesa`, pero con la distancia al centroide y las coordenadas
+            # redondeadas a la micra antes de comparar: una malla simétrica (la del
+            # fantasma lo es) tiene empates exactos que el ruido de coma flotante de mover
+            # el fichero rompería cada vez de un modo. Y en orden de coordenadas
+            # anatómicas, no de índice: reordenar el fichero no puede cambiar ni el orden
+            # de las sumas del ajuste.
+            if len(local) == 0:
+                return indices_corona
+            clave = np.floor(local / paso).astype(np.int64)
+            _, inversa = np.unique(clave, axis=0, return_inverse=True)
+            inversa = np.asarray(inversa).ravel()
+            centroide = np.zeros((int(inversa.max()) + 1, 3))
+            np.add.at(centroide, inversa, local)
+            centroide /= np.bincount(inversa)[:, None]
+            d = np.round(np.linalg.norm(local - centroide[inversa], axis=1), 6)
+            q = np.round(local, 6)
+            orden = np.lexsort((q[:, 2], q[:, 1], q[:, 0], d, inversa))
+            primero = orden[np.r_[True, inversa[orden][1:] != inversa[orden][:-1]]]
+            return indices_corona[primero[np.lexsort(q[primero].T[::-1])]]
+
+        gruesa = submuestra(REJILLA_GRUESA_MM)
+        fina = submuestra(REJILLA_INVERSA_MM)
         return cls(
             V=V, F=F, N=N, etiquetas=etq, banda=banda, base=base, oclusal=oclusal,
             centro=centro, arcada=str(ejes.arcada), puntas=puntas, arbol=cKDTree(V),
             etiqueta_cara=etiqueta_cara, banda_cara=banda[F].all(axis=1),
             normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio,
+            corona=corona, corona_cara=corona[F].all(axis=1), corona_gruesa=gruesa,
+            corona_fina=fina,
         )
 
     def dientes_en_banda(self) -> list[int]:
@@ -662,6 +768,78 @@ def _hilos(q: np.ndarray) -> int:
 
 def _inversa(rot: np.ndarray, tras: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rot.T, -rot.T @ tras
+
+
+def paso_con_desfase(
+    src: np.ndarray, dst: np.ndarray, normales: np.ndarray, pesos: np.ndarray | None,
+    *, tope: tuple[float, float], desfase: bool = True,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Paso punto a plano que estima a la vez un desfase común `b` a lo largo de la normal.
+
+    Minimiza Σ wᵢ ((R·srcᵢ + t − dstᵢ)·nᵢ + b)², con `nᵢ` hacia fuera del diente: `b > 0`
+    es un borde del CBCT que queda DENTRO de la superficie del escáner. `b` no se acumula
+    entre iteraciones: cada paso lo reestima entero, porque el residuo es absoluto. El
+    `tope` limita solo la parte de la pose. Sin `desfase` es `paso_punto_plano`.
+    """
+    jac, b, w, centro = _sistema_punto_plano(src, dst, normales, pesos)
+    if desfase:
+        jac = np.c_[jac, np.ones(len(jac))]
+    jtw = jac.T * w
+    x = np.linalg.lstsq(jtw @ jac, jtw @ b, rcond=None)[0]
+    pose = x[:6]
+    exceso = max(float(np.linalg.norm(pose[:3])) / tope[0],
+                 float(np.linalg.norm(pose[3:])) / tope[1])
+    if exceso > 1.0:
+        pose = pose / exceso
+    rot = rotacion_de_vector(pose[:3])
+    return rot, centro - rot @ centro + pose[3:], float(x[6]) if desfase else 0.0
+
+
+# Factor con que se estira la altura en el árbol del contorno para que el vecino más
+# próximo de un punto del escáner caiga SIEMPRE en el corte más cercano (ver
+# `ContornoIndexado`). No decide nada: basta con que supere la anchura del campo dividida
+# por la separación mínima entre cortes, y con 1e3 sobra.
+_ESTIRA_Z = 1e3
+
+
+@dataclass(frozen=True, eq=False)
+class ContornoIndexado:
+    """El contorno del CBCT preparado para buscar desde el escáner, corte a corte.
+
+    `normales` son las del borde en el corte, en 3D con componente vertical nula. El árbol
+    está sobre `(x, y, z·_ESTIRA_Z)`: consultado con la z del corte más cercano, devuelve
+    el punto de contorno más próximo EN PLANTA dentro de ese corte. Un punto del escáner
+    a más de medio paso mediano del corte más cercano —en un hueco de la serie— no tiene
+    corte que lo vea y no empareja.
+    """
+
+    P: np.ndarray
+    normales: np.ndarray
+    zs: np.ndarray
+    medio_paso: float
+    arbol: cKDTree = field(repr=False)
+
+    @classmethod
+    def construye(cls, P: np.ndarray, N2: np.ndarray) -> ContornoIndexado:
+        P = np.asarray(P, dtype=np.float64)
+        z = np.round(P[:, 2], 3)
+        zs = np.unique(z)
+        paso = float(np.median(np.diff(zs))) if len(zs) > 1 else 1.0
+        normales = np.c_[np.asarray(N2, dtype=np.float64), np.zeros(len(P))]
+        return cls(P=P, normales=normales, zs=zs, medio_paso=0.5 * paso,
+                   arbol=cKDTree(np.c_[P[:, :2], z * _ESTIRA_Z]))
+
+    def mas_cercano(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`(validos, indice, distancia_en_planta)` del contorno para cada `x` (mm DICOM)."""
+        x = np.asarray(x, dtype=np.float64)
+        k = np.clip(np.searchsorted(self.zs, x[:, 2]), 1, max(len(self.zs) - 1, 1))
+        abajo = self.zs[k - 1]
+        arriba = self.zs[np.minimum(k, len(self.zs) - 1)]
+        corte = np.where(np.abs(x[:, 2] - abajo) <= np.abs(arriba - x[:, 2]), abajo, arriba)
+        ok = np.abs(x[:, 2] - corte) <= self.medio_paso
+        _, j = self.arbol.query(np.c_[x[:, :2], corte * _ESTIRA_Z], workers=_hilos(x))
+        d = np.linalg.norm(x[:, :2] - self.P[j, :2], axis=1)
+        return ok & (d <= TOPE_SECCION_MM), j, d
 
 
 @dataclass(frozen=True, eq=False)
@@ -750,15 +928,65 @@ class RegistroAnatomico:
             ok &= esc.etiqueta_cara[cara] != excluye
         return ok, punto, esc.normal_cara[cara], d
 
+    def indexado(self, P: np.ndarray) -> ContornoIndexado | None:
+        """El contorno `P` indexado por cortes, si es uno de `contornos` (con normales)."""
+        P = np.ascontiguousarray(P, dtype=np.float64)
+        clave = "indexado:" + hashlib.sha256(P.tobytes()).hexdigest()
+        if clave not in self.cache:
+            n2 = self._normales_de(P)
+            self.cache[clave] = None if n2 is None else ContornoIndexado.construye(P, n2)
+        return self.cache[clave]
+
+    def empareja_inverso(
+        self, ri: np.ndarray, ti: np.ndarray, contorno: ContornoIndexado, *,
+        gruesa: bool = False, excluye: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """`(q, punto, normal, distancia)` del sentido que faltaba: corona del escáner → contorno.
+
+        Cada vértice de la CORONA (no solo la banda) busca su punto de contorno más próximo
+        en planta dentro del corte más cercano. Devuelve, en el marco del escáner, el punto
+        de contorno movido (`q`, lo que se ajusta), el vértice (`punto`), la normal del
+        borde en el corte llevada a ese marco y la distancia en planta.
+
+        Es lo que una pose deslizada hacia la raíz deja sin pareja: la parte oclusal de la
+        corona del escáner queda metida dentro de una raíz o de un cuello, a milímetros de
+        cualquier borde, y la banda deja de encajar en cuanto la sección se estrecha hacia
+        la cúspide. El sentido contorno→banda no lo cobra nunca: el contorno de corona que
+        queda por debajo empareja con escáner que no es banda y se cae solo.
+        """
+        esc = self.escaner
+        idx = esc.corona_gruesa if gruesa else esc.corona_fina
+        if excluye is not None:
+            idx = idx[esc.etiquetas[idx] != excluye]
+        s = esc.V[idx]
+        x = (s - ti) @ ri  # al CBCT: x = riᵀ (s − ti)
+        ok, j, d = contorno.mas_cercano(x)
+        j = j[ok]
+        q = contorno.P[j] @ ri.T + ti
+        return q, s[ok], contorno.normales[j] @ ri.T, d[ok]
+
     def afina(
         self, rot: np.ndarray, tras: np.ndarray, P: np.ndarray, *, iters: int = ITER_FINO,
         tol: float = TOL_MM, excluye: int | None = None, superficie: bool = True,
+        inverso: ContornoIndexado | None = None, gruesa: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, int, bool]:
-        """ICP punto a plano recortado del contorno `P` al escáner, desde `(rot, tras)`.
+        """ICP punto a plano recortado entre el contorno y el escáner.
 
-        Trabaja con la pose inversa: el contorno se lleva al marco del escáner y se empareja
-        con TODO el escáner (`empareja`); la pareja cuenta solo si cae en la banda (y no en
-        el diente `excluye`). Devuelve la pose escáner→CBCT, las iteraciones y si convergió.
+        Sentido contorno→escáner: trabaja con la pose inversa, el contorno `P` se lleva al
+        marco del escáner y se empareja con TODO el escáner (`empareja`); la pareja cuenta
+        solo si cae en la banda (y no en el diente `excluye`).
+
+        Con `BILATERAL` (apagado por defecto, ver la constante), además el sentido
+        escáner→contorno (`empareja_inverso`, contra `inverso`, que por defecto es `P`
+        indexado si es uno de `contornos`): la corona entera, cúspide incluida, contra
+        el borde del corte más cercano. Cada sentido se recorta por separado y pesa lo
+        mismo en el paso, sea cual sea su número de parejas. Sin él, una pose deslizada
+        hacia la raíz no cuesta nada mientras la raíz sea tan ancha como la banda
+        (`docs/research/registro-anatomico.md` §7–8). `gruesa` usa la submuestra de corona
+        de la etapa gruesa. Con `DESFASE_EN_AJUSTE` (apagado) cada paso estima además el
+        desfase común del isonivel (`paso_con_desfase`).
+
+        Devuelve la pose escáner→CBCT, las iteraciones y si convergió.
 
         ⚠️ **Ciclos.** Con recorte, el conjunto de parejas puede alternar entre dos estados y
         el ICP oscilar con periodo 2 o más sin llegar nunca a la tolerancia. Si la pose
@@ -767,6 +995,8 @@ class RegistroAnatomico:
         resultado no depende de en qué paridad se agotan las iteraciones.
         """
         ri, ti = _inversa(rot, tras)
+        if inverso is None and BILATERAL:
+            inverso = self.indexado(P)
         lo, hi = P.min(axis=0), P.max(axis=0)
         sonda = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                           for z in (lo[2], hi[2])])
@@ -781,10 +1011,24 @@ class RegistroAnatomico:
                 break
             usa = idx[d[idx] <= np.quantile(d[idx], TRIM)]
             coste = float(np.mean(d[usa]))
-            dr, dt = paso_punto_plano(q[usa], punto[usa], normal[usa], tope=TOPE_PASO)
+            src, dst, nor = q[usa], punto[usa], normal[usa]
+            pesos = None
+            if inverso is not None:
+                qr, pr, nr, dr_ = self.empareja_inverso(ri, ti, inverso, gruesa=gruesa,
+                                                        excluye=excluye)
+                if len(dr_) >= CORRESPONDENCIAS_MINIMAS:
+                    usa_r = dr_ <= np.quantile(dr_, TRIM)
+                    coste = 0.5 * (coste + float(np.mean(dr_[usa_r])))
+                    pesos = np.r_[np.full(len(src), 1.0 / len(src)),
+                                  np.full(int(usa_r.sum()), 1.0 / int(usa_r.sum()))]
+                    src = np.vstack([src, qr[usa_r]])
+                    dst = np.vstack([dst, pr[usa_r]])
+                    nor = np.vstack([nor, nr[usa_r]])
+            dr, dt, _ = paso_con_desfase(src, dst, nor, pesos, tope=TOPE_PASO,
+                                         desfase=DESFASE_EN_AJUSTE)
             historia.append((ri, ti, coste))
             ri, ti = dr @ ri, dr @ ti + dt
-            movido = float(np.max(np.linalg.norm(q[usa] @ dr.T + dt - q[usa], axis=1)))
+            movido = float(np.max(np.linalg.norm(src @ dr.T + dt - src, axis=1)))
             if movido < tol:
                 convergido = True
                 break
@@ -829,10 +1073,27 @@ class RegistroAnatomico:
         Para cada corte del CBCT: se corta el escáner movido en esa z exacta; por diente,
         la media de dos medianas —sección→contorno y contorno asignado→sección—; un punto de
         contorno se asigna al diente de su punto de sección más próximo si ese punto es de
-        banda y está a ≤ `TOPE_SECCION_MM`. S_t es la mediana sobre cortes; S, la mediana
-        sobre dientes, todos pesando igual. C es el mínimo de (a) la fracción de la sección
-        de banda con contorno a ≤ 1 mm y (b) entre los puntos de contorno cuyo punto de
-        sección más próximo es de banda, la fracción a ≤ 1 mm.
+        CORONA (`Escaner.corona`: de la cúspide a la base de la banda) y está a ≤
+        `TOPE_SECCION_MM`. S_t es la mediana sobre cortes; S, la mediana sobre dientes,
+        todos pesando igual.
+
+        La sección es la corona entera y no solo la banda porque es la que se queda sin
+        pareja cuando la pose se desliza hacia la raíz: la banda encaja contra una raíz casi
+        igual de ancha, pero la parte oclusal de la corona queda dentro de ella (§8 de la
+        nota). Medido en el fantasma con raíces realistas, desde la verdad: 8 mm hacia la
+        raíz subían S con la banda de 0,148 a 0,295 mm, y con la corona y el desfase de
+        0,115 a 0,362.
+
+        Con `DESFASE_EN_S` y normales en `por_corte`, cada distancia es `|r − b|`: el residuo
+        con signo contra la normal del borde menos el desfase común `b` del isonivel (la
+        mediana de esos residuos en la sección de corona), que va a `isolevel_offset_mm`.
+
+        C es (a): la fracción de la sección de corona con contorno a ≤ 1 mm. El lado del
+        contorno (b) —entre los puntos de contorno cuyo punto de sección más próximo es de
+        corona, la fracción a ≤ 1 mm— se informa pero no decide: cuenta bordes que el
+        escáner no puede ver por construcción (la arcada contraria con resalte, hueso por
+        encima del umbral cerca del cuello), y con eso no mide si la pose cubre lo que el
+        escáner sí ve.
 
         Con normales en `por_corte` se mide además el residuo con signo por diente:
         + la sección del escáner queda fuera del diente del CBCT (flota), − dentro (hundida).
@@ -841,9 +1102,11 @@ class RegistroAnatomico:
         vt = esc.V @ rot.T + tras
         zf = vt[esc.F][:, :, 2]
         zmin, zmax = zf.min(axis=1), zf.max(axis=1)
-        por_diente: dict[int, list[float]] = {}
         firmados: dict[int, list[np.ndarray]] = {}
-        a_num = a_den = b_num = b_den = 0
+        # Primera pasada: por corte y diente, distancias y residuos con signo (+ el escáner
+        # queda fuera del borde del CBCT), contra la normal del borde.
+        trozos: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        lado_b: list[tuple[np.ndarray, np.ndarray]] = []
         for z, c2, n2 in por_corte:
             caras = np.flatnonzero((zmin <= z) & (zmax >= z))
             if len(caras) == 0 or len(c2) == 0:
@@ -852,40 +1115,72 @@ class RegistroAnatomico:
             if len(s2) == 0:
                 continue
             lab = esc.etiqueta_cara[cara]
-            en_banda = esc.banda_cara[cara] & (lab > 0)
+            en_banda = esc.corona_cara[cara] & (lab > 0)
             if solo is not None:
                 en_banda &= lab == solo
             d_s, j_s = cKDTree(c2).query(s2)
             d_c, j_c = cKDTree(s2).query(c2)
-            a_den += int(en_banda.sum())
-            a_num += int((d_s[en_banda] <= TOL_COBERTURA_MM).sum())
+            r_s = r_c = None
+            if n2 is not None:
+                r_s = np.einsum("ij,ij->i", s2 - c2[j_s], n2[j_s])
+                r_c = np.einsum("ij,ij->i", s2[j_c] - c2, n2)
             cerca_banda = en_banda[j_c]
-            b_den += int(cerca_banda.sum())
-            b_num += int((d_c[cerca_banda] <= TOL_COBERTURA_MM).sum())
+            lado_b.append((d_c[cerca_banda],
+                           r_c[cerca_banda] if r_c is not None else d_c[cerca_banda]))
             asignado = cerca_banda & (d_c <= TOPE_SECCION_MM)
             diente_c = lab[j_c]
             for f in np.unique(lab[en_banda]):
                 s_f = en_banda & (lab == f)
                 c_f = asignado & (diente_c == f)
-                if c_f.any():
-                    por_diente.setdefault(int(f), []).append(
-                        0.5 * (float(np.median(d_s[s_f])) + float(np.median(d_c[c_f])))
-                    )
-                if n2 is not None:
-                    util = s_f & (d_s <= TOPE_SECCION_MM)
-                    if util.any():
-                        firmados.setdefault(int(f), []).append(np.einsum(
-                            "ij,ij->i", s2[util] - c2[j_s[util]], n2[j_s[util]]
-                        ))
+                util = s_f & (d_s <= TOPE_SECCION_MM)
+                if r_s is not None and util.any():
+                    firmados.setdefault(int(f), []).append(r_s[util])
+                trozos.append((
+                    int(f), d_s[s_f], d_c[c_f],
+                    r_s[s_f] if r_s is not None else d_s[s_f],
+                    r_c[c_f] if r_c is not None else d_c[c_f],
+                ))
+        # El desfase común del isonivel: la mediana de los residuos con signo de la sección
+        # de corona con borde a ≤ `TOPE_SECCION_MM`. Sin normales, o sin
+        # `DESFASE_EN_S`, no hay desfase y S es la distancia sin signo de siempre.
+        con_signo = DESFASE_EN_S and bool(firmados)
+        desfase = (
+            float(np.median(np.concatenate([np.concatenate(v) for v in firmados.values()])))
+            if con_signo else 0.0
+        )
+
+        def error(d: np.ndarray, r: np.ndarray) -> np.ndarray:
+            # Lo que el desfase no explica. `d` acota por debajo un residuo que el desfase
+            # no puede hacer pequeño solo porque el punto quede de lado sobre la normal.
+            return np.abs(r - desfase) if con_signo else d
+
+        por_diente: dict[int, list[float]] = {}
+        a_num = a_den = 0
+        for f, d_s, d_c, r_s, r_c in trozos:
+            e_s = error(d_s, r_s)
+            a_den += len(e_s)
+            a_num += int(((e_s <= TOL_COBERTURA_MM)
+                          & (d_s <= TOL_COBERTURA_MM + abs(desfase))).sum())
+            if len(d_c):
+                por_diente.setdefault(f, []).append(
+                    0.5 * (float(np.median(e_s)) + float(np.median(error(d_c, r_c))))
+                )
+        b_num = b_den = 0
+        for d_c, r_c in lado_b:
+            e_c = error(d_c, r_c)
+            b_den += len(e_c)
+            b_num += int(((e_c <= TOL_COBERTURA_MM)
+                          & (d_c <= TOL_COBERTURA_MM + abs(desfase))).sum())
         s_t = {f: float(np.median(v)) for f, v in sorted(por_diente.items())}
         cobertura_a = a_num / a_den if a_den else 0.0
         cobertura_b = b_num / b_den if b_den else 0.0
         salida = {
             "S": float(np.median(list(s_t.values()))) if s_t else float("inf"),
-            "C": float(min(cobertura_a, cobertura_b)),
+            "C": float(cobertura_a),
             "C_scanner_side": round(float(cobertura_a), 4),
             "C_contour_side": round(float(cobertura_b), 4),
             "per_tooth": s_t,
+            "isolevel_offset_mm": desfase,
         }
         if firmados:
             residuo = {}
@@ -949,13 +1244,14 @@ class RegistroAnatomico:
     def _busca(self, P: np.ndarray) -> dict:
         grueso = P[rejilla_gruesa(P)]
         por_corte = _por_corte(P, self._normales_de(P))
+        inverso = self.indexado(P) if BILATERAL else None
 
         # 1 · Etapa gruesa desde cada arranque.
         poses = []
         for nombre, rot, dz in self.arranques():
             tras = self.traslacion_inicial(rot, dz, P)
             r, t, _, _ = self.afina(rot, tras, grueso, iters=ITER_GRUESO, tol=TOL_GRUESO_MM,
-                                   superficie=False)
+                                   superficie=False, inverso=inverso, gruesa=True)
             poses.append((nombre, r, t))
 
         # 2 · Cuencas gruesas, en el orden de los arranques; el primero de cada una la

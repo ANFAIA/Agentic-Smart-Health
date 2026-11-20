@@ -239,6 +239,131 @@ def test_raices_tan_anchas_como_el_cuello_no_arrastran_la_banda(fichero, mundo) 
     assert puntuacion["C"] >= anatomico.COBERTURA_MIN
 
 
+def _registrador_sin_busqueda(
+    campo: dict, hu: np.ndarray, V: np.ndarray, F: np.ndarray, etq: np.ndarray
+) -> tuple[RegistroAnatomico, np.ndarray]:
+    """El registrador y su contorno a 1400, sin búsqueda ni incertidumbre (segundos)."""
+    ejes, motivo = anatomical_frame(V, etq)
+    assert ejes is not None, motivo
+    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu, escaner.arcada)
+    u = float(anatomico.UMBRAL_CONTORNO)
+    contornos = {u: anatomico.contornos_losa(centros, hu, u, plano, escaner.arcada)}
+    registrador = RegistroAnatomico(
+        escaner=escaner, base_cbct=base, plano=plano, contornos=contornos
+    )
+    return registrador, contornos[u][0]
+
+
+@pytest.mark.parametrize("mm", [2.0, 4.0, 8.0])
+def test_deslizar_hacia_la_raiz_cuesta_en_s_aunque_la_raiz_sea_tan_ancha_como_la_banda(
+    fichero, mundo, mm
+) -> None:
+    """Lo que una pose deslizada hacia la raíz deja sin pareja es la parte OCLUSAL de la
+    corona del escáner, metida dentro de la raíz. S lo cobra porque se mide sobre la corona
+    entera, no solo sobre la banda.
+
+    Medido al escribirlo, con raíces realistas: con la banda y sin desfase, 8 mm hacia la
+    raíz subían S de 0,148 a 0,295 mm y la cobertura seguía en 1,0; con la corona y el
+    desfase del isonivel, de 0,115 a 0,362, y 2 mm a 0,205. El desfase absorbe parte de un
+    deslizamiento pequeño (por el cono de la corona, subir se parece a encoger), así que la
+    cota es el margen con que se declara una vuelta: un deslizamiento tiene que perder por
+    más de lo que se considera «casi igual».
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    registrador, destino = _registrador_sin_busqueda(campo, hu, *fichero)
+    por_corte = anatomico._por_corte(destino, registrador._normales_de(destino))
+    R, t = ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO
+    raiz = registrador.base_cbct[2]  # arcada superior: la raíz está hacia +S
+    buena = registrador.puntua_secciones(R, t, por_corte)
+    deslizada = registrador.puntua_secciones(R, t + mm * raiz, por_corte)
+    assert buena["C"] >= anatomico.COBERTURA_MIN
+    assert deslizada["S"] > buena["S"] + anatomico.MARGEN_VUELTA_S_MM
+
+
+@pytest.mark.parametrize("desde_mm", [0.0, 8.0], ids=["verdad", "8mm-raiz"])
+def test_con_el_borde_desenfocado_s_prefiere_la_verdad_y_el_ajuste_se_desliza(
+    fichero, mundo, desde_mm, monkeypatch
+) -> None:
+    """El mecanismo del caso A, reproducido en el fantasma: con la PSF el borde a 1400 cae
+    DENTRO de la superficie, más en la raíz (dentina) y en las cúspides que en las paredes,
+    y un ajuste que lo toma por la superficie sube la arcada por el cono de la corona.
+
+    Fija lo que hay, no lo que se querría. Medido al escribirlo, σ = 0,4 mm, raíces
+    realistas: el ajuste por defecto se va 0,70 mm hacia la raíz desde la verdad, y 19 mm
+    desde 8 mm. S con el desfase del isonivel puntúa la verdad mejor que donde acaba (sin
+    el desfase, al revés: 0,156 frente a 0,193). Con el desfase también en el ajuste
+    (`DESFASE_EN_AJUSTE`, apagado: rompe P0-teselado) la pose queda a 0,24 y 0,33 mm.
+    """
+    campo, hu = campo_cbct(paso=PASO, raices="realistas", desenfoque_mm=0.4)
+    V, F, etq = fichero
+    registrador, destino = _registrador_sin_busqueda(campo, hu, V, F, etq)
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    desde = verdad[1] + desde_mm * registrador.base_cbct[2]
+    corona = etq > 0
+
+    def error(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+        return _en_cbct(V[corona], R, t) - mundo[0][corona]
+
+    R0, t0, _, _ = registrador.afina(verdad[0], desde, destino)
+    assert float(np.median(error(R0, t0)[:, 2])) > 0.5  # hacia la raíz
+    por_corte = anatomico._por_corte(destino, registrador._normales_de(destino))
+    assert (registrador.puntua_secciones(*verdad, por_corte)["S"]
+            < registrador.puntua_secciones(R0, t0, por_corte)["S"])
+
+    monkeypatch.setattr(anatomico, "DESFASE_EN_AJUSTE", True)
+    R, t, _, _ = registrador.afina(verdad[0], desde, destino)
+    e = error(R, t)
+    assert float(np.median(np.linalg.norm(e, axis=1))) < 0.4
+    assert abs(float(np.median(e[:, 2]))) < 0.4
+
+
+def test_el_sentido_inverso_del_ajuste_sigue_disponible_y_vuelve_sin_desenfoque(
+    fichero, mundo, monkeypatch
+) -> None:
+    """`BILATERAL` está apagado (ver la constante); encendido, sin desenfoque, vuelve
+    desde 8 mm hacia la raíz. Medido al escribirlo: 0,07 mm de mediana sin desfase."""
+    monkeypatch.setattr(anatomico, "BILATERAL", True)
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    V, F, etq = fichero
+    registrador, destino = _registrador_sin_busqueda(campo, hu, V, F, etq)
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    R, t, _, convergido = registrador.afina(
+        verdad[0], verdad[1] + 8.0 * registrador.base_cbct[2], destino
+    )
+    assert convergido
+    corona = etq > 0
+    error = np.linalg.norm(_en_cbct(V[corona], R, t) - mundo[0][corona], axis=1)
+    assert float(np.median(error)) < 0.15
+
+
+def _perfil(densidad: Any) -> dict:
+    z = np.round(np.arange(-10.0, 25.0, 0.4), 3)
+    return anatomico._perfil_z(np.repeat(z, np.round(densidad(z)).astype(int)))
+
+
+def _campana(media: float, sigma: float) -> Any:
+    return lambda z: np.exp(-0.5 * ((z - media) / sigma) ** 2)
+
+
+def test_el_valle_solo_es_ancla_si_cae_entre_las_dos_coronas() -> None:
+    """Dos coronas en oclusión dejan el valle cerca del punto medio entre sus picos; un
+    valle pegado a uno de ellos es un hombro del perfil (dentina o hueso denso por encima
+    de las coronas), no un contacto, y no entra como ancla."""
+    dos_arcadas = _perfil(lambda z: 100 * _campana(0, 2)(z) + 100 * _campana(12, 2)(z))
+    assert dos_arcadas["bimodal"]
+    assert dos_arcadas["valley_offcentre"] <= anatomico.VALLE_CENTRAL
+
+    hombro = _perfil(
+        lambda z: 100 * _campana(0, 2)(z) + 30 * ((z > 0) & (z < 10.5))
+        + 15 * ((z >= 10.5) & (z < 12)) + 60 * _campana(13.6, 0.7)(z)
+    )
+    assert hombro["valley_offcentre"] > anatomico.VALLE_CENTRAL
+    assert not hombro["bimodal"]
+    assert "valley_rejected" in hombro
+
+
 # --------------------------------------------------------------------------- #
 # 2 · Sin azar, y 3 · byte a byte entre procesos
 # --------------------------------------------------------------------------- #
