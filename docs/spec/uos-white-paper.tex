@@ -613,106 +613,121 @@ public dental dataset, or that provenance alone prevents evaluation leakage.
 \section{The representation choice: what Gaussian splatting adds, and what it does not}
 \label{sec:gs}
 
-UOS-Core can carry a mesh scene without Gaussian layers. The experimental pipeline also uses 3D
-Gaussian splatting \cite{kerbl2023} --- fast, differentiable, web-renderable, and a single
-substrate for things that were previously either meshes or voxels. We tested that appeal
-rather than assuming it, and this section reports where it pays, because the answer
-constrains how the format should be used and is easy to get wrong in a way that looks
-impressive. The algebra behind the experiments is in Appendix~\ref{app:math}. These results concern
-representation research and do not certify diagnostic performance.
+UOS-Core can carry a mesh scene without Gaussian layers. The experimental pipeline also uses
+3D Gaussian splatting \cite{kerbl2023}, with an attenuation variant for CBCT
+\cite{xgaussian,r2gaussian}, as a common substrate for surface and volume data. This
+section reports what that choice was measured to add. The volumetric figures come from three
+CBCT volumes of a licensed research cohort, labelled V1--V3 to keep them apart from the
+clinical cases; the seeding sweep and the regional control use one volume each. The fitting
+code for these experiments is not versioned in the repository because of the cohort's
+licence, so the figures are taken from the project's research record. They concern
+representation and do not bear on diagnostic performance. The algebra is in
+Appendix~\ref{app:math}.
 
-\subsection{Re-fitting one acquisition reallocates capacity; it does not create resolution}
+\subsection{Re-fitting one acquisition does not create resolution}
 
-The first question was whether splatting could recover detail the acquisition did not
-capture --- the informal hope that an optimised continuous representation ``cleans up'' a
-noisy surface or sharpens a radiograph. We simulated a $9\times9$\,mm patch of occlusal
-surface containing three findings chosen so that each exists on a different physical
-support: an occlusal fissure of 0.15\,mm (geometry), a white spot lesion of 0.60\,mm
-(surface colour), and a dentinal lesion of 1.50\,mm under intact enamel (density only).
-Each modality was simulated through its physical chain: Gaussian PSF, sampling at its own
-pitch, then noise.
+We simulated a two-dimensional $9\times9$\,mm patch of occlusal surface with three findings,
+each mainly on one support: an occlusal fissure of 0.15\,mm (geometry, encoded as a narrow
+low-density, dark band), a white spot lesion of 0.60\,mm (surface colour, with a small
+density reduction) and a dentinal lesion of 1.50\,mm under intact enamel (density only). The
+CBCT chain applies the Gaussian point-spread function measured on case~B (FWHM 0.425\,mm),
+sampling at 0.30\,mm and measured noise; the intraoral chains sample surface colour at their
+pitch without a point-spread or noise model. Retained contrast is computed in closed form. At 0.15\,mm the
+CBCT keeps about 2\,\% of the contrast (contrast-to-noise ratio about 0.1). A continuous
+re-representation of the CBCT was emulated by interpolating its samples, not by fitting a
+Gaussian field: it yields a smoother image carrying the same information.
 
-\begin{finding}{What this means for the format}
-A finding that exists only as density is invisible to a surface scanner at any
-reconstruction quality, and a fissure below the CBCT's sampling pitch is not recovered by
-fitting Gaussians to the CBCT. What splatting contributes is the ability to \emph{allocate
-capacity where the data has it}, and that pays exactly when the modalities being combined
-have different resolving powers.
+\begin{finding}{Scope of this result}
+A finding that exists only as density is invisible to a surface scanner, and a fissure
+below the CBCT's resolution is not recovered by re-representing the same CBCT samples. Each
+modality is simulated as one acquisition at one pitch, so the result does not cover
+multi-view reconstruction, which can exceed the resolution of a single view when views
+overlap with sub-pixel shifts.
 
-That condition holds in dentistry, where an intraoral scanner resolves surface detail an
-order of magnitude finer than a CBCT resolves internal structure, and it is why the
-representation is worth adopting here. The result is therefore not a limit on the method so
-much as a statement of what the method is for: \textbf{composition across heterogeneous
-sources}, which is also what the format is for. Any sharpening claim has to come from
-adding a modality that carries the detail, not from re-fitting one that does not.
-
-\textbf{The scope of this negative result, stated precisely.} Each modality here is
-simulated as \emph{one} acquisition at \emph{one} sampling pitch, so what is measured is
-that re-fitting a single acquisition does not recover detail below that pitch. It is not a
-statement about the method in general. Multi-view reconstruction \emph{can} exceed the
-resolution of any single view when the views overlap with sub-pixel displacements, which is
-the mechanism of multi-view super-resolution. That regime is not measured here.
+The resolution gap between modalities is smaller than often assumed. On case~B, the
+intraoral scan samples the arch surface at about 0.21\,mm, while the CBCT (0.30\,mm voxels)
+has a measured edge-spread width of 0.425\,mm: roughly a factor of two, and the two numbers
+measure different quantities. A representation-cost estimate gives an adaptive field a
+$2.7\times$ advantage over a sparse grid at that scanner's resolution and none at CBCT
+resolution. Gaussian layers are therefore a design choice for holding density, surface
+colour and labels on one primitive, not a demonstrated efficiency gain.
 \end{finding}
 
-\subsection{Capacity limits observed with the chosen renderer}
+\subsection{Capacity observed with the chosen renderer}
 
-Fitting a single field to a real CBCT and varying the seeding budget from 20{,}000 to
-418{,}727 primitives, reconstruction quality on held-out views does not improve: PSNR stays
-between 40.2 and 43.2\,dB across the whole range, and beyond roughly 10{,}000 \emph{live}
-primitives the optimiser prunes back to a similar working set regardless of what it was
-given. Twenty times the budget buys nothing.
+Fitting a single field to one of the volumes and varying the seeding budget from 20{,}000 to 418{,}727
+primitives, held-out projection PSNR stays between 40.2 and 43.2\,dB and does not improve
+with the budget (Appendix~\ref{app:sweep}). The live set settles at about 8{,}000--11{,}000
+primitives: after global calibration of the density scale, the same total attenuation is
+spread over more primitives and a growing fraction falls below the renderer's opacity
+threshold. The plateau depends on the dynamic range of the target image; V2 keeps 22{,}887
+live primitives in a single field.
 
+The experiments use the \code{gsplat} rasteriser. It skips a primitive at a pixel when its
+alpha there is below $1/255$, clamps each primitive's alpha at 0.999 and stops compositing a
+pixel before its transmittance falls to $10^{-4}$, which bounds the expressible line
+integral (Appendix~\ref{app:ceiling}). These are implementation thresholds, not properties
+of Gaussian representations. Splitting each volume into five layers, each with its own
+density calibration, raised held-out PSNR on all three volumes
+(Table~\ref{tab:layers}).
 
-The renderer has an opacity culling threshold near $1/255$ and the implementation clamps
-accumulated alpha before converting it to an attenuation proxy. These are different
-quantities, not the endpoints of one physical interval. They motivate the calibration and
-layer-splitting experiments below, but the seeding sweep alone does not prove a unique cause
-or a general limit of Gaussian representations.
-
-\begin{center}
+\begin{table}[ht]
+\centering
+\caption{Single field against five calibrated layers on the three cohort volumes. Each
+volume is compared with its own single-field control at its own resolution. The layers
+intersect class labels supplied with the cohort with density ranges.}
+\label{tab:layers}
 \begin{tabular}{lrrrrr}
 \toprule
-\textbf{Case} & \textbf{1 field (dB)} & \textbf{5 layers (dB)} & \textbf{$\Delta$} &
+\textbf{Volume} & \textbf{1 field (dB)} & \textbf{5 layers (dB)} & \textbf{$\Delta$} &
 \textbf{Live, 1 field} & \textbf{Live, 5 layers}\\
 \midrule
-A & 43.23 & 47.62 & $+4.39$ & 11\,013 & 176\,865\\
-B & 42.02 & 44.10 & $+2.08$ & 22\,887 & 185\,787\\
-C & 37.44 & 44.85 & $+7.41$ & 13\,672 & 133\,628\\
+V1 & 43.23 & 47.62 & $+4.39$ & 11\,013 & 176\,865\\
+V2 & 42.02 & 44.10 & $+2.08$ & 22\,887 & 185\,787\\
+V3 & 37.44 & 44.85 & $+7.41$ & 13\,672 & 133\,628\\
 \bottomrule
 \end{tabular}
-\end{center}
+\end{table}
 
-The reported gains occur on all three volumes; the reported run-to-run variation is about
-0.5\,dB, without a formal uncertainty analysis here. A separate control addresses initial
-primitive count: a dedicated field seeded at the \emph{same density}
-as the global one, over the same region, scores 45.02\,dB against 25.56\,dB --- 19\,dB at
-equal primitive count. This supports a benefit from the tested specialisation and calibration. It does not isolate
-all causes: final live primitive counts differ substantially, and the single-region control
-is a separate experiment from the three-volume comparison.
+The layered models kept 8.1--16.1 times more live primitives (10.4 times in aggregate), so
+calibration, partitioning and active capacity are confounded in this comparison. The project
+notes give a run-to-run variation of about 0.5\,dB; the number of repeat runs behind that
+figure is not recorded.
 
-This also happens to be how a clinician would want to look at the twin --- enamel, dentine
-and bone, separately --- so the decomposition is a product feature rather than a fitting
-trick. And the remaining route is a product decision rather than a research one: a
-rasteriser that integrates density directly, without the opacity cull and implementation-specific alpha
-clamp, would make calibration a convenience rather than a
-necessity. Its effect would need a controlled comparison with the current implementation.
+A regional control fixes the primitive count. In a 25\,mm box around one molar of one volume, a
+dedicated field seeded at the same density as the global one scored 45.02\,dB against
+25.56\,dB for the global field cropped to the region, with similar live counts (1{,}461 and
+1{,}404). The cropped global field was scored on close-up views it was not trained on, so
+the gap measures how poorly a region is extracted from a global model rather than absolute
+quality.
+
+\begin{finding}{The layer gain did not transfer to case~A}
+The comparison was repeated on case~A's CBCT with the same protocol (0.30\,mm resampling,
+252 views, one in eight held out), before the source audit of \S\ref{sec:endtoend}, and
+therefore on the extraction that mixed two series. Four layers defined by density range
+alone scored 39.83\,dB against 37.35\,dB for one field ($+2.48$\,dB). Four layers that
+crossed the project's binary tooth segmentation with density ranges scored 36.07\,dB against
+37.32\,dB ($-1.25$\,dB): tissue the segmenter misses falls into a layer with the wrong
+density scale. A density-only partition was then added to the export pipeline and
+withdrawn the same day, because its layers grouped enamel with metal and soft tissue with
+trabecular bone and so carried no anatomical meaning. The reference writer emits one
+CBCT-derived density field, a CBCT--scanner composite and a scanner appearance layer; it
+emits no tissue layers.
+\end{finding}
 
 \subsection{What this section commits the format to}
 
-Two design decisions in \cite{uosspec} follow directly. The Gaussian layers a container
-ships declare whether they are \textbf{measured} or \textbf{reconstructed}, and the
-appearance layer is declared reconstructed --- because \S\ref{sec:negative} measures that it
-is. And a layer declared measured must state the occupancy threshold that decided which
-tissue appears in it, because otherwise a rendering choice masquerades as a finding.
+Two design decisions in \cite{uosspec} follow. A Gaussian layer in a container declares
+whether it is \textbf{measured} or \textbf{reconstructed}, and the appearance layer is
+declared reconstructed (\S\ref{sec:negative}). A layer declared measured must state the
+occupancy threshold that decided which tissue appears in it. The density field in case~A's
+container is the unfitted seed produced at ingestion; the projection scores in this section
+come from separate fitting experiments and do not describe that field.
 
-Stated as a position: the honest use of splatting in dentistry is composition and capacity
-allocation across modalities of differing resolution, not enhancement of a single
-acquisition. A fitted field \emph{does} produce visually smoother output than the voxels it
-was fitted to, and that smoothness is the representation's prior rather than recovered
-signal. Under a metric that rewards plausibility it looks like enhancement; under one that
-asks whether a 0.15\,mm fissure below the sampling pitch is now visible, it is not. Any
-denoising claim requires a task-level evaluation against ground truth that this project has
-not done, and we would not accept one from anybody else either.
+A fitted field produces visually smoother output than the voxels it was fitted to. That
+smoothness comes from the representation's prior, not from recovered signal, and any
+denoising claim would need a task-level evaluation against ground truth, which this work
+does not include.
 
 % =============================================================================
 \section{What has been measured}\label{sec:evidence}
@@ -786,18 +801,20 @@ compress to 13--15\,\%, the \code{.glb} only to 81\,\%.\\
 \textbf{Measurement} & \textbf{Value} & \textbf{What it establishes}\\
 \midrule
 \endhead
-Calibration of $\sigma$ & $19 \to 43$\,dB & Improvement in the reported projection-fitting experiment after numerical calibration;
-not calibration of CBCT grey values to physical attenuation.\\
+Calibration of $\sigma$ (cohort) & $19 \to 43$\,dB & Projection PSNR after a global
+density scale is fitted; not calibration of CBCT grey values to physical attenuation.\\
 
-Additivity of disjoint layers & max.\ error $3.6\times10^{-7}$ on normalised $\tau$ &
-That layer decompositions can be scored against the same image as the global field, which
-is what makes the comparison honest.\\
+Additivity of disjoint layers (cohort) & max.\ error $3.6\times10^{-7}$ on normalised $\tau$
+& A layer decomposition can be scored against the same image as the single field.\\
 
-Tissue decomposition & $+2.08$ to $+7.41$\,dB, three volumes & Improved held-out projection PSNR in the three tested volumes.\\
+Five calibrated layers (cohort, V1--V3) & $+2.08$ to $+7.41$\,dB & Higher held-out
+projection PSNR on three volumes, with 8.1--16.1 times more live primitives.\\
 
-Same-density dedicated field & 45.02\,dB vs.\ 25.56\,dB & A separate regional control with equal initial seeding; not proof of equal final capacity.\\
+Layers on case~A's CBCT & $+2.48$\,dB by density range; $-1.25$\,dB by segmented class &
+The class-based gain did not transfer; computed on the mixed extraction.\\
 
-Live primitives after culling & $16\times$ more across five layers & An observed difference in active capacity, consistent with the calibration hypothesis.\\
+Same-density regional field (cohort) & 45.02\,dB vs.\ 25.56\,dB & Extraction of a region
+from a global model scores poorly on close-up views; not a capacity comparison.\\
 \bottomrule
 \end{longtable}
 
@@ -957,7 +974,22 @@ and nothing to act on.
 
 % =============================================================================
 
-\section{Regulatory posture}\label{sec:regulatory}
+\section{Intended use and regulatory posture}\label{sec:regulatory}
+
+\paragraph{Intended use.}\label{sec:intended-use} A draft intended-use statement (version
+0.1, 10 October 2026, to be ratified with a specialist before any evaluation) fixes the task
+before it is evaluated. A dentist or specialist reviewing a case already diagnosed by the
+usual means opens the CBCT, the intraoral scan and the report in one scene, selects a tooth
+and sees what each source says about it, with the provenance of each value and inferred
+values marked as such. The context is investigational; the user keeps their usual method and
+decides with it. Excluded are diagnosis, treatment planning or any clinical decision taken
+with UOS; measurement of roots, bone or anatomical distances on the combined scene; planning
+of implants, surgical guides or fabrication; reading grey values as calibrated Hounsfield
+units; and colour measurement. The statement sets provisional acceptance criteria, among
+them a maximum landmark TRE of 1.5\,mm and an overlap fraction of at least 0.20 for the
+registration. Neither is met in case~A: TRE has not been measured and the overlap
+is 0--3.6\,\%. The statement does not determine the system's regulatory classification.
+
 
 The layer mechanism describes provenance and supports separating model outputs from other
 assets. It does not determine whether software is a medical device. Under the European
@@ -1279,24 +1311,24 @@ unspecified for the same reason: the missing piece is a decision about keys and 
 code.
 \end{finding}
 
-\subsection{Surgical planning, the furthest and the most valuable}
+\subsection{Treatment planning is outside the current scope}
 
-Graft planning is the case where the tissue decomposition of \S\ref{sec:gs} stops being a
-reconstruction result and becomes the deliverable: what a surgeon needs to see is bone volume
-available and bone volume required, separated from the soft tissue that hides it and from the
-restorative metal that confounds it. The decomposition already produces those layers and the
-container already carries them as separate, individually described fields. What is missing is
-the clinical quantity computed on top of them, with its own error bar, and a validation that
-it agrees with what a surgeon measures intraoperatively. We consider this the most valuable
-open item and the one furthest from being closed.
+Graft and implant planning would need bone volume available and required, separated from
+soft tissue and from restorative metal, each with a stated error. This work does not provide
+it: the writer emits no tissue layers, and the decompositions tried on case~A either lost
+projection quality or carried no anatomical meaning (\S\ref{sec:gs}). Treatment planning and measurement of roots, bone or
+anatomical distances on the combined scene are excluded by the intended use
+(\S\ref{sec:intended-use}). Including them would need multi-class tissue segmentation, a new
+intended-use statement with its own acceptance criteria, and comparison with an independent
+clinical reference.
 
 \subsection{Platform work}
 
 \begin{enumerate}
-  \item \textbf{A rasteriser that integrates $\sigma$ directly}, without the 8-bit cull and
-  the alpha clamp used in the current implementation. Its effect on quality and numerical
-  stability needs a controlled comparison; it does not remove the need to characterise
-  acquisition calibration.
+  \item \textbf{A rasteriser that integrates $\sigma$ directly}, without the opacity
+  threshold and early termination of the photometric rasteriser used here. Its effect on
+  quality and numerical stability needs a controlled comparison; it does not remove the need
+  to characterise acquisition calibration.
   \item \textbf{A distributable conformance fixture of a realistic case}, built from an
   openly licensed dataset, so that interoperability can be tested rather than asserted.
   \item \textbf{Anatomical root truncation}, following \S\ref{sec:negative}: fit the
@@ -1519,10 +1551,11 @@ with $R_i$ parameterised by a unit quaternion and $s_{ij} > 0$. Its influence at
   \exp\!\Big( -\tfrac{1}{2} (x - c_i)^{\!\top} \Sigma_i^{-1} (x - c_i) \Big).
 \]
 
-Rendering truncates at a Mahalanobis radius of $3$, the convention the Khronos extension
-fixes \cite{khrgs}. This is the ``$3\sigma$'' of the standard-deviation sense above, not a
-density: a primitive is treated as compactly supported on the ellipsoid
-$(x-c_i)^\top \Sigma_i^{-1}(x-c_i) \le 9$.
+For interchange, a primitive is treated as compactly supported on the ellipsoid
+$(x-c_i)^\top \Sigma_i^{-1}(x-c_i) \le 9$, the Mahalanobis-radius-3 cut-off that the Khronos
+extension assumes \cite{khrgs}. This is the ``$3\sigma$'' of the standard-deviation sense
+above, not a density. The rasteriser used in the fitting experiments truncates at up to 3.33
+standard deviations, less for low-opacity primitives.
 
 \subsection{Two different physics on the same primitive}
 
@@ -1543,7 +1576,8 @@ the basis constant $Y_0 = 1/(2\sqrt{\pi}) \approx 0.2820947918$ and the training
   \mathrm{RGB} \;=\; Y_0 \cdot \mathrm{SH}_{0,0} \;+\; \tfrac{1}{2}.
 \]
 
-\paragraph{Volumetric splatting: attenuation,} the volumetric model. X-ray attenuation
+\paragraph{Volumetric splatting: attenuation,} the model used for X-ray view synthesis
+and tomographic reconstruction \cite{xgaussian,r2gaussian}. X-ray attenuation
 is isotropic and unbounded, so opacity is replaced by a density $\sigma_i \ge 0$ and the
 harmonics are discarded entirely. The field models the linear attenuation coefficient
 
@@ -1566,34 +1600,31 @@ without a descriptor saying which is which \cite{uosspec}.
 
 \subsection{Renderer thresholds and numerical calibration}\label{app:ceiling}
 
-The experimental density field is fitted with a rasteriser built for the photometric model, and that
-borrowing has an algebraic price which we can state exactly.
-
-Note that the field is expressed in $\sigma$ but rendered through a pipeline whose numerics
-are defined on $\alpha$; the ceiling below is exactly the cost of that translation.
-The rasteriser culls any primitive whose effective opacity falls below the 8-bit quantum,
-$\alpha_{\min} \approx 1/255$. A culled primitive contributes nothing \emph{and receives no
-gradient}: it is dead without notice. At the other end, the implementation clamps accumulated alpha at $\alpha_{\mathrm{acc}} = 0.9999$, which through
-$\tau = -\ln(1 - \alpha_{\mathrm{acc}})$ caps the expressible line integral at
-
+The volumetric experiments fit the density field with \code{gsplat}, a rasteriser built
+for the photometric model. The field is expressed in $\sigma$, but the rasteriser's
+numerics are defined on $\alpha$. The source inspected is release 1.5.3; the version used in
+the experiments was not recorded. At a pixel, a primitive whose alpha is below
+$\alpha_{\min} = 1/255$ is skipped; a primitive below that threshold everywhere contributes
+nothing and receives no gradient. Each primitive's alpha is clamped at 0.999, and
+compositing stops before a pixel's transmittance falls to $10^{-4}$. Accumulated alpha
+therefore stays below 0.9999, and through $\tau = -\ln(1 - \alpha_{\mathrm{acc}})$ the
+expressible line integral is bounded by
 \[
-  \tau_{\max} \;=\; -\ln\!\big(1 - 0.9999\big) \;\approx\; 9.21 .
+  \tau_{\max} \;=\; \ln 10^{4} \;\approx\; 9.21 .
 \]
-
-
-The opacity cutoff and this attenuation ceiling are different quantities; they must not be
-written as the bounds of one physical interval. The value 0.9999 is an implementation
-choice, not the representational limit of \code{float32}. In the reported experiment,
-unscaled values led to about 19\,dB projection PSNR before calibration.
+The opacity threshold and this ceiling are different quantities, not the bounds of one
+physical interval, and both are implementation choices. In the reported experiment,
+unscaled densities gave about 19\,dB projection PSNR before calibration.
 
 \paragraph{What calibration establishes.} A positive global scalar rescales the field,
-$\sigma_i'=k\sigma_i$, to match a reference projection statistic. This changes the density
+$\sigma_i'=k\sigma_i$, so that the mean rendered projection matches the mean of the
+reference digitally reconstructed radiograph. This changes the density
 scale without directly moving Gaussian centres or covariances. It is a numerical fitting
 step; it does not calibrate a CBCT scanner to Hounsfield units or prove preservation of
 all anatomical detail after optimisation. The reported projection score rose to about
 43\,dB. The result concerns that rendering and fitting pipeline.
 
-\subsection{Additive decomposition into tissue layers}
+\subsection{Additive decomposition into layers}
 
 Because $\tau$ is a line integral, it is additive over any partition of the field. If
 $\{P_1, \dots, P_L\}$ partitions the primitives disjointly and exhaustively, then
@@ -1608,8 +1639,8 @@ so the unscaled partition preserves the line integral. Independently fitted or s
 layers require a separate reconstruction check; additivity of the partition alone does
 not guarantee their agreement with the source. We verified this before
 comparing anything, measuring a maximum additivity error of $3.6 \times 10^{-7}$ on
-normalised $\tau$, which is what makes it legitimate to score a single field and a
-five-layer decomposition \emph{on the same image}, the only honest comparison.
+normalised $\tau$, which allows a single field and a five-layer decomposition to be scored
+\emph{on the same image}.
 
 
 Each fitted layer receives a separate numerical calibration. This changes the optimisation
@@ -1619,22 +1650,21 @@ final model capacity as causes of the improved scores.
 
 \subsection{Appearance sampled onto a surface}
 
-Recovering a per-vertex colour from a fitted field, the operation behind the improved
-mesh, is a weighted mean over the primitives that actually cover a vertex $v$, using local opacity and spatial weights. This is a surface-colour estimator, not the
-view-dependent compositing equation above. For the $k = 32$ nearest primitives within the $3\sigma$
-support,
-
+Recovering a per-vertex colour from a fitted appearance field is a weighted mean over
+nearby primitives; it is a surface-colour estimator, not the view-dependent compositing
+equation above. For the $k = 32$ nearest primitives within a search radius of three times
+the 99th-percentile primitive scale,
 \[
-  w_i(v) \;=\; \alpha_i \cdot G(v \mid c_i, \Sigma_i),
+  w_i(v) \;=\; \alpha_i \exp\!\Big(-\frac{\lVert v-c_i\rVert^2}{2\,\bar s_i^{\,2}}\Big),
   \qquad
   \mathrm{RGB}(v) \;=\; \frac{\sum_i w_i(v)\, \mathrm{RGB}_i}{\sum_i w_i(v)} ,
 \]
-
-
-with a vertex marked uncovered when $\sum_i w_i(v)=0$. Unlike front-to-back rendering,
-this expression has no visibility order or transmittance product. It must not be described
-as the colour a camera necessarily sees at that vertex. Fallback handling also needs to
-remain identifiable.
+where $\bar s_i$ is the mean of the three scale factors of primitive $i$, an isotropic
+approximation to $G(v\mid c_i,\Sigma_i)$. A vertex is marked measured only if
+$\sum_i w_i(v) > 10^{-6}$ and at least one neighbour lies within $3\bar s_i$; otherwise it
+receives a declared neutral colour. A display-only fill from measured neighbours of the same
+tooth does not change that flag. The expression has no visibility order or transmittance,
+so it is not the colour a camera necessarily sees at that vertex.
 
 \subsection{Thresholding the crown boundary}
 
@@ -1664,13 +1694,14 @@ PSNR does not measure error on native-resolution slices or performance on a diag
 
 \subsection{The seeding sweep, measured}\label{app:sweep}
 
-The empirical counterpart of \S\ref{app:ceiling}. A single field fitted to one real CBCT,
-varying only the seeding budget, PSNR on held-out views:
+A single field fitted to one cohort volume, varying only the seeding budget; PSNR on
+held-out views. The second column is the fraction of seeded primitives whose opacity ended
+below the rasteriser's threshold, $1 - N_{\mathrm{live}}/N_{\mathrm{seeded}}$.
 
 \begin{center}
 \begin{tabular}{rrrr}
 \toprule
-\textbf{Seeded primitives} & \textbf{Occupancy covered} & \textbf{Live primitives} &
+\textbf{Seeded primitives} & \textbf{Below threshold at end} & \textbf{Live primitives} &
 \textbf{PSNR (dB)}\\
 \midrule
 20\,000  & 61.6\,\% & 7\,685  & 43.07\\
@@ -1683,11 +1714,9 @@ varying only the seeding budget, PSNR on held-out views:
 \end{tabular}
 \end{center}
 
-Twenty times the budget does not improve reconstruction, and beyond roughly 10\,000 live
-primitives the optimiser prunes back to a similar working set regardless of what it was
-given.
-These observations apply to this renderer and optimisation setup. They do not establish
-that other renderers, objectives or acquisition regimes share the same limit.
+Twenty times the budget does not improve reconstruction, and the live set stays at about
+8\,000--11\,000 primitives. The plateau depends on the dynamic range of the target image and
+on this renderer and optimisation setup; it is not a general limit.
 
 % =============================================================================
 
@@ -1705,6 +1734,16 @@ JSON Schema and a conformance fixture bank under Apache~2.0.
 B. Kerbl, G. Kopanas, T. Leimkühler and G. Drettakis.
 \emph{3D Gaussian Splatting for Real-Time Radiance Field Rendering}.
 ACM Transactions on Graphics, 42(4), SIGGRAPH 2023.
+
+\bibitem{xgaussian}
+Y. Cai, Y. Liang, J. Wang, A. Wang, Y. Zhang, X. Yang, Z. Zhou and A. Yuille.
+\emph{Radiative Gaussian Splatting for Efficient X-ray Novel View Synthesis}.
+ECCV 2024. arXiv:2403.04116.
+
+\bibitem{r2gaussian}
+R. Zha, T. J. Lin, Y. Cai, J. Cao, Y. Zhang and H. Li.
+\emph{R$^2$-Gaussian: Rectifying Radiative Gaussian Splatting for Tomographic
+Reconstruction}. NeurIPS 2024. arXiv:2405.20693.
 
 \bibitem{gltf}
 Khronos Group. \emph{glTF 2.0 Specification}.
