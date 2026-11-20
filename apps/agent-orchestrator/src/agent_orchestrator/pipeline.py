@@ -545,6 +545,7 @@ class IngestionPipeline:
             arcada = arcada_del_nombre(malla)
 
         sin_anatomico: str | None = None
+        registrador: Any
         if registro == "anatomico":
             from fusion_agents.anatomico import prepara_anatomico
 

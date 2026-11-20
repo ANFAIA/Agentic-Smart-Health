@@ -308,15 +308,6 @@ def test_mover_o_reordenar_el_fichero_no_mueve_las_coronas(
     assert float(d.max()) < 1e-6
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "anatomico.RegistroAnatomico.afina recorta por distancia al vértice más próximo "
-        "(`d` del árbol), no por residuo punto a plano: el recorte depende del teselado y "
-        "deja la altura 0,17 mm (malla original) frente a 0,03 mm (subdividida) desde la "
-        "pose verdadera; recortando por residuo punto a plano, 0,015 frente a −0,006"
-    ),
-)
 def test_subdividir_la_malla_no_mueve_las_coronas(referencia, fichero, cbct) -> None:
     """P0-teselado: el mismo escaneo con cuatro veces más triángulos.
 
@@ -368,7 +359,7 @@ def test_el_margen_de_vuelta_llega_al_gate_cuando_los_datos_no_la_excluyen(refer
     margen = informe["search"]["flip_margin"]
     assert margen is not None and margen["angle_deg"] > anatomico.ANGULO_VUELTA
     no_excluida = (
-        margen["S_ratio"] <= 1 + anatomico.MARGEN_VUELTA_S
+        margen["S_difference_mm"] <= anatomico.MARGEN_VUELTA_S_MM
         or margen["C_difference"] < anatomico.MARGEN_VUELTA_C
     )
     texto = " ".join(motivos(informe))
@@ -387,45 +378,52 @@ def cbct_inclinado() -> tuple[dict, np.ndarray]:
     return campo_cbct(paso=PASO, inclinacion=INCLINACION)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "marco_cbct ajusta el plano al esmalte de una losa AXIAL de ±BANDA_PLANO_MM "
-        "alrededor de la moda; con dos picos la moda es el ecuador de una arcada (−6 mm "
-        "en el fantasma) y la losa horizontal recorta la arcada inclinada: mide 6,84° de "
-        "10°, 7,44° de −10°, 3,94° de 5° y 2,45° de 3° (≈70–80 % de la inclinación)"
-    ),
-)
-def test_con_la_boca_inclinada_el_marco_mide_la_inclinacion(cbct_inclinado) -> None:
+def test_el_marco_del_cbct_no_inventa_inclinacion(cbct_inclinado) -> None:
+    """`marco_cbct` no estima la inclinación: da los ejes del DICOM tal cual. Un plano por
+    PCA al esmalte leía entre 0,2° y 40° según la ventana para 10° reales."""
     campo, hu = cbct_inclinado
-    _, plano, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
-    assert "fallback_lps" not in marco
-    assert marco["tilt_deg"] == pytest.approx(10.0, abs=1.0)
-    assert anatomico.angulo_grados(plano.normal, INCLINACION @ np.array([0.0, 0.0, 1.0])) < 1.0
+    base, plano, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
+    np.testing.assert_array_equal(base, anatomico.EJES_LPS)
+    np.testing.assert_array_equal(plano.normal, anatomico.EJES_LPS[2])
+    assert marco["anchors_mm"][0] == 0.0
 
 
-def test_con_la_boca_inclinada_se_registra(fichero, mundo, cbct_inclinado) -> None:
-    """Aunque el plano salga corto de inclinación, la rejilla de arranques y el ajuste
-    cubren la diferencia: la pose se recupera igual que sin inclinar."""
+def test_con_la_boca_inclinada_se_registra_y_se_mide_la_inclinacion(
+    fichero, mundo, cbct_inclinado
+) -> None:
+    """La rejilla de arranques, la banda por diente y la losa ancha absorben 10° de
+    cabeceo: la pose se recupera, y la inclinación la mide el escáner registrado."""
     campo, hu = cbct_inclinado
-    _, _, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
-    assert "fallback_lps" not in marco and marco["tilt_deg"] > 3.0  # algo mide
-
     V, F, etq = fichero
-    origen, destino, registrador, _, _ = registra(V, F, etq, campo, hu)
+    origen, destino, registrador, informe, _ = registra(V, F, etq, campo, hu)
     R, t, r = pose(registrador, origen, destino)
     assert r.veto is None
     corona = etq > 0
     verdad = mueve(mundo[0], INCLINACION, np.zeros(3))[corona]
     error = np.linalg.norm(_en_cbct(V[corona], R, t) - verdad, axis=1)
     assert float(np.median(error)) < 0.3
-    assert anatomico.angulo_rotacion_grados(R @ ROT_FICHERO @ INCLINACION.T) < 0.5
+    # Con la losa horizontal, un extremo de la arcada inclinada aporta menos contorno: la
+    # rotación sale a 0,57°, no a las centésimas de la boca sin inclinar.
+    assert anatomico.angulo_rotacion_grados(R @ ROT_FICHERO @ INCLINACION.T) < 1.0
+    # La inclinación que se declara es la del eje oclusal que sale de las etiquetas FDI, y
+    # ese eje no es exactamente el vertical del fantasma: va 0,99° hacia anterior. Así que
+    # la verdad no son 10°, sino lo que inclina ESE eje; la tolerancia es la de la rotación.
+    assert informe["tilt_from_registration_deg"] == pytest.approx(
+        _inclinacion_del_eje_fdi(mundo, INCLINACION), abs=1.0
+    )
 
 
-def test_sin_inclinar_el_plano_sale_horizontal(cbct) -> None:
-    campo, hu = cbct
-    _, _, marco = marco_cbct(campo["centers"] + campo["origin"], hu)
-    assert marco["tilt_deg"] < 1.0
+def _inclinacion_del_eje_fdi(mundo, inclinacion: np.ndarray) -> float:
+    Vw, _, etq = mundo
+    ejes, motivo = anatomical_frame(Vw, etq)
+    assert ejes is not None, motivo
+    return anatomico.angulo_grados(inclinacion @ ejes.superior, anatomico.EJES_LPS[2])
+
+
+def test_sin_inclinar_la_inclinacion_registrada_es_la_del_eje_fdi(mundo, referencia) -> None:
+    assert referencia["informe"]["tilt_from_registration_deg"] == pytest.approx(
+        _inclinacion_del_eje_fdi(mundo, np.eye(3)), abs=0.3
+    )
 
 
 # --------------------------------------------------------------------------- #

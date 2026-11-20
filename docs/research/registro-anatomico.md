@@ -1,7 +1,8 @@
 # Registro escáner↔CBCT anatómico por banda de escáner
 
 > **Estado (2026-11-20): implementado en `fusion_agents.anatomico` y opcional
-> (`--registro anatomico`).** Desarrollado sobre un fantasma sintético y sobre el caso A.
+> (`--registro anatomico`). Funciona en el fantasma y FALLA en el caso A (§7).** El
+> protocolo del caso B está suspendido sin congelar hasta corregirlo.
 > El caso B no se ha registrado con este método: su evaluación de precisión está
 > pre-registrada en [`registro-anatomico-protocolo.md`](registro-anatomico-protocolo.md) y
 > se ejecuta después de commitear ese protocolo. `registro="auto"` no cambia hasta que el
@@ -33,23 +34,40 @@ fija). Se eligió la primera y se le injertaron piezas de las otras dos (ver §6
 
 1. **Primero se orienta y después se ajusta, sin azar.**
    - El escáner trae sus ejes de las etiquetas FDI (`anatomical_frame`).
-   - El CBCT trae los suyos de la cabecera DICOM (LPS). El eje superior se corrige con la
-     normal de un plano ajustado al esmalte (`marco_cbct`).
+   - El CBCT trae los de la cabecera DICOM (LPS), **sin estimar la inclinación del plano
+     oclusal**. Se probó a estimarla y no es fiable (§4).
+   - La altura del plano oclusal en el CBCT es la moda del perfil de altura del esmalte.
+     Si el perfil tiene dos picos, el valle entra como **segunda ancla**, no como
+     sustituta: se arranca desde las dos y decide la puntuación (§4).
    - La pose inicial es la rotación de unos ejes a otros. No hay submuestra aleatoria en
      ningún paso.
 2. **Solo se compara lo que las dos modalidades ven.**
    - En el escáner se toma una banda **por diente**: la corona entre 1,5 y 6 mm por debajo
-     de la cúspide de *ese* diente, a lo largo del eje oclusal de la arcada.
+     de la cúspide de *ese* diente, a lo largo del eje oclusal de la arcada. Sigue la curva
+     de Spee y la inclinación de la cabeza, que una losa sobre el CBCT no sigue.
    - En el CBCT se toman los **bordes** del diente en cada corte, a un umbral fijo de 1400,
-     dentro de una losa inclinada de −2 a +12 mm sobre el plano oclusal.
-3. **El ajuste va del contorno al escáner, punto a plano.**
-   - Cada punto de contorno busca su vértice más próximo entre **todos** los del escáner,
-     y solo cuenta si ese vértice es de la banda.
-   - Así las cúspides de la arcada contraria y el hueso cervical se caen solos, sin un
-     umbral de altura que decidirlo.
+     dentro de una losa de −4 a +14 mm alrededor de las anclas. La losa es ancha a
+     propósito: tiene que caber la banda aunque la boca esté inclinada unos 10°.
+   - El borde se sitúa a medio paso de vóxel hacia fuera también en diagonal (8 vecinos).
+     Con solo 4 vecinos quedaba sesgado hacia dentro en las esquinas (§4).
+3. **El ajuste va del contorno al escáner, punto a plano, con recorte.**
+   - Cada punto de contorno busca su punto más próximo entre **todo** el escáner, y solo
+     cuenta si ese punto es de la banda. Así las cúspides de la arcada contraria, la raíz y
+     el hueso cervical se caen solos, sin un umbral de altura que decidirlo.
+   - Hay tres tramos:
+     - un tramo grueso, sobre un representante del contorno por milímetro, que solo tiene
+       que dejar cada arranque en su cuenca;
+     - un tramo medio emparejando con el vértice más próximo;
+     - un tramo fino, solo para las cuencas finalistas, que empareja con el punto más
+       próximo **sobre la superficie** de la malla y con la normal de su cara. Emparejar
+       con vértices sesgaba la altura según el teselado (§4).
+   - Si el ICP entra en un ciclo, se detecta y se devuelve el elemento del ciclo de menor
+     coste.
 4. **Varias salidas fijas y una vara distinta para elegir.**
-   - Hay 81 arranques alrededor de la pose anatómica (±20° por eje × ±2 mm en altura).
-   - Hay además 9 hipótesis de vuelta de 180° que se ajustan siempre y nunca pueden ganar.
+   - Hay 81 arranques alrededor de la pose anatómica (±20° por eje × ±2 mm en altura) por
+     cada ancla.
+   - Hay además 9 hipótesis de vuelta de 180° por ancla, que se ajustan siempre y nunca
+     pueden ganar: están para medir por cuánto pierden.
    - Las poses se agrupan en cuencas. Gana la de menor **S**: la distancia simétrica,
      dentro de cada corte real del CBCT, entre la sección exacta del escáner y el contorno,
      con todos los dientes pesando igual.
@@ -59,7 +77,7 @@ fija). Se eligió la primera y se le injertaron piezas de las otras dos (ver §6
 **Elegibilidad de una cuenca.** Tiene que cumplir las tres condiciones:
 - los tres ejes anatómicos a ≤ 30° de los del CBCT;
 - cobertura C ≥ 0,5;
-- las cúspides a ≤ 5 mm del plano oclusal del CBCT.
+- las cúspides a ≤ 5 mm de la altura de alguna ancla.
 
 Si ninguna cuenca las cumple, se devuelve la más cercana a la anatomía con un **veto**, que
 deja la confianza en 0 y lo manda al gate (`RegistrationResult.veto`).
@@ -74,8 +92,14 @@ deja la confianza en 0 y lo manda al gate (`RegistrationResult.veto`).
 | Residuo con signo | + si el escáner flota, − si se hunde |
 | Condicionamiento | La dirección de traslación peor restringida, en ejes anatómicos |
 | Escala | La que pediría una semejanza; solo se informa, nunca se aplica |
+| Inclinación | El ángulo entre el eje oclusal del escáner registrado y el superior del CBCT. Incluye el error del eje que sale de las etiquetas FDI (0,99° en el fantasma) |
 
-U = √(umbral² + navaja² + ambigüedad²) por vértice.
+U = √(umbral² + navaja² + ambigüedad²) por vértice. La vertical con que se descompone es el
+eje superior del escáner ya registrado, que sí está medido (etiquetas FDI).
+
+Los márgenes de la vuelta y de la ambigüedad van en milímetros de S, no en proporción. S
+tiene un suelo que pone el tamaño de vóxel, así que una proporción fija saltaría con un
+vóxel y no con otro para el mismo desajuste.
 
 ## 3 · Por qué la tabla de `histora` no descartaba este enfoque en series densas
 
@@ -103,49 +127,67 @@ Solo sobre el fantasma sintético (`packages/fusion-agents/tests/fantasma_arcada
 caso A. Ninguna constante sale del caso B: o se heredan de `por_cortes`, fijadas sobre el
 caso A, o son a priori.
 
-**Sobre el fantasma salieron tres cosas:**
-- **La moda de la altura del esmalte puede caer en la arcada contraria.**
-  - Si cada arcada forma su propio pico de esmalte, la moda queda en el ecuador de una de
-    las dos.
-  - Con la moda, el plano quedó 6 mm dentro de la arcada de abajo, y el escáner superior
-    encajó contra los dientes inferiores.
-  - Eso sí lo rechazó el veto de altura de las cúspides.
-  - Ahora la altura de referencia es el **valle** si el perfil tiene dos picos y la moda si
-    tiene uno.
-  - El perfil se cuenta por corte y se suaviza con un núcleo de 1 mm. Un histograma de
-    anchura fija daba picos falsos de muestreo con cortes de 0,4 mm.
-- **Con dientes idénticos el arco se desliza un diente entero.** El fantasma tiene ahora
-  anchuras distintas por pieza y la arcada inferior desplazada media pieza, como en una
-  oclusión real.
-- **Con coronas simétricas de arriba abajo, una vuelta encaja casi igual.** El fantasma
-  corta ahora la corona en el cuello. Una vuelta sigue puntuando cerca (S ×1,03) y la
-  descarta la anatomía, que es para lo que está el veto.
+**El fantasma tuvo que hacerse más realista para que las pruebas significaran algo:**
+- **Con dientes idénticos, el arco se desliza un diente entero.** Ahora cada pieza tiene su
+  anchura y la arcada inferior va desplazada media pieza, como en una oclusión real.
+- **Con coronas simétricas de arriba abajo, una vuelta encaja casi igual.** Ahora la corona
+  se corta en el cuello. Una vuelta sigue puntuando cerca y la descarta la anatomía, que es
+  para lo que está el veto.
 
-**Resultado en el fantasma** (rejilla de 0,4 mm, escaneo movido 97° y 85 mm a su propio
-marco):
-- error de la banda: 0,172 mm de mediana, todo en altura y hacia la raíz. Es el sesgo de
-  medio paso del borde ya documentado en `registro-por-cortes.md` §5;
-- U de mediana: 0,014 mm;
-- dirección peor condicionada: la superior.
+**Lo que el fantasma y el caso A cambiaron del método:**
+- **La altura del plano.** Con la moda sola, el fantasma de dos arcadas dejó el plano 6 mm
+  dentro de la arcada contraria: cada arcada formaba su pico y la moda caía en el ecuador
+  de una. Con el valle solo, el caso A (serie dispersa) tomó un valle entre el plano
+  oclusal y un pico menor 11 mm por encima, y la losa se quedó sin contorno. Ninguna regla
+  sirve sola, así que entran las dos como anclas. El perfil se cuenta por corte y se
+  suaviza con un núcleo de 1 mm: un histograma de anchura fija daba picos falsos de
+  muestreo.
+- **La inclinación del CBCT no se estima.** Un plano por PCA al esmalte leyó entre 0,2° y
+  40° para una inclinación real de 10°, según la ventana. Con las dos arcadas en la ventana
+  tomaba por inclinación el resalte entre ellas; con una ventana definida por el propio
+  plano se reforzaba a sí mismo. La inclinación la absorben la rejilla de arranques, la
+  banda por diente y la losa ancha. Con la boca del fantasma inclinada 10° el registro
+  cae en la pose correcta a menos de 1° y la inclinación se mide después, sobre el escáner
+  registrado.
+- **Tres sesgos encontrados por la revisión de geometría, corregidos antes de congelar:**
+  - el borde de 4 vecinos quedaba hacia dentro en las esquinas: ahora 8 vecinos;
+  - emparejar con vértices movía la altura 0,05–0,17 mm según el teselado de la misma
+    superficie: ahora el tramo fino empareja con la superficie;
+  - el ICP podía oscilar entre dos poses sin converger: ahora el ciclo se detecta.
+
+**Resultado en el fantasma**, con rejilla de 0,4 mm y el escaneo movido 97° y 85 mm a su
+propio marco:
+- Antes de las tres correcciones, el error de la banda era de 0,172 mm de mediana, todo en
+  altura y hacia la raíz.
+- Con ellas, la revisión lo midió en ~0,06 mm.
+- La U de mediana es de centésimas de milímetro, y la dirección peor condicionada es la
+  superior.
+
+Que U sea tan pequeña en el fantasma es lo esperado. Es un caso sin ruido, con la misma
+forma en las dos modalidades. No dice nada sobre el caso B.
 
 **Caso A:** ver §7.
 
 ## 5 · Lo que este método no resuelve
 
-- **Exactitud.** Un sesgo común a todos los reajustes no aparece en U: el isonivel 1400, el
-  medio paso del borde, o que los dientes se hayan movido entre la sesión del CBCT y la del
-  escaneo. Solo lo acotan los puntos anatómicos
+- **Exactitud.** Un sesgo común a todos los reajustes no aparece en U: el isonivel 1400, o
+  que los dientes se hayan movido entre la sesión del CBCT y la del escaneo. Solo lo acotan
+  los puntos anatómicos
   ([`uos-protocolo-puntos-anatomicos.md`](../spec/uos-protocolo-puntos-anatomicos.md)).
 - **Ningún modelo rígido encaja todas las piezas** si el escaneo y el CBCT no tienen la
-  misma forma, como PREVIO frente a POST (consistencia §2). ŝ y la navaja lo cuantifican; no
-  lo corrigen.
+  misma forma, como PREVIO frente a POST (consistencia §2). La escala y la navaja lo
+  cuantifican; no lo corrigen.
 - **Depende de las etiquetas FDI.** Fijan el marco grueso y la banda. Una numeración
   corrida un diente desplaza la banda de cada pieza; P2 del protocolo lo acota.
+- **Es más lento**: unos 80 s por registro en el fantasma, frente a segundos del camino
+  antiguo. Por eso sigue siendo opcional.
 
 ## 6 · Qué se injertó de las otras propuestas
 
 - De la búsqueda con consenso:
-  - el segundo CBCT como eje de precisión independiente (E3);
+  - el segundo CBCT como eje de precisión independiente (E3). En el caso B no existe: la
+    segunda serie es la misma adquisición, y E3 queda como control de reproducibilidad
+    (protocolo §2);
   - los dos niveles de veredicto, «mejora» y «objetivo»;
   - la prueba de calibración;
   - el signo de la arcada.
@@ -160,10 +202,52 @@ marco):
   apertura del arco. En los escaneos superiores del caso B da el anterior al revés; lo usa
   `segmentar_fdi.py`. Aquí se usa un ajuste de grado 2 solo como comprobación cruzada
   (`marco_geometrico`).
-- `preparacion.plano_oclusal_del_esmalte` usa la moda. Este módulo no la toca: la sustituye
-  por el valle cuando el perfil es bimodal y lo declara.
+- `preparacion.plano_oclusal_del_esmalte` usa la moda. Este módulo no la toca: añade el
+  valle como segunda ancla cuando el perfil es bimodal y lo declara.
 
-## 7 · Caso A
+## 7 · Caso A: el método falla, y por qué
 
-_Pendiente: se completa con la ejecución de desarrollo sobre el caso A antes de congelar el
-protocolo._
+Ejecución de desarrollo del 2026-11-20 sobre el maxilar del caso A. La serie es dispersa
+(paso mediano 0,45 mm, hueco máximo 1,95 mm) y las etiquetas FDI son las votadas. **No hay
+verdad en el caso A**: la referencia es el registro por cortes (`por_cortes`, rms 1,65 mm,
+solapamiento 0,56), que tampoco es exacto. Nada de esta sección se usa para elegir
+constantes comparando con esa pose.
+
+**El método tal como está, con 180 arranques (dos anclas):**
+- **Veto.** Ninguna de las 35 cuencas es elegible. La devuelta tiene cobertura C = 0,21 y
+  S = 1,47 mm, y queda a 14,0 mm de mediana del registro por cortes.
+- **Una vuelta puntúa mejor.** Su S es 0,71 mm menor; solo la descarta la anatomía.
+- **Incertidumbre declarada de 20 a 43 mm** por diente: el propio método dice que no sabe
+  dónde está.
+- **Tiempo: 22–24 min** por registro con incertidumbre, frente a unos 80 s en el fantasma.
+
+**Por qué, medido desde la pose del registro por cortes:**
+
+| Contorno | S en esa pose | C en esa pose | Afinando desde ahí, la pose se mueve |
+|---|---|---|---|
+| Dos anclas, losa −4 a +25,6 mm | 0,86 mm | 0,40 | 10,4 mm |
+| Solo la moda, −4 a +14 mm | 0,86 mm | 0,40 | 7,6 mm; las cúspides acaban a +8,7 mm |
+| Solo la moda, −3 a +9 mm | 0,86 mm | 0,40 | 3,3 mm |
+| Solo la moda, −2 a +7 mm | 0,78 mm | 0,42 | 1,2 mm, sin converger en 200 iteraciones |
+
+Esto deja tres fallos de diseño, que el fantasma no tenía cómo mostrar:
+1. **La banda de corona del escáner encaja contra las raíces.** Una losa que llega 14 mm por
+   encima del plano oclusal mete raíz y cuello, y en un diente real tienen una anchura
+   parecida a la de la corona cerca de la encía. El ajuste sube la arcada hacia ellas, en la
+   dirección peor condicionada (la vertical). Cuanto más alta la losa, más se desplaza. En
+   el fantasma las raíces eran conos finos y no competían.
+2. **La segunda ancla es espuria aquí.** El perfil del esmalte es bimodal (picos a 29,1 y
+   42,7 mm), pero las cúspides están en el primero; el valle (+11,6 mm) solo ensancha la losa
+   hasta casi 30 mm.
+3. **La cobertura mínima de 0,5 es inalcanzable** en esta serie incluso en la pose de
+   referencia: el lado del contorno da 0,40, porque la losa trae mucho borde que el escáner
+   no ve. Con eso el veto salta siempre.
+
+**Consecuencia:** el protocolo del caso B queda **suspendido sin congelar**. Ejecutarlo
+sería medir la precisión de un método que ya se sabe que falla en el único caso real de
+desarrollo, y a ~22 min por registro serían unas 50 h. Antes hace falta:
+- reproducir estos fallos en el fantasma, con raíces tan anchas como el cuello, porque solo
+  ahí hay verdad;
+- corregirlos contra el fantasma;
+- volver a pasar el caso A, solo como comprobación de que no hay veto y de lo que declara;
+- reducir el tiempo por registro.

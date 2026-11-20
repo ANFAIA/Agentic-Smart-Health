@@ -16,8 +16,8 @@ fía de sí mismo diente a diente. Diseño y justificación: `docs/research/regi
 
 1 · **Primero se orienta y después se ajusta, sin azar.** El escáner trae sus ejes de las
 etiquetas FDI (`export_agents.anatomia.anatomical_frame`, que pasa quien llama); el CBCT,
-de la cabecera DICOM (LPS), con el eje superior corregido por la normal de un plano
-ajustado al esmalte (`marco_cbct`). La pose inicial es la rotación de unos ejes a otros
+los de la cabecera DICOM (LPS) tal cual, sin estimar la inclinación del plano oclusal
+(`marco_cbct` explica por qué). La pose inicial es la rotación de unos ejes a otros
 (`por_cortes.pose_inicial`). No hay submuestra aleatoria en ningún paso: mover el STL,
 reordenar sus vértices o cambiar una semilla no puede cambiar el resultado.
 
@@ -974,7 +974,8 @@ class RegistroAnatomico:
         # mínimo: no merece 200 iteraciones si no puede ganar.
         cuencas: list[dict] = []
         for c in gruesas:
-            r, t, iteraciones, convergido = self.afina(*c["pose"], P, iters=ITER_MEDIO,
+            r0, t0 = c["pose"]
+            r, t, iteraciones, convergido = self.afina(r0, t0, P, iters=ITER_MEDIO,
                                                        superficie=False)
             for d in cuencas:
                 if self.rms_desplazamiento((r, t), d["pose"]) < RADIO_CUENCA_GRUESA_MM:
@@ -986,15 +987,17 @@ class RegistroAnatomico:
                                 "refined": False})
 
         def puntua(c: dict) -> None:
-            c["score"] = self.puntua_secciones(*c["pose"], por_corte)
-            c["check"] = self.coherencia(*c["pose"], c["score"])
+            r0, t0 = c["pose"]
+            c["score"] = self.puntua_secciones(r0, t0, por_corte)
+            c["check"] = self.coherencia(r0, t0, c["score"])
             c["flip_start"] = all(s.startswith("vuelta") for s in c["starts"])
 
         def refina(c: dict) -> None:
             if c["refined"]:
                 return
             # El tramo corto emparejó con vértices; el fino, con la superficie, siempre.
-            r, t, iteraciones, convergido = self.afina(*c["pose"], P, iters=ITER_FINO)
+            r0, t0 = c["pose"]
+            r, t, iteraciones, convergido = self.afina(r0, t0, P, iters=ITER_FINO)
             c.update(pose=(r, t), iterations=c["iterations"] + iteraciones,
                      converged=convergido)
             c["refined"] = True
@@ -1074,9 +1077,12 @@ class RegistroAnatomico:
             if c is elegida:
                 continue
             if c["score"]["S"] <= elegida["score"]["S"] + MARGEN_AMBIGUEDAD_S_MM:
-                d = self.rms_desplazamiento(c["pose"], elegida["pose"])
-                if d > DESPLAZAMIENTO_AMBIGUO_MM and (ambigua is None or d > ambigua["rms_mm"]):
-                    ambigua = {"rms_mm": round(d, 3), "S": c["score"]["S"], "pose": c["pose"]}
+                lejos = self.rms_desplazamiento(c["pose"], elegida["pose"])
+                if lejos > DESPLAZAMIENTO_AMBIGUO_MM and (
+                    ambigua is None or lejos > ambigua["rms_mm"]
+                ):
+                    ambigua = {"rms_mm": round(lejos, 3), "S": c["score"]["S"],
+                               "pose": c["pose"]}
 
         rot, tras = elegida["pose"]
         _, _, _, r = self.correspondencias(rot, tras, P)
@@ -1122,7 +1128,7 @@ class RegistroAnatomico:
         # Umbral.
         h_thr = np.zeros(int(self.escaner.banda.sum()))
         h_thr_v = np.zeros_like(h_thr)
-        umbral = {}
+        umbral: dict[str, Any] = {}
         for u, (pu, _) in sorted(self.contornos.items()):
             if pu.shape == P.shape and np.array_equal(pu, P):
                 continue

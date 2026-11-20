@@ -206,6 +206,28 @@ transformación **conocida sobre la misma nube**; con `0.70` y `1.0` sí.
 De ahí la regla: **cribar flojo y refinar fuerte**. Un único valor de recorte para todo el
 registro es un error de diseño.
 
+### 2.6.2 Enmienda 2026-11-20: un registro anatómico opcional, sin azar y sin vueltas
+
+La medida 1 sobre el caso B
+([`consistencia-registro-caso-b.md`](../research/consistencia-registro-caso-b.md)) mostró
+dos fallos del camino de series densas:
+- la pose cambia 1–3 mm con la semilla de la submuestra y con el orden de los vértices;
+- en ~30 % de semillas da la vuelta, con el mismo rms que una pose buena.
+
+`fusion_agents.anatomico` (`registro="anatomico"`) es el método nuevo:
+- orienta con los ejes FDI del escáner y los LPS del CBCT;
+- ajusta contornos del CBCT a una banda por diente del escáner, desde arranques fijos;
+- elige con una distancia por secciones que no es la función ajustada;
+- veta lo que contradice la anatomía (`RegistrationResult.veto`, confianza 0).
+
+No sustituye a `auto`. Funciona en el fantasma y **falla en el caso A**: la banda de corona
+acaba encajando contra las raíces y todas las cuencas quedan vetadas. Por eso el protocolo
+de precisión del caso B
+([`registro-anatomico-protocolo.md`](../research/registro-anatomico-protocolo.md)) está
+suspendido y sin congelar. El cambio de valor por defecto, si algún día se justifica, irá
+en un commit aparte. Diseño:
+[`registro-anatomico.md`](../research/registro-anatomico.md).
+
 ### 2.7 El registro se valida en dos niveles
 
 Separar **corrección del algoritmo** de **calidad sobre dato clínico**, porque fallan por

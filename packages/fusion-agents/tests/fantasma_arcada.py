@@ -54,7 +54,7 @@ def centros_coronas(arcada: str = "upper") -> tuple[np.ndarray, np.ndarray]:
     y = -(22 * np.cos(t) - 12)
     z = np.full_like(t, CENTRO_Z if arcada == "upper" else -CENTRO_Z)
     fdi = []
-    for i, ti in enumerate(t):
+    for i in range(len(t)):
         lado_derecho = x[i] < 0
         numero = N_LADO - i if i < N_LADO else i - N_LADO + 1
         if arcada == "upper":
@@ -127,7 +127,8 @@ def _elipsoide(
     for i in range(nu):
         j = (i + 1) % nu
         for k in range(n_v - 1):
-            caras += [[idx[i, k], idx[j, k], idx[j, k + 1]], [idx[i, k], idx[j, k + 1], idx[i, k + 1]]]
+            caras += [[idx[i, k], idx[j, k], idx[j, k + 1]],
+                      [idx[i, k], idx[j, k + 1], idx[i, k + 1]]]
         caras += [[len(pts), idx[j, 0], idx[i, 0]], [len(pts) + 1, idx[i, -1], idx[j, -1]]]
     return V, np.array(caras)
 
