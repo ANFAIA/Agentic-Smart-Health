@@ -474,6 +474,156 @@ resultado, y la elección se hizo sobre las dos anotaciones de este caso, que de
 para medirla. Confirmarla exige una línea nueva trazada a ciegas, sobre este caso u otro
 maxilar. Es un caso.
 
+### 6.10 · La separación entre dientes, y un modelo reentrenado para ella (2026-11-20)
+
+**Diagnóstico, sobre `dev` y antes de proponer nada.** Con el pipeline real —voto entre 3
+de 18 referencias y la limpieza de `caso_completo.py`— y las predicciones ya cacheadas, se
+contó cada fallo por pieza del experto (40 arcadas, 520 piezas):
+
+| Fallo | Medida | Piezas afectadas |
+|---|---|---:|
+| Numeración | etiqueta emparejada con otra pieza, o pieza sin etiqueta | 22 (4 %) |
+| **Separación** | la pieza cede o toma más del 10 % de su área a una vecina | **165 (32 %)** |
+| | … más del 30 % | 36 |
+| Frontera interproximal | distancia a la del experto, mediana por contacto | 0,72 mm; 146 de 439 contactos > 1 mm |
+
+La pose no lo explica: con la pose original de Teeth3DS+ salen 147 piezas y 0,72 mm. El
+sangrado es una franja pegada al vecino (mediana 0,4-0,5 mm de la pieza dueña), no
+fragmentos sueltos. Y es lo que cabe esperar de cómo ve el modelo la arcada: trozos de
+2.048 puntos, que sobre unos 9.500 mm² dejan ~2,15 mm entre puntos, cuando la malla tiene
+0,17 mm entre vértices. El error de frontera crece con ese espaciado (Spearman 0,36 sobre
+40 arcadas): es una correlación modesta y se toma como hipótesis, no como causa probada.
+
+Así que el fallo que se ataca es la **separación**, y por la vía de la causa: reentrenar el
+mismo Point Transformer con más puntos por trozo. La numeración y el margen no son el
+objetivo, pero no pueden empeorar.
+
+**El conjunto reservado.** Los 300 pacientes descargados son todos el
+`public-training-set-1` de 3DTeethSeg'22 y están gastados: 240 entrenaron el modelo y 60 son
+`dev` y `eval`. El proyecto OSF `xctdy` tiene el dataset entero en siete zips (ver
+`dataset-teeth3ds.md` §3); de los 600 pacientes que faltan, 300 son el `private-testing-set`
+del reto, que no ha visto **nadie** con datos públicos. La reserva son 60 de ellos, elegidos
+con semilla fija por [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py)
+y versionados en [`teeth3ds-reserva.txt`](teeth3ds-reserva.txt) antes de bajar ninguno. Los
+otros 300, el `public-training-set-2`, se usan para entrenar.
+
+**El candidato.** [`scripts/entrena_fdi_escaner.py`](../../scripts/entrena_fdi_escaner.py):
+la arquitectura, la entrada y la pérdida del notebook; trozos de 8.192 puntos, giros
+aleatorios de hasta ±N° (nunca espejo, que cambiaría el lado FDI) y 1.080 arcadas en vez de
+480. Se prueban como mucho tres valores de giro y se elige en `dev`.
+
+**La métrica nueva.** `margen_metricas.separacion_interproximal`: por cada par de piezas del
+experto que se tocan, la distancia simétrica entre su frontera y la predicha; por pieza, el
+área cedida y tomada. Empareja las etiquetas con las piezas por solape, como
+`identidad_de_piezas`, así que un número cambiado no cuenta como frontera mal puesta.
+
+**Criterios, fijados en este commit antes de entrenar** (`scripts/benchmark_separacion.py`).
+C = candidato, B = `normales-ce-baseline.pt`, los dos en el pipeline real:
+
+| | Criterio |
+|---|---|
+| K1 | mediana de todos los contactos de C ≤ 0,75 × la de B, y mejora en ≥ 70 % de las arcadas |
+| K2 | piezas que sangran > 10 %: C ≤ 0,75 × B |
+| K3 | piezas bien numeradas C ≥ B, y fantasmas C ≤ B |
+| K4 | la distancia del voto al techo de la pose nativa no crece |
+| K5 | falso diente ≤ B + 0,01, falsa encía ≤ B + 0,5 puntos, piezas que pasan a < 85 % de corona ≤ 0,5 % |
+| K6 | acierto FDI por vértice de diente ≥ B − 0,005 |
+
+**Precisión del protocolo, fijada antes de ver ningún candidato** (2026-11-20, mientras
+entrenaba el primero). Las configuraciones son tres y en este orden: 16.384 puntos con
+±15°; 8.192 con ±15°; y la resolución ganadora con ±30°. Gana la resolución con menor
+contacto p50 en `dev` entre las que cumplen K3; el candidato final es, de las tres, la de
+menor contacto p50 entre las que cumplen K1-K6 en `dev` (`benchmark_separacion.py elige`).
+La semilla extra que preveía el plan no se entrena, por tiempo.
+
+Si C no los cumple todos en `dev`, la reserva no se toca y esto se cierra como negativo. La
+reserva se evalúa **una vez** (el script se niega a repetirlo). Si cumple todo, C pasa a ser
+el checkpoint por defecto de `segmentar_fdi.py`; si no, queda disponible y declarado.
+
+Las anotaciones de las doctoras (14 curvas del maxilar del caso A) solo entran al final,
+como falsación: dan la identidad de cada pieza pero no la frontera entre dientes que se
+tocan, y ya se usaron para numerar.
+
+**Resultado en `dev` (2026-11-20).** Los tres candidatos entrenaron 60 épocas con semilla 0
+sobre las 1.080 arcadas y se midieron con `benchmark_separacion.py evalua --split dev` contra
+la base, desde `6602771` con el árbol limpio:
+
+| | Contacto p50 | Contactos > 1 mm | Sangran > 10 % | Correctas | Fantasmas | Falso diente | Falsa encía | FDI por vértice | K1-K6 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| B, base | 0,75 mm | 152 de 428 | 165 de 520 | 498 | 19 | 0,454 | 0,0070 | 0,884 | — |
+| C1, 16.384 pts, ±15° | 0,22 mm | 6 de 437 | 22 | 506 | 15 | 0,257 | 0,0021 | 0,936 | falla K4 |
+| **C2, 8.192 pts, ±15°** | **0,16 mm** | 11 de 438 | 19 | 508 | 13 | 0,283 | 0,0017 | 0,946 | **cumple** |
+| C3, 8.192 pts, ±30° | 0,23 mm | 13 de 439 | 18 | 509 | 14 | 0,305 | 0,0015 | 0,945 | falla K4 |
+
+Los tres mejoran el contacto en las 40 arcadas. C1 y C3 fallan solo K4, y por una pieza
+cada uno: el voto se queda una pieza por debajo de lo que daría la pose nativa (506 frente a
+507, 509 frente a 510), cuando con la base coincidían. El criterio pedía que esa distancia no
+creciera y creció, así que quedan fuera, aunque sea por poco. Por la regla fijada, la
+resolución ganadora fue 8.192 (0,16 frente a 0,22 mm) y el candidato final es **C2**. Que
+8.192 puntos separe mejor que 16.384 contradice la hipótesis de partida, según la cual más
+resolución sería mejor. Con una sola semilla no se puede saber si es una diferencia real o
+ruido de entrenamiento, y no se ha investigado.
+
+C2 pasó la puerta, así que la reserva se predijo con B y con C2 y se evaluó una vez.
+
+**Resultado en la reserva (2026-11-20): negativo, por un criterio.** 120 arcadas de 60
+pacientes del `private-testing-set`, evaluadas con `benchmark_separacion.py evalua --split
+reserva` desde `6602771` con el árbol limpio (`run-record.json` junto a cada predicción):
+
+| Criterio | B | C2 | |
+|---|---:|---:|---|
+| K1 contacto p50 | 0,86 mm | 0,17 mm; mejora en las 118 arcadas con contactos | cumple |
+| K2 piezas que sangran > 10 % | 789 de 1.657 | 103 | cumple |
+| K3 bien numeradas · fantasmas | 1.365 · 106 | 1.531 · 95 | cumple |
+| K4 techo − voto | 42 | 14 | cumple |
+| K5 falso diente · falsa encía | 0,358 · 0,065 | 0,255 · 0,019 | cumple |
+| K5 piezas que **pasan** a < 85 % de corona | — | **10 de 1.657 (0,60 %)** | **no cumple** (límite 0,5 %) |
+| K6 FDI por vértice de diente | 0,738 | 0,888 | cumple |
+
+Cinco criterios y medio se cumplen con holgura. Lo que falla es la cláusula de daño de K5:
+10 piezas que con la base conservaban al menos el 85 % de su corona bajan de ese umbral con
+C2, cuando el límite era 8 (0,5 % de 1.657). El total de piezas por debajo del 85 % baja de
+152 a 33, pero el criterio contaba solo las que empeoran, a propósito: un método que arregla
+muchas piezas y estropea unas pocas no debe compensar unas con otras. Así que, por la regla
+fijada, **C2 no pasa a ser el checkpoint por defecto**. Queda disponible y declarado
+(`segmentar_fdi.py --checkpoint`), igual que `M9` y `ancla_al_pliegue`.
+
+Dos cosas que se ven en la reserva y no estaban previstas. La base rinde mucho peor aquí que
+en `dev`: el 82 % de las piezas bien numeradas frente al 96 %, y 74 de 120 arcadas con algún
+fantasma. Son pacientes del test privado del reto, que nadie ha visto con datos públicos, y es
+la primera medida de la base fuera de la distribución con la que se entrenó. Lo que C2 gana
+también es mayor aquí: 166 piezas bien numeradas más, frente a 10 en `dev`. Y el margen
+mejora sin tocarlo: la mediana pasa de 2,23 a 0,96 mm del experto, efecto secundario de las
+1.080 arcadas y de los trozos más finos, no de ninguna regla de margen. No se ha separado qué
+parte de la mejora viene de los trozos y qué parte del doble de datos. Para eso haría falta
+entrenar 2.048 puntos con las 1.080 arcadas, y ese experimento no estaba en el protocolo.
+
+**Falsación en los casos clínicos, sin ajustar nada.** Se segmentaron el maxilar del caso A
+y las dos arcadas del caso B con B y con C2. Las 14 curvas de margen de las dos anotadoras del
+caso A ya estaban gastadas, así que no se leen como validación:
+
+- **Identidad, caso A.** Con C2 las 14 piezas anotadas se emparejan con su propio número y
+  ninguna queda sin etiqueta. Con B se emparejaban por solape igual, pero a la 21 (y a la 17,
+  según una de las anotaciones) no le quedaba etiqueta mayoritaria. C2 añade además una
+  **18** de 109 mm² que ninguna anotadora marcó. No se sabe si existe esa pieza; si no existe,
+  es un fantasma del tipo que K3 cuenta.
+- **Margen, caso A.** Hay 3,53 y 3,64 mm de la línea con B, y 0,88 y 0,98 mm con C2, sin
+  ninguna pieza por debajo del 85 % de corona. Entre las dos anotadoras hay unos 0,15 mm.
+  Coincide en dirección con la reserva; no es una medida independiente.
+- **Caso B**, sin anotación. Las piezas que superan el ancho anatómico pasan de 8 a 5 en el
+  maxilar y de 2 a 1 en la mandíbula. C2 añade una **38** de 35 mm² en la mandíbula, de nuevo
+  sin forma de saber si es real.
+
+Nada de lo clínico contradice la reserva. La pega coincide con la que la reserva ya cuenta:
+los fantasmas bajan poco (106 → 95) y en los dos casos aparece un tercer molar que nadie ha
+confirmado.
+
+**Lo que queda abierto.** (1) El daño de corona de K5: mirar las 10 piezas de la reserva no
+vale para ajustar, porque la reserva ya está gastada; un intento nuevo necesita su propio
+conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resolución de
+datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
+entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

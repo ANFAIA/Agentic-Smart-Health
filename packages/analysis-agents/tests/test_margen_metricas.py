@@ -181,3 +181,66 @@ def test_posicion_en_arcada() -> None:
     assert posicion_en_arcada(18) == ("upper", 0)
     assert posicion_en_arcada(11) == ("upper", 7) and posicion_en_arcada(21) == ("upper", 8)
     assert posicion_en_arcada(38) == ("lower", 15) and posicion_en_arcada(41) == ("lower", 7)
+
+
+# ── Separación entre piezas vecinas ─────────────────────────────────────────────
+
+def _dos_dientes(frontera_x: float, codigos: tuple[int, int] = (11, 12)):
+    """Loseta plana: encía en `y < 0`; diente `codigos[0]` a la izquierda de `frontera_x`."""
+    pos, tri, _ = _valle(0.0)
+    etq = np.where(pos[:, 1] < 0, 0,
+                   np.where(pos[:, 0] < frontera_x, codigos[0], codigos[1])).astype(np.int64)
+    return pos, tri, etq
+
+
+def test_separacion_perfecta_no_tiene_error() -> None:
+    from analysis_agents.margen_metricas import separacion_interproximal
+
+    pos, tri, experto = _dos_dientes(16.0)
+    s = separacion_interproximal(pos, tri, experto, experto)
+    assert s["resolved"] == 1 and s["unresolved"] == 0
+    assert s["contact_p50_mm"] == 0.0
+    assert s["teeth_bleeding"] == 0 and s["ceded_area_fraction"] == 0.0
+
+
+def test_una_frontera_corrida_se_mide_en_milimetros_y_en_area() -> None:
+    from analysis_agents.margen_metricas import separacion_interproximal
+
+    pos, tri, experto = _dos_dientes(16.0)
+    _, _, pred = _dos_dientes(19.0)            # la frontera entre 11 y 12 se corre 3 mm
+    s = separacion_interproximal(pos, tri, pred, experto)
+    assert s["contact_p50_mm"] == pytest.approx(3.0, abs=PASO)
+    # El 12 cede una franja de 3 mm de sus ~15,5 mm: más del 10 %, sangra; el 11 la toma.
+    assert s["per_tooth"]["12"]["ceded"] == pytest.approx(3.0 / 15.5, abs=0.04)
+    assert s["per_tooth"]["11"]["taken"] == pytest.approx(s["per_tooth"]["12"]["ceded"]
+                                                          * 15.5 / 16.0, abs=0.04)
+    assert s["teeth_bleeding"] == 2
+
+
+def test_un_numero_cambiado_no_es_un_error_de_separacion() -> None:
+    from analysis_agents.margen_metricas import separacion_interproximal
+
+    pos, tri, experto = _dos_dientes(16.0)
+    _, _, cambiado = _dos_dientes(16.0, codigos=(12, 13))   # mal numerado, bien separado
+    s = separacion_interproximal(pos, tri, cambiado, experto)
+    assert s["contact_p50_mm"] == 0.0 and s["teeth_bleeding"] == 0
+
+
+def test_dos_piezas_fundidas_en_una_etiqueta_no_se_resuelven() -> None:
+    from analysis_agents.margen_metricas import separacion_interproximal
+
+    pos, tri, experto = _dos_dientes(16.0)
+    fundida = np.where(experto > 0, 11, 0)
+    s = separacion_interproximal(pos, tri, fundida, experto)
+    assert s["resolved"] == 0 and s["unresolved"] == 1
+    assert s["per_tooth"]["12"]["ceded"] == pytest.approx(1.0)
+
+
+def test_agregar_la_separacion_usa_todos_los_contactos() -> None:
+    pos, tri, experto = _dos_dientes(16.0)
+    _, _, pred = _dos_dientes(19.0)
+    bien = metricas_de_arcada(pos, tri, experto, experto)
+    mal = metricas_de_arcada(pos, tri, pred, experto)
+    r = agrega([bien, mal])["separation"]
+    assert r["resolved"] == 2 and r["teeth_bleeding"] == 2
+    assert r["contacts_over_1mm"] == 1
