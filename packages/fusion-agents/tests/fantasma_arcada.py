@@ -22,7 +22,11 @@ necesita un fichero que CI no tiene no prueba nada en CI.
   normal (ver `desplazamiento_oclusion`): así hay esmalte de la otra arcada a las alturas
   de la banda del escáner, que la máscara de esmalte no quita.
 - El «escaneo» superior es la superficie de las coronas superiores por debajo de la encía,
-  más una cinta de encía, teselada por su cuenta y con etiquetas FDI.
+  más una cinta de encía, teselada por su cuenta y con etiquetas FDI. Por defecto la cinta
+  queda 1 mm por encima de las coronas, que asoman 9 mm. Con `encia="cuello"` la encía
+  nace en el margen de cada corona, festoneado, y con `desborde_mm` las etiquetas FDI
+  invaden la encía como hace el segmentador real; `corona="corta"` deja coronas clínicas
+  de 6,5 mm (ver `_collar_encia`).
 """
 
 from __future__ import annotations
@@ -298,9 +302,93 @@ def _elipsoide(
     return V, np.array(caras)
 
 
-def escaneo_superior(nu: int = 48, nv: int = 32) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """`(V, F, fdi)` en LPS (el mundo del CBCT): coronas superiores + cinta de encía."""
+# Encía al cuello (`encia="cuello"`), valores de libro fijados antes de medir nada con ellos:
+# - corona clínica (de la cúspide al margen gingival, en vestibular y lingual): 9 mm, lo que
+#   asoma con la cinta de siempre, o `CORONA_CORTA_MM` con `corona="corta"` (un molar
+#   real tiene 6–7 mm);
+# - el margen es festoneado: en interproximal la papila sube `PAPILA_MM` hacia oclusal;
+# - la encía sale del margen hacia apical y hacia fuera a 45° hasta tener `GROSOR_ENCIA_MM`
+#   de espesor, y desde ahí sube paralela al eje del diente `ALTO_ENCIA_MM` más;
+# - `desborde_mm` es cuánta encía, medida sobre la superficie del escaneo desde el margen,
+#   lleva la etiqueta FDI de su diente. El segmentador del escáner etiqueta como diente el
+#   45 % de la encía del experto en Teeth3DS+, típicamente 1–3 mm más allá del margen.
+CORONA_NORMAL_MM = 9.0
+CORONA_CORTA_MM = 6.5
+PAPILA_MM = 2.5
+GROSOR_ENCIA_MM = 1.0
+ALTO_ENCIA_MM = 5.0
+PASO_ENCIA_MM = 0.25
+
+
+def _tangente_arcada(c: np.ndarray) -> np.ndarray:
+    """Dirección de la arcada (mesiodistal) en planta en el diente de centro `c`."""
+    t = np.arcsin(np.clip(-c[0] / 24.0, -1.0, 1.0))
+    tang = np.array([-24 * np.cos(t), 22 * np.sin(t)])
+    return tang / np.linalg.norm(tang)
+
+
+def _altura_margen(u: np.ndarray, tang: np.ndarray, alto: float) -> np.ndarray:
+    """Altura del margen sobre la cúspide en cada dirección `u` (en planta) del diente.
+
+    `alto` en vestibular y lingual; `alto − PAPILA_MM` en mesial y distal.
+    """
+    return alto - PAPILA_MM * (u @ tang) ** 2
+
+
+def _collar_encia(
+    c: np.ndarray, f: int, alto: float, desborde: float, nu: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """`(V, F, fdi, s)` de la encía alrededor de un diente; `s`, distancia al margen.
+
+    La sección es la de la corona a la altura del margen; desde ahí la encía sale a 45°
+    hacia apical hasta `GROSOR_ENCIA_MM` de espesor y sube paralela al eje. Lleva la
+    etiqueta `f` hasta `desborde` mm de superficie desde el margen, y 0 más allá.
+    """
+    semi = semiejes(f)
+    tang = _tangente_arcada(c)
+    ang = np.linspace(0, 2 * np.pi, nu, endpoint=False)
+    u = np.c_[np.cos(ang), np.sin(ang)]
+    cuspide = c[2] - semi[2]
+    zm = cuspide + _altura_margen(u, tang, alto)
+    rm = semi[0] * np.sqrt(np.clip(1.0 - ((zm - c[2]) / semi[2]) ** 2, 0.0, 1.0))
+    labio = GROSOR_ENCIA_MM * np.sqrt(2.0)
+    s = np.arange(0.0, labio + ALTO_ENCIA_MM + 1e-9, PASO_ENCIA_MM)
+    fuera = np.where(s <= labio, s / np.sqrt(2.0), GROSOR_ENCIA_MM)
+    sube = np.where(s <= labio, s / np.sqrt(2.0), GROSOR_ENCIA_MM + (s - labio))
+    r = rm[:, None] + fuera[None, :]
+    V = np.stack([c[0] + r * u[:, :1], c[1] + r * u[:, 1:],
+                  zm[:, None] + sube[None, :]], axis=-1).reshape(-1, 3)
+    idx = np.arange(nu * len(s)).reshape(nu, len(s))
+    F = []
+    for i in range(nu):
+        j = (i + 1) % nu
+        for k in range(len(s) - 1):
+            F += [[idx[i, k], idx[j, k], idx[j, k + 1]], [idx[i, k], idx[j, k + 1], idx[i, k + 1]]]
+    dist = np.tile(s, nu)
+    etq = np.where(dist <= desborde + 1e-9, f, 0)
+    return V, np.array(F), etq, dist
+
+
+def escaneo_superior(
+    nu: int = 48, nv: int = 32, encia: str = "cinta", corona: str = "normal",
+    desborde_mm: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`(V, F, fdi)` en LPS (el mundo del CBCT): coronas superiores + encía.
+
+    `encia`: `"cinta"` (por defecto, lo de siempre: una herradura 1 mm por encima de las
+    coronas, que asoman 9 mm) o `"cuello"` (la encía nace en el margen festoneado de cada
+    corona, ver `_collar_encia`). Solo con `"cuello"`: `corona` (`"normal"`, 9 mm de corona
+    clínica, o `"corta"`, `CORONA_CORTA_MM`) y `desborde_mm` (encía etiquetada como diente).
+    """
+    if encia not in ("cinta", "cuello"):
+        raise ValueError(f"encía desconocida: {encia!r} (se espera 'cinta' o 'cuello')")
+    if corona not in ("normal", "corta"):
+        raise ValueError(f"corona desconocida: {corona!r} (se espera 'normal' o 'corta')")
+    if encia == "cinta" and (corona != "normal" or desborde_mm > 0):
+        raise ValueError("`corona` y `desborde_mm` solo existen con encia='cuello'")
     centros, fdi = centros_coronas("upper")
+    if encia == "cuello":
+        return _escaneo_cuello(centros, fdi, nu, nv, corona, desborde_mm)
     Vs, Fs, Es = [], [], []
     n = 0
     for c, f in zip(centros, fdi, strict=True):
@@ -334,6 +422,50 @@ def escaneo_superior(nu: int = 48, nv: int = 32) -> tuple[np.ndarray, np.ndarray
     Vs.append(Vg)
     Fs.append(np.array(Fg) + n)
     Es.append(np.zeros(len(Vg), dtype=np.int64))
+    return np.vstack(Vs), np.vstack(Fs), np.concatenate(Es)
+
+
+def _escaneo_cuello(
+    centros: np.ndarray, fdi: np.ndarray, nu: int, nv: int, corona: str, desborde: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Coronas cortadas en su margen festoneado y un collar de encía por diente.
+
+    Entre dientes vecinos cada punto de encía es del diente más próximo en planta (en
+    unidades de su anchura), y la encía que cae dentro de otra corona se quita: así las
+    papilas de dos vecinos se encuentran sin atravesarse.
+    """
+    alto = CORONA_NORMAL_MM if corona == "normal" else CORONA_CORTA_MM
+    semis = np.stack([semiejes(int(f)) for f in fdi])
+    Vs, Fs, Es = [], [], []
+    n = 0
+
+    def anade(V: np.ndarray, F: np.ndarray, E: np.ndarray, vale: np.ndarray) -> None:
+        nonlocal n
+        F = F[vale[F].all(1)]
+        usados = np.unique(F)
+        mapa = -np.ones(len(V), dtype=np.int64)
+        mapa[usados] = np.arange(len(usados))
+        Vs.append(V[usados])
+        Fs.append(mapa[F] + n)
+        Es.append(E[usados])
+        n += len(usados)
+
+    for c, f in zip(centros, fdi, strict=True):
+        semi = semiejes(int(f))
+        V, F = _elipsoide(c, semi, nu, nv)
+        rel = V[:, :2] - c[:2]
+        u = rel / np.maximum(np.linalg.norm(rel, axis=1, keepdims=True), 1e-12)
+        h = V[:, 2] - (c[2] - semi[2])
+        anade(V, F, np.full(len(V), f), h < _altura_margen(u, _tangente_arcada(c), alto))
+    for i, (c, f) in enumerate(zip(centros, fdi, strict=True)):
+        V, F, E, _ = _collar_encia(c, int(f), alto, desborde, nu)
+        plano = np.linalg.norm(V[:, None, :2] - centros[None, :, :2], axis=2) / semis[None, :, 0]
+        suyo = plano.argmin(axis=1) == i
+        otra = np.zeros(len(V), dtype=bool)
+        for j, (cj, sj) in enumerate(zip(centros, semis, strict=True)):
+            if j != i:
+                otra |= (((V - cj) / sj) ** 2).sum(1) < 1.0
+        anade(V, F, E, suyo & ~otra)
     return np.vstack(Vs), np.vstack(Fs), np.concatenate(Es)
 
 

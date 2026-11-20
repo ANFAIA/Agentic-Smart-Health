@@ -670,6 +670,101 @@ def test_la_sobremordida_no_baja_la_cobertura_en_la_verdad(fichero) -> None:
     assert reg.rms_desplazamiento((r, t), verdad) < 0.2
 
 
+def test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas() -> None:
+    """`encia="cuello"`: el desborde de etiquetas solo llega a la banda si la corona es corta.
+
+    Por defecto el escaneo es el de siempre. Con la encía naciendo en el margen y las
+    etiquetas FDI desbordadas 3 mm sobre ella, la banda (1,5–6 mm bajo la cúspide) no cambia
+    con coronas clínicas de 9 mm: la encía etiquetada empieza más arriba. Con coronas de
+    6,5 mm, la papila (2,5 mm más oclusal en interproximal) sí mete encía en la banda.
+    """
+    V0, F0, e0 = escaneo_superior()
+    V1, F1, e1 = escaneo_superior(encia="cinta")
+    np.testing.assert_array_equal(V0, V1)
+    np.testing.assert_array_equal(F0, F1)
+    np.testing.assert_array_equal(e0, e1)
+    with pytest.raises(ValueError, match="encia='cuello'"):
+        escaneo_superior(desborde_mm=1.0)
+    with pytest.raises(ValueError, match="encía"):
+        escaneo_superior(encia="otra")
+
+    def banda(corona: str, desborde: float) -> tuple[np.ndarray, np.ndarray]:
+        V, F, etq = escaneo_superior(encia="cuello", corona=corona, desborde_mm=desborde)
+        ejes, _ = anatomical_frame(V, etq)
+        return anatomico.Escaner.construye(V, F, etq, ejes).banda, etq
+
+    sin, e_sin = banda("normal", 0.0)
+    con, e_con = banda("normal", 3.0)
+    assert (e_con > 0).sum() > (e_sin > 0).sum()  # el desborde etiqueta encía
+    np.testing.assert_array_equal(sin, con)
+    corta_sin, e_corta = banda("corta", 0.0)
+    corta_con, _ = banda("corta", 3.0)
+    encia_en_banda = corta_con & (e_corta == 0)
+    assert not (corta_sin & (e_corta == 0)).any()
+    assert encia_en_banda.sum() > 0.1 * corta_con.sum()
+
+
+def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verdad() -> None:
+    """Hipótesis descartada: el desborde de etiquetas no explica la C ≈ 0,43 del caso A.
+
+    Con coronas clínicas de 6,5 mm y las etiquetas FDI 3 mm sobre la encía, un 15 % de la
+    banda es encía. Medido (`docs/research/registro-anatomico.md` §11): en la pose
+    verdadera C queda en 0,976 y el lado del escáner en 0,996, porque la encía de la banda
+    es papila entre dos coronas y queda a menos de 1 mm del contorno de alguna. Afinar
+    desde la verdad se mueve 0,10 mm hacia la raíz, frente a 0,08 sin desborde.
+    """
+    Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
+    V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    centros = campo["centers"] + campo["origin"]
+    ejes, _ = anatomical_frame(V, etq)
+    escaner = anatomico.Escaner.construye(V, F, etq, ejes)
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    reg = RegistroAnatomico(escaner=escaner, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    puntuacion = reg.puntua_secciones(*verdad, anatomico._por_corte(P, None))
+    assert puntuacion["C"] >= 0.9
+    assert puntuacion["C_scanner_side"] >= 0.95
+    assert reg.coherencia(*verdad, puntuacion)["eligible"]
+    r, t, _, convergido = reg.afina(*verdad, P)
+    assert convergido
+    assert reg.rms_desplazamiento((r, t), verdad) < 0.2
+
+
+def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() -> None:
+    """Debilidad medida, no corregida: la encía etiquetada tira de la altura y C no lo ve.
+
+    Con capa de esmalte, desenfoque de 0,18 mm y serie dispersa, la máscara deja poco
+    contorno cervical, y la encía etiquetada como diente (inclinada, a 1 mm de la corona)
+    se lleva un 17 % de las parejas del ajuste. Afinar desde la verdad desliza la arcada
+    0,41 mm hacia la raíz con 3 mm de desborde, frente a 0,04 mm sin él, y C sigue por
+    encima de 0,9: el veto no lo detecta (`docs/research/registro-anatomico.md` §11). Si
+    algún día el ajuste deja de deslizar, o C empieza a verlo, este test lo dice.
+    """
+    campo, hu = campo_cbct(paso=PASO, paso_z=0.45, quita=(2.2, 3.9), raices="realistas",
+                           esmalte="capa", desenfoque_mm=0.18)
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    desliza = {}
+    for desborde in (0.0, 3.0):
+        Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=desborde)
+        V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+        ejes, _ = anatomical_frame(V, etq)
+        reg = RegistroAnatomico(escaner=anatomico.Escaner.construye(V, F, etq, ejes),
+                                base_cbct=base, plano=plano,
+                                contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+        r, t, _, convergido = reg.afina(*verdad, P)
+        assert convergido
+        desliza[desborde] = reg.rms_desplazamiento((r, t), verdad)
+        assert reg.puntua_secciones(r, t, anatomico._por_corte(P, None))["C"] >= 0.9
+    assert desliza[0.0] < 0.1
+    assert desliza[3.0] > 0.3
+
+
 def _snap() -> TwinSnapshot:
     return TwinSnapshot(
         acquisition_id="A1",

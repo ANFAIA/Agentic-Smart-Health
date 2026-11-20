@@ -394,7 +394,7 @@ verdad.
 
 **Estado.**
 - La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
-  264 tests verdes, y ruff, mypy y los guardianes limpios.
+  267 tests verdes, y ruff, mypy y los guardianes limpios.
 - El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
   anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
 
@@ -403,8 +403,9 @@ verdad.
    guarda hace falta verdad. Hay dos caminos:
    - puntos anatómicos del caso A, marcados por una persona según el protocolo de puntos.
      Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario;
-   - un fantasma que dé C ≈ 0,4 en la pose verdadera. La sobremordida era el candidato y
-     **no lo reproduce** (§10); no queda ningún candidato medido.
+   - un fantasma que dé C ≈ 0,4 en la pose verdadera. Ni la sobremordida (§10) ni las
+     etiquetas FDI desbordadas sobre la encía (§11) lo reproducen; no queda ningún
+     candidato medido. El desborde sí deja un sesgo vertical que el veto no ve (§11).
 2. **El sesgo vertical por desenfoque** (0,3–0,7 mm hacia la raíz en el fantasma con
    σ = 0,3–0,4 mm). Es exactitud, no precisión, así que no bloquea el protocolo de
    precisión, pero tiene que estar declarado en el artículo.
@@ -477,3 +478,92 @@ el TRE con puntos anatómicos marcados por una persona (§8.2). El fantasma tamp
 fosas ni incisivos en pala: son elipsoides. Una oclusión más fiel cambiaría el detalle de la
 tabla, pero difícilmente lo bastante para pasar de 0,95 a 0,4.
 
+
+## 11 · Etiquetas FDI desbordadas sobre la encía: no bajan C, pero sesgan la altura
+
+**Pregunta.** En Teeth3DS+ el segmentador del escáner etiqueta como diente el 45 % de la
+encía del experto (`scripts/benchmark_margen.py`), típicamente 1–3 mm más allá del margen.
+Si esa encía cae en la banda (1,5–6 mm bajo la cúspide) y no tiene contorno de diente a
+menos de 1 mm, el lado del escáner de C baja. En el fantasma no podía pasar: las coronas
+asomaban 9 mm y la encía era una cinta 1 mm por encima, etiquetada 0.
+
+**La opción.** `fantasma_arcada.escaneo_superior(encia="cuello", corona=..., desborde_mm=...)`,
+por defecto `encia="cinta"` (lo de siempre). Valores de libro fijados antes de medir:
+- la encía nace en el margen de cada corona: sale a 45° hacia apical hasta 1 mm de grosor
+  y sube paralela al eje del diente 5 mm más;
+- el margen es festoneado: la papila sube 2,5 mm hacia oclusal en mesial y distal;
+- corona clínica de 9 mm en vestibular (`corona="normal"`) o de 6,5 mm (`"corta"`);
+- `desborde_mm`: cuánta encía, medida sobre la superficie desde el margen, lleva la etiqueta
+  de su diente;
+- el CBCT no cambia: la encía es tejido blando.
+
+**Medido con el código actual** (rejilla 0,4 mm, raíces realistas). «Serie dispersa» es paso
+0,45 mm con un hueco de 2,2 a 3,9 mm, como en §8.1. Error de corona frente a la verdad sobre
+los vértices de corona de verdad (sin la encía desbordada); vertical positiva hacia la raíz.
+La búsqueda es la del orquestador, sin incertidumbre.
+
+| Escaneo | CBCT | Encía en banda | Verdad: S / C (escáner / contorno) | Afinar desde la verdad | Búsqueda: veto, error mediano (p95) |
+|---|---|---|---|---|---|
+| Cinta de siempre | denso | 0 | 0,148 / 0,975 (0,975 / 1,000) | 0,084 mm | — (§8.1: no, 0,081) |
+| Corona 9 mm, desborde 0 | denso | 0 | 0,148 / 0,975 (0,975 / 1,000) | 0,084 mm | no, 0,081 (0,083) |
+| Corona 9 mm, desborde 1, 2 o 3 | denso | 0 | idéntico al anterior | 0,084 mm | no, 0,081 (0,083) con 3 mm |
+| Corona 6,5 mm, desborde 0 | denso | 0 | 0,150 / 0,996 (0,996 / 1,000) | 0,076 mm | no, 0,077 (0,085) |
+| Corona 6,5 mm, desborde 1 | denso | 778 de 5744 | 0,157 / 0,976 (0,996 / 0,976) | 0,101 mm | no, 0,130 (0,166) |
+| Corona 6,5 mm, desborde 2 | denso | 868 de 5834 | 0,158 / 0,976 (0,996 / 0,976) | 0,100 mm | no, 0,104 (0,127) |
+| Corona 6,5 mm, desborde 3 | denso | 876 de 5842 | 0,158 / 0,976 (0,996 / 0,976) | 0,100 mm | no, 0,104 (0,128) |
+| Corona 6,5 mm, desborde 0 | disperso, capa | 0 | 0,150 / 1,000 (1,000 / 1,000) | 0,041 mm | no, 0,074 (0,077) |
+| Corona 6,5 mm, desborde 1 | disperso, capa | 778 | 0,163 / 0,959 (1,000 / 0,959) | 0,407 mm | no, **0,417** (0,533), vertical +0,41 |
+| Corona 6,5 mm, desborde 2 | disperso, capa | 868 | 0,163 / 0,959 (1,000 / 0,959) | 0,412 mm | no, **0,548** (0,732), vertical +0,54 |
+| Corona 6,5 mm, desborde 3 | disperso | 876 | 0,163 / 0,959 (1,000 / 0,959) | 0,412 mm | no, **0,552** (0,732), vertical +0,54 |
+| Corona 6,5 mm, desborde 3 | disperso, capa | 876 | 0,163 / 0,959 (1,000 / 0,959) | 0,412 mm | no, **1,062** (1,532), vertical +1,03 |
+| Corona 9 mm, desborde 3 | disperso, capa | 0 | 0,148 / 0,976 (0,976 / 1,000) | 0,078 mm | no, 0,066 (0,078) |
+
+«Capa» es capa de esmalte con σ = 0,18 mm. En la verdad y al afinar da exactamente lo mismo
+que el esmalte macizo (comprobado con desborde 0 y 3 en denso, y 3 en disperso): a ese
+desenfoque el contorno a 1400 y la máscara no cambian en este fantasma. La búsqueda, en
+cambio, puede acabar en otra cuenca: con desborde 3 y serie dispersa, 0,55 mm con esmalte
+macizo y **1,06 mm** con capa, las dos sin veto y con C 0,96–0,97. En esta última U sale
+1,34 mm de mediana, casi todo vertical y casi todo del reajuste a 1900: el gate lo recibe
+por incertidumbre, no por veto.
+
+**Sensibilidad al grosor de la encía, añadida después de ver la tabla**, no un valor
+elegido: la encía palatina real tiene 2–3 mm.
+- Corona 6,5 mm, desborde 3, denso: con 2 mm, C 0,973 en la verdad y desliza 0,092 mm; con
+  3 mm, C 0,972 y 0,091 mm.
+- Ídem en serie dispersa con 2 mm: C 0,949, desliza **1,12 mm**, y la búsqueda da 1,16 mm
+  (vertical +1,12) sin veto, C 0,96.
+
+**Lectura.**
+1. **El desborde no reproduce C ≈ 0,4 en la verdad.** El lado del escáner no baja nada
+   (0,99–1,00): con coronas de 9 mm la encía etiquetada empieza por encima de la banda, y
+   con coronas de 6,5 mm lo que entra en la banda es sobre todo **papila**, entre dos
+   coronas y a menos de 1 mm del contorno de alguna. Por alturas, en la verdad, la encía de
+   la banda está a 3,5–6 mm bajo la cúspide y cubre el 100 % con 1 mm de grosor; con 3 mm,
+   el 84 % en la franja de 5,5–6 mm. El lado del contorno baja de 1,0 a 0,96–0,98. Como en
+   §10, nada de esto acerca C a 0,43.
+2. **Sí aparece otro fallo, que el veto no ve: la encía etiquetada tira de la altura.** Sus
+   caras están inclinadas (|n·oclusal| 0,60 frente a 0,21–0,24 de las paredes de la corona) y
+   todas tiran en el mismo sentido. En denso son el 9 % de las parejas recortadas del ajuste
+   y el efecto es de 0,02 mm. En la serie dispersa el hueco quita cortes de la mitad de la
+   banda, la encía pasa al 17 % y el ajuste baja la arcada 0,41 mm hacia la raíz desde la
+   verdad (1,1 mm con encía de 2 mm). Basta 1 mm de desborde: la papila ya está en la banda.
+   C sigue en 0,96, así que **el veto no lo detecta**.
+3. **En el caso A el lado bajo era el del contorno** (0,40 en §7, antes de la máscara), y el
+   desborde actúa sobre todo en el otro. No hay nada en esta tabla que permita leer el
+   C = 0,43 del caso A como desborde.
+
+**Qué no se ha cambiado, y qué se podría decidir después.** No se toca ninguna regla: no
+hay tiempo de diseñar y verificar una antes del corte, y la pregunta de C sigue abierta. Un
+remedio con principio para el punto 2 no debería salir del caso A sino del escáner mismo:
+la encía desbordada se distingue por geometría (normal inclinada respecto al eje oclusal,
+fuera del contorno convexo de la corona en planta, o más allá del pliegue cervical que ya
+busca `analysis_agents.frontera.ancla_al_pliegue`). Candidatos a probar contra el fantasma,
+con el criterio fijado antes: (a) recortar la banda de cada diente al pliegue cervical en
+vez de a 6 mm fijos; (b) no emparejar contra caras de la banda con |n·oclusal| por encima de
+lo que tienen las paredes de la corona del propio diente. Cualquiera de los dos tiene que
+dejar la tabla de §8.1 igual y bajar el deslizamiento de las filas dispersas; no puede
+elegirse mirando C ni la pose del caso A.
+
+Tests: `test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas`,
+`test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verdad` y
+`test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c`.
