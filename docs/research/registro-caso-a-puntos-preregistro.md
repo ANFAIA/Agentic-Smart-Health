@@ -126,6 +126,26 @@ serie dispersa). Es un artefacto ya generado; se puntúa tal cual.
 - Si la ejecución no reproduce el veto de §8.2 (C = 0,43), se declara la diferencia y se
   puntúa lo que salga; no se repite hasta obtener el valor esperado.
 
+**R2b · Registro anatómico con el filtro de inclinación** (§11.1 de `registro-anatomico.md`).
+Añadido el 2026-11-20 a las 13:05, **antes de enviar la petición y sin ninguna entrega**. El
+filtro deja de emparejar las caras de banda más inclinadas que la pared de su corona, que en
+el fantasma corrigen el sesgo hacia la raíz de §11. R2 no cambia y se sigue puntuando tal
+cual: R2b no lo sustituye.
+- Código: `00887406…` de la misma rama (`git rev-parse 0088740` da el hash completo).
+- Huellas (`--huellas` en ese commit):
+  - `huella_constantes` `c2c75645343a866384487a963a3fee8818e520f60756b6254b97e5448d0233f9`
+  - `huella_protocolo` `b4a345e95b24b8c20ee36aec167aed1510f37dffef0c7b144e65b581e4bacfef`
+- Comando: el de R2 desde una copia limpia de `0088740`, con salida
+  `data/processed/verification-20261120/series-c1bd42bdd9d7/anatomico-0088740`.
+- Las mismas comprobaciones que R2 (`git_head`, `git_dirty: false`, huellas, `registro.json`,
+  sin `sin_anatomico`), y el mismo requisito: su `.uos` se anota aquí con su SHA-256 antes de
+  abrir ninguna entrega.
+- La misma regla de lectura que R1 y R2 (§7). **R2 frente a R2b no elige nada**: que uno
+  cumpla y el otro no se informa como resultado de este caso, no como motivo para encender
+  el filtro por defecto. El margen del filtro se eligió viendo el fantasma, y el filtro tiene
+  un límite medido (coronas de 4 mm con la franja de referencia contaminada) en el que no
+  quita nada.
+
 **Secundario, no es un tercer método.** `--ajuste 16-mv,26-mv,13-c,23-c`, en la ejecución
 de R1 (no depende del registro del contenedor), calcula un registro rígido con esos cuatro
 puntos, su error en los demás y un *leave-one-out* sobre todos los puntos comunes. Dice si
@@ -170,7 +190,7 @@ y los declara.
 
 ## 6 · Qué se informa
 
-Por registro (R1 y R2), todo y siempre:
+Por registro (R1, R2 y R2b), todo y siempre:
 - **TRE por punto** sobre la media de las dos observadoras (`per_point_mm` de `tre.json`), y
   **por tipo de diente** (molar 16/26, premolar 14/24, canino 13/23, incisivo 11/21), con
   mediana y máximo agregados a partir de esos valores. La tabla por región que trae
@@ -202,7 +222,7 @@ con *d* el desacuerdo entre las dos observadoras en cada modalidad y *s_k* el ma
 dos suelos de altura. El punto **cumple** A1 si TRE_k + U_k ≤ 1,5 mm, **falla** si <!--const:EPSILON_IOS_CBCT_MM-->
 TRE_k − U_k > 1,5 mm, y si no es **indeterminado**. <!--const:EPSILON_IOS_CBCT_MM-->
 
-**Por registro, la misma regla para R1 y R2.** Un registro **cumple** si cumplen todos los
+**Por registro, la misma regla para R1, R2 y R2b.** Un registro **cumple** si cumplen todos los
 puntos comunes, con n ≥ 6 y al menos uno por cuadrante; **falla** si falla al menos uno; en
 cualquier otro caso, incluido n < 6, es **indeterminado**.
 
@@ -223,14 +243,14 @@ coherente con el sesgo de §11. No prueba su causa.
   estos puntos.
 - **Si un registro se cambia después de verlos**, estos puntos dejan de valer para medir el
   método cambiado. Su TRE exige puntos nuevos o un marcado nuevo, reservado antes de mirar.
-- **No se usan para elegir el camino por defecto** entre R1 y R2. Una elección así exigiría
+- **No se usan para elegir el camino por defecto** entre R1, R2 y R2b. Una elección así exigiría
   puntos nuevos.
 - No se escriben en el `.uos`: declarar un TRE en el manifiesto exige una versión sucesora y
   la identidad de quien verificó.
 
 ## 9 · Qué se podrá concluir, y qué no
 
-- **Sí:** el TRE de R1 y R2 en este caso, con su incertidumbre, y si el veto de R2 fue una
+- **Sí:** el TRE de R1, R2 y R2b en este caso, con su incertidumbre, y si el veto de R2 fue una
   falsa alarma o un acierto **aquí**.
 - **No es validación clínica.** Es un solo caso, una sola arcada, como mucho ocho puntos,
   en una serie dispersa y adquirida en oclusión.
