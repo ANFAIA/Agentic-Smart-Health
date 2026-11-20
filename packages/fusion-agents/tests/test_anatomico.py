@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import fantasma_arcada
 import numpy as np
 import pytest
 from core_schemas import Modality, Provenance, TwinSnapshot
@@ -670,8 +671,12 @@ def test_la_sobremordida_no_baja_la_cobertura_en_la_verdad(fichero) -> None:
     assert reg.rms_desplazamiento((r, t), verdad) < 0.2
 
 
-def test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas() -> None:
+def test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`encia="cuello"`: el desborde de etiquetas solo llega a la banda si la corona es corta.
+
+    Con la banda fija a 6 mm (`BANDA_AL_PLIEGUE` apagado); con el pliegue, ni así.
 
     Por defecto el escaneo es el de siempre. Con la encía naciendo en el margen y las
     etiquetas FDI desbordadas 3 mm sobre ella, la banda (1,5–6 mm bajo la cúspide) no cambia
@@ -688,6 +693,8 @@ def test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas() -> None:
     with pytest.raises(ValueError, match="encía"):
         escaneo_superior(encia="otra")
 
+    monkeypatch.setattr(anatomico, "BANDA_AL_PLIEGUE", False)
+
     def banda(corona: str, desborde: float) -> tuple[np.ndarray, np.ndarray]:
         V, F, etq = escaneo_superior(encia="cuello", corona=corona, desborde_mm=desborde)
         ejes, _ = anatomical_frame(V, etq)
@@ -702,10 +709,19 @@ def test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas() -> None:
     encia_en_banda = corta_con & (e_corta == 0)
     assert not (corta_sin & (e_corta == 0)).any()
     assert encia_en_banda.sum() > 0.1 * corta_con.sum()
+    monkeypatch.setattr(anatomico, "BANDA_AL_PLIEGUE", True)
+    corta_pliegue, _ = banda("corta", 3.0)
+    assert not (corta_pliegue & (e_corta == 0)).any()
+    np.testing.assert_array_equal(banda("normal", 3.0)[0], con)
 
 
-def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verdad() -> None:
+def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verdad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Hipótesis descartada: el desborde de etiquetas no explica la C ≈ 0,43 del caso A.
+
+    Medido con la banda fija a 6 mm (`BANDA_AL_PLIEGUE` apagado), que es la que deja
+    entrar la encía; con el pliegue la encía ya no está en la banda.
 
     Con coronas clínicas de 6,5 mm y las etiquetas FDI 3 mm sobre la encía, un 15 % de la
     banda es encía. Medido (`docs/research/registro-anatomico.md` §11): en la pose
@@ -713,6 +729,7 @@ def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verd
     es papila entre dos coronas y queda a menos de 1 mm del contorno de alguna. Afinar
     desde la verdad se mueve 0,10 mm hacia la raíz, frente a 0,08 sin desborde.
     """
+    monkeypatch.setattr(anatomico, "BANDA_AL_PLIEGUE", False)
     Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
     V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
     campo, hu = campo_cbct(paso=PASO, raices="realistas")
@@ -733,8 +750,13 @@ def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verd
     assert reg.rms_desplazamiento((r, t), verdad) < 0.2
 
 
-def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() -> None:
-    """Debilidad medida, no corregida: la encía etiquetada tira de la altura y C no lo ve.
+def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Debilidad medida con la banda fija a 6 mm: la encía etiquetada tira de la altura.
+
+    Con `BANDA_AL_PLIEGUE` apagado (el valor por defecto, la banda fija), explícito para que
+    no cambie si un día se enciende. El remedio lo fija el test siguiente.
 
     Con capa de esmalte, desenfoque de 0,18 mm y serie dispersa, la máscara deja poco
     contorno cervical, y la encía etiquetada como diente (inclinada, a 1 mm de la corona)
@@ -743,6 +765,7 @@ def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() 
     encima de 0,9: el veto no lo detecta (`docs/research/registro-anatomico.md` §11). Si
     algún día el ajuste deja de deslizar, o C empieza a verlo, este test lo dice.
     """
+    monkeypatch.setattr(anatomico, "BANDA_AL_PLIEGUE", False)
     campo, hu = campo_cbct(paso=PASO, paso_z=0.45, quita=(2.2, 3.9), raices="realistas",
                            esmalte="capa", desenfoque_mm=0.18)
     centros = campo["centers"] + campo["origin"]
@@ -763,6 +786,39 @@ def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() 
         assert reg.puntua_secciones(r, t, anatomico._por_corte(P, None))["C"] >= 0.9
     assert desliza[0.0] < 0.1
     assert desliza[3.0] > 0.3
+
+
+@pytest.mark.parametrize(("grosor", "tope"), [(1.0, 0.10), (2.0, 0.15)])
+def test_la_banda_al_pliegue_cervical_deja_fuera_la_encia_desbordada(
+    monkeypatch: pytest.MonkeyPatch, grosor: float, tope: float
+) -> None:
+    """Remedio de §12: la banda de cada diente acaba en su pliegue cervical, no a 6 mm.
+
+    Serie dispersa, capa de esmalte con σ = 0,18 mm, coronas de 6,5 mm y 3 mm de encía
+    etiquetada como diente. Con la banda fija, afinar desde la verdad desliza 0,41 mm
+    (encía de 1 mm) y 1,1 mm (2 mm). Criterio fijado antes de medir: < 0,10 y < 0,15 mm.
+    Ningún vértice de encía queda en la banda y ningún diente se declara sin pliegue.
+    """
+    monkeypatch.setattr(anatomico, "BANDA_AL_PLIEGUE", True)
+    monkeypatch.setattr(fantasma_arcada, "GROSOR_ENCIA_MM", grosor)
+    campo, hu = campo_cbct(paso=PASO, paso_z=0.45, quita=(2.2, 3.9), raices="realistas",
+                           esmalte="capa", desenfoque_mm=0.18)
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
+    _, _, corona = escaneo_superior(encia="cuello", corona="corta", desborde_mm=0.0)
+    V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+    ejes, _ = anatomical_frame(V, etq)
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    assert esc.pliegue["sin_pliegue"] == []
+    assert not (esc.banda & (corona == 0)).any()
+    reg = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    r, t, _, convergido = reg.afina(*verdad, P)
+    assert convergido
+    assert reg.rms_desplazamiento((r, t), verdad) < tope
 
 
 def _snap() -> TwinSnapshot:

@@ -608,3 +608,85 @@ elegirse mirando C ni la pose del caso A.
 Tests: `test_la_encia_al_cuello_solo_entra_en_la_banda_con_coronas_cortas`,
 `test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verdad` y
 `test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c`.
+
+## 12 · Remedio (a): la banda acaba en el pliegue cervical de cada diente
+
+**Decisión: queda APAGADO por defecto** (`BANDA_AL_PLIEGUE = False`), porque uno de los
+criterios fijados antes de medir falla (K3, abajo). Encenderlo es una decisión que tiene que
+tomar alguien sabiendo qué se cambia.
+
+**Qué cambia si se enciende.** `pliegue_cervical` (en `anatomico.py`, activado por `BANDA_AL_PLIEGUE`):
+por diente y por sector en planta (`SECTORES_PLIEGUE` = 12, porque el margen es festoneado),
+se recorren sus vértices de 1,5 a 6 mm bajo la cúspide, de arriba abajo, siguiendo la
+elevación de la normal hacia fuera. La pared de una corona es convexa: bajando, su normal
+solo gira hacia apical. El pliegue es el primer vértice cuya elevación supera en
+`GIRO_PLIEGUE_GRADOS` = 20° la mínima vista hasta él, es decir, donde la superficie se abre
+hacia la encía. La banda del sector acaba una arista mediana de la propia malla del diente
+por encima (`ARISTAS_SOBRE_PLIEGUE`). Un sector sin pliegue conserva 6 mm; un diente con
+pliegue en menos de la mitad de sus sectores lo conserva en todos y va al informe
+(`scanner_band.teeth_without_clear_crease`). No se añade motivo al gate: con coronas largas
+(o la cinta de siempre) el pliegue está por debajo de 6 mm y **todos** los dientes salen
+«sin pliegue», que es lo correcto y no un aviso.
+
+**Por qué con la normal y no con `analysis_agents.frontera.concavidad`.** Se probó primero
+la concavidad discreta con el umbral heredado de `frontera` (1,0 normalizado): en el
+fantasma no encontró ni un pliegue. Medido: normalizada por la media de la malla, la pared
+de la corona da ≈ −1 (convexa, radio de pocos mm con aristas de 0,44 mm) y el pliegue no
+pasa de +0,2–0,6, porque la media de cosenos sobre todos los vecinos diluye una sola arista
+doblada. Además depende del sentido de giro de las caras, que en el fantasma es hacia
+dentro. La normal orientada con el vector radial del diente sí lo ve. El umbral de 20° es a priori
+(entre el ruido de normales y los ~45° con que sale la encía); no se tocó tras medir.
+
+**Criterios fijados antes de medir** y resultado (rejilla 0,4 mm, raíces realistas; afinar
+desde la verdad, `rms_desplazamiento` de la banda):
+
+| | Escaneo | CBCT | Banda fija (encía en banda) | Al pliegue (encía en banda) | Criterio |
+|---|---|---|---|---|---|
+| K1 | corona 6,5, desborde 3, encía 1 mm | disperso, capa σ 0,18 | **0,412** (876) | **0,073** (0) | < 0,10 ✔ |
+| K1 | corona 6,5, desborde 3, encía 2 mm | disperso, capa σ 0,18 | **1,119** (906) | **0,083** (0) | < 0,15 ✔ |
+| K2 | corona 5, desborde 3, encía 3 mm | denso | **3,310** (3440) | **0,082** (0) | < 0,2 ✔ |
+| sonda | corona 4, desborde 3, encía 3 mm | denso | 4,256 (5178) | 0,097 (306) | — |
+| sonda | corona 5, desborde 3, encía 2 mm | denso | 3,118 (3446) | 0,082 (0) | — |
+
+Con la corona de 4 mm quedan 306 vértices de encía en la banda: en interproximal la papila
+sube 2,5 mm y el pliegue queda por encima de 1,5 mm bajo la cúspide, fuera de la ventana
+donde se busca. Aun así el deslizamiento baja de 4,3 a 0,10 mm.
+
+Búsqueda completa del orquestador con el pliegue (sin incertidumbre): corona 6,5,
+desborde 3, encía 1 mm, disperso con capa → 0,075 mm de error mediano de corona (p95 0,081),
+sin veto, frente a 1,06 con la banda fija (§11). Corona 5, encía 3 mm, denso → 0,084
+(0,104), sin veto.
+
+**K3, sin regresión.**
+- La cinta de siempre y las coronas de 9 mm (desborde 0 y 3) dan **la misma banda, vértice
+  a vértice**, con el pliegue activado y sin él: ningún sector encuentra pliegue por encima
+  de 6 mm. Como el resto del registro es determinista y solo consume la banda, las filas de
+  §8.1 (densa y dispersa realistas) y las de corona 9 mm de §11 no cambian: no hay nada que
+  volver a correr.
+- Corona 6,5 mm sin desborde sí cambia: la banda pierde 760 de 4966 vértices (el último
+  anillo, una arista por encima del pliegue en el margen, sobre todo junto a la papila).
+  Denso: afinar desde la verdad 0,082 mm frente a 0,076, búsqueda 0,082 (0,085) frente a
+  0,077 (0,085), sin veto: dentro de 0,01.
+  Disperso con capa: búsqueda 0,076 (0,081) frente a 0,074 (0,077), sin veto, dentro de
+  0,01. Pero **afinar desde la verdad pasa de 0,041 a 0,074 mm**: esa casilla de K3 falla.
+  No es el margen sobre el pliegue: con `ARISTAS_SOBRE_PLIEGUE` = 0 (sonda posterior, no
+  usada para elegir) da 0,082. El 0,041 de la banda fija parece la excepción —denso da
+  0,076 con ella, y la búsqueda dispersa ya acababa en 0,074—, pero eso es una lectura, y
+  el criterio estaba fijado antes.
+- Determinismo: la banda es idéntica tras permutar los vértices del fichero (orden por
+  profundidad con desempate por posición, no por índice).
+
+**Lo que sigue débil.**
+- Solo se ha probado en el fantasma, cuya encía sale a 45° de un margen nítido. En un
+  escaneo real el pliegue puede ser romo, el surco puede no estar escaneado y la encía
+  desbordada puede no abrirse hacia fuera; ahí el diente se declara sin pliegue y vuelve el
+  sesgo de §11 sin aviso en el gate.
+- Una corona con una concavidad propia por encima del margen (un cuello en reloj de arena,
+  una restauración, un incisivo con el cíngulo marcado en palatino) cortaría la banda antes
+  de tiempo. Sin datos con verdad no se sabe cuánto.
+- No se ha corrido el caso A ni se ha mirado C con el remedio: no puede elegirse por él.
+- La huella de constantes (`huella_constantes`) cambia: el protocolo del caso B sigue
+  suspendido y sin congelar, así que no rompe ninguna congelación.
+
+Tests: `test_la_banda_al_pliegue_cervical_deja_fuera_la_encia_desbordada` (fija K1) y los
+tres de §11, que ahora fijan la banda vieja con `BANDA_AL_PLIEGUE` apagado.

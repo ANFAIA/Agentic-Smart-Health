@@ -365,7 +365,8 @@ def normales_vertice(V: np.ndarray, F: np.ndarray) -> np.ndarray:
 
 
 def banda_escaner(
-    V: np.ndarray, etiquetas: np.ndarray, oclusal: np.ndarray, centro: np.ndarray
+    V: np.ndarray, etiquetas: np.ndarray, oclusal: np.ndarray, centro: np.ndarray,
+    alto: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[int, float]]:
     """`(mascara, puntas)`: la banda de corona de CADA diente y la altura de su cúspide.
 
@@ -373,7 +374,8 @@ def banda_escaner(
     no de un eje por diente: el eje de un diente sacado de su propia nube se midió con 60°
     de error (ficha del `segmentation-agent`). La cúspide es el percentil 99 de la altura
     de sus vértices, para que un vértice suelto no mande. Un vértice está en la banda si
-    queda entre `MARGEN_MORDIDA_MM` y `ALTO_BANDA_MM` por debajo de la cúspide de su diente.
+    queda entre `MARGEN_MORDIDA_MM` y `ALTO_BANDA_MM` por debajo de la cúspide de su diente;
+    con `alto` (por vértice, de `pliegue_cervical`), entre `MARGEN_MORDIDA_MM` y `alto`.
     """
     V = np.asarray(V, dtype=np.float64)
     etq = np.asarray(etiquetas, dtype=np.int64)
@@ -384,8 +386,111 @@ def banda_escaner(
         m = etq == c
         punta = float(np.percentile(h[m], 99))
         puntas[int(c)] = punta
-        banda |= m & (h <= punta - MARGEN_MORDIDA_MM) & (h >= punta - ALTO_BANDA_MM)
+        hasta = ALTO_BANDA_MM if alto is None else alto
+        banda |= m & (h <= punta - MARGEN_MORDIDA_MM) & (h >= punta - hasta)
     return banda, puntas
+
+
+# --------------------------------------------------------------------------- #
+# Banda recortada al pliegue cervical (`docs/research/registro-anatomico.md` §12)
+# --------------------------------------------------------------------------- #
+# Si está activo, la banda de cada diente acaba en su pliegue cervical —donde la pared de
+# la corona se dobla hacia la encía— en vez de a `ALTO_BANDA_MM` fijos. Motivo (§11): la
+# encía que el segmentador del escáner etiqueta como diente cae dentro de la banda, tiene
+# las caras inclinadas y tira de toda la arcada hacia la raíz sin que el veto lo vea.
+# ⚠️ APAGADO por defecto: cumple K1, K2 y K4 en el fantasma, pero falla una casilla de K3
+# (corona 6,5 mm sin desborde, serie dispersa: afinar desde la verdad pasa de 0,041 a
+# 0,074 mm, frente a una tolerancia de 0,01). Ver §12.
+BANDA_AL_PLIEGUE = False
+# Giro mínimo de la normal hacia oclusal, bajando por la pared, para llamarlo pliegue.
+# La pared de una corona es convexa: bajando desde la cúspide su normal (hacia fuera) solo
+# gira hacia apical. Donde vuelve a girar hacia oclusal la superficie es cóncava, y la
+# primera vez que lo hace bajando es donde la corona se dobla hacia la encía. 20° a priori:
+# por encima del ruido de normales de una malla de escáner, muy por debajo de los ~45° con
+# que sale la encía. Se mide con la normal y no con la curvatura discreta
+# (`analysis_agents.frontera.concavidad`) porque esa depende del tamaño de arista y del
+# sentido de giro de las caras: en el fantasma no encontró ningún pliegue (§12).
+GIRO_PLIEGUE_GRADOS = 20.0
+# Sectores en planta alrededor de cada diente: el margen es festoneado (la papila sube en
+# mesial y distal), así que el pliegue no está a una altura única por diente.
+SECTORES_PLIEGUE = 12
+# Un diente con pliegue en menos de esta fracción de sectores se declara «sin pliegue
+# claro» y conserva `ALTO_BANDA_MM` en todos.
+FRACCION_SECTORES_PLIEGUE = 0.5
+# Margen por encima del pliegue: `ARISTAS_SOBRE_PLIEGUE` veces la arista mediana de la
+# propia malla del diente. Los vértices a una arista del pliegue ya están en la curva.
+ARISTAS_SOBRE_PLIEGUE = 1.0
+
+
+def pliegue_cervical(
+    V: np.ndarray, F: np.ndarray, N: np.ndarray, etiquetas: np.ndarray,
+    oclusal: np.ndarray, centro: np.ndarray, puntas: Mapping[int, float],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """`(alto, informe)`: hasta qué profundidad bajo su cúspide llega la banda de cada vértice.
+
+    Por diente y por sector en planta se recorren sus vértices de `MARGEN_MORDIDA_MM` a
+    `ALTO_BANDA_MM` bajo la cúspide, de arriba abajo, siguiendo la elevación de la normal
+    hacia fuera (su ángulo con el plano perpendicular al eje oclusal). El pliegue es el
+    primer vértice cuya elevación supera en `GIRO_PLIEGUE_GRADOS` la mínima vista hasta
+    él: donde la pared deja de cerrarse hacia apical y se abre hacia la encía. La banda del
+    sector acaba `ARISTAS_SOBRE_PLIEGUE` aristas por encima. Un sector sin pliegue conserva
+    `ALTO_BANDA_MM`; un diente con pliegue en menos de `FRACCION_SECTORES_PLIEGUE` de sus
+    sectores lo conserva en todos y se declara.
+
+    Todo sale de la geometría del propio escáner: ninguna cifra mira el CBCT ni la pose. El
+    signo de la normal no se toma del orden de las caras, sino del vector radial respecto
+    al eje del diente.
+    """
+    oc = _unitario(oclusal)
+    h = (V - centro) @ oc
+    alto = np.full(len(V), ALTO_BANDA_MM)
+    radial = np.zeros_like(V)
+    sector = np.zeros(len(V), dtype=np.int64)
+    profundidad = np.full(len(V), np.inf)
+    etq = etiquetas
+    for c, punta in puntas.items():
+        m = etq == c
+        x = V[m] - centro
+        x = x - np.outer(x @ oc, oc)
+        r = x - x.mean(axis=0)
+        radial[m] = r
+        u = _ortogonaliza(np.array([1.0, 0.0, 0.0]) if abs(oc[0]) < 0.9
+                          else np.array([0.0, 1.0, 0.0]), oc)
+        w = np.cross(oc, u)
+        ang = np.arctan2(r @ w, r @ u)
+        sector[m] = np.minimum(
+            ((ang + np.pi) / (2 * np.pi) * SECTORES_PLIEGUE).astype(np.int64),
+            SECTORES_PLIEGUE - 1,
+        )
+        profundidad[m] = punta - h[m]
+    signo = np.where(np.einsum("ij,ij->i", N, radial) < 0, -1.0, 1.0)
+    elevacion = np.degrees(np.arcsin(np.clip((N @ oc) * signo, -1.0, 1.0)))
+    arista = np.linalg.norm(V[F[:, 0]] - V[F[:, 1]], axis=1)
+    informe: dict[str, Any] = {"sin_pliegue": [], "sectores": {}}
+    for c in puntas:
+        m = etq == c
+        caras = m[F].all(axis=1)
+        margen = ARISTAS_SOBRE_PLIEGUE * float(np.median(arista[caras])) if caras.any() else 0.0
+        candidatos = m & (profundidad >= MARGEN_MORDIDA_MM) & (profundidad <= ALTO_BANDA_MM)
+        cortes_sector = {}
+        for k in range(SECTORES_PLIEGUE):
+            ks = np.flatnonzero(candidatos & (sector == k))
+            if len(ks) == 0:
+                continue
+            # Orden estable por profundidad y, a igualdad, por posición: reordenar el
+            # fichero no cambia el pliegue.
+            orden = np.lexsort((V[ks, 2], V[ks, 1], V[ks, 0], profundidad[ks]))
+            e = elevacion[ks[orden]]
+            giro = np.flatnonzero(e > np.minimum.accumulate(e) + GIRO_PLIEGUE_GRADOS)
+            if len(giro):
+                cortes_sector[k] = float(profundidad[ks[orden[giro[0]]]]) - margen
+        informe["sectores"][str(int(c))] = len(cortes_sector)
+        if len(cortes_sector) < FRACCION_SECTORES_PLIEGUE * SECTORES_PLIEGUE:
+            informe["sin_pliegue"].append(int(c))
+            continue
+        for k, corte in cortes_sector.items():
+            alto[m & (sector == k)] = min(ALTO_BANDA_MM, corte)
+    return alto, informe
 
 
 def limites_losa(arcada: str) -> tuple[float, float]:
@@ -595,6 +700,7 @@ class Escaner:
     normal_cara: np.ndarray = field(repr=False, compare=False)
     caras_de: np.ndarray = field(repr=False, compare=False)
     inicio: np.ndarray = field(repr=False, compare=False)
+    pliegue: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def mas_cercano(
         self, q: np.ndarray, *, solo_banda: bool = False
@@ -664,6 +770,11 @@ class Escaner:
         oclusal = _unitario(ejes.oclusal)
         centro = np.asarray(ejes.centro, dtype=np.float64)
         banda, alturas_punta = banda_escaner(V, etq, oclusal, centro)
+        pliegue: dict[str, Any] = {"activo": BANDA_AL_PLIEGUE}
+        if BANDA_AL_PLIEGUE:
+            alto, info = pliegue_cervical(V, F, N, etq, oclusal, centro, alturas_punta)
+            banda, _ = banda_escaner(V, etq, oclusal, centro, alto)
+            pliegue.update(info)
         h = (V - centro) @ oclusal
         puntas = {}
         for c, punta in alturas_punta.items():
@@ -683,7 +794,7 @@ class Escaner:
             V=V, F=F, N=N, etiquetas=etq, banda=banda, base=base, oclusal=oclusal,
             centro=centro, arcada=str(ejes.arcada), puntas=puntas, arbol=cKDTree(V),
             etiqueta_cara=etiqueta_cara, banda_cara=banda[F].all(axis=1),
-            normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio,
+            normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio, pliegue=pliegue,
         )
 
     def dientes_en_banda(self) -> list[int]:
@@ -1425,6 +1536,8 @@ def prepara_anatomico(
             "n_vertices": int(escaner.banda.sum()),
             "teeth": escaner.dientes_en_banda(),
             "mm_below_cusp": [MARGEN_MORDIDA_MM, ALTO_BANDA_MM],
+            "cut_at_cervical_crease": bool(escaner.pliegue.get("activo", False)),
+            "teeth_without_clear_crease": list(escaner.pliegue.get("sin_pliegue", [])),
         },
         "contour": {
             "threshold": UMBRAL_CONTORNO,

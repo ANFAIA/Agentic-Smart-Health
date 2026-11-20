@@ -660,8 +660,10 @@ FusionOutput
   to tell a bad registration from a miscalibrated guard. A proposed change to coverage that
   made it pass was reverted: it only helped wrong poses on the phantom. ⚠️ On the phantom,
   scanner FDI labels that overflow onto the gingiva put gum into the band and pull the fit
-  0.4–4.4 mm toward the root with no veto (research note §11), an accuracy bias still to be
-  fixed. So the case B
+  0.4–4.4 mm toward the root with no veto (research note §11). §12 adds an option, **off by default**, that ends each tooth's band
+  at its cervical crease, found on the scanner from where the outward normal turns ≥ 20°
+  back toward occlusal; on the phantom it brings the slide under 0.1 mm, but one
+  no-regression cell fails (0.041 → 0.074 mm), so it is not switched on. So the case B
   protocol ([`registro-anatomico-protocolo.md`](docs/research/registro-anatomico-protocolo.md))
   is still suspended and not frozen, and the default `auto` is unchanged. See
   [the research note](docs/research/registro-anatomico.md) §7–§8.
@@ -694,6 +696,7 @@ FusionOutput
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Initial registration. ADR 004; `RigidTransform` in `core-schemas` (contract 1.3.0); complete semantic fusion; geometric fusion with multiscale ICP (coarse stage missing); idempotent insertion into the time series; wired into the orchestrator. |
 | 2026-08-10 | 0.2.0 (geometric) | Registration measured against a real patient with CBCT + scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). Confidence now comes from the **overlapping population**, ε becomes **per modality pair** (0.5 mm volume-derived · 1.5 mm intraoral↔CBCT), a **minimum overlap** gate is added, and the **coarse stage** (`icp_global`) ADR 004 left pending is implemented. Additive: a registrar that does not measure overlap behaves exactly as before. |
+| 2026-11-20 | 0.3.0 (geometric) | Anatomical registration, **off by default**: `BANDA_AL_PLIEGUE` ends each tooth's scanner band at its cervical crease, so gum the scanner labelled as tooth no longer pulls the fit toward the root. Phantom, refining from the truth: 0.41 → 0.07 mm (sparse, 1 mm gum), 1.12 → 0.08 mm (2 mm gum), 3.31 → 0.08 mm (dense, 5 mm crowns, 3 mm gum); the default scan's band is unchanged vertex for vertex. Off because one pre-set no-regression cell fails (short crowns, no overflow, sparse: refining from the truth 0.041 → 0.074 mm). Not run on case A. Default `auto` unchanged. No contract change. |
 | 2026-11-20 | 0.3.0 (geometric) | Anatomical registration fits crown contour only (enamel within 1.5 mm in the same slice), ignores a second enamel peak below a quarter of the first, Phantom with realistic roots: crown error 0.081 mm median, as before. Case A: no longer slides to the roots, 1.6–4 mm declared uncertainty, still vetoed by coverage (0.43), no ground truth. The enamel radius (1.0 and 2.0 mm) is refitted into the uncertainty. Default `auto` unchanged. No contract change. |
 | 2026-11-20 | 0.3.0 (geometric) | Optional anatomical registration (`fusion_agents.anatomico`): per-tooth scanner band, CBCT contours at a fixed threshold, deterministic starts, flip hypotheses that cannot win, selection by section distance, and a `veto` field on `RegistrationResult` that sends contradictory anatomy to the gate with confidence 0. Fails on clinical case A (vetoed; the fit slides towards the roots), so the case B precision protocol is suspended and not frozen. Default `auto` unchanged. No contract change. |
 | 2026-11-09 | 0.2.0 (geometric) | Registration by slices for sparse CBCT series (`fusion_agents.por_cortes`): anatomical starting pose from FDI and DICOM axes, inverse ICP restricted to the band above the bite, and a gate reason with the slice count, the gaps and the pose spread across contour thresholds. Used only when the scanner has FDI labels and the series is sparse; dense series keep the old path, which is measured better there. No contract change. |
