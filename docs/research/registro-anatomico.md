@@ -307,6 +307,8 @@ hacia la raíz. Rejilla de 0,4 mm.
 | Realistas, serie dispersa (0,45 mm, hueco 2,2–3,9) | no | 0,150 / 0,977 | 0,080 | 0,092 | +0,077 | 0,078 mm |
 | Realistas, capa de esmalte, σ = 0,3 mm | no | 0,150 / 0,970 | 0,436 | 0,503 | +0,434 | 0,285 mm |
 | Ídem sin máscara (comparación) | no | 0,150 / 0,970 | 0,437 | 0,503 | +0,435 | 0,285 mm |
+| Realistas, capa, σ = 0,18 mm, serie dispersa | no | 0,146 / 0,977 | 0,065 | 0,078 | +0,065 | 0,078 mm |
+| Ídem sin máscara (comparación) | no | 0,150 / 0,977 | 0,080 | 0,092 | +0,077 | 0,078 mm |
 
 - En la verdad: S 0,148 y C 0,975 (lado del contorno 1,0) con raíces realistas; S 0,158 y
   C 0,975 con desenfoque.
@@ -365,6 +367,13 @@ incertidumbre):
   `prepara_anatomico` fallaría por falta de puntos, que es un fallo declarado; si solo
   quedara el esmalte de las cúspides, la banda perdería su parte cervical. En el sentido
   contrario, hueso cortical ≥ 1800 junto a una raíz volvería a meter raíz.
+- **Con la máscara, S distingue peor la arcada contraria.** En el fantasma disperso con capa
+  de esmalte y σ = 0,18 mm, dos cuencas con la banda sobre las coronas inferiores (a 14 y
+  16 mm de la verdad) puntúan S 0,137 y 0,142, por debajo de la buena (0,146); sin máscara
+  quedaban por encima (≥ 0,179), porque la raíz de la otra arcada contaba en su contra. Las
+  excluyen la cobertura y la altura de las cúspides, no S. Con una sola ancla eso aguanta
+  mientras las cúspides queden a más de 5 mm del plano, pero es un margen que antes daba S y
+  ahora da solo la anatomía.
 - **La sobremordida no está en el fantasma.** La otra arcada en las alturas de la banda es
   esmalte y la máscara no la quita; la regla 3 solo deja de contarla en C si está a más de
   3 mm.
