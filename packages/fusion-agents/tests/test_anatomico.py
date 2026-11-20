@@ -733,8 +733,11 @@ def test_el_desborde_de_etiquetas_sobre_la_encia_no_baja_la_cobertura_en_la_verd
     assert reg.rms_desplazamiento((r, t), verdad) < 0.2
 
 
-def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() -> None:
-    """Debilidad medida, no corregida: la encía etiquetada tira de la altura y C no lo ve.
+def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c(
+    monkeypatch,
+) -> None:
+    """Debilidad medida SIN el filtro de inclinación: la encía etiquetada tira de la altura
+    y C no lo ve. Con el filtro, ver el test siguiente.
 
     Con capa de esmalte, desenfoque de 0,18 mm y serie dispersa, la máscara deja poco
     contorno cervical, y la encía etiquetada como diente (inclinada, a 1 mm de la corona)
@@ -743,6 +746,7 @@ def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() 
     encima de 0,9: el veto no lo detecta (`docs/research/registro-anatomico.md` §11). Si
     algún día el ajuste deja de deslizar, o C empieza a verlo, este test lo dice.
     """
+    monkeypatch.setattr(anatomico, "FILTRA_INCLINACION", False)
     campo, hu = campo_cbct(paso=PASO, paso_z=0.45, quita=(2.2, 3.9), raices="realistas",
                            esmalte="capa", desenfoque_mm=0.18)
     centros = campo["centers"] + campo["origin"]
@@ -763,6 +767,43 @@ def test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c() 
         assert reg.puntua_secciones(r, t, anatomico._por_corte(P, None))["C"] >= 0.9
     assert desliza[0.0] < 0.1
     assert desliza[3.0] > 0.3
+
+
+@pytest.mark.parametrize(("grosor", "tope"), [(1.0, 0.10), (2.0, 0.15)])
+def test_sin_las_caras_inclinadas_la_encia_desbordada_ya_no_desliza_el_ajuste(
+    monkeypatch, grosor: float, tope: float
+) -> None:
+    """K1 de §11.1: con el filtro de inclinación, afinar desde la verdad ya no baja la arcada.
+
+    Mismo caso que el test anterior (serie dispersa, capa con σ = 0,18 mm, coronas de
+    6,5 mm, 3 mm de desborde): sin filtro desliza 0,41 mm con encía de 1 mm y 1,1 mm con
+    encía de 2 mm. Con él, por debajo de 0,10 y 0,15 mm, y sin quitar ni una cara de corona
+    de verdad: lo que se quita es encía.
+    """
+    import fantasma_arcada
+
+    monkeypatch.setattr(fantasma_arcada, "GROSOR_ENCIA_MM", grosor)
+    monkeypatch.setattr(anatomico, "FILTRA_INCLINACION", True)
+    campo, hu = campo_cbct(paso=PASO, paso_z=0.45, quita=(2.2, 3.9), raices="realistas",
+                           esmalte="capa", desenfoque_mm=0.18)
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
+    _, _, etq0 = escaneo_superior(encia="cuello", corona="corta", desborde_mm=0.0)
+    V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+    ejes, _ = anatomical_frame(V, etq)
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    corona = (etq0 > 0)[F].all(axis=1)
+    quitadas = esc.banda_cara & ~esc.ajuste_cara
+    assert not (quitadas & corona).any()
+    assert (quitadas & ~corona).sum() > 0.8 * (esc.banda_cara & ~corona).sum()
+    reg = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    r, t, _, convergido = reg.afina(*verdad, P)
+    assert convergido
+    assert reg.rms_desplazamiento((r, t), verdad) < tope
 
 
 def _snap() -> TwinSnapshot:

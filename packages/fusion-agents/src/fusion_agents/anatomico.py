@@ -131,6 +131,24 @@ RADIO_ESMALTE_MM = 1.5
 # máscara a medio milímetro menos y más (un vóxel de 0,3–0,5 mm, a priori).
 RADIOS_ESMALTE_INCERTIDUMBRE = (1.0, 2.0)
 
+# Caras de banda demasiado inclinadas para ser pared de corona (§11 de la nota). Cuando las
+# etiquetas FDI del escáner desbordan sobre la encía, esa encía entra en la banda con caras
+# inclinadas (|n·oclusal| ≈ 0,60, frente a 0,21–0,24 en las paredes de la corona), y en el
+# ajuste punto a plano todas tiran de la arcada hacia la raíz. El umbral sale de cada diente
+# del propio escaneo: la distribución de |n·oclusal| de sus caras en la parte ALTA de la
+# banda (`MARGEN_MORDIDA_MM`–`ALTO_BANDA_SUPERIOR_MM` bajo su cúspide), en su percentil
+# `PERCENTIL_INCLINACION` más `MARGEN_INCLINACION`. Las caras de banda por encima no se
+# emparejan ni asignan contorno a S; C sigue contándolas, para no cambiar lo que veta.
+# ⚠️ La primera versión, fijada antes de medir, tomaba el percentil 95 más 0,15: con coronas
+# clínicas de 5 mm la papila desbordada ya ocupa el 21 % de esa franja alta, el p95 cae en
+# encía y no se quita nada (§11.1). La mediana aguanta hasta la mitad de contaminación; el
+# margen de 0,20 se puso DESPUÉS de ver el fantasma (corona: mediana ≈ 0,3, p99 ≈ 0,45 junto
+# a las cúspides; encía ≥ 0,56). Ninguno mira C ni el caso A.
+FILTRA_INCLINACION = True
+ALTO_BANDA_SUPERIOR_MM = 3.5
+PERCENTIL_INCLINACION = 50.0
+MARGEN_INCLINACION = 0.20
+
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
 # cúspide) tiene que caber aunque la boca esté inclinada ~10° —±4,4 mm en los extremos de
@@ -388,6 +406,30 @@ def banda_escaner(
     return banda, puntas
 
 
+def caras_de_pared(
+    altura: np.ndarray, inclinacion: np.ndarray, etiqueta: np.ndarray, en_banda: np.ndarray,
+    puntas: Mapping[int, float],
+) -> np.ndarray:
+    """Máscara de caras de banda cuya |n·oclusal| cabe en la pared de corona de su diente.
+
+    `altura` es la del centroide de cada cara sobre el eje oclusal; `inclinacion`,
+    |n·oclusal|. Por diente, el umbral es el percentil `PERCENTIL_INCLINACION` de la
+    inclinación de sus caras de banda entre `MARGEN_MORDIDA_MM` y `ALTO_BANDA_SUPERIOR_MM`
+    bajo la cúspide, más `MARGEN_INCLINACION`. Un diente sin caras en esa franja se deja
+    entero: sin referencia propia no se quita nada. Fuera de la banda devuelve `False`.
+    """
+    apta = en_banda.copy()
+    for c, punta in puntas.items():
+        m = en_banda & (etiqueta == c)
+        prof = punta - altura
+        ref = m & (prof >= MARGEN_MORDIDA_MM) & (prof <= ALTO_BANDA_SUPERIOR_MM)
+        if not ref.any():
+            continue
+        umbral = float(np.percentile(inclinacion[ref], PERCENTIL_INCLINACION)) + MARGEN_INCLINACION
+        apta[m & (inclinacion > umbral)] = False
+    return apta
+
+
 def limites_losa(arcada: str) -> tuple[float, float]:
     """Alturas sobre el plano entre las que se toman contornos, hacia la raíz de la arcada."""
     if arcada == "upper":
@@ -592,6 +634,7 @@ class Escaner:
     arbol: cKDTree = field(repr=False, compare=False)
     etiqueta_cara: np.ndarray = field(repr=False, compare=False)
     banda_cara: np.ndarray = field(repr=False, compare=False)
+    ajuste_cara: np.ndarray = field(repr=False, compare=False)
     normal_cara: np.ndarray = field(repr=False, compare=False)
     caras_de: np.ndarray = field(repr=False, compare=False)
     inicio: np.ndarray = field(repr=False, compare=False)
@@ -675,6 +718,13 @@ class Escaner:
         norma = np.linalg.norm(normal_cara, axis=1, keepdims=True)
         normal_cara = np.divide(normal_cara, norma, out=np.zeros_like(normal_cara),
                                 where=norma > 0)
+        banda_cara = banda[F].all(axis=1)
+        ajuste_cara = banda_cara.copy()
+        if FILTRA_INCLINACION:
+            ajuste_cara &= caras_de_pared(
+                h[F].mean(axis=1), np.abs(normal_cara @ oclusal), etiqueta_cara, banda_cara,
+                alturas_punta,
+            )
         orden = np.argsort(F.ravel(), kind="stable")
         inicio = np.searchsorted(F.ravel()[orden], np.arange(len(V) + 1))
         base = np.stack([_unitario(ejes.derecha), _unitario(ejes.anterior),
@@ -682,7 +732,7 @@ class Escaner:
         return cls(
             V=V, F=F, N=N, etiquetas=etq, banda=banda, base=base, oclusal=oclusal,
             centro=centro, arcada=str(ejes.arcada), puntas=puntas, arbol=cKDTree(V),
-            etiqueta_cara=etiqueta_cara, banda_cara=banda[F].all(axis=1),
+            etiqueta_cara=etiqueta_cara, banda_cara=banda_cara, ajuste_cara=ajuste_cara,
             normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio,
         )
 
@@ -820,7 +870,7 @@ class RegistroAnatomico:
                 ok &= esc.etiquetas[j] != excluye
             return ok, esc.V[j], esc.N[j], d
         punto, cara, d = esc.mas_cercano(q, solo_banda=True)
-        ok = (cara >= 0) & esc.banda_cara[np.maximum(cara, 0)]
+        ok = (cara >= 0) & esc.ajuste_cara[np.maximum(cara, 0)]
         if excluye is not None:
             ok &= esc.etiqueta_cara[cara] != excluye
         return ok, punto, esc.normal_cara[cara], d
@@ -930,6 +980,9 @@ class RegistroAnatomico:
             en_banda = esc.banda_cara[cara] & (lab > 0)
             if solo is not None:
                 en_banda &= lab == solo
+            # S solo con caras de pared: las demasiado inclinadas ni puntúan ni reciben
+            # contorno (`FILTRA_INCLINACION`). C, con la banda entera.
+            de_pared = en_banda & esc.ajuste_cara[cara]
             d_s, j_s = cKDTree(c2).query(s2)
             d_c, j_c = cKDTree(s2).query(c2)
             a_den += int(en_banda.sum())
@@ -942,10 +995,10 @@ class RegistroAnatomico:
             # equivocadas: elegir así es elegir con el método antiguo (§8 de la nota).
             b_den += int(cerca_banda.sum())
             b_num += int((d_c[cerca_banda] <= TOL_COBERTURA_MM).sum())
-            asignado = cerca_banda & (d_c <= TOPE_SECCION_MM)
+            asignado = de_pared[j_c] & (d_c <= TOPE_SECCION_MM)
             diente_c = lab[j_c]
-            for f in np.unique(lab[en_banda]):
-                s_f = en_banda & (lab == f)
+            for f in np.unique(lab[de_pared]):
+                s_f = de_pared & (lab == f)
                 c_f = asignado & (diente_c == f)
                 if c_f.any():
                     por_diente.setdefault(int(f), []).append(

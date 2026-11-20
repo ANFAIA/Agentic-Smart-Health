@@ -1062,7 +1062,9 @@ def etapa_p3(ctx: Contexto) -> dict:
                                 "n_slices": int(len(np.unique(np.round(destino[m, 2], 3))))}
         for nombre, banda in zip(("tablero_0", "tablero_1"), mitades_tablero(esc),
                                  strict=True):
-            mitad = dataclasses.replace(esc, banda=banda, banda_cara=banda[esc.F].all(axis=1))
+            en_mitad = banda[esc.F].all(axis=1)
+            mitad = dataclasses.replace(esc, banda=banda, banda_cara=en_mitad,
+                                        ajuste_cara=esc.ajuste_cara & en_mitad)
             reg = RegistroAnatomico(escaner=mitad, base_cbct=reg0.base_cbct,
                                     plano=reg0.plano, contornos=reg0.contornos)
             poses[nombre] = ejecuta(reg, mitad.V[mitad.banda], destino)
