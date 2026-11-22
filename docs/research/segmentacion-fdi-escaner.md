@@ -1169,10 +1169,28 @@ mismas arcadas, donde C2 numera bien casi todo y lo que cambie es sobre todo rot
 - Ningún conjunto de evaluación se ha usado para esta regla; la reserva nueva sigue sin
   gastar. El borrador queda fuera del repositorio, en
   `data/processed/identidad/borrador-molar-6.14.py`.
-- **Abierto:** distinguir premolar de molar por la forma y no por el área, por ejemplo con
-  un clasificador de tipo sobre la corona recortada al margen, y medir su error en
-  entrenamiento antes que nada. Mientras ese error no esté claramente por debajo del de C2,
-  ninguna regla que corrija a C2 por el tipo puede ganar.
+- Quedaba distinguir premolar de molar por la forma y no por el área. Antes de entrenar un
+  clasificador para eso se midió el más parecido que ya existe: la cabeza de posición del
+  modelo de pieza v2, que aprendió de la forma de la corona la posición del experto. Se midió
+  en sus 108 arcadas de validación, de pacientes con los que no entrenó, con C2 y la limpieza
+  actual:
+
+  | Premolar frente a molar | Bien numeradas por C2 (750 posteriores) | Desplazadas por C2 (36) |
+  |---|---:|---:|
+  | C2 | 100 % | 63,9 % |
+  | Modelo de pieza, recorte de C2 | 97,1 % | 61,1 % |
+  | Modelo de pieza, corona del experto | 98,0 % | 58,3 % |
+
+  **El modelo falla en las mismas piezas que C2, y no por el recorte**: con la corona exacta
+  del experto acierta todavía menos. En esas piezas la forma de la corona, mirada sola, no
+  dice el número que les pone el experto. Un clasificador nuevo que aprendiera lo mismo de lo
+  mismo no tiene de dónde sacar más. Y en las piezas fáciles se equivoca un 2-3 %, con lo que
+  cualquier regla que corrija a C2 con él rompería más de lo que arregla. **No se entrena.**
+  Lo que falta para esas piezas no está en la pieza: está en la arcada entera, en la arcada
+  contraria o en la edad del paciente. Es una línea distinta y no está empezada.
+
+  Es una medida exploratoria, con dos scripts que no están en el repositorio:
+  `data/processed/identidad/medida-tipo-6.14.py` y `medida-tipo-experto-6.14.py`.
 
 ## 7 · Consecuencia sobre el producto
 
