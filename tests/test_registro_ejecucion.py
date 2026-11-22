@@ -73,7 +73,8 @@ def test_el_registro_lleva_lo_que_identifica_la_ejecucion(tmp_path: Path) -> Non
     registro = cc.registro_ejecucion(["caso_completo.py", "--semilla", "7"], 7)
     assert registro["seed"] == 7
     assert registro["argv"][-1] == "7"
-    assert registro["agents"] == {"cbct-agent": "0.2.0", "uos-export-agent": "0.18.0"}
+    assert registro["agents"] == {"cbct-agent": "0.2.0", "geometric-fusion-agent": "0.3.0",
+                                  "uos-export-agent": "0.18.0"}
     assert registro["uos_format"] == "0.3"
     assert {"python", "numpy", "scipy", "torch"} <= registro["environment"].keys()
     assert set(registro["code"]) == {"git_head", "git_dirty", "git_diff_sha256",
