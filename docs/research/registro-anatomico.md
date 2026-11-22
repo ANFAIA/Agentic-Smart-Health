@@ -403,7 +403,10 @@ verdad.
 1. **El veto por cobertura en el caso A (C = 0,43).** Para decidir si es el registro o la
    guarda hace falta verdad. Hay dos caminos:
    - puntos anatómicos del caso A, marcados por una persona según el protocolo de puntos.
-     Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario;
+     Requiere pedirlo a las anotadoras, y eso solo con permiso explícito del usuario.
+     Qué se medirá con ellos, contra qué registros (el por cortes de `run-6` y este en
+     `543e289`) y qué se podrá concluir quedó fijado antes de recibir ningún punto en
+     [`registro-caso-a-puntos-preregistro.md`](registro-caso-a-puntos-preregistro.md);
    - un fantasma que dé C ≈ 0,4 en la pose verdadera.
      - La sobremordida queda descartada (§10).
      - Las etiquetas FDI desbordadas sobre la encía (§11) son el único candidato abierto:
