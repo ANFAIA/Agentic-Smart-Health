@@ -231,6 +231,10 @@ class PipelineResult:
     hitl_reasons: list[str] = field(default_factory=list)
     latency_s: float = 0.0
     patient_pseudonym: str = ""
+    # Lo que la preparación del registro escáner↔CBCT midió y tuvo que dar por bueno, tal
+    # cual (sin el registrador). Sirve para guardarlo junto a la ejecución: el registro
+    # anatómico deja aquí sus cuencas, márgenes de vuelta e incertidumbre por diente.
+    registration_report: dict | None = None
 
     def __post_init__(self) -> None:
         # ⚠️ **Los motivos se DEDUPLICAN aquí, en el único sitio por el que pasan todos.**
@@ -476,6 +480,7 @@ class IngestionPipeline:
         dos_arcadas: bool = False,
         corona_origen: Any | None = None,
         etiquetas_origen: Any | None = None,
+        registro: str = "auto",
     ) -> tuple[Any, Any, dict] | None:
         """Las dos nubes que `fuse` va a registrar, elegidas **aquí** y no a mano.
 
@@ -501,7 +506,22 @@ class IngestionPipeline:
         que el nuevo, y por eso se queda. El registrador va en
         `informe["registrador"]` para que `fuse` lo use; si no se puede (sin esmalte, sin
         contornos, ejes sin medir), se cae al camino de siempre y se dice por qué.
+
+        `registro` elige el registrador:
+
+        - `"auto"` (por defecto): lo de arriba — por cortes si la serie es dispersa y hay
+          etiquetas, el de siempre si es densa. No cambia hasta que el protocolo de
+          `docs/research/registro-anatomico-protocolo.md` lo justifique, y en commit aparte.
+        - `"anatomico"`: `fusion_agents.anatomico` para series densas **y** dispersas,
+          siempre que las etiquetas den ejes. Sin azar, con vueltas vetadas y con su
+          incertidumbre por diente en el informe. Si no se puede, cae al de siempre y lo
+          declara.
+        - `"clasico"`: el de siempre, aunque la serie sea dispersa.
         """
+        if registro not in ("auto", "anatomico", "clasico"):
+            raise ValueError(
+                f"registro desconocido: {registro!r} (se espera auto, anatomico o clasico)"
+            )
         import numpy as np
         from export_agents import densidad_a_hu
         from export_agents.anatomia import anatomical_frame
@@ -511,7 +531,8 @@ class IngestionPipeline:
         if snapshot is None or snapshot.surface_ref is None:
             return None
         campo = self.store.load(snapshot.gaussian_field_ref)
-        vertices = self.store.load(snapshot.surface_ref)["positions"]
+        superficie = self.store.load(snapshot.surface_ref)
+        vertices = superficie["positions"]
 
         # Sin `hu_range` el campo no viene de un CBCT y no hay HU que umbralizar; la
         # preparación lo admite y registra contra todo, que es lo correcto ahí.
@@ -523,8 +544,47 @@ class IngestionPipeline:
         if arcada is None and malla is not None:
             arcada = arcada_del_nombre(malla)
 
+        sin_anatomico: str | None = None
+        registrador: Any
+        if registro == "anatomico":
+            from fusion_agents.anatomico import prepara_anatomico
+
+            if etiquetas_origen is None or hu is None:
+                sin_anatomico = (
+                    "faltan las etiquetas FDI del escáner"
+                    if etiquetas_origen is None
+                    else "el campo no trae HU"
+                )
+            elif "faces" not in superficie:
+                sin_anatomico = "la superficie del escáner no trae caras"
+            else:
+                etq = np.asarray(etiquetas_origen, dtype=np.int64)
+                base, motivo = (
+                    anatomical_frame(np.asarray(vertices), etq)
+                    if len(etq) == len(vertices)
+                    else (None, f"las etiquetas del escáner ({len(etq)}) no corresponden a "
+                                f"sus {len(vertices)} vértices")
+                )
+                if base is None:
+                    sin_anatomico = motivo
+                else:
+                    try:
+                        origen, destino, registrador, informe = prepara_anatomico(
+                            campo, hu, np.asarray(vertices), np.asarray(superficie["faces"]),
+                            etq, base, normales=superficie.get("normals"),
+                            arcada_nombre=arcada,
+                        )
+                    except ValueError as exc:
+                        sin_anatomico = str(exc)
+                    else:
+                        informe["registrador"] = registrador
+                        informe["arcada"] = arcada or (
+                            "maxilar" if base.arcada == "upper" else "mandibular"
+                        )
+                        return origen, destino, informe
+
         sin_por_cortes: str | None = None
-        if etiquetas_origen is not None and hu is not None:
+        if registro == "auto" and etiquetas_origen is not None and hu is not None:
             etq = np.asarray(etiquetas_origen, dtype=np.int64)
             if len(etq) != len(vertices):
                 sin_por_cortes = (
@@ -567,6 +627,12 @@ class IngestionPipeline:
             corona_origen=corona_origen,
             registrar=icp,
         )
+        if sin_anatomico is not None:
+            informe["sin_anatomico"] = (
+                f"se pidió el registro anatómico y no se pudo ({sin_anatomico}): se usa el "
+                "ICP de siempre, que varía con la semilla y puede dar la vuelta sin que el "
+                "residuo lo note"
+            )
         if sin_por_cortes is not None:
             informe["sin_por_cortes"] = (
                 "no se pudo registrar por cortes con pose anatómica "
@@ -596,8 +662,14 @@ class IngestionPipeline:
                 "registra contra las dos, y el residuo del ICP no distingue una de otra"
             )
         if "registrador" in informe:
+            if informe.get("method") == "fusion_agents.anatomico":
+                from fusion_agents.anatomico import motivos as motivos_anatomico
+
+                return motivos + motivos_anatomico(informe)
             return motivos_por_cortes(informe)
-        for clave in ("no_se_parte", "sin_corona", "sin_arbitro", "sin_por_cortes"):
+        for clave in (
+            "no_se_parte", "sin_corona", "sin_arbitro", "sin_por_cortes", "sin_anatomico"
+        ):
             if clave in informe:
                 motivos.append(str(informe[clave]))
         return motivos
@@ -614,6 +686,7 @@ class IngestionPipeline:
         corona_origen: Any | None = None,
         etiquetas_origen: Any | None = None,
         detected: Mapping[str, float] | None = None,
+        registro: str = "auto",
     ) -> PipelineResult:
         """Aplica las etapas de fusión sobre un resultado de ingesta.
 
@@ -645,14 +718,17 @@ class IngestionPipeline:
         # `registration` sigue mandando: es por donde entra un registro preparado fuera
         # —un experimento, un par corregido a mano— sin tener que pasar por aquí.
         agente_geo = self.geometric_fusion
+        informe_registro = result.registration_report
         if snapshot is not None and registration is None and malla is not None:
             preparado = self.prepara_registro(
                 result, malla=malla, arcada=arcada, dos_arcadas=dos_arcadas,
                 corona_origen=corona_origen, etiquetas_origen=etiquetas_origen,
+                registro=registro,
             )
             if preparado is not None:
                 origen, destino, informe = preparado
                 registration = (origen, destino)
+                informe_registro = {k: v for k, v in informe.items() if k != "registrador"}
                 motivos += self._motivos_de_preparacion(informe)
                 # Este camino ES intraoral↔CBCT por construcción: la malla la trae un
                 # escáner y el destino sale del campo del CBCT. Ahí manda el otro ε.
@@ -691,7 +767,8 @@ class IngestionPipeline:
             faltan = revisa_requisitos(contrato, snapshot, antes)
             if faltan:
                 return replace(
-                    result, snapshot=snapshot, fusion=[*result.fusion, *salidas],
+                    result, snapshot=snapshot, registration_report=informe_registro,
+                    fusion=[*result.fusion, *salidas],
                     analysis=[*result.analysis, *analisis],
                     hitl_reasons=[*result.hitl_reasons, *motivos, *faltan],
                 )
@@ -725,6 +802,7 @@ class IngestionPipeline:
             fusion=[*result.fusion, *salidas],
             analysis=[*result.analysis, *analisis],
             hitl_reasons=[*result.hitl_reasons, *motivos],
+            registration_report=informe_registro,
         )
 
     def exportar(

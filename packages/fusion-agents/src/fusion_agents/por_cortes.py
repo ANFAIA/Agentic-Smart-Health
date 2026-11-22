@@ -107,20 +107,23 @@ class SerieDensa(ValueError):
     """La serie no es dispersa en la banda: el camino de siempre registra mejor."""
 
 
-def pose_inicial(ejes_escaner: np.ndarray) -> np.ndarray:
+def pose_inicial(ejes_escaner: np.ndarray, ejes_cbct: np.ndarray = EJES_LPS) -> np.ndarray:
     """Rotación que lleva los ejes anatómicos del escáner sobre los del CBCT.
 
     `ejes_escaner` tiene por filas derecha, anterior y superior del paciente en el marco
-    del escáner. Si su quiralidad no es la del DICOM, una de las dos está en espejo y
-    ninguna rotación lo arregla: se dice en vez de registrar algo reflejado.
+    del escáner; `ejes_cbct`, lo mismo en el del DICOM (por defecto los ejes LPS puros;
+    `fusion_agents.anatomico` pasa unos corregidos por la inclinación del plano oclusal).
+    Si las dos quiralidades no coinciden, una de las dos está en espejo y ninguna rotación
+    lo arregla: se dice en vez de registrar algo reflejado.
     """
     b = np.asarray(ejes_escaner, dtype=np.float64)
-    if np.linalg.det(b) * np.linalg.det(EJES_LPS) <= 0:
+    c = np.asarray(ejes_cbct, dtype=np.float64)
+    if np.linalg.det(b) * np.linalg.det(c) <= 0:
         raise ValueError(
             "los ejes anatómicos del escáner tienen la quiralidad contraria a los del "
             "DICOM: uno de los dos está en espejo y una rotación no lo corrige"
         )
-    return EJES_LPS.T @ b
+    return c.T @ b
 
 
 def banda(arcada: str, plano: float) -> tuple[float, float]:
@@ -169,10 +172,33 @@ def contornos(
     0,6 mm de error vertical. La dirección hacia fuera es la contraria a la media de los
     vecinos que sí son diente.
     """
+    return contornos_con_normales(centros, hu, umbral, z_min, z_max)[0]
+
+
+def contornos_con_normales(
+    centros: np.ndarray, hu: np.ndarray, umbral: float, z_min: float, z_max: float,
+    *, desplazamiento: str = "medio-paso",
+) -> tuple[np.ndarray, np.ndarray]:
+    """`contornos` y, para cada punto, su normal hacia fuera en el plano del corte.
+
+    La normal es la misma dirección con la que `contornos` lleva el borde medio paso hacia
+    fuera, así que no hay una segunda estimación que pueda contradecir a la primera. Va
+    como `(N, 2)`, en x e y: el corte es horizontal y la componente z no está medida.
+
+    `desplazamiento="8-vecinos"` corrige lo que el medio paso deja: con la vecindad de 8,
+    en una pared de normal (nx, ny) los puntos de borde quedan a profundidades uniformes
+    en [0, (|nx|+|ny|)·paso), no en [0, paso), así que el centro de esa franja está a
+    ½(|nx|+|ny|)·paso. Con medio paso fijo, una pared diagonal queda ~0,14 pasos por dentro
+    (medido en el fantasma: −0,047 mm con paso 0,4) y, como la altura es la dirección peor
+    medida, eso hunde la pose entera. Lo usa `fusion_agents.anatomico`; `contornos` y el
+    registro por cortes siguen con el medio paso con el que se midieron.
+    """
+    if desplazamiento not in ("medio-paso", "8-vecinos"):
+        raise ValueError(f"desplazamiento desconocido: {desplazamiento!r}")
     centros = np.asarray(centros, dtype=np.float64)
     hu = np.asarray(hu)
     z_redondo = np.round(centros[:, 2], 3)
-    salida = []
+    salida, normales = [], []
     for z in np.unique(z_redondo):
         if not z_min <= z <= z_max:
             continue
@@ -192,9 +218,15 @@ def contornos(
         norma = np.linalg.norm(fuera, axis=1, keepdims=True)
         fuera = np.divide(fuera, norma, out=np.zeros_like(fuera), where=norma > 1e-9)
         puntos = duro[borde].copy()
-        puntos[:, :2] += 0.5 * paso * fuera
+        if desplazamiento == "8-vecinos":
+            puntos[:, :2] += (0.5 * paso * np.abs(fuera).sum(axis=1))[:, None] * fuera
+        else:
+            puntos[:, :2] += 0.5 * paso * fuera
         salida.append(puntos)
-    return np.vstack(salida) if salida else np.empty((0, 3))
+        normales.append(fuera)
+    if not salida:
+        return np.empty((0, 3)), np.empty((0, 2))
+    return np.vstack(salida), np.vstack(normales)
 
 
 @dataclass(frozen=True)

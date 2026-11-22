@@ -119,6 +119,7 @@ def registro_ejecucion(argv: list[str], semilla: int) -> dict:
     """Lo que identifica una ejecución: orden, semilla, código, entorno y versiones."""
     from datetime import UTC, datetime
 
+    from fusion_agents.geometric import GeometricFusionAgent
     from ingestion_agents.cbct_agent import CBCTAgent
     from uos import UOSExportAgent
     from uos.manifiesto import UOS_VERSION
@@ -130,6 +131,7 @@ def registro_ejecucion(argv: list[str], semilla: int) -> dict:
         "code": revision_de_codigo(),
         "environment": entorno_de_software(),
         "agents": {CBCTAgent.name: CBCTAgent.version,
+                   GeometricFusionAgent.name: GeometricFusionAgent.version,
                    UOSExportAgent.name: UOSExportAgent.version},
         "uos_format": UOS_VERSION,
         "started_at": datetime.now(UTC).isoformat(),
@@ -547,6 +549,14 @@ def main() -> int:
              "piezas cuyo surco es tan claro como el de un experto (percentil 5), solo en "
              "el maxilar: en la mandíbula dañó coronas y se usan los umbrales de siempre.",
     )
+    ap.add_argument(
+        "--registro", choices=("auto", "anatomico", "clasico"), default="auto",
+        help="Registrador escáner↔CBCT. `auto` (por defecto): por cortes si la serie es "
+             "dispersa, el ICP de siempre si es densa. `anatomico`: "
+             "`fusion_agents.anatomico` para las dos, sin azar y con las vueltas vetadas; "
+             "necesita `--fdi`. Con él se escribe `registro.json` con sus cuencas, "
+             "márgenes de vuelta e incertidumbre por diente. `clasico`: el de siempre.",
+    )
     ap.add_argument("--reusa-apariencia-uos", type=Path,
                     help="UOS anterior del mismo escaneo; recupera sus tonos sin reentrenar.")
     ap.add_argument("--reusa-apariencia-artefacto", type=Path,
@@ -780,7 +790,19 @@ def main() -> int:
         # Con `--fdi`, las etiquetas del escáner dan su base anatómica y el registro va
         # por cortes: pose inicial medida en las dos modalidades y ajuste solo por encima
         # de la mordida. Ver `fusion_agents.por_cortes`.
-        fus = pipe.fuse(r, malla=caso.mesh, dos_arcadas=True, etiquetas_origen=etq_ios)
+        fus = pipe.fuse(r, malla=caso.mesh, dos_arcadas=True, etiquetas_origen=etq_ios,
+                        registro=args.registro)
+        if fus.registration_report is not None:
+            import json
+
+            ruta_reg = args.salida / "registro.json"
+            ruta_reg.write_text(
+                json.dumps(fus.registration_report, indent=2, ensure_ascii=False,
+                           default=str) + "\n"
+            )
+            registro["registration_report"] = ruta_reg.name
+            registro["registration_method"] = fus.registration_report.get("method")
+            print(f"  informe del registro → {ruta_reg}")
         for o in fus.fusion:
             print(linea(o))
         for a in fus.analysis:

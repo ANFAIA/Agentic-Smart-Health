@@ -288,3 +288,117 @@ def test_la_etapa_gruesa_encuentra_la_pose_que_el_icp_fino_solo_aproxima(giro):
 
     assert fino.rms_efectivo_mm > 0.2    # plausible, y equivocado
     assert grueso.rms_efectivo_mm < 0.01  # la transformación exacta
+
+
+# --- punto a plano y veto (registro anatómico, 0.3.0) ----------------------- #
+def _esfera(n: int = 2000, radio: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
+    """`(puntos, normales)` sobre una esfera centrada en el origen."""
+    u = np.random.default_rng(0).normal(size=(n, 3))
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    return u * radio, u
+
+
+def _rot_eje(eje: np.ndarray, grados: float) -> np.ndarray:
+    from fusion_agents.registration import rotacion_de_vector
+
+    return rotacion_de_vector(eje / np.linalg.norm(eje) * math.radians(grados))
+
+
+def test_un_paso_punto_a_plano_lleva_la_esfera_movida_a_su_sitio():
+    """3° y 1 mm en UN paso, con la rotación reconstruida exacta (Rodrigues).
+
+    En una esfera la rotación alrededor del centro no se observa punto a plano —un punto
+    que desliza sobre la superficie no es error—, así que lo que se exige es lo que sí
+    está determinado: que los puntos caigan sobre la superficie y el centro en su sitio.
+    La linealización deja un error de segundo orden que el paso absorbe: < 1e-3 mm.
+    """
+    from fusion_agents.registration import paso_punto_plano
+
+    destino, normales = _esfera()
+    rot = _rot_eje(np.array([1.0, 2.0, 3.0]), 3.0)
+    trans = np.array([1.0, 0.0, 0.0])
+    origen = (destino - trans) @ rot  # destino = rot·origen + trans
+    dr, dt = paso_punto_plano(origen, destino, normales)
+
+    movido = origen @ dr.T + dt
+    assert np.abs(np.linalg.norm(movido, axis=1) - 10.0).max() < 1e-3
+    centro_movido = dr @ (-rot.T @ trans) + dt
+    assert np.linalg.norm(centro_movido) < 1e-3
+    assert np.linalg.det(dr) == pytest.approx(1.0, abs=1e-12)
+
+
+def test_punto_a_plano_converge_a_la_pose_exacta_en_un_elipsoide():
+    """Con una superficie que sí fija la rotación, iterar el paso da la pose exacta."""
+    from fusion_agents.registration import paso_punto_plano
+
+    u = _esfera()[1]
+    semi = np.array([12.0, 8.0, 4.0])
+    destino = u * semi
+    normales = u / semi**2
+    normales /= np.linalg.norm(normales, axis=1, keepdims=True)
+    rot = _rot_eje(np.array([1.0, 2.0, 3.0]), 3.0)
+    trans = np.array([1.0, -0.5, 0.3])
+    origen = (destino - trans) @ rot
+    actual = origen
+    for _ in range(6):
+        dr, dt = paso_punto_plano(actual, destino, normales)
+        actual = actual @ dr.T + dt
+    assert np.abs(actual - destino).max() < 1e-6
+
+
+def test_el_tope_limita_el_paso_sin_cambiar_su_direccion():
+    from fusion_agents.registration import paso_punto_plano
+
+    u = _esfera()[1]
+    semi = np.array([12.0, 8.0, 4.0])
+    destino = u * semi
+    normales = u / semi**2
+    normales /= np.linalg.norm(normales, axis=1, keepdims=True)
+    origen = destino - np.array([3.0, 0.0, 0.0])
+    _, libre = paso_punto_plano(origen, destino, normales)
+    _, topado = paso_punto_plano(origen, destino, normales, tope=(math.radians(5.0), 1.0))
+    assert np.linalg.norm(topado) == pytest.approx(1.0, abs=1e-9)
+    assert topado / np.linalg.norm(topado) == pytest.approx(libre / np.linalg.norm(libre))
+
+
+def test_rotacion_de_vector_es_rodrigues():
+    from fusion_agents.registration import rotacion_de_vector
+
+    assert rotacion_de_vector(np.zeros(3)) == pytest.approx(np.eye(3))
+    np.testing.assert_allclose(
+        rotacion_de_vector(np.array([0.0, 0.0, math.radians(30.0)])), _rot_z(30.0), atol=1e-15
+    )
+
+
+def test_el_veto_por_defecto_es_none_y_no_cambia_la_transformacion():
+    """Los registradores de antes no vetan, y el veto no viaja al contrato."""
+    sin = RegistrationResult((1.0, 0.0, 0.0, 0.0), (1.0, 2.0, 3.0), 0.3, 5, True,
+                             rms_overlap_mm=0.2, overlap_fraction=0.9)
+    con = RegistrationResult((1.0, 0.0, 0.0, 0.0), (1.0, 2.0, 3.0), 0.3, 5, True,
+                             rms_overlap_mm=0.2, overlap_fraction=0.9, veto="vuelta")
+    assert sin.veto is None
+    assert icp(_nube(), _nube()).veto is None
+    assert con.to_rigid_transform().model_dump() == sin.to_rigid_transform().model_dump()
+
+
+def test_un_registro_vetado_da_confianza_cero_y_va_al_gate():
+    """Un residuo excelente no salva una pose que el registrador sabe imposible."""
+
+    def registrador(source, target):
+        return RegistrationResult(
+            (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.01, 3, True,
+            rms_overlap_mm=0.01, overlap_fraction=0.95,
+            veto="ninguna pose candidata es anatómicamente coherente",
+        )
+
+    out = GeometricFusionAgent(registrar=registrador).fuse(
+        _snap(), source=_nube(), target=_nube()
+    )
+    assert out.ok
+    assert out.snapshot.provenance.confidence == 0.0
+    assert out.hitl_required
+    assert any(m.startswith("registro vetado: ninguna pose") for m in out.hitl_reasons)
+    # El veto ya explica la confianza 0: no se añade además el motivo del umbral.
+    assert not any("bajo el umbral" in m for m in out.hitl_reasons)
+    # La pose se entrega igualmente, declarada: no se esconde.
+    assert out.snapshot.provenance.transform is not None

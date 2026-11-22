@@ -71,6 +71,11 @@ class RegistrationResult:
     """Fracción de `source` con contrapartida. Un solapamiento ridículo invalida el
     registro **por bajo que salga el rms**: con pocos puntos siempre se encuentra
     alguna pose que los acerca."""
+    veto: str | None = None
+    """Por qué esta pose **no** se puede dar por buena aunque el ajuste haya convergido.
+    Lo pone un registrador que sabe algo que el residuo no ve —p. ej. que ninguna pose
+    candidata es anatómicamente coherente—. Con veto, el agente da confianza 0 y lo manda
+    al gate. `None` en los registradores que no vetan, que son todos los anteriores."""
 
     @property
     def rms_efectivo_mm(self) -> float:
@@ -177,6 +182,112 @@ def quaternion_to_matrix(q: tuple[float, float, float, float]) -> np.ndarray:
 
 def apply(rot: np.ndarray, trans: np.ndarray, points: np.ndarray) -> np.ndarray:
     return points @ rot.T + trans
+
+
+# --------------------------------------------------------------------------- #
+# Punto a plano
+# --------------------------------------------------------------------------- #
+def rotacion_de_vector(w: np.ndarray) -> np.ndarray:
+    """Rotación exacta (Rodrigues) de un vector de rotación `w` en radianes."""
+    w = np.asarray(w, dtype=np.float64)
+    angulo = float(np.linalg.norm(w))
+    if angulo < 1e-15:
+        return np.eye(3)
+    k = w / angulo
+    kx = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return np.eye(3) + math.sin(angulo) * kx + (1.0 - math.cos(angulo)) * (kx @ kx)
+
+
+def _sistema_punto_plano(
+    src: np.ndarray, dst: np.ndarray, normales: np.ndarray, pesos: np.ndarray | None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """`(J, b, w, centro)` del problema linealizado, en coordenadas centradas en `src`.
+
+    Centrar en el centroide del origen hace que el condicionamiento no dependa de dónde
+    está el marco: una arcada a 100 mm del origen del fichero tendría si no un brazo de
+    palanca enorme que mezcla rotación y traslación.
+    """
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    n = np.asarray(normales, dtype=np.float64)
+    w = np.ones(len(src)) if pesos is None else np.asarray(pesos, dtype=np.float64)
+    centro = (w[:, None] * src).sum(axis=0) / max(float(w.sum()), 1e-300)
+    p = src - centro
+    jac = np.c_[np.cross(p, n), n]
+    b = -np.einsum("ij,ij->i", src - dst, n)
+    return jac, b, w, centro
+
+
+def paso_punto_plano(
+    src: np.ndarray,
+    dst: np.ndarray,
+    normales_dst: np.ndarray,
+    pesos: np.ndarray | None = None,
+    *,
+    tope: tuple[float, float] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Un paso de mínimos cuadrados punto a plano: `(R, t)` que acerca `src` a los planos.
+
+    Minimiza Σ wᵢ ((R·srcᵢ + t − dstᵢ)·nᵢ)² linealizando la rotación. Es el paso de
+    Chen–Medioni: con el plano tangente del destino, un punto que desliza sobre la
+    superficie no cuenta como error, y eso es lo que deja converger dos muestreos
+    distintos de la misma superficie — el contorno de un corte y los vértices de una malla.
+    La rotación se reconstruye exacta con Rodrigues, no se deja linealizada.
+
+    `tope = (radianes, mm)` limita el tamaño de UN paso, escalando el incremento entero
+    si se pasa. Con una dirección mal condicionada —la altura, cuando casi todo el contorno
+    es pared vertical— un paso sin tope puede saltar lejos; el tope no cambia el punto fijo
+    al que se converge, solo cómo se llega.
+    """
+    jac, b, w, centro = _sistema_punto_plano(src, dst, normales_dst, pesos)
+    jtw = jac.T * w
+    x = np.linalg.lstsq(jtw @ jac, jtw @ b, rcond=None)[0]
+    if tope is not None:
+        exceso = max(
+            float(np.linalg.norm(x[:3])) / tope[0], float(np.linalg.norm(x[3:])) / tope[1]
+        )
+        if exceso > 1.0:
+            x = x / exceso
+    rot = rotacion_de_vector(x[:3])
+    return rot, centro - rot @ centro + x[3:]
+
+
+def informacion_6dof(
+    src: np.ndarray, dst: np.ndarray, normales_dst: np.ndarray, pesos: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """`(autovalores, autovectores, sigma)` de JᵀWJ en la solución.
+
+    Dice qué dirección de la pose está peor restringida por los datos. Los tres
+    primeros componentes son rotación (rad), los tres últimos traslación (mm); un
+    autovector se lee por sus pesos en cada bloque. `sigma` es la desviación robusta del
+    residuo (1,4826·MAD). σ/√λ es un error formal **optimista**: supone residuos
+    independientes y no lo son —puntos vecinos de un mismo contorno comparten error—.
+    """
+    jac, b, w, _ = _sistema_punto_plano(src, dst, normales_dst, pesos)
+    valores, vectores = np.linalg.eigh((jac.T * w) @ jac)
+    sigma = 1.4826 * float(np.median(np.abs(b - np.median(b)))) if len(b) else float("nan")
+    return valores, vectores, sigma
+
+
+def paso_similitud_punto_plano(
+    src: np.ndarray, dst: np.ndarray, normales_dst: np.ndarray, pesos: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Como `paso_punto_plano` con un 7.º grado de libertad: escala alrededor del centroide.
+
+    Solo para diagnosticar. Devuelve `(R, t, s)` con `s·R·src + t` acercándose al
+    destino. Si la escala que pide el ajuste se aleja de 1, ningún modelo rígido puede
+    encajar todas las piezas a la vez, y eso se declara: nunca se guarda en la
+    transformación.
+    """
+    jac, b, w, centro = _sistema_punto_plano(src, dst, normales_dst, pesos)
+    p = np.asarray(src, dtype=np.float64) - centro
+    n = np.asarray(normales_dst, dtype=np.float64)
+    jac7 = np.c_[jac, np.einsum("ij,ij->i", p, n)]
+    jtw = jac7.T * w
+    x = np.linalg.lstsq(jtw @ jac7, jtw @ b, rcond=None)[0]
+    rot = rotacion_de_vector(x[:3])
+    s = 1.0 + float(x[6])
+    return rot, centro - s * (rot @ centro) + x[3:6], s
 
 
 # --------------------------------------------------------------------------- #
