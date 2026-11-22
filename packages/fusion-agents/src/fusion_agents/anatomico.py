@@ -155,6 +155,21 @@ MARGEN_INCLINACION = 0.20
 # antes de medir el detector, pero sale del mismo fantasma.
 PARED_CORONA_MAX = 0.45
 
+# Filtro de sentido (§12 de la nota). Si la dentina queda por debajo del umbral de contorno,
+# el isonivel dibuja también la unión amelodentinaria, un borde por DENTRO de la corona que
+# el escáner no ve en ninguna pose y que la máscara de esmalte no quita (está a menos de
+# `RADIO_ESMALTE_MM` del esmalte). Esos bordes tiran de las paredes hacia dentro, y la única
+# forma rígida de acercarlas es subir hasta donde la corona del escáner es más estrecha: en
+# el fantasma con 1,2 mm de cáscara y dentina a 1200, 1,16 mm hacia la raíz. Con el filtro,
+# una pareja solo vale si la normal del contorno hacia fuera del tejido denso y la de la
+# malla hacia fuera del diente forman menos de 90°, y lo que mira hacia dentro tampoco
+# puntúa. No tiene parámetro: los 90° son la definición de «hacia dentro».
+# ⚠️ **APAGADO: resultado negativo frente a los criterios fijados antes de medir.** Arregla
+# la cáscara (1,16 → 0,07 mm), pero la orientación por mayoría falla cuando la encía
+# desbordada es más de la mitad de la banda de un diente: en K2 orienta las coronas hacia
+# dentro, descarta las parejas buenas y C en la verdad cae de 0,83 a 0,55.
+FILTRA_SENTIDO = False
+
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
 # cúspide) tiene que caber aunque la boca esté inclinada ~10° —±4,4 mm en los extremos de
@@ -662,6 +677,12 @@ class Escaner:
     # Por diente, lo que vio el filtro de inclinación (§11.3); vacío si está apagado.
     inclinacion: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False,
                                                    compare=False)
+    # Normales de cara y de vértice orientadas hacia FUERA de su diente (`_hacia_fuera`);
+    # cero fuera de los dientes. Solo las usa el filtro de sentido (`FILTRA_SENTIDO`).
+    normal_cara_ext: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)),
+                                        repr=False, compare=False)
+    N_ext: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)), repr=False,
+                              compare=False)
 
     def mas_cercano(
         self, q: np.ndarray, *, solo_banda: bool = False
@@ -754,16 +775,46 @@ class Escaner:
         inicio = np.searchsorted(F.ravel()[orden], np.arange(len(V) + 1))
         base = np.stack([_unitario(ejes.derecha), _unitario(ejes.anterior),
                          _unitario(ejes.superior)])
+        normal_cara_ext = _hacia_fuera(normal_cara, V[F].mean(axis=1), etiqueta_cara,
+                                       banda_cara, oclusal)
+        N_ext = _hacia_fuera(N, V, etq, banda, oclusal)
         return cls(
             V=V, F=F, N=N, etiquetas=etq, banda=banda, base=base, oclusal=oclusal,
             centro=centro, arcada=str(ejes.arcada), puntas=puntas, arbol=cKDTree(V),
             etiqueta_cara=etiqueta_cara, banda_cara=banda_cara, ajuste_cara=ajuste_cara,
             normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio,
-            inclinacion=inclinacion,
+            inclinacion=inclinacion, normal_cara_ext=normal_cara_ext, N_ext=N_ext,
         )
 
     def dientes_en_banda(self) -> list[int]:
         return sorted(int(c) for c in np.unique(self.etiquetas[self.banda]) if c > 0)
+
+
+def _hacia_fuera(
+    normales: np.ndarray, puntos: np.ndarray, etiquetas: np.ndarray, banda: np.ndarray,
+    oclusal: np.ndarray,
+) -> np.ndarray:
+    """Las `normales` de cada diente con el signo que apunta hacia fuera de él.
+
+    El sentido de una normal de la malla es el del fichero (el orden de los vértices de la
+    cara), no anatómico. Se decide **por diente y por mayoría**: en la banda, la pared de la
+    corona mira hacia fuera del eje del diente, así que el signo que pone de acuerdo con la
+    dirección radial (la que se aleja del centroide de su banda, sin la componente oclusal)
+    a la mayoría de sus elementos es el de ese diente. Por diente y no por elemento, para
+    que una concavidad no dé la vuelta a una normal suelta. Lo que no es diente queda a cero.
+    """
+    salida = np.zeros_like(normales)
+    for c in np.unique(etiquetas[etiquetas > 0]):
+        de_c = etiquetas == c
+        m = de_c & banda
+        if not m.any():
+            continue
+        radial = puntos[m] - puntos[m].mean(axis=0)
+        radial -= np.outer(radial @ oclusal, oclusal)
+        a_favor = int((np.einsum("ij,ij->i", radial, normales[m]) > 0).sum())
+        signo = 1.0 if 2 * a_favor >= int(m.sum()) else -1.0
+        salida[de_c] = signo * normales[de_c]
+    return salida
 
 
 def marco_geometrico(V: np.ndarray, etiquetas: np.ndarray) -> np.ndarray:
@@ -875,7 +926,8 @@ class RegistroAnatomico:
         return der * dp[0] + ant * dp[1] + sup * (dz - cuspide)
 
     def empareja(
-        self, q: np.ndarray, *, superficie: bool = True, excluye: int | None = None
+        self, q: np.ndarray, *, superficie: bool = True, excluye: int | None = None,
+        n_q: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """`(validos, punto, normal, distancia)` de cada punto `q` (marco del escáner).
 
@@ -887,6 +939,13 @@ class RegistroAnatomico:
         superficie: emparejar con el vértice sesga la altura según el espaciado de la malla
         —0,05 a 0,17 mm en el fantasma con distintos teselados de la misma superficie—, y
         la altura es justo la dirección peor restringida.
+
+        **Mismo sentido** (`FILTRA_SENTIDO`, §12 de la nota). Con `n_q`, la normal hacia
+        fuera del tejido denso de cada punto de contorno ya en el marco del escáner, la
+        pareja vale además solo si esa normal y la de la malla hacia fuera del diente
+        (`Escaner.normal_cara_ext`, `Escaner.N_ext`) forman menos de 90°. El escáner solo ve
+        la cara externa de la corona; un borde interior del isonivel —la unión
+        amelodentinaria con la dentina bajo el umbral— mira hacia dentro del diente.
         """
         esc = self.escaner
         if not superficie:
@@ -894,22 +953,29 @@ class RegistroAnatomico:
             ok = esc.banda[j]
             if excluye is not None:
                 ok &= esc.etiquetas[j] != excluye
+            if FILTRA_SENTIDO and n_q is not None:
+                ok &= np.einsum("ij,ij->i", n_q, esc.N_ext[j]) > 0
             return ok, esc.V[j], esc.N[j], d
         punto, cara, d = esc.mas_cercano(q, solo_banda=True)
         ok = (cara >= 0) & esc.ajuste_cara[np.maximum(cara, 0)]
         if excluye is not None:
             ok &= esc.etiqueta_cara[cara] != excluye
+        if FILTRA_SENTIDO and n_q is not None:
+            ok &= np.einsum("ij,ij->i", n_q, esc.normal_cara_ext[np.maximum(cara, 0)]) > 0
         return ok, punto, esc.normal_cara[cara], d
 
     def afina(
         self, rot: np.ndarray, tras: np.ndarray, P: np.ndarray, *, iters: int = ITER_FINO,
         tol: float = TOL_MM, excluye: int | None = None, superficie: bool = True,
+        N2: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, int, bool]:
         """ICP punto a plano recortado del contorno `P` al escáner, desde `(rot, tras)`.
 
         Trabaja con la pose inversa: el contorno se lleva al marco del escáner y se empareja
         con TODO el escáner (`empareja`); la pareja cuenta solo si cae en la banda (y no en
         el diente `excluye`). Devuelve la pose escáner→CBCT, las iteraciones y si convergió.
+        `N2` son las normales 2D del contorno, para el filtro de sentido; si no se dan se
+        buscan entre los contornos del registrador, y si `P` no es ninguno se ajusta sin él.
 
         ⚠️ **Ciclos.** Con recorte, el conjunto de parejas puede alternar entre dos estados y
         el ICP oscilar con periodo 2 o más sin llegar nunca a la tolerancia. Si la pose
@@ -918,6 +984,9 @@ class RegistroAnatomico:
         resultado no depende de en qué paridad se agotan las iteraciones.
         """
         ri, ti = _inversa(rot, tras)
+        if N2 is None:
+            N2 = self._normales_de(P)
+        n3 = None if N2 is None else np.c_[N2, np.zeros(len(N2))]
         lo, hi = P.min(axis=0), P.max(axis=0)
         sonda = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                           for z in (lo[2], hi[2])])
@@ -926,7 +995,10 @@ class RegistroAnatomico:
         while k < iters:
             k += 1
             q = P @ ri.T + ti
-            ok, punto, normal, d = self.empareja(q, superficie=superficie, excluye=excluye)
+            ok, punto, normal, d = self.empareja(
+                q, superficie=superficie, excluye=excluye,
+                n_q=None if n3 is None else n3 @ ri.T,
+            )
             idx = np.flatnonzero(ok)
             if len(idx) < CORRESPONDENCIAS_MINIMAS:
                 break
@@ -960,7 +1032,8 @@ class RegistroAnatomico:
         con signo según esa normal (cuyo sentido es el del fichero, no anatómico)."""
         ri, ti = _inversa(rot, tras)
         q = P @ ri.T + ti
-        ok, punto, normal, _ = self.empareja(q, excluye=excluye)
+        ok, punto, normal, _ = self.empareja(q, excluye=excluye,
+                                             n_q=self._normales_en(P, ri))
         q, punto, normal = q[ok], punto[ok], normal[ok]
         return q, punto, normal, np.einsum("ij,ij->i", q - punto, normal)
 
@@ -987,6 +1060,13 @@ class RegistroAnatomico:
 
         Con normales en `por_corte` se mide además el residuo con signo por diente:
         + la sección del escáner queda fuera del diente del CBCT (flota), − dentro (hundida).
+
+        ⚠️ **Con normales y `FILTRA_SENTIDO`, solo cuenta el contorno que mira hacia donde
+        mira el escáner.** Un punto de contorno cuya normal hacia fuera forma más de 90° con
+        la de su punto de sección más próximo (hacia fuera del diente,
+        `Escaner.normal_cara_ext`) es un borde interior del isonivel, sin pareja posible en
+        ninguna pose: no entra en S, ni en ninguno de los dos lados de C, ni en el residuo
+        con signo (§12 de la nota).
         """
         esc = self.escaner
         vt = esc.V @ rot.T + tras
@@ -1009,11 +1089,19 @@ class RegistroAnatomico:
             # S solo con caras de pared: las demasiado inclinadas ni puntúan ni reciben
             # contorno (`FILTRA_INCLINACION`). C, con la banda entera.
             de_pared = en_banda & esc.ajuste_cara[cara]
-            d_s, j_s = cKDTree(c2).query(s2)
             d_c, j_c = cKDTree(s2).query(c2)
+            visible = np.ones(len(c2), dtype=bool)
+            if FILTRA_SENTIDO and n2 is not None:
+                n_seccion = (esc.normal_cara_ext[cara] @ rot.T)[:, :2]
+                visible = np.einsum("ij,ij->i", n2, n_seccion[j_c]) >= 0
+                if not visible.any():
+                    continue
+            indice_visible = np.flatnonzero(visible)
+            d_s, j_v = cKDTree(c2[indice_visible]).query(s2)
+            j_s = indice_visible[j_v]
             a_den += int(en_banda.sum())
             a_num += int((d_s[en_banda] <= TOL_COBERTURA_MM).sum())
-            cerca_banda = en_banda[j_c]
+            cerca_banda = en_banda[j_c] & visible
             # El lado del contorno se cuenta sobre TODOS los puntos cuyo punto de sección
             # más próximo es de banda, como antes de la máscara de esmalte. Restringirlo a
             # los asignados (≤ `TOPE_SECCION_MM`) se propuso para que la pose del registro
@@ -1021,7 +1109,7 @@ class RegistroAnatomico:
             # equivocadas: elegir así es elegir con el método antiguo (§8 de la nota).
             b_den += int(cerca_banda.sum())
             b_num += int((d_c[cerca_banda] <= TOL_COBERTURA_MM).sum())
-            asignado = de_pared[j_c] & (d_c <= TOPE_SECCION_MM)
+            asignado = de_pared[j_c] & (d_c <= TOPE_SECCION_MM) & visible
             diente_c = lab[j_c]
             for f in np.unique(lab[de_pared]):
                 s_f = de_pared & (lab == f)
@@ -1100,21 +1188,29 @@ class RegistroAnatomico:
         return self.cache[clave]["result"]
 
     def _normales_de(self, P: np.ndarray) -> np.ndarray | None:
-        for p, n2 in self.contornos.values():
+        for p, n2 in (*self.contornos.values(), *self.contornos_corona.values()):
             if p.shape == P.shape and np.array_equal(p, P):
                 return n2
         return None
 
+    def _normales_en(self, P: np.ndarray, ri: np.ndarray) -> np.ndarray | None:
+        """Normales del contorno `P` llevadas al marco del escáner por la rotación `ri`."""
+        N2 = self._normales_de(P)
+        return None if N2 is None else np.c_[N2, np.zeros(len(N2))] @ ri.T
+
     def _busca(self, P: np.ndarray) -> dict:
-        grueso = P[rejilla_gruesa(P)]
-        por_corte = _por_corte(P, self._normales_de(P))
+        indices_gruesos = rejilla_gruesa(P)
+        grueso = P[indices_gruesos]
+        N2 = self._normales_de(P)
+        por_corte = _por_corte(P, N2)
 
         # 1 · Etapa gruesa desde cada arranque.
         poses = []
         for nombre, rot, dz in self.arranques():
             tras = self.traslacion_inicial(rot, dz, P)
             r, t, _, _ = self.afina(rot, tras, grueso, iters=ITER_GRUESO, tol=TOL_GRUESO_MM,
-                                   superficie=False)
+                                   superficie=False,
+                                   N2=None if N2 is None else N2[indices_gruesos])
             poses.append((nombre, r, t))
 
         # 2 · Cuencas gruesas, en el orden de los arranques; el primero de cada una la
@@ -1390,7 +1486,7 @@ class RegistroAnatomico:
         s_total = 1.0
         for _ in range(ITER_ESCALA):
             qq = P @ ri.T + ti
-            valido, punto, normal, d = self.empareja(qq)
+            valido, punto, normal, d = self.empareja(qq, n_q=self._normales_en(P, ri))
             ok = np.flatnonzero(valido)
             if len(ok) < CORRESPONDENCIAS_MINIMAS:
                 break

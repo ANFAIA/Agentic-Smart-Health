@@ -846,6 +846,54 @@ def test_el_filtro_de_inclinacion_arregla_la_encia_vestibular_y_avisa_donde_no_p
         assert len(contaminados) >= len(esc.inclinacion) / 2
 
 
+@pytest.mark.parametrize("caso", ["cascara", "encia"])
+def test_el_filtro_de_sentido_arregla_la_cascara_y_se_rompe_con_la_encia_desbordada(
+    monkeypatch, caso: str
+) -> None:
+    """§12 de la nota: por qué `FILTRA_SENTIDO` queda apagado.
+
+    - Cáscara de esmalte de 1,2 mm con dentina a 1200: sin el filtro el borde interior
+      arrastra el ajuste 1,16 mm hacia la raíz desde la verdad; con él, 0,07 mm.
+    - K2 (coronas de 5 mm, 3 mm de desborde, encía de 3 mm): la encía desbordada es más de
+      la mitad de la banda de casi todos los dientes, la orientación por mayoría da la
+      vuelta a las normales de la corona y el filtro descarta las parejas buenas: de
+      0,07 mm sin filtro a 0,34 mm, y C en la verdad de 0,83 a 0,55.
+    Si un cambio arregla el segundo caso sin perder el primero, volver a medir §12.
+    """
+    import fantasma_arcada
+
+    if caso == "cascara":
+        monkeypatch.setattr(fantasma_arcada, "GROSOR_CASCARA_MM", 1.2)
+        campo, hu = campo_cbct(paso=PASO, raices="realistas", esmalte="cascara", dentina=1200.0)
+        Vw, F, etq = escaneo_superior()
+    else:
+        monkeypatch.setattr(fantasma_arcada, "CORONA_CORTA_MM", 5.0)
+        monkeypatch.setattr(fantasma_arcada, "GROSOR_ENCIA_MM", 3.0)
+        campo, hu = campo_cbct(paso=PASO, raices="realistas")
+        Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+    ejes, _ = anatomical_frame(V, etq)
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    reg = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    desliza = {}
+    for filtro in (False, True):
+        monkeypatch.setattr(anatomico, "FILTRA_SENTIDO", filtro)
+        r, t, _, convergido = reg.afina(*verdad, P)
+        assert convergido
+        desliza[filtro] = reg.rms_desplazamiento((r, t), verdad)
+    if caso == "cascara":
+        assert desliza[False] > 1.0
+        assert desliza[True] < 0.15
+    else:
+        assert desliza[False] < 0.15
+        assert desliza[True] > 0.25, "si ya no se rompe, volver a medir §12"
+
+
 def test_una_franja_contaminada_llega_a_la_puerta() -> None:
     """El motivo nombra los dientes; sin dientes contaminados no hay motivo."""
     base = {"scanner_band": {"inclination_filter": {
