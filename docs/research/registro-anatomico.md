@@ -775,3 +775,84 @@ Tests: `test_el_filtro_de_inclinacion_arregla_la_encia_vestibular_y_avisa_donde_
 fija K2 (5 mm: 0,07 mm, sin avisos) y el límite (4 mm: sigue deslizando más de 1 mm, y al
 menos la mitad de los dientes avisan). `test_una_franja_contaminada_llega_a_la_puerta`
 fija el motivo.
+
+## 12 · Filtro de sentido: el borde interior de la corona (criterios fijados antes de medir, 2026-11-22)
+
+**El problema, medido con el código de §11.3 antes de escribir esto.** Si la dentina queda
+por debajo del umbral de contorno (1400), el isonivel dibuja dos bordes en cada corona: la
+cara externa y la unión amelodentinaria, por dentro. El escáner solo ve la externa. La
+máscara de esmalte (§8) no quita el borde interior, porque está a menos de 1,5 mm del
+esmalte. Afinando desde la verdad, en el fantasma denso de raíces realistas con una cáscara
+de esmalte uniforme (`esmalte="cascara"`, `dentina=1200`):
+
+| Cáscara | Desliza (rms de la banda) | Vertical de corona | C en la verdad | C en la pose afinada |
+|---|---|---|---|---|
+| Sin cáscara (esmalte macizo) | 0,084 mm | +0,080 | 0,975 | 0,974 |
+| 1,2 mm, dentina a 1600 (no hay borde interior) | 0,084 mm | +0,080 | 0,975 | 0,974 |
+| 1,2 mm, dentina a 1200 | **1,156 mm** | +1,174 | 0,726 | 0,832 |
+| 1,0 mm, dentina a 1200 | 1,155 mm | +1,179 | 0,853 | 0,949 |
+| 0,8 mm, dentina a 1200 | 0,809 mm | +0,819 | 0,978 | 0,999 |
+| 0,6 mm, dentina a 1200 | 0,450 mm | +0,446 | 1,000 | 1,000 |
+| Capa que se adelgaza (§8), dentina a 1200 | 0,022 mm | +0,020 | 0,862 | 0,862 |
+
+El deslizamiento va hacia la raíz, como en el caso A. Además, **C puntúa mejor la pose
+deslizada que la verdad**: el borde interior no tiene pareja en ninguna pose y baja C en la
+buena. Es lo que ya encontró la rama `fix/losa-sigue-pose` (§9; 1,19 mm con 1,2 mm de
+cáscara), cuyas cifras para cáscaras de 0,6–1,0 mm (0,22–0,32 mm con su filtro) se conocían
+al escribir esto.
+
+**La propuesta (`FILTRA_SENTIDO`).** Solo el filtro de sentido de aquella rama, sin su
+ventana que sigue a la pose, sin su regla del valle y sin cambiar el tope del lado del
+contorno de C:
+- Las normales de la malla se orientan hacia fuera **por diente y por mayoría**, contra la
+  dirección radial de su banda; el sentido del fichero no es anatómico.
+- En el ajuste (`empareja`, en las dos etapas y en la escala), una pareja solo vale si la
+  normal del contorno hacia fuera del tejido denso y la de la malla hacia fuera del diente
+  forman menos de 90°.
+- En la puntuación, un punto de contorno que mira hacia dentro respecto a su punto de sección
+  no entra ni en S, ni en ninguno de los dos lados de C, ni en el residuo con signo.
+- No tiene ningún parámetro: los 90° son la definición de «hacia dentro». Sin normales del
+  contorno no filtra nada.
+
+**Fantasmas.** Todos con raíces realistas, rejilla de 0,4 mm y el escaneo movido 97° y
+85 mm de los tests.
+- **Sin borde interior** (el filtro no debería cambiar nada):
+  - esmalte macizo, denso;
+  - serie dispersa (0,45 mm, hueco 2,2–3,9);
+  - capa con σ = 0,3 mm;
+  - capa con σ = 0,18 mm en serie dispersa;
+  - sobremordida;
+  - K1 (cuello, corona corta, 3 mm de desborde, encía de 1 y 2 mm, serie dispersa con capa
+    y σ = 0,18 mm);
+  - K2 (coronas de 5 mm, 3 mm de desborde, encía de 3 mm, denso).
+- **Con borde interior:** cáscara de 1,2, 1,0, 0,8 y 0,6 mm con dentina a 1200; capa con
+  dentina a 1200, nítida y con σ = 0,18 mm.
+
+**Criterios, escritos antes de medir el filtro:**
+- **F1, corrige el caso que lo motiva.** Cáscara de 1,2 mm con dentina a 1200: afinando
+  desde la verdad, la banda se desplaza ≤ 0,15 mm rms (hoy 1,156).
+- **F2, cáscaras más finas (informativo).** En las de 1,0, 0,8 y 0,6 mm el desplazamiento
+  tiene que bajar respecto a la tabla de arriba. La cifra se declara, pero no decide, porque
+  la de la rama antigua ya se conocía.
+- **F3, no cambia lo que no tiene borde interior.** En cada fantasma sin borde interior,
+  afinando desde la verdad, la pose con filtro y sin él difieren ≤ 0,02 mm rms, y C en la
+  verdad cambia ≤ 0,01.
+- **F4, no afloja la guarda de cobertura** (la lección de §8, regla 3). En cada fantasma, de
+  los dos grupos, C se mide en la verdad y en estas poses equivocadas:
+  - la verdad trasladada en vertical ±2 y ±4 mm;
+  - trasladada 3 mm a la derecha y 3 mm hacia anterior;
+  - girada 5° sobre cada eje del CBCT;
+  - volteada 180° sobre cada eje del CBCT alrededor del centro de la banda.
+  Con el filtro, C en la verdad no puede bajar más de 0,01. El margen, C en la verdad menos
+  el máximo de C en las equivocadas, no puede bajar más de 0,02 en ningún fantasma.
+- **F5, la búsqueda completa** (sin incertidumbre) en esmalte macizo denso, en serie dispersa
+  y en cáscara de 1,2 mm con dentina a 1200:
+  - sin veto;
+  - error de corona ≤ 0,15 mm de mediana;
+  - en los dos primeros, la pose elegida a ≤ 0,02 mm rms de la elegida sin filtro.
+- **F6.** La batería completa de fusión y orquestador pasa sin tocar ningún test existente.
+
+**Regla de decisión.** Si F1, F3, F4, F5 y F6 se cumplen, `FILTRA_SENTIDO` queda encendido
+por defecto. Después se pre-registra R3 para el caso A, antes de que llegue ningún punto, en
+`registro-caso-a-puntos-preregistro.md`. Si falla cualquiera, queda apagado y se escribe aquí
+como negativo. **El caso A no se ejecuta en esta medida.**

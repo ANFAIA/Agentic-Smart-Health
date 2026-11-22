@@ -15,7 +15,10 @@ necesita un fichero que CI no tiene no prueba nada en CI.
   deja el `cbct-agent`; con `paso_z` distinto del de planta, y cortes que se pueden quitar.
   Por defecto la corona es esmalte macizo y el borde es nítido; con `esmalte="capa"` el
   esmalte es una capa que se adelgaza hasta el cuello sobre dentina, y `desenfoque_mm`
-  desenfoca el volumen como la PSF de un equipo real.
+  desenfoca el volumen como la PSF de un equipo real. Con `esmalte="cascara"` la corona es
+  una cáscara de grosor uniforme (`GROSOR_CASCARA_MM`) y por dentro es dentina; con
+  `dentina` por debajo del umbral de contorno (1400) el isonivel dibuja también la unión
+  amelodentinaria, un borde por DENTRO de cada corona que el escáner no ve en ninguna pose.
 - Por defecto las dos arcadas apenas se tocan: las puntas quedan a ±0,5 mm de z = 0, la
   inferior desplazada media pieza hacia distal y sin resalte en los incisivos. Con
   `oclusion="sobremordida"` la inferior sube y se mete por dentro como en una mordida
@@ -124,13 +127,16 @@ def centros_coronas(
     return centros, fdi_arr
 
 
-def _dentro(p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool) -> np.ndarray:
+def _dentro(
+    p: np.ndarray, centros: np.ndarray, fdi: np.ndarray, arriba: bool, encoge: float = 0.0
+) -> np.ndarray:
     """Dentro de alguna corona: el elipsoide, cortado en el cuello (3 mm hacia la raíz).
 
     Sin el corte la corona sería simétrica de arriba abajo, y un escaneo vuelto del revés
-    encajaría contra su mitad de la raíz tan bien como contra la de la cúspide.
+    encajaría contra su mitad de la raíz tan bien como contra la de la cúspide. `encoge`
+    resta esos mm a cada semieje: el núcleo de dentina bajo una cáscara de esmalte.
     """
-    semi = np.stack([semiejes(int(f)) for f in fdi])
+    semi = np.stack([semiejes(int(f)) for f in fdi]) - encoge
     d = (p[:, None, :] - centros[None]) / semi[None]
     hacia_raiz = (p[:, None, 2] - centros[None, :, 2]) * (1 if arriba else -1)
     return (((d**2).sum(-1) <= 1) & (hacia_raiz < 3.0)).any(1)
@@ -192,6 +198,10 @@ def _en_raiz_realista(
 GROSOR_ESMALTE_MM = 1.5
 ESMALTE_PLENO_MM = 4.0
 LAC_MM = 8.0
+# Cáscara de esmalte (`esmalte="cascara"`): grosor uniforme en toda la corona. Es lo que usó
+# la rama `fix/losa-sigue-pose` (etiqueta `archivo/registro-losa-sigue-pose`) para
+# reproducir el deslizamiento hacia la raíz con dentina bajo el umbral.
+GROSOR_CASCARA_MM = 1.2
 # Lo que el `cbct-agent` guarda como tejido duro tras el desenfoque.
 PISO_HU = 300.0
 
@@ -220,15 +230,20 @@ def campo_cbct(
     paso: float = 0.4, paso_z: float | None = None, quita: tuple[float, float] | None = None,
     inclinacion: np.ndarray | None = None, raices: str = "conicas",
     esmalte: str = "macizo", desenfoque_mm: float = 0.0, oclusion: str = "plana",
+    dentina: float = 1600.0,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """`(campo, hu)`. `inclinacion` rota la boca (no la rejilla) alrededor del origen.
 
     `raices`: `"conicas"` (por defecto, lo de siempre: conos finos) o `"realistas"` (tan
     anchas como el cuello de la corona, ver `_en_raiz_realista`). En los dos casos la raíz
-    es dentina (1600).
+    es dentina (`dentina`, 1600 por defecto).
 
-    `esmalte`: `"macizo"` (por defecto: toda la corona a 2200) o `"capa"` (una capa de
-    esmalte que se adelgaza hasta el cuello sobre dentina, ver `_es_esmalte`).
+    `esmalte`: `"macizo"` (por defecto: toda la corona a 2200), `"capa"` (una capa de
+    esmalte que se adelgaza hasta el cuello sobre dentina, ver `_es_esmalte`) o `"cascara"`
+    (una cáscara de `GROSOR_CASCARA_MM` uniforme sobre un núcleo de dentina).
+    `dentina`: el valor de la dentina de la corona y de la raíz. Por debajo del umbral de
+    contorno (1400) la corona tiene dos bordes en el isonivel, el externo y la unión
+    amelodentinaria; la raíz, ninguno, y la máscara de esmalte no la ve.
     `desenfoque_mm`: σ de un desenfoque gaussiano isótropo del volumen (la PSF del equipo;
     0,425 mm de anchura a media altura son σ ≈ 0,18 mm), con el fondo blando a 0 y solo lo
     que queda por encima de `PISO_HU` como tejido duro. Se aplica antes de quitar cortes.
@@ -237,8 +252,10 @@ def campo_cbct(
     """
     if raices not in ("conicas", "realistas"):
         raise ValueError(f"raices desconocidas: {raices!r} (se espera 'conicas' o 'realistas')")
-    if esmalte not in ("macizo", "capa"):
-        raise ValueError(f"esmalte desconocido: {esmalte!r} (se espera 'macizo' o 'capa')")
+    if esmalte not in ("macizo", "capa", "cascara"):
+        raise ValueError(
+            f"esmalte desconocido: {esmalte!r} (se espera 'macizo', 'capa' o 'cascara')"
+        )
     paso_z = paso if paso_z is None else paso_z
     xs = np.arange(-32, 32, paso)
     ys = np.arange(-16, 20, paso)
@@ -258,9 +275,13 @@ def campo_cbct(
     raiz &= ~corona
     if esmalte == "capa":
         es = corona & (_es_esmalte(q, sup, f_sup, True) | _es_esmalte(q, inf, f_inf, False))
+    elif esmalte == "cascara":
+        nucleo = (_dentro(q, sup, f_sup, True, encoge=GROSOR_CASCARA_MM)
+                  | _dentro(q, inf, f_inf, False, encoge=GROSOR_CASCARA_MM))
+        es = corona & ~nucleo
     else:
         es = corona
-    valor = np.where(es, 2200.0, np.where(corona | raiz, 1600.0, 0.0))
+    valor = np.where(es, 2200.0, np.where(corona | raiz, dentina, 0.0))
     if desenfoque_mm > 0:
         from scipy.ndimage import gaussian_filter
 
