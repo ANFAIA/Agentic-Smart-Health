@@ -833,7 +833,7 @@ negativo. Sale negativo, igual que el ancho en §6.5.
     que cuente piezas a lo largo de la arcada y vea el hueco de la que falta, no qué forma
     tiene cada una.
 
-### 6.12 · El verificador, entrenado con los recortes de C2: plan y criterios (2026-11-22)
+### 6.12 · El verificador, entrenado con los recortes de C2: plan, criterios y resultado negativo (2026-11-22)
 
 **De dónde sale.** El verificador de §6.11 (E1) quitaba 87 de los 95 fantasmas con τ = 0,3,
 pero también 31 dientes reales bien numerados, y las ausentes subían de 48 a 84. Este
@@ -921,6 +921,66 @@ marcó; el caso B se describe.
 - Entrenar: menos de una hora de GPU.
 - Puntuar `dev`, `dev-privado` y la reserva nueva: minutos por conjunto. Antes hay que terminar
   la predicción de C2 en la reserva nueva, que ya está en marcha, y su paso `c2`.
+
+**Resultado (2026-11-22): negativo en `dev-privado`, más cerca que §6.11. La reserva nueva no
+se ha tocado.**
+
+Se construyó lo pre-registrado, sin cambiar ningún criterio ni añadir valores de τ:
+`entrena_pieza.py --version 2` y `benchmark_identidad.py --version 2`, con
+`analysis_agents.identidad.componente_principal`. El modelo se entrenó desde `768a630` con el
+árbol limpio, en 100 minutos de GPU; la mejor época fue la 18 (99,6 % de acierto en diente y
+92,5 % en posición sobre validación). La elección se ejecutó desde `7279aed`, también limpio.
+
+Dos cosas se apartan de lo escrito, ninguna en el método:
+
+- **El desborde se calcula al vuelo** en cada recorte en vez de guardarse en regiones de
+  15 mm: esas regiones no cabían ni en disco ni en RAM. El aumento es el mismo; lo que cambia
+  es el coste, unos 80 ms por recorte desbordado.
+- **`elige` falló la primera vez** antes de escribir nada, porque la regla de w recorría E2
+  aunque la versión 2 no lo evalúa. Se corrigió en `7279aed` y se repitió; no había ningún
+  resultado que ver.
+
+| E1 v2 τ | Fantasmas (V1) | Ausentes (V2) | Coronas dañadas (V3) | Bien numeradas (V4) | V5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 95 | 48 | — | 1.531 | 508 · 13 | |
+| 0,3 | 18 | 59 ✗ | 13 ✗ | 1.525 ✗ | 508 · 6 | no |
+| 0,5 | 14 | 62 ✗ | 14 ✗ | 1.523 ✗ | 508 · 1 | no |
+| 0,7 | 11 | 62 ✗ | 15 ✗ | 1.523 ✗ | 507 · 1 | no |
+| §6.11, τ = 0,3 | 8 | 84 | 45 | 1.500 | 503 · 3 | no |
+
+Los límites, con N = 1.657: V2 permite 56 ausentes, V3 8 coronas y V4 exige 1.531. Ningún τ
+pasa, así que por la regla fijada **la reserva nueva no se evalúa** y los casos clínicos no se
+ejecutan.
+
+**Lo que la hipótesis acertó.** Con τ = 0,3 el v2 ya no quita ningún diente entero bien
+numerado. De las 31 de §6.11, 25 eran dientes enteros y no queda ninguna; las 6 bien
+numeradas que quita ahora son fragmentos que cubren a lo sumo el 19 % de su diente, como los
+otros 6 de entonces. Las ausentes pasan de 84 a 59 y las coronas
+dañadas de 45 a 13. La explicación de §6.11 era correcta: el modelo fallaba por lo que vio al
+entrenar.
+
+**Lo que queda, mirado en `dev-privado` después de la elección.** Con τ = 0,3 quita 100
+instancias: 77 fantasmas, 6 fragmentos bien numerados y 17 desplazadas. De esas 17:
+
+- 11 son fragmentos que cubren menos del 25 % del diente al que caen. Al quitarlos, ese
+  diente se queda sin etiqueta que lo empareje cuando su cuerpo lleva otro número, y cuenta
+  como ausente.
+- 6 son **dientes enteros** (cubren del 55 % al 95 %) que C2 numeró con el código del otro
+  lado o del cuadrante opuesto: un 46 llamado 36, un 41 llamado 31, un 37 llamado 48. El
+  modelo les da `p(diente)` entre 0,01 y 0,14. No se ha mirado por qué; la sospecha, sin
+  probar, es que esas instancias montan sobre dos piezas a ambos lados de la línea media o
+  del cuadrante.
+
+Las 11 ausentes nuevas salen de esos dos grupos.
+
+**Lo que esto deja.**
+
+- **La reserva nueva sigue sin gastar.** La predicción de C2 sobre ella está terminada y en
+  caché (solo etiquetas). No se ha ejecutado `c2`, `puntua` ni `evalua` sobre ella.
+- **El defecto no cambia**: C2 sin verificador.
+- **Abierto:** que el verificador no quite una instancia que cubre la mayor parte de un diente
+  real, y que los fragmentos se fundan con su pieza en vez de borrarse. Las dos cosas
+  necesitan su propio pre-registro, y `dev-privado` ya se ha mirado para esta.
 
 ## 7 · Consecuencia sobre el producto
 
