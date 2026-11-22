@@ -724,3 +724,23 @@ encima. Verificado de forma independiente, todos los números se reproducen:
 `worktree-wf_c0df66f7-9fa-1` (sin publicar), con el interruptor apagado. Cortar en el
 pliegue tira además mucha banda de corona verdadera (K2 conserva 2316 de 3700 vértices de
 corona), que es lo que (b) evita: (b) quita caras inclinadas y no altura.
+
+### 11.3 · Que el filtro avise cuando no puede actuar (criterios fijados antes de medir, 2026-11-22)
+
+El filtro de §11.1 falla en silencio cuando la papila llena más de la mitad de la franja de
+referencia de un diente: la mediana cae en encía y no quita nada. **La propuesta:** declarar
+una franja contaminada cuando la mediana de |n·oclusal| de sus caras pasa de
+`PARED_CORONA_MAX = 0,45`, y mandar esos dientes a la puerta. El 0,45 es el p99 de la pared
+de corona del fantasma junto a las cúspides (§11.1). Se fijó **antes** de medir el detector,
+pero sale del mismo fantasma y de la misma forma de corona.
+
+**Criterios, escritos antes de medir el detector:**
+- **A1, sin falsas alarmas donde el filtro funciona.** Ningún diente marcado en ninguno de
+  estos escaneos: la cinta de siempre; con cuello, coronas de 9 y de 6,5 mm, sin desborde y
+  con 3 mm de desborde y encía de 1 y 2 mm; coronas de 5 mm con 3 mm de desborde y encía de
+  2, 3 y 4 mm; coronas de 4,5 mm con 3 mm de desborde y encía de 3 mm.
+- **A2, avisa en el acantilado.** Con coronas de 4,0 mm, 3 mm de desborde y encía de 1, 2 y
+  3 mm, al menos la mitad de los dientes de cada escaneo quedan marcados.
+- **Si A1 falla, no entra en la puerta.** Las medianas por diente quedan en el informe y el
+  resultado se escribe aquí como negativo. Si solo falla A2, entra en la puerta y el límite
+  se declara.
