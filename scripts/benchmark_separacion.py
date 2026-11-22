@@ -85,9 +85,14 @@ RETROCESO_FDI = 0.005        # K6: acierto FDI por vértice de diente ≥ B − 
 
 # ── Datos ───────────────────────────────────────────────────────────────────────
 
+# Las dos reservas viven en el árbol de OSF. La segunda (§6.11) se predice con este mismo
+# script para que C2 corra exactamente igual que en la primera.
+RESERVAS = {"reserva": osf.ids_reserva, "reserva-2": osf.ids_reserva_2}
+
+
 def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
-    if split == "reserva":
-        ids = osf.ids_reserva()
+    if split in RESERVAS:
+        ids = RESERVAS[split]()
         pares = [(p, a) for p in ids for a in bm.ARCADAS]
         return pares[:limite] if limite else pares
     return bm.arcadas_de(split, limite)
@@ -95,7 +100,7 @@ def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
 
 def carga(split: str, paciente: str, arcada: str):  # type: ignore[no-untyped-def]
     """`(posiciones, caras, etiquetas de experto)` como `benchmark_margen.carga_arcada`."""
-    if split != "reserva":
+    if split not in RESERVAS:
         return bm.carga_arcada(paciente, arcada)
     malla = bm.parse_obj(osf.MALLAS / paciente / f"{paciente}_{arcada}.obj")
     pos = np.asarray(malla["positions"], dtype=np.float64)
@@ -142,6 +147,8 @@ def predice(args: argparse.Namespace) -> int:
         bm.parse_obj(bm.MALLAS / r / f"{r}_{a}.obj")["positions"], dtype=np.float64))[:2]
         for r in refs for a in bm.ARCADAS}
     pares = arcadas(args.split, args.limite)
+    i, n = (int(x) for x in args.parte.split("/"))
+    pares = pares[i::n]  # la agregación es de un núcleo: se reparte en procesos
     destino_registro = SALIDA / sha[:12] / args.split / "run-record.json"
     destino_registro.parent.mkdir(parents=True, exist_ok=True)
     destino_registro.write_text(json.dumps(registro(sys.argv), indent=2) + "\n")
@@ -166,7 +173,9 @@ def predice(args: argparse.Namespace) -> int:
             salida[f"et_{r}"] = etiquetas
             salida[f"conf_{r}"] = np.float32(confianza(logp, etiquetas))
         destino.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(destino, **salida)
+        temporal = destino.with_suffix(".tmp.npz")
+        np.savez_compressed(temporal, **salida)
+        temporal.replace(destino)
         print(f"  [{k}/{len(pares)}] {paciente}_{arcada}: razón {float(origen[2]):.2f}",
               flush=True)
     return 0
@@ -392,6 +401,7 @@ def main() -> int:
     ordenes = ap.add_subparsers(dest="orden", required=True)
     p = ordenes.add_parser("predice")
     p.add_argument("--checkpoint", type=Path, required=True)
+    p.add_argument("--parte", default="0/1", help="i/n: solo las arcadas i, i+n, …")
     e = ordenes.add_parser("evalua")
     e.add_argument("--base", type=Path, default=bm.CHECKPOINT)
     e.add_argument("--candidato", type=Path, required=True)
@@ -400,8 +410,10 @@ def main() -> int:
     el.add_argument("--modo", choices=("resolucion", "final"), required=True)
     el.add_argument("--candidatos", type=Path, nargs="+", required=True)
     el.set_defaults(funcion=elige)
-    for sub, funcion in ((p, predice), (e, evalua)):
-        sub.add_argument("--split", choices=("dev", "reserva"), required=True)
+    # `reserva-2` solo se predice aquí: la evalúa `benchmark_identidad.py`, una vez (§6.11).
+    for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2")),
+                                 (e, evalua, ("dev", "reserva"))):
+        sub.add_argument("--split", choices=splits, required=True)
         sub.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
         sub.set_defaults(funcion=funcion)
     args = ap.parse_args()
