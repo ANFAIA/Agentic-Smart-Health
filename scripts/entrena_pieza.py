@@ -6,6 +6,10 @@
     uv run python scripts/entrena_pieza.py prepara         # regiones y negativos (CPU)
     $G scripts/entrena_pieza.py entrena --salida data/processed/identidad/pieza.pt
 
+    # verificador v2 (§6.12): recortes de C2 como positivos y desborde sobre encía
+    uv run python scripts/entrena_pieza.py prepara --version 2
+    $G scripts/entrena_pieza.py entrena --version 2 --salida data/processed/identidad/pieza-v2.pt
+
 **Por qué existe.** C2 decide el número de cada diente sobre todo por su posición en la
 arcada: cuando falta un premolar corre la hemiarcada, y detrás del 7 pone un «8» sobre la
 encía. Este modelo ve una sola pieza a resolución de malla, sin saber dónde está en la
@@ -23,6 +27,13 @@ es un incisivo, un premolar o un molar. Ver §6.11 de `docs/research/segmentacio
   mismas arcadas (`mina`). C2 se entrenó con ellas, así que da pocos.
 
 El 10 % de los pacientes, con semilla fija, valida y elige la época; nunca `dev-privado`.
+
+**La versión 2 (§6.12)** cambia tres cosas y nada más. Añade como positivos las instancias
+de C2 sobre estas arcadas que no son fantasmas, con su propia frontera y la posición de la
+pieza del experto con la que se emparejan. La mitad de las veces hace crecer un positivo
+sobre la encía del experto hasta *s* mm, con *s* uniforme entre 0 y `DESBORDE_MAXIMO_MM`.
+Y recorta las instancias de C2 desde su componente principal. El desborde se calcula al
+vuelo sobre la arcada, no se guarda: con regiones de 15 mm no cabían ni en disco ni en RAM.
 
 **La entrada** es el recorte de `analysis_agents.identidad.recorte`: la pieza y lo que hay a
 menos de 2 mm, hasta 4.096 puntos, centrado en la pieza, en milímetros y en la pose de
@@ -52,6 +63,7 @@ for _src in sorted(RAIZ.glob("packages/*/src")):
 from analysis_agents.identidad import (  # noqa: E402
     MARGEN_RECORTE_MM,
     POSICIONES,
+    componente_principal,
     distancia_con_signo,
     instancias,
     recorte,
@@ -72,6 +84,7 @@ bm = ef.bm
 SALIDA = RAIZ / "data/processed/identidad"
 MINADO = SALIDA / "mina"
 REGIONES = SALIDA / "regiones"
+REGIONES_V2 = SALIDA / "regiones-v2"
 C2 = RAIZ / "data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt"
 C2_SHA = "24a4cf569aa902138bdc765a9836197b771c8fca297854cd546e48e92f95946a"
 
@@ -82,6 +95,11 @@ PARCHE_MM = (3.5, 5.5)     # radio de un parche de encía: el área de un molar,
 DISTAL_MM = 8.0            # a qué distancia detrás de la última pieza se busca el parche
 PARCHES_CERCA = 2          # parches de encía por arcada cerca de los dientes
 VALIDACION = 0.10
+# §6.12: cuánto puede crecer un positivo sobre la encía, y con qué frecuencia. El 13 cubre
+# el desborde de 26 de las 31 piezas reales que el verificador de §6.11 quitó.
+DESBORDE_MAXIMO_MM = 13.0
+PROB_DESBORDE = 0.5
+POSITIVO_C2 = 3  # tipo de región: instancia de C2 que no es fantasma (solo versión 2)
 SEMILLA = 0
 
 
@@ -167,12 +185,12 @@ def parches_de_encia(pos: np.ndarray, experto: np.ndarray,
     return parches
 
 
-def prepara_arcada(trabajo: tuple[str, str]) -> str:
+def prepara_arcada(trabajo: tuple[str, str, int]) -> str:
     from analysis_agents.margen_metricas import identidad_de_piezas
     from scipy.spatial import cKDTree
 
-    nombre, ruta = trabajo
-    destino = REGIONES / f"{nombre}.npz"
+    nombre, ruta, version = trabajo
+    destino = (REGIONES_V2 if version == 2 else REGIONES) / f"{nombre}.npz"
     if destino.is_file():
         return nombre
     z = np.load(ruta)
@@ -183,22 +201,30 @@ def prepara_arcada(trabajo: tuple[str, str]) -> str:
     regiones = [_region(pos, arbol, v, 1, c % 10, 0) for c, v in instancias(experto).items()
                 if 1 <= c % 10 <= POSICIONES]
     regiones += [_region(pos, arbol, v, 0, 0, 1) for v in parches_de_encia(pos, experto, rng)]
-    fantasmas = 0
+    fantasmas = positivos_c2 = 0
     minado = MINADO / f"{nombre}.npz"
     if minado.is_file():
         c2 = bm.limpieza_actual(pos, np.load(minado)["et"].astype(np.int64))
         ide = identidad_de_piezas(c2, experto)
         for cod, e in ide["per_label"].items():
+            vs = np.flatnonzero(c2 == int(cod))
+            if version == 2:
+                vs = componente_principal(pos, vs)
             if e["status"] == "ghost":
-                regiones.append(_region(pos, arbol, np.flatnonzero(c2 == int(cod)), 0, 0, 2))
+                regiones.append(_region(pos, arbol, vs, 0, 0, 2))
                 fantasmas += 1
+            elif version == 2 and 1 <= int(e["expert"]) % 10 <= POSICIONES:
+                regiones.append(_region(pos, arbol, vs, 1, int(e["expert"]) % 10,
+                                        POSITIVO_C2))
+                positivos_c2 += 1
     np.savez_compressed(
         destino, idx=np.concatenate([r[0] for r in regiones]),
         d=np.concatenate([r[1] for r in regiones]),
         cortes=np.cumsum([0] + [len(r[0]) for r in regiones]),
         etiqueta=np.array([r[2] for r in regiones], dtype=np.int16),
         minado=np.bool_(minado.is_file()))
-    return f"{nombre}: {len(regiones)} regiones, {fantasmas} fantasmas de C2"
+    return (f"{nombre}: {len(regiones)} regiones, {fantasmas} fantasmas y "
+            f"{positivos_c2} positivos de C2")
 
 
 def prepara(args: argparse.Namespace) -> int:
@@ -210,9 +236,10 @@ def prepara(args: argparse.Namespace) -> int:
     faltan = [a for a in arcadas if not (MINADO / f"{a[0]}.npz").is_file()]
     if faltan and not args.sin_minar:
         raise SystemExit(f"⚠ faltan {len(faltan)} arcadas por minar; corre `mina` antes.")
-    REGIONES.mkdir(parents=True, exist_ok=True)
+    (REGIONES_V2 if args.version == 2 else REGIONES).mkdir(parents=True, exist_ok=True)
+    trabajos = [(n, r, args.version) for n, r in arcadas]
     with Pool(args.procesos) as pool:
-        for k, msg in enumerate(pool.imap_unordered(prepara_arcada, arcadas), 1):
+        for k, msg in enumerate(pool.imap_unordered(prepara_arcada, trabajos), 1):
             if k % 50 == 0 or k == len(arcadas):
                 print(f"  [{k}/{len(arcadas)}] {msg}", flush=True)
     return 0
@@ -274,8 +301,38 @@ def a_tensores(recortes: list[tuple[np.ndarray, np.ndarray]], dev: str):  # type
     return X, P, b
 
 
-def aumenta(pos, nrm, idx, d, rng, rotacion: float):  # type: ignore[no-untyped-def]
-    """Un recorte de entrenamiento: frontera movida, a veces un lado quitado, girado."""
+def desborda(pos, idx, d, encia, rng):  # type: ignore[no-untyped-def]
+    """§6.12: la pieza crece sobre la encía del experto a menos de *s* mm de ella.
+
+    Devuelve `(idx, d)` recalculados sobre la arcada para la pieza crecida, con el mismo
+    radio que las regiones guardadas, para que el resto del aumento no cambie.
+    """
+    from scipy.spatial import cKDTree
+
+    pieza = idx[d <= 0]
+    s = rng.uniform(0.0, DESBORDE_MAXIMO_MM)
+    holgura = s + RADIO_REGION
+    lo, hi = pos[pieza].min(0) - holgura, pos[pieza].max(0) + holgura
+    caja = np.flatnonzero(np.all((pos >= lo) & (pos <= hi), axis=1))
+    en_pieza = np.zeros(len(pos), dtype=bool)
+    en_pieza[pieza] = True
+    candidatas = caja[encia[caja] & ~en_pieza[caja]]
+    if len(candidatas) and s > 0:
+        dist, _ = cKDTree(pos[pieza]).query(pos[candidatas], distance_upper_bound=s)
+        en_pieza[candidatas[np.isfinite(dist)]] = True
+    local, d_local = distancia_con_signo(pos[caja], np.flatnonzero(en_pieza[caja]),
+                                         RADIO_REGION)
+    return caja[local], d_local
+
+
+def aumenta(pos, nrm, idx, d, rng, rotacion: float, encia=None):  # type: ignore[no-untyped-def]
+    """Un recorte de entrenamiento: frontera movida, a veces un lado quitado, girado.
+
+    Con `encia` (versión 2, solo positivos), la mitad de las veces la pieza desborda antes
+    sobre la encía (`desborda`). Sin ella el generador consume lo mismo que en la versión 1.
+    """
+    if encia is not None and rng.random() < PROB_DESBORDE:
+        idx, d = desborda(pos, idx, np.asarray(d, dtype=np.float64), encia, rng)
     r = recorte(pos, nrm, idx, d.astype(np.float64), rng,
                 desplaza=rng.uniform(-DESPLAZA_MM, DESPLAZA_MM))
     if r is None:
@@ -310,29 +367,33 @@ def entrena(args: argparse.Namespace) -> int:
     arcadas = ef.arcadas_de_entrenamiento(True)
     if args.limite:
         arcadas = arcadas[: args.limite]
+    regiones = REGIONES_V2 if args.version == 2 else REGIONES
     datos, muestras = [], []
     for nombre, ruta in arcadas:
-        z, r = np.load(ruta), np.load(REGIONES / f"{nombre}.npz")
+        z, r = np.load(ruta), np.load(regiones / f"{nombre}.npz")
         if not bool(r["minado"]) and not args.limite:
             raise SystemExit(f"⚠ {nombre} se preparó sin minar; rehaz `prepara`.")
+        encia = z["labels"] == 0 if args.version == 2 else None
         datos.append((nombre, z["pos"].astype(np.float32), z["nrm"].astype(np.float32),
-                      r["idx"], r["d"], r["cortes"]))
+                      r["idx"], r["d"], r["cortes"], encia))
         for j, e in enumerate(r["etiqueta"]):
             muestras.append((len(datos) - 1, j, int(e[0]), int(e[1]), int(e[2])))
     val_pac = particion_validacion([n for n, *_ in datos])
     es_val = np.array([datos[a][0].rsplit("_", 1)[0] in val_pac for a, *_ in muestras])
     entreno = [m for m, v in zip(muestras, es_val, strict=True) if not v]
     valida = [m for m, v in zip(muestras, es_val, strict=True) if v]
-    tipos = np.bincount([m[4] for m in muestras], minlength=3)
+    tipos = np.bincount([m[4] for m in muestras], minlength=4)
     print(f"{len(datos)} arcadas · {len(entreno)} recortes de entreno, {len(valida)} de "
           f"validación · positivos {tipos[0]}, parches {tipos[1]}, fantasmas de C2 "
-          f"{tipos[2]} · {time.perf_counter() - t0:.0f} s", flush=True)
+          f"{tipos[2]}, positivos de C2 {tipos[3]} · {time.perf_counter() - t0:.0f} s",
+          flush=True)
 
     def recorte_de(m, rng_):  # type: ignore[no-untyped-def]
-        a, j, *_ = m
-        _, pos, nrm, idx, d, cortes = datos[a]
+        a, j, clase, _, tipo = m
+        _, pos, nrm, idx, d, cortes, encia = datos[a]
         s = slice(cortes[j], cortes[j + 1])
-        return aumenta(pos, nrm, idx[s], d[s], rng_, args.rotacion)
+        return aumenta(pos, nrm, idx[s], d[s], rng_, args.rotacion,
+                       encia=encia if clase == 1 else None)
 
     rng_val = np.random.default_rng(12345)
     lotes_val = [[recorte_de(m, rng_val) for m in valida[s: s + args.lote]]
@@ -398,7 +459,8 @@ def entrena(args: argparse.Namespace) -> int:
     args.salida.parent.mkdir(parents=True, exist_ok=True)
     nombres = sorted(n for n, *_ in datos)
     torch.save({
-        "state_dict": mejor_estado, "name": "pieza · verificador + posición",
+        "state_dict": mejor_estado, "version": args.version,
+        "name": "pieza · verificador + posición" + (" · v2" if args.version == 2 else ""),
         "epoch": min(historia, key=lambda f: f["val_loss"])["epoch"],
         "seed": args.semilla, "history": historia, "run_record": registro,
         "rotation_deg": args.rotacion, "points": 4096, "margin_mm": MARGEN_RECORTE_MM,
@@ -421,6 +483,7 @@ def main() -> int:
     p.add_argument("--limite", type=int)
     p.add_argument("--procesos", type=int, default=min(6, os.cpu_count() or 1))
     p.add_argument("--sin-minar", action="store_true", help="Solo para pruebas de humo.")
+    p.add_argument("--version", type=int, choices=(1, 2), default=1)
     e = ordenes.add_parser("entrena")
     e.add_argument("--salida", type=Path, required=True)
     e.add_argument("--epocas", type=int, default=20)
@@ -430,6 +493,7 @@ def main() -> int:
     e.add_argument("--rotacion", type=float, default=15.0)
     e.add_argument("--semilla", type=int, default=SEMILLA)
     e.add_argument("--limite", type=int)
+    e.add_argument("--version", type=int, choices=(1, 2), default=1)
     args = ap.parse_args()
     return {"mina": mina, "prepara": prepara, "entrena": entrena}[args.orden](args)
 

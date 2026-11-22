@@ -828,10 +828,159 @@ negativo. Sale negativo, igual que el ancho en §6.5.
 - **Abierto:**
   - un verificador entrenado con instancias de C2 emparejadas con el experto, en vez de la
     pieza del experto movida ±1 mm. Es una hipótesis nueva que necesita su propio
-    pre-registro, y `dev-privado` ya se ha mirado para esta;
+    pre-registro, y `dev-privado` ya se ha mirado para esta. Es §6.12;
   - la numeración corrida no se arregla con información local de la pieza. Haría falta algo
     que cuente piezas a lo largo de la arcada y vea el hueco de la que falta, no qué forma
     tiene cada una.
+
+### 6.12 · El verificador, entrenado con los recortes de C2: plan, criterios y resultado negativo (2026-11-22)
+
+**De dónde sale.** El verificador de §6.11 (E1) quitaba 87 de los 95 fantasmas con τ = 0,3,
+pero también 31 dientes reales bien numerados, y las ausentes subían de 48 a 84. Este
+apartado prueba la explicación que §6.11 dejó sin probar. Se escribe y se versiona antes de
+tocar el código y de entrenar nada. Desde §6.10 C2 es además el modelo por defecto, así que
+lo que se mide aquí mejora o no el camino por defecto.
+
+**Diagnóstico, en `dev-privado`.** Es el conjunto de elección, y mirarlo es lo que le
+corresponde. La pregunta: en las 1.531 piezas que C2 numera bien, ¿cuánto se sale su
+instancia del diente del experto? Se mide con el percentil 95 de la distancia, al diente del
+experto, de los vértices de C2 que caen fuera de él (medianas por grupo):
+
+| Piezas bien numeradas | N | Desborde | Desborde > 1 mm | Parte sobre encía | Parte sobre el vecino |
+|---|---:|---:|---:|---:|---:|
+| Que E1 quitó (`p(diente)` < 0,3) | 31 | 6,3 mm | 87 % | 0,29 | 0,01 |
+| Que E1 dejó (≥ 0,7) | 1.472 | 1,3 mm | 72 % | 0,15 | 0,01 |
+
+- **El desborde es sobre la encía, no sobre el vecino**, y en las piezas quitadas es cinco
+  veces mayor. El modelo de §6.11 solo vio fronteras movidas ±1 mm, así que una pieza real
+  con 6 mm de encía pegada le pareció un fantasma.
+- **5 de las 31 llevan un trozo suelto a más de 30 mm** del diente: la misma etiqueta
+  aparece en otra parte de la arcada, y el recorte, centrado en la media, mira entre los dos.
+- **6 de las 31 son fragmentos** que cubren menos del 20 % de su diente. Esto no los ataca.
+- **En entrenamiento el desborde existe, pero su cola es corta.** En 216 de las 1.080
+  arcadas de entrenamiento (una de cada cinco), con C2 en su pose nativa y la limpieza
+  actual, la mediana es 1,15 mm y el percentil 90 es 2,5 mm. En `dev-privado` son 1,36 y
+  5,8 mm. Entrenar con las instancias de C2 acerca la distribución, pero no llega a la cola.
+
+**La hipótesis.** El verificador falló por lo que vio al entrenar y no por lo que puede ver.
+Con recortes que desbordan como los de C2 debería distinguir una corona con encía pegada de
+un parche de encía sin corona, que es lo que es un fantasma.
+
+**Lo que se construye.** Solo cambia lo que se lista. La arquitectura, las 20 épocas de
+8.000 recortes, el lote de 16, `lr` 1e-3, la rotación de ±15°, la semilla 0, el 10 % de
+pacientes de validación y los 540 pacientes de entrenamiento son los de §6.11.
+
+- **Positivos nuevos:** las instancias de C2 sobre las arcadas de entrenamiento, con la
+  limpieza actual y con su propia frontera. Entran todas las que `identidad_de_piezas` no
+  clasifica como fantasma, con la posición de la pieza del experto con la que se emparejan.
+  Se mantienen los positivos del experto (±1 mm, hasta un 30 % quitado) y los negativos de
+  §6.11 (parches de encía y fantasmas de C2).
+- **Desborde sobre encía como aumento.** La mitad de las veces, la pieza de un positivo crece
+  sobre los vértices de encía del experto que quedan a menos de *s* mm de ella, con *s*
+  uniforme entre 0 y 13 mm. El 13 sale del diagnóstico: cubre el desborde de 26 de las 31
+  piezas quitadas. De las otras 5, cuatro son de las del trozo suelto y una desborda 14,8 mm.
+- **El recorte sale de la componente principal de la instancia**: la mayor componente
+  conexa de sus vértices, unidos cuando están a menos de 1 mm. Es igual al entrenar y al
+  inferir. La etiqueta no cambia: E1 sigue quitando o dejando la instancia entera.
+
+**Elección, solo en `dev-privado`.** τ ∈ {0,3; 0,5; 0,7}, sin más valores después de verlos,
+con la regla de §6.11: el que deja menos fantasmas entre los que cumplen V1-V5; si empatan,
+el menor. E2 no se vuelve a evaluar: el modelo sigue aprendiendo la posición, pero no se usa.
+**Si ningún τ pasa, la reserva nueva no se toca** y esto se cierra como negativo.
+
+**Criterios.** Son los V1-V5 de §6.11, sin cambiar ninguno. R es C2 en el pipeline real, que
+ahora es también el defecto. N es el número de piezas del experto en el conjunto medido.
+
+| | E1 v2 · verificador |
+|---|---|
+| V1 | fantasmas ≤ 0,5 × R |
+| V2 | ausentes ≤ R + 0,5 % de N |
+| V3 | piezas que pasan a < 85 % de corona respecto a R ≤ 0,5 % de N |
+| V4 | bien numeradas ≥ R |
+| V5 | en `dev`: bien numeradas ≥ R − 0,5 % de N, y fantasmas ≤ R |
+
+**Una sola evaluación en la reserva nueva**, de V1-V4, desde un commit con el árbol limpio y
+con su `run-record.json`. El script se negará a repetirla. Con eso la reserva queda gastada
+también para cualquier intento posterior. Quedan unos 180 pacientes del test privado sin
+bajar. Después, la falsación en los casos clínicos, sin ajustar nada: el caso A tiene que
+seguir con sus 14 piezas anotadas bien numeradas, y se dirá qué pasa con la 18 que nadie
+marcó; el caso B se describe.
+
+**Lo que este plan no ataca.**
+
+- Las 103 desplazadas: un verificador decide si hay diente, no cuál es.
+- Las 48 ausentes y los 6 fragmentos pequeños: quitar un fragmento no le da instancia a su
+  diente.
+- Las 10 coronas dañadas de K5.
+- Qué es el defecto: si E1 v2 pasa, se añade como opción sobre C2, y adoptarlo por defecto
+  lo decide el responsable del proyecto.
+
+**Coste previsto.**
+
+- Regiones de entrenamiento con radio de 15 mm: unos 4 GB, de los 20 GB libres.
+- Entrenar: menos de una hora de GPU.
+- Puntuar `dev`, `dev-privado` y la reserva nueva: minutos por conjunto. Antes hay que terminar
+  la predicción de C2 en la reserva nueva, que ya está en marcha, y su paso `c2`.
+
+**Resultado (2026-11-22): negativo en `dev-privado`, más cerca que §6.11. La reserva nueva no
+se ha tocado.**
+
+Se construyó lo pre-registrado, sin cambiar ningún criterio ni añadir valores de τ:
+`entrena_pieza.py --version 2` y `benchmark_identidad.py --version 2`, con
+`analysis_agents.identidad.componente_principal`. El modelo se entrenó desde `768a630` con el
+árbol limpio, en 100 minutos de GPU; la mejor época fue la 18 (99,6 % de acierto en diente y
+92,5 % en posición sobre validación). La elección se ejecutó desde `7279aed`, también limpio.
+
+Dos cosas se apartan de lo escrito, ninguna en el método:
+
+- **El desborde se calcula al vuelo** en cada recorte en vez de guardarse en regiones de
+  15 mm: esas regiones no cabían ni en disco ni en RAM. El aumento es el mismo; lo que cambia
+  es el coste, unos 80 ms por recorte desbordado.
+- **`elige` falló la primera vez** antes de escribir nada, porque la regla de w recorría E2
+  aunque la versión 2 no lo evalúa. Se corrigió en `7279aed` y se repitió; no había ningún
+  resultado que ver.
+
+| E1 v2 τ | Fantasmas (V1) | Ausentes (V2) | Coronas dañadas (V3) | Bien numeradas (V4) | V5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 95 | 48 | — | 1.531 | 508 · 13 | |
+| 0,3 | 18 | 59 ✗ | 13 ✗ | 1.525 ✗ | 508 · 6 | no |
+| 0,5 | 14 | 62 ✗ | 14 ✗ | 1.523 ✗ | 508 · 1 | no |
+| 0,7 | 11 | 62 ✗ | 15 ✗ | 1.523 ✗ | 507 · 1 | no |
+| §6.11, τ = 0,3 | 8 | 84 | 45 | 1.500 | 503 · 3 | no |
+
+Los límites, con N = 1.657: V2 permite 56 ausentes, V3 8 coronas y V4 exige 1.531. Ningún τ
+pasa, así que por la regla fijada **la reserva nueva no se evalúa** y los casos clínicos no se
+ejecutan.
+
+**Lo que la hipótesis acertó.** Con τ = 0,3 el v2 ya no quita ningún diente entero bien
+numerado. De las 31 de §6.11, 25 eran dientes enteros y no queda ninguna; las 6 bien
+numeradas que quita ahora son fragmentos que cubren a lo sumo el 19 % de su diente, como los
+otros 6 de entonces. Las ausentes pasan de 84 a 59 y las coronas
+dañadas de 45 a 13. La explicación de §6.11 era correcta: el modelo fallaba por lo que vio al
+entrenar.
+
+**Lo que queda, mirado en `dev-privado` después de la elección.** Con τ = 0,3 quita 100
+instancias: 77 fantasmas, 6 fragmentos bien numerados y 17 desplazadas. De esas 17:
+
+- 11 son fragmentos que cubren menos del 25 % del diente al que caen. Al quitarlos, ese
+  diente se queda sin etiqueta que lo empareje cuando su cuerpo lleva otro número, y cuenta
+  como ausente.
+- 6 son **dientes enteros** (cubren del 55 % al 95 %) que C2 numeró con el código del otro
+  lado o del cuadrante opuesto: un 46 llamado 36, un 41 llamado 31, un 37 llamado 48. El
+  modelo les da `p(diente)` entre 0,01 y 0,14. No se ha mirado por qué; la sospecha, sin
+  probar, es que esas instancias montan sobre dos piezas a ambos lados de la línea media o
+  del cuadrante.
+
+Las 11 ausentes nuevas salen de esos dos grupos.
+
+**Lo que esto deja.**
+
+- **La reserva nueva sigue sin gastar.** La predicción de C2 sobre ella está terminada y en
+  caché (solo etiquetas). No se ha ejecutado `c2`, `puntua` ni `evalua` sobre ella.
+- **El defecto no cambia**: C2 sin verificador.
+- **Abierto:** que el verificador no quite una instancia que cubre la mayor parte de un diente
+  real, y que los fragmentos se fundan con su pieza en vez de borrarse. Las dos cosas
+  necesitan su propio pre-registro, y `dev-privado` ya se ha mirado para esta.
 
 ## 7 · Consecuencia sobre el producto
 

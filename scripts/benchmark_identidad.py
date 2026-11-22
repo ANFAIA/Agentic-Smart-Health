@@ -7,6 +7,9 @@
     uv run python scripts/benchmark_identidad.py elige --modelo …/pieza.pt
     uv run python scripts/benchmark_identidad.py evalua --modelo …/pieza.pt   # UNA vez
 
+    # verificador v2 (§6.12): solo E1, con `--version 2` en puntua, elige, evalua y clinico
+    $G scripts/benchmark_identidad.py puntua --version 2 --split dev-privado --modelo …/pieza-v2.pt
+
 **Los conjuntos** (§6.11 de `docs/research/segmentacion-fdi-escaner.md`):
 
 - `dev-privado`: la primera reserva, ya gastada (120 arcadas del test privado). Aquí se
@@ -19,6 +22,10 @@
 `benchmark_separacion.py`, el voto entre las 3 referencias más confiadas de 18 y la limpieza
 de `caso_completo.py`. `c2` recalcula, solo para esas 3, la log-probabilidad de C2 que E2
 necesita (p₁), y comprueba que las etiquetas salen idénticas a las cacheadas.
+
+**La versión 2** (§6.12) recorta cada instancia desde su componente principal, guarda en
+`pieza-v2/` y solo elige y evalúa E1. La reserva nueva se evalúa una vez en total, sea con
+la versión que sea: `evalua` se niega si ya existe cualquier resumen de ella.
 
 Los recortes de cada pieza se ponen en la pose de la referencia más confiada, que es la pose
 de Teeth3DS+ con la que se entrenó el modelo de pieza. El orden desde la línea media se mide
@@ -46,6 +53,7 @@ from analysis_agents.identidad import (  # noqa: E402
     MARGEN_RECORTE_MM,
     PESOS_C2,
     TAUS,
+    componente_principal,
     distancia_con_signo,
     instancias,
     p1_por_instancia,
@@ -90,8 +98,20 @@ def ruta_c2(split: str, paciente: str, arcada: str) -> Path:
     return SALIDA / "c2" / split / f"{paciente}_{arcada}.npz"
 
 
-def ruta_pieza(split: str, paciente: str, arcada: str) -> Path:
-    return SALIDA / "pieza" / split / f"{paciente}_{arcada}.npz"
+def ruta_pieza(split: str, paciente: str, arcada: str, version: int = 1) -> Path:
+    return SALIDA / ("pieza-v2" if version == 2 else "pieza") / split / f"{paciente}_{arcada}.npz"
+
+
+def ruta_eleccion(version: int) -> Path:
+    return SALIDA / ("eleccion-v2.json" if version == 2 else "eleccion.json")
+
+
+def recorte_de_instancia(pos, nrm, vs, arbol, rng, version: int):  # type: ignore[no-untyped-def]
+    """El recorte que ve el modelo de pieza; en la versión 2, desde la componente principal."""
+    if version == 2:
+        vs = componente_principal(pos, vs)
+    idx, d = distancia_con_signo(pos, vs, MARGEN_RECORTE_MM, arbol)
+    return recorte(pos, nrm, idx, d, rng)
 
 
 def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
@@ -185,7 +205,7 @@ def puntua(args: argparse.Namespace) -> int:
         for r in refs for a in bm.ARCADAS}
     pares = parte(arcadas(args.split, args.limite), args.parte)
     for k, (paciente, arcada) in enumerate(pares, 1):
-        destino = ruta_pieza(args.split, paciente, arcada)
+        destino = ruta_pieza(args.split, paciente, arcada, args.version)
         if destino.is_file():
             continue
         z = np.load(ruta_c2(args.split, paciente, arcada))
@@ -198,8 +218,7 @@ def puntua(args: argparse.Namespace) -> int:
         rng = np.random.default_rng(SEMILLA_RECORTE)
         cods, recortes = [], []
         for c, vs in instancias(z["R"]).items():
-            idx, d = distancia_con_signo(v1, vs, MARGEN_RECORTE_MM, arbol)
-            r = recorte(v1, n1, idx, d, rng)
+            r = recorte_de_instancia(v1, n1, vs, arbol, rng, args.version)
             assert r is not None
             cods.append(c)
             recortes.append(r)
@@ -258,11 +277,12 @@ def metricas(pred: np.ndarray, experto: np.ndarray) -> dict[str, Any]:
     }
 
 
-def evalua_arcada(trabajo: tuple[str, str, str, float | None, float | None, bool]) -> dict:
-    split, paciente, arcada, tau, w, con_contacto = trabajo
+def evalua_arcada(trabajo: tuple[str, str, str, float | None, float | None, bool, int]
+                  ) -> dict:
+    split, paciente, arcada, tau, w, con_contacto, version = trabajo
     pos, tri, experto = bs.carga(SPLITS[split], paciente, arcada)
     z = np.load(ruta_c2(split, paciente, arcada))
-    s = np.load(ruta_pieza(split, paciente, arcada))
+    s = np.load(ruta_pieza(split, paciente, arcada, version))
     p1 = {int(c): v for c, v in zip(z["p1_codigos"], z["p1"], strict=True)}
     p_diente = {int(c): float(v) for c, v in zip(s["codigos"], s["p_diente"], strict=True)}
     p2 = {int(c): v for c, v in zip(s["codigos"], s["p2"], strict=True)}
@@ -349,22 +369,24 @@ def _todas(c: dict[str, Any]) -> bool:
     return all(v["pass"] for k, v in c.items() if isinstance(v, dict) and "pass" in v)
 
 
-def _filas(split: str, tau=None, w=None, contacto=False, trabajos=8, limite=None):  # type: ignore[no-untyped-def]
+def _filas(split: str, tau=None, w=None, contacto=False, trabajos=8, limite=None,  # type: ignore[no-untyped-def]
+           version=1):
     pares = arcadas(split, limite)
-    faltan = [p for p in pares if not ruta_pieza(split, *p).is_file()
+    faltan = [p for p in pares if not ruta_pieza(split, *p, version).is_file()
               or not ruta_c2(split, *p).is_file()]
     if faltan:
         raise SystemExit(f"⚠ {split}: faltan {len(faltan)} arcadas por `c2` o `puntua`.")
     with ProcessPoolExecutor(max_workers=trabajos) as grupo:
         return list(grupo.map(evalua_arcada,
-                              [(split, p, a, tau, w, contacto) for p, a in pares]))
+                              [(split, p, a, tau, w, contacto, version)
+                               for p, a in pares]))
 
 
 # ── elige: τ y w, solo en `dev-privado` y `dev` ─────────────────────────────────
 
 def elige(args: argparse.Namespace) -> int:
-    filas = _filas("dev-privado", trabajos=args.trabajos)
-    filas_dev = _filas("dev", trabajos=args.trabajos)
+    filas = _filas("dev-privado", trabajos=args.trabajos, version=args.version)
+    filas_dev = _filas("dev", trabajos=args.trabajos, version=args.version)
     e1 = {}
     for t in TAUS:
         c = criterios_e1(filas, f"E1_{t}")
@@ -372,7 +394,8 @@ def elige(args: argparse.Namespace) -> int:
         c["all_pass"] = _todas(c)
         e1[str(t)] = c
     e2 = {}
-    for w in PESOS_C2:
+    # §6.12: la versión 2 solo es el verificador; E2 no se vuelve a evaluar.
+    for w in (PESOS_C2 if args.version == 1 else ()):
         c = criterios_e2(filas, f"E2_{w}")
         c["N5_dev"] = criterio_dev(filas_dev, f"E2_{w}", fantasmas=False)
         c["all_pass"] = _todas(c)
@@ -380,15 +403,15 @@ def elige(args: argparse.Namespace) -> int:
     # Regla de §6.11: τ con menos fantasmas entre los que cumplen; si empatan, el menor.
     # w con menos desplazadas entre los que cumplen; si empatan, el mayor.
     validos_t = [t for t in TAUS if e1[str(t)]["all_pass"]]
-    validos_w = [w for w in PESOS_C2 if e2[str(w)]["all_pass"]]
+    validos_w = [w for w in PESOS_C2 if str(w) in e2 and e2[str(w)]["all_pass"]]
     tau = min(validos_t, key=lambda t: (e1[str(t)]["V1_ghosts"]["E1"], t)) if validos_t \
         else None
     w = min(validos_w, key=lambda x: (e2[str(x)]["N1_shifted"]["E2"], -x)) if validos_w \
         else None
-    salida = {"set": "dev-privado + dev", "model": str(args.modelo),
+    salida = {"set": "dev-privado + dev", "version": args.version, "model": str(args.modelo),
               "model_sha256": bs.sha_de(args.modelo), "E1": e1, "E2": e2,
               "chosen": {"tau": tau, "w": w}, "run_record": bs.registro(sys.argv)}
-    destino = SALIDA / "eleccion.json"
+    destino = ruta_eleccion(args.version)
     destino.write_text(json.dumps(salida, indent=2) + "\n")
     destino.with_suffix(".md").write_text(informe_eleccion(salida))
     print(informe_eleccion(salida))
@@ -400,7 +423,9 @@ def si(x: bool) -> str:
 
 
 def informe_eleccion(s: dict) -> str:
-    lineas = ["# Identidad por pieza · elección en `dev-privado` (y `dev` para V5/N5)", "",
+    v2 = s.get("version", 1) == 2
+    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)" if v2 else "")
+              + " · elección en `dev-privado` (y `dev` para V5/N5)", "",
               "| E1 τ | Fantasmas R → E1 | Ausentes | Coronas dañadas | Correctas | V5 dev "
               "| Todo |", "|---|---|---|---|---|---|---|"]
     for t, c in s["E1"].items():
@@ -413,8 +438,9 @@ def informe_eleccion(s: dict) -> str:
             f"| {c['V5_dev']['correct_R']} → {c['V5_dev']['correct']}, fantasmas "
             f"{c['V5_dev']['ghost_R']} → {c['V5_dev']['ghost']} ({si(c['V5_dev']['pass'])}) "
             f"| {si(c['all_pass'])} |")
-    lineas += ["", "| E2 w | Desplazadas R → E2 | Correctas | Rotas | FDI por vértice "
-               "| N5 dev | Todo |", "|---|---|---|---|---|---|---|"]
+    if s["E2"]:
+        lineas += ["", "| E2 w | Desplazadas R → E2 | Correctas | Rotas | FDI por vértice "
+                   "| N5 dev | Todo |", "|---|---|---|---|---|---|---|"]
     for w, c in s["E2"].items():
         lineas.append(
             f"| {w} | {c['N1_shifted']['R']} → {c['N1_shifted']['E2']} "
@@ -434,12 +460,14 @@ def informe_eleccion(s: dict) -> str:
 # ── evalua: la reserva nueva, UNA vez ───────────────────────────────────────────
 
 def evalua(args: argparse.Namespace) -> int:
-    destino = SALIDA / "resumen-reserva-2.json"
-    if destino.is_file():
-        print(f"⚠ La reserva nueva ya se evaluó ({destino}). Se evalúa UNA vez.",
-              file=sys.stderr)
+    destino = SALIDA / ("resumen-reserva-2-v2.json" if args.version == 2
+                        else "resumen-reserva-2.json")
+    hechos = sorted(SALIDA.glob("resumen-reserva-2*.json"))
+    if hechos:
+        print(f"⚠ La reserva nueva ya se evaluó ({hechos[0]}). Se evalúa UNA vez, con la "
+              "versión que sea.", file=sys.stderr)
         return 3
-    eleccion = json.loads((SALIDA / "eleccion.json").read_text())
+    eleccion = json.loads(ruta_eleccion(args.version).read_text())
     if eleccion["model_sha256"] != bs.sha_de(args.modelo):
         raise SystemExit("⚠ el modelo no es el que se eligió en dev-privado; no sigo.")
     tau, w = eleccion["chosen"]["tau"], eleccion["chosen"]["w"]
@@ -447,8 +475,8 @@ def evalua(args: argparse.Namespace) -> int:
         raise SystemExit("⚠ ni E1 ni E2 pasaron en dev-privado: la reserva no se toca.")
     rec = bs.registro(sys.argv)
     filas = _filas("reserva-2", tau, w, contacto=tau is not None and w is not None,
-                   trabajos=args.trabajos)
-    salida: dict[str, Any] = {"set": "reserva-2", "arches": len(filas),
+                   trabajos=args.trabajos, version=args.version)
+    salida: dict[str, Any] = {"set": "reserva-2", "version": args.version, "arches": len(filas),
                               "patients": len({f["patient"] for f in filas}),
                               "chosen": {"tau": tau, "w": w},
                               "model_sha256": eleccion["model_sha256"], "run_record": rec}
@@ -483,7 +511,9 @@ def evalua(args: argparse.Namespace) -> int:
 
 
 def informe_reserva(s: dict) -> str:
-    lineas = ["# Identidad por pieza · `reserva-2`, evaluada una vez", "",
+    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)"
+                                      if s.get("version", 1) == 2 else "")
+              + " · `reserva-2`, evaluada una vez", "",
               f"{s['arches']} arcadas de {s['patients']} pacientes. τ = {s['chosen']['tau']}, "
               f"w = {s['chosen']['w']}, elegidos en `dev-privado`.", ""]
     if "E1" in s:
@@ -538,7 +568,7 @@ def clinico(args: argparse.Namespace) -> int:
     from scipy.spatial import cKDTree
 
     seg = _carga("segmentar_fdi", RAIZ / "scripts/segmentar_fdi.py")
-    eleccion = json.loads((SALIDA / "eleccion.json").read_text())
+    eleccion = json.loads(ruta_eleccion(args.version).read_text())
     if eleccion["model_sha256"] != bs.sha_de(args.modelo):
         raise SystemExit("⚠ el modelo no es el que se eligió en dev-privado; no sigo.")
     tau, w = eleccion["chosen"]["tau"], eleccion["chosen"]["w"]
@@ -573,8 +603,7 @@ def clinico(args: argparse.Namespace) -> int:
     arbol, rng = cKDTree(v1), np.random.default_rng(SEMILLA_RECORTE)
     cods, recortes = [], []
     for c, vs in instancias(R).items():
-        idx, d = distancia_con_signo(v1, vs, MARGEN_RECORTE_MM, arbol)
-        r_ = recorte(v1, n1, idx, d, rng)
+        r_ = recorte_de_instancia(v1, n1, vs, arbol, rng, args.version)
         assert r_ is not None
         cods.append(c)
         recortes.append(r_)
@@ -620,16 +649,19 @@ def main() -> int:
     p.add_argument("--modelo", type=Path, required=True)
     p.add_argument("--limite", type=int)
     p.add_argument("--parte", default="0/1")
+    p.add_argument("--version", type=int, choices=(1, 2), default=1)
     cl = ordenes.add_parser("clinico")
     cl.add_argument("--segmentacion", type=Path, required=True)
     cl.add_argument("--fdi-json", type=Path, required=True)
     cl.add_argument("--arcada", choices=("upper", "lower"), required=True)
     cl.add_argument("--modelo", type=Path, required=True)
     cl.add_argument("--salida", type=Path, required=True)
+    cl.add_argument("--version", type=int, choices=(1, 2), default=1)
     for nombre in ("elige", "evalua"):
         s = ordenes.add_parser(nombre)
         s.add_argument("--modelo", type=Path, required=True)
         s.add_argument("--trabajos", type=int, default=6)
+        s.add_argument("--version", type=int, choices=(1, 2), default=1)
     args = ap.parse_args()
     return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua,
             "clinico": clinico}[args.orden](args)

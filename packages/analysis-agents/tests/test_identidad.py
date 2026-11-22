@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from analysis_agents.identidad import (
     asigna_posiciones,
+    componente_principal,
     distancia_con_signo,
     instancias,
     orden_desde_linea_media,
@@ -133,3 +134,13 @@ def test_la_distancia_con_signo_separa_dentro_y_fuera() -> None:
 
 def test_instancias_ignora_la_encia() -> None:
     assert set(instancias(np.array([0, 0, 21, 22, 21]))) == {21, 22}
+
+
+def test_la_componente_principal_suelta_el_trozo_lejano() -> None:
+    x = np.arange(0, 5, 0.2)
+    cerca = np.stack([x, np.zeros_like(x), np.zeros_like(x)], axis=1)
+    lejos = cerca[:5] + [40.0, 0.0, 0.0]
+    pos = np.concatenate([lejos, cerca])
+    principal = componente_principal(pos, np.arange(len(pos)))
+    assert set(principal) == set(range(5, len(pos)))
+    assert list(componente_principal(pos, np.array([3]))) == [3]
