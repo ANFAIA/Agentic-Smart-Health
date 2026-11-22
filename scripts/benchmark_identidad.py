@@ -403,7 +403,7 @@ def elige(args: argparse.Namespace) -> int:
     # Regla de §6.11: τ con menos fantasmas entre los que cumplen; si empatan, el menor.
     # w con menos desplazadas entre los que cumplen; si empatan, el mayor.
     validos_t = [t for t in TAUS if e1[str(t)]["all_pass"]]
-    validos_w = [w for w in PESOS_C2 if e2[str(w)]["all_pass"]]
+    validos_w = [w for w in PESOS_C2 if str(w) in e2 and e2[str(w)]["all_pass"]]
     tau = min(validos_t, key=lambda t: (e1[str(t)]["V1_ghosts"]["E1"], t)) if validos_t \
         else None
     w = min(validos_w, key=lambda x: (e2[str(x)]["N1_shifted"]["E2"], -x)) if validos_w \
