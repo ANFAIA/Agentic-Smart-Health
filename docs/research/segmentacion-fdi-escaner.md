@@ -1232,6 +1232,18 @@ recalculan. **La reserva nueva no se toca**, ni los casos clínicos.
 unas 3 h por modelo para predecir en `dev` y `dev-privado` (31 y 137 min con C2). Unos 0,2 GB
 de disco por modelo.
 
+**Cómo se ejecuta.** Todo va en [`scripts/entrena_6_15.sh`](../../scripts/entrena_6_15.sh):
+los dos entrenamientos uno detrás de otro, la predicción y la evaluación de cada modelo en
+los dos conjuntos, y al final `benchmark_separacion.py compara`, que aplica la lectura de
+arriba ya escrita en código (`lee_6_15`) y deja `comparacion-6-15-dev.md` y
+`comparacion-6-15-reserva.md`. Se niega a arrancar con el árbol sucio o sin este
+pre-registro en la historia. Si se corta, relanzarlo sigue donde iba. Se ejecuta con:
+
+    systemd-inhibit --what=sleep:idle --why="§6.15" bash scripts/entrena_6_15.sh
+
+El código de lectura se versionó junto con el script, después de este pre-registro y antes
+de entrenar nada.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
