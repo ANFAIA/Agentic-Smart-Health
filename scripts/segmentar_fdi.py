@@ -10,10 +10,18 @@ deliberada: `packages/tooth-aggregation` está escrito **sin depender de torch**
 la agregación punto→diente se instale y se testee en el workspace normal, y el *forward*
 del modelo sea cosa del llamante. Este script es ese llamante.
 
-Reutiliza `data/processed/a3-checkpoints/normales-ce-baseline.pt` SIN reentrenar, y no
-el otro checkpoint de A3: está medido que `normales-ce-boundary-centroid` está
-**degenerado en mandibular** (0,193 de acierto; mapea sistemáticamente códigos
-inferiores a superiores).
+Por defecto usa `data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt` (C2, de
+`scripts/entrena_fdi_escaner.py`) desde el 2026-11-22. ⚠️ **Es una decisión del
+responsable del proyecto, no un criterio cumplido.** En la reserva de 120 arcadas C2 numeró
+bien 1.531 de 1.657 piezas frente a 1.365 del checkpoint de agosto, pero falló una cláusula
+pre-registrada: 10 piezas pasan a conservar menos del 85 % de su corona, con un límite de 8
+(§6.10 de `docs/research/segmentacion-fdi-escaner.md`). Esas cifras son con
+`--referencias-entrenamiento 18`; sin referencias no se canoniza la pose y no valen.
+
+El checkpoint de agosto, `normales-ce-baseline.pt`, sigue disponible con `--checkpoint`
+y es la base contra la que se midieron todos los métodos hasta §6.10. No se usa el otro
+checkpoint de A3: está medido que `normales-ce-boundary-centroid` está **degenerado en
+mandibular** (0,193 de acierto; mapea sistemáticamente códigos inferiores a superiores).
 
 ## La pose, que es lo que hacía falta y no estaba
 
@@ -92,6 +100,8 @@ CHUNK, PASADAS = 2048, 3   # trozos del TAMAÑO DE ENTRENAMIENTO: misma distribu
 DIM_MODELO = (32, 64, 128, 256, 512)
 KNN_INST, MIN_INST, MERGE_MULT = 8, 30, 12.0
 RAZON_DUDOSA = 0.6
+# C2 por decisión del responsable (2026-11-22), pese a fallar K5 en la reserva: §6.10.
+CHECKPOINT_POR_DEFECTO = RAIZ / "data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt"
 FDI_INFERIOR = list(range(48, 40, -1)) + list(range(31, 39))
 FDI_SUPERIOR = list(range(18, 10, -1)) + list(range(21, 29))
 
@@ -330,8 +340,9 @@ def main() -> int:
     ap.add_argument("--escaneo", type=Path, required=True)
     ap.add_argument("--arcada", choices=("lower", "upper"), required=True)
     ap.add_argument("--salida", type=Path, required=True)
-    ap.add_argument("--checkpoint", type=Path,
-                    default=RAIZ / "data/processed/a3-checkpoints/normales-ce-baseline.pt")
+    ap.add_argument("--checkpoint", type=Path, default=CHECKPOINT_POR_DEFECTO,
+                    help="Por defecto C2 (fdi-8k-rot15-s0.pt). El de agosto: "
+                         "data/processed/a3-checkpoints/normales-ce-baseline.pt")
     ap.add_argument("--referencia", type=Path, action="append", default=None,
                     help="OBJ de Teeth3DS+ que define la pose esperada por el modelo. "
                          "Sin él no se canoniza, que es lo que rompe la inferencia. "
