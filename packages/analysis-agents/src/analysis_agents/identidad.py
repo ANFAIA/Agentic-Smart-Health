@@ -146,18 +146,32 @@ def asigna_posiciones(puntos: np.ndarray) -> list[int] | None:
     return [q + 1 for q in reversed(salida)]
 
 
-def orden_desde_linea_media(centroides: np.ndarray, centro: np.ndarray,
-                            R: np.ndarray) -> np.ndarray:
+def orden_desde_linea_media(centroides: np.ndarray, centro: np.ndarray, R: np.ndarray,
+                            contrarios: np.ndarray | None = None) -> np.ndarray:
     """Índices de `centroides` de la pieza más cercana a la línea media a la más lejana.
 
     `centro` y `R` son el marco de la arcada (`fusion_agents.marco.marco_canonico`, filas
-    `[lateral, anterior, oclusal]`), medido sobre la propia malla. El orden es el del ángulo
-    respecto al eje anterior en el plano oclusal, en valor absoluto: en una arcada en U es
-    monótono a lo largo de cada hemiarcada.
+    `[lateral, anterior, oclusal]`), medido sobre la propia malla. El ángulo respecto al eje
+    anterior en el plano oclusal, en valor absoluto, es monótono a lo largo de cada
+    hemiarcada en U; eso da el ORDEN. El SENTIDO no se fía del signo de ese eje.
+
+    ⚠️ **Por qué.** `marco_canonico` fija los signos para que dos arcadas se puedan poner una
+    sobre otra, no para que «anterior» sea anatómico. En `dev-privado` el orden salía
+    invertido en el maxilar —39 cuadrantes al revés y 18 bien en 30 arcadas— y la
+    renumeración, obligada a numerar en orden creciente, desnumeraba la hemiarcada entera.
+    Así que el sentido se mide: el extremo de la línea media es el más cercano a las piezas
+    del cuadrante contrario (`contrarios`). Solo sin ellas se usa el eje anterior.
     """
     v = np.asarray(centroides, dtype=np.float64) - np.asarray(centro, dtype=np.float64)
     lateral, anterior = v @ np.asarray(R)[0], v @ np.asarray(R)[1]
-    return np.argsort(np.abs(np.arctan2(lateral, anterior)), kind="stable")
+    orden = np.argsort(np.abs(np.arctan2(lateral, anterior)), kind="stable")
+    if contrarios is not None and len(contrarios) and len(orden) > 1:
+        otros = np.asarray(contrarios, dtype=np.float64)
+        cerca = np.linalg.norm(np.asarray(centroides)[:, None, :] - otros[None, :, :],
+                               axis=2).min(axis=1)
+        if cerca[orden[-1]] < cerca[orden[0]]:
+            orden = orden[::-1]
+    return orden
 
 
 def p1_por_instancia(logps: list[np.ndarray], codigos_modelo: list[int],
@@ -202,7 +216,11 @@ def renumera(etiquetas: np.ndarray, pos: np.ndarray, centro: np.ndarray, R: np.n
     for q in sorted({c // 10 for c in inst}):
         codigos = sorted(c for c in inst if c // 10 == q)
         cent = np.stack([np.asarray(pos)[inst[c]].mean(0) for c in codigos])
-        orden = [codigos[i] for i in orden_desde_linea_media(cent, centro, R)]
+        # El cuadrante contrario de la misma arcada: 1↔2, 3↔4.
+        contrario = {1: 2, 2: 1, 3: 4, 4: 3}.get(q)
+        otros = [np.asarray(pos)[inst[c]].mean(0) for c in inst if c // 10 == contrario]
+        orden = [codigos[i] for i in orden_desde_linea_media(
+            cent, centro, R, np.stack(otros) if otros else None)]
         S = np.stack([np.asarray(p2[c], dtype=np.float64)
                       + (w * np.asarray(p1[c], dtype=np.float64) if w else 0.0)
                       for c in orden])

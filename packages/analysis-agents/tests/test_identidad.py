@@ -55,6 +55,18 @@ def test_el_orden_va_de_la_linea_media_hacia_atras_en_cada_lado() -> None:
         assert list(barajado[orden]) == list(range(len(c)))
 
 
+def test_el_sentido_lo_da_el_cuadrante_contrario_y_no_el_signo_del_eje() -> None:
+    """El fallo de `dev-privado`: con el eje anterior al revés, el orden salía invertido."""
+    al_reves = np.diag([1.0, -1.0, 1.0])
+    derecha, izquierda = _arco(lado=1.0), _arco(lado=-1.0)
+    barajado = np.random.default_rng(1).permutation(len(derecha))
+    sin_contrario = orden_desde_linea_media(derecha[barajado], np.zeros(3), al_reves)
+    assert list(barajado[sin_contrario]) == list(range(len(derecha)))[::-1]
+    con_contrario = orden_desde_linea_media(derecha[barajado], np.zeros(3), al_reves,
+                                            izquierda)
+    assert list(barajado[con_contrario]) == list(range(len(derecha)))
+
+
 def test_el_verificador_solo_quita_lo_que_baja_del_umbral() -> None:
     e = np.array([0, 11, 11, 12, 18, 18])
     nuevas, quitadas = verifica(e, {11: 0.9, 12: 0.5, 18: 0.1}, tau=0.5)
