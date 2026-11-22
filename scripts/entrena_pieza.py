@@ -103,6 +103,8 @@ def mina(args: argparse.Namespace) -> int:
     arcadas = ef.arcadas_de_entrenamiento(True)
     if args.limite:
         arcadas = arcadas[: args.limite]
+    i, n = (int(x) for x in args.parte.split("/"))
+    arcadas = arcadas[i::n]  # la agregación es de un núcleo: se reparte en procesos
     MINADO.mkdir(parents=True, exist_ok=True)
     for k, (nombre, ruta) in enumerate(arcadas, 1):
         destino = MINADO / f"{nombre}.npz"
@@ -114,7 +116,9 @@ def mina(args: argparse.Namespace) -> int:
         torch.manual_seed(0)
         _, inst = seg.infiere(modelo, codigos, n_clases, pos, pos, z["nrm"], arcada, dev,
                               trozo=meta["num_points"])
-        np.savez_compressed(destino, et=seg.etiquetas_de(inst, len(pos)))
+        temporal = destino.with_suffix(".tmp.npz")
+        np.savez_compressed(temporal, et=seg.etiquetas_de(inst, len(pos)))
+        temporal.replace(destino)
         if k % 50 == 0:
             print(f"  [{k}/{len(arcadas)}] {nombre}", flush=True)
     return 0
@@ -339,7 +343,7 @@ def entrena(args: argparse.Namespace) -> int:
 
     modelo = construye_modelo().to(dev)
     opt = torch.optim.Adam(modelo.parameters(), lr=args.lr)
-    pasos = args.epocas * math.ceil(args.por_epoca / args.lote)
+    pasos = args.epocas * math.ceil(min(args.por_epoca, len(entreno)) / args.lote)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=pasos,
                                                 pct_start=0.05)
 
@@ -353,7 +357,8 @@ def entrena(args: argparse.Namespace) -> int:
     for epoca in range(args.epocas):
         modelo.train()
         te = time.perf_counter()
-        elegidas = rng.choice(len(entreno), size=args.por_epoca, replace=False)
+        elegidas = rng.choice(len(entreno), size=min(args.por_epoca, len(entreno)),
+                              replace=False)
         suma = 0.0
         for s in range(0, len(elegidas), args.lote):
             ms = [entreno[i] for i in elegidas[s: s + args.lote]]
@@ -411,6 +416,7 @@ def main() -> int:
     ordenes = ap.add_subparsers(dest="orden", required=True)
     m = ordenes.add_parser("mina")
     m.add_argument("--limite", type=int)
+    m.add_argument("--parte", default="0/1", help="i/n: solo las arcadas i, i+n, …")
     p = ordenes.add_parser("prepara")
     p.add_argument("--limite", type=int)
     p.add_argument("--procesos", type=int, default=min(6, os.cpu_count() or 1))

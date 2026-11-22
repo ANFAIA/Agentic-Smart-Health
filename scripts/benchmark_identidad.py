@@ -98,6 +98,12 @@ def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
     return bs.arcadas(SPLITS[split], limite)
 
 
+def parte(pares: list, cual: str) -> list:  # type: ignore[type-arg]
+    """`i/n`: las arcadas i, i+n, … La agregación y la limpieza son de un núcleo."""
+    i, n = (int(x) for x in cual.split("/"))
+    return pares[i::n]
+
+
 # ── c2: R, p₁ y el marco de cada arcada (GPU) ───────────────────────────────────
 
 def c2(args: argparse.Namespace) -> int:
@@ -112,7 +118,7 @@ def c2(args: argparse.Namespace) -> int:
     marcos = {(r, a): marco_canonico(np.asarray(
         bm.parse_obj(bm.MALLAS / r / f"{r}_{a}.obj")["positions"], dtype=np.float64))[:2]
         for r in refs for a in bm.ARCADAS}
-    pares = arcadas(args.split, args.limite)
+    pares = parte(arcadas(args.split, args.limite), args.parte)
     (SALIDA / "c2" / args.split).mkdir(parents=True, exist_ok=True)
     (SALIDA / "c2" / args.split / "run-record.json").write_text(
         json.dumps(bs.registro(sys.argv), indent=2) + "\n")
@@ -140,14 +146,16 @@ def c2(args: argparse.Namespace) -> int:
         R = bm.limpieza_actual(pos, votada)
         p1 = p1_por_instancia(logps, codigos, R)
         cods = sorted(p1)
+        temporal = destino.with_suffix(".tmp.npz")
         np.savez_compressed(
-            destino, R=R.astype(np.int16), p1_codigos=np.array(cods, dtype=np.int16),
+            temporal, R=R.astype(np.int16), p1_codigos=np.array(cods, dtype=np.int16),
             p1=np.stack([p1[c] for c in cods]) if cods else np.zeros((0, 8)),
             elegidas=np.array(elegidas), centro=origen[0], marco=origen[1])
+        temporal.replace(destino)
         print(f"  [{k}/{len(pares)}] {paciente}_{arcada}", flush=True)
     print(f"vértices con etiqueta distinta de la cacheada al recalcular: {distintas}")
-    (SALIDA / "c2" / args.split / "reproduccion.json").write_text(
-        json.dumps({"vertices_distintos": distintas}) + "\n")
+    (SALIDA / "c2" / args.split / f"reproduccion-{args.parte.replace('/', 'de')}.json"
+     ).write_text(json.dumps({"vertices_distintos": distintas}) + "\n")
     return 0
 
 
@@ -175,7 +183,7 @@ def puntua(args: argparse.Namespace) -> int:
     marcos = {(r, a): marco_canonico(np.asarray(
         bm.parse_obj(bm.MALLAS / r / f"{r}_{a}.obj")["positions"], dtype=np.float64))[:2]
         for r in refs for a in bm.ARCADAS}
-    pares = arcadas(args.split, args.limite)
+    pares = parte(arcadas(args.split, args.limite), args.parte)
     for k, (paciente, arcada) in enumerate(pares, 1):
         destino = ruta_pieza(args.split, paciente, arcada)
         if destino.is_file():
@@ -197,8 +205,10 @@ def puntua(args: argparse.Namespace) -> int:
             recortes.append(r)
         p_diente, p2 = puntua_recortes(modelo, recortes, dev)
         destino.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(destino, codigos=np.array(cods, dtype=np.int16),
+        temporal = destino.with_suffix(".tmp.npz")
+        np.savez_compressed(temporal, codigos=np.array(cods, dtype=np.int16),
                             p_diente=p_diente, p2=p2)
+        temporal.replace(destino)
         print(f"  [{k}/{len(pares)}] {paciente}_{arcada}: {len(cods)} piezas", flush=True)
     return 0
 
@@ -513,6 +523,90 @@ def informe_reserva(s: dict) -> str:
     return "\n".join(lineas)
 
 
+# ── clinico: E1 y E2 sobre una segmentación ya hecha, sin ajustar nada ──────────
+
+def clinico(args: argparse.Namespace) -> int:
+    """Aplica E1 (τ) y E2 (w) elegidos en `dev-privado` a la salida de `segmentar_fdi.py`.
+
+    Parte de lo que ya se segmentó con C2 en §6.10 (`segmentacion_<arcada>.npz`, la columna
+    `limpias`, y el voto de `fdi_<arcada>.json`), recalcula la log-probabilidad de las tres
+    referencias que votaron y escribe un npz con `V`, `F` y una columna por variante, que es
+    lo que lee `puntua_margen.py`. No escribe nombres de fichero del escaneo.
+    """
+    import torch
+    from fusion_agents.marco import a_marco_de, marco_canonico
+    from scipy.spatial import cKDTree
+
+    seg = _carga("segmentar_fdi", RAIZ / "scripts/segmentar_fdi.py")
+    eleccion = json.loads((SALIDA / "eleccion.json").read_text())
+    if eleccion["model_sha256"] != bs.sha_de(args.modelo):
+        raise SystemExit("⚠ el modelo no es el que se eligió en dev-privado; no sigo.")
+    tau, w = eleccion["chosen"]["tau"], eleccion["chosen"]["w"]
+    ep.firma_c2()
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    c2_modelo, codigos, n_clases, meta = seg.carga_modelo(ep.C2, dev)
+    pieza, _ = carga_pieza(args.modelo, dev)
+    z = np.load(args.segmentacion)
+    V, F = z["V"].astype(np.float64), z["F"].astype(np.int64)
+    R = z["limpias"].astype(np.int64)
+    voto = json.loads(args.fdi_json.read_text())["pose"]["vote"]["chosen"]
+    rutas = {r.stem: r for r in seg.referencias_de_entrenamiento(18, args.arcada)}
+    N = seg.normales_vtk(V.astype(np.float32), F).astype(np.float64)
+    origen = marco_canonico(V)
+    marcos = {r: marco_canonico(np.asarray(bm.parse_obj(rutas[r])["positions"],
+                                           dtype=np.float64))[:2] for r in voto}
+    logps, etqs, confs = [], {}, {}
+    from analysis_agents.pose_votada import confianza
+
+    for r in voto:
+        v_ent, n_ent = a_marco_de(V, origen[:2], marcos[r], normales=N)
+        torch.manual_seed(0)
+        logp, inst = seg.infiere(c2_modelo, codigos, n_clases, V, v_ent, n_ent, args.arcada,
+                                 dev, trozo=meta["num_points"])
+        logps.append(logp)
+        etqs[r] = seg.etiquetas_de(inst, len(V)).astype(np.int64)
+        confs[r] = confianza(logp, etqs[r])
+    # Solo votan esas tres, así que su voto tiene que reproducir el de §6.10.
+    distintas = int((vota(etqs, confs)[0] != z["etiquetas"]).sum())
+    p1 = p1_por_instancia(logps, codigos, R)
+    v1, n1 = a_marco_de(V, origen[:2], marcos[voto[0]], normales=N)
+    arbol, rng = cKDTree(v1), np.random.default_rng(SEMILLA_RECORTE)
+    cods, recortes = [], []
+    for c, vs in instancias(R).items():
+        idx, d = distancia_con_signo(v1, vs, MARGEN_RECORTE_MM, arbol)
+        r_ = recorte(v1, n1, idx, d, rng)
+        assert r_ is not None
+        cods.append(c)
+        recortes.append(r_)
+    pd, pp = puntua_recortes(pieza, recortes, dev)
+    p_diente = {c: float(v) for c, v in zip(cods, pd, strict=True)}
+    p2 = {c: v for c, v in zip(cods, pp, strict=True)}
+    columnas: dict[str, np.ndarray] = {"R": R}
+    registro: dict[str, Any] = {"tau": tau, "w": w, "vote": voto,
+                                "vertices_differing_from_cached_vote": distintas,
+                                "per_instance": {str(c): {
+                                    "p_tooth": round(p_diente[c], 4),
+                                    "position_model": int(np.argmax(p2[c])) + 1,
+                                    "position_c2": int(np.argmax(p1[c])) + 1}
+                                    for c in cods}}
+    if tau is not None:
+        columnas["E1"], registro["E1_removed"] = verifica(R, p_diente, tau)
+    if w is not None:
+        columnas["E2"], registro["E2"] = renumera(R, V, origen[0], origen[1], p2, p1, w)
+    if tau is not None and w is not None:
+        columnas["E1+E2"] = renumera(columnas["E1"], V, origen[0], origen[1], p2, p1, w)[0]
+    args.salida.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(args.salida / f"identidad_{args.arcada}.npz", V=V, F=F,
+                        **{k.replace("+", "_"): v.astype(np.int16)
+                           for k, v in columnas.items()})
+    registro["codes"] = {k: sorted(instancias(v)) for k, v in columnas.items()}
+    registro["run_record"] = bs.registro(sys.argv)
+    (args.salida / f"identidad_{args.arcada}.json").write_text(
+        json.dumps(registro, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in registro.items() if k != "run_record"}, indent=1))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -520,16 +614,25 @@ def main() -> int:
     c = ordenes.add_parser("c2")
     c.add_argument("--split", choices=tuple(SPLITS), required=True)
     c.add_argument("--limite", type=int)
+    c.add_argument("--parte", default="0/1")
     p = ordenes.add_parser("puntua")
     p.add_argument("--split", choices=tuple(SPLITS), required=True)
     p.add_argument("--modelo", type=Path, required=True)
     p.add_argument("--limite", type=int)
+    p.add_argument("--parte", default="0/1")
+    cl = ordenes.add_parser("clinico")
+    cl.add_argument("--segmentacion", type=Path, required=True)
+    cl.add_argument("--fdi-json", type=Path, required=True)
+    cl.add_argument("--arcada", choices=("upper", "lower"), required=True)
+    cl.add_argument("--modelo", type=Path, required=True)
+    cl.add_argument("--salida", type=Path, required=True)
     for nombre in ("elige", "evalua"):
         s = ordenes.add_parser(nombre)
         s.add_argument("--modelo", type=Path, required=True)
         s.add_argument("--trabajos", type=int, default=6)
     args = ap.parse_args()
-    return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua}[args.orden](args)
+    return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua,
+            "clinico": clinico}[args.orden](args)
 
 
 if __name__ == "__main__":
