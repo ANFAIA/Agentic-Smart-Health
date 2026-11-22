@@ -981,6 +981,100 @@ Las 11 ausentes nuevas salen de esos dos grupos.
 - **Abierto:** que el verificador no quite una instancia que cubre la mayor parte de un diente
   real, y que los fragmentos se fundan con su pieza en vez de borrarse. Las dos cosas
   necesitan su propio pre-registro, y `dev-privado` ya se ha mirado para esta.
+- **Siguiente:** §6.13, que mira por qué se rechazan esos 6 dientes enteros y fija cuándo no
+  debe actuar el verificador.
+
+### 6.13 · El verificador que se abstiene: plan y criterios (2026-11-23)
+
+**De dónde sale.** §6.12 dejó el verificador v2 cerca: quitaba 77 de los 95 fantasmas sin
+quitar ningún diente entero bien numerado, pero fallaba V2, V3 y V4. Este apartado no
+reentrena nada; cambia cuándo actúa el verificador. Se escribe y se versiona antes de
+implementar la regla y de evaluarla.
+
+**Diagnóstico, en `dev-privado`.** Se miran las 24 instancias que E1 v2 con τ = 0,3 quita y
+que dejan una ausente nueva, una corona por debajo del 85 % o una pieza bien numerada de
+menos.
+
+- **Dos arcadas inferiores dan casi todo.** En las dos C2 falló la arcada entera: sus
+  instancias montan sobre dos dientes. En una, el «31» es mitad 41 y mitad 42, y el «48» es
+  un 37 con 3.177 vértices de encía pegados. El verificador rechaza 9 de sus 11 instancias
+  y 7 de las 8 de la otra. La mediana de `p(diente)` por arcada es 0,09 y 0,01; sobre las
+  120 arcadas es 0,9998. De ahí salen 10 de las 11 ausentes nuevas y 8 de las 13 coronas
+  dañadas.
+- **Los 6 dientes «del otro lado» de §6.12 son de esas dos arcadas**, cinco de una y uno de
+  la otra. La sospecha de §6.12 acertaba a medias: montan sobre dos piezas, pero porque la
+  arcada entera está corrida, no por la línea media. Las normales, la resolución y la
+  orientación de esas dos mallas son como las de las demás. El verificador tiene razón en
+  que esas instancias no son un diente; el daño lo hace mandarlas a encía.
+- **Las 6 bien numeradas que se pierden son fragmentos** de 1,9 a 29,8 mm². Llevan el
+  número correcto sobre el 0-24 % de su diente, y el resto del diente lleva otro. Solo uno
+  baja una corona del 85 %.
+- **El resto:** 4 coronas dañadas por instancias de 50 a 130 mm² (tres fantasmas que montan
+  en parte sobre un diente real y un fragmento del vecino), y una ausente que dejan dos
+  fragmentos de 1,8 y 7,6 mm².
+
+**Lo que se construye.** El modelo es el de §6.12 (`pieza-v2-s0.pt`, sin reentrenar), con sus
+puntuaciones ya guardadas en `pieza-v2/`. A E1 se le añaden dos condiciones, y nada más:
+
+- **Abstención por arcada.** Si más de la mitad de las instancias de una arcada tienen
+  `p(diente) < τ`, el verificador no toca esa arcada y lo declara. Un escaneo de arcada es
+  casi todo dientes; si el modelo dice lo contrario, lo que ha fallado es la segmentación de
+  C2, y eso pide revisión humana, no borrar. La mitad no se ajusta: es la mayoría.
+- **Tamaño mínimo.** Las instancias de menos de **39,0 mm²** no se juzgan y se quedan como
+  están. Es la mitad de la mediana del área de la corona más pequeña, el incisivo central
+  inferior: 78,0 mm² sobre 480 arcadas de entrenamiento de Teeth3DS+, medido con
+  `benchmark_identidad.py areas` desde `5b1f39b` con el árbol limpio, sin mirar ningún
+  conjunto de evaluación. Un trozo tan pequeño no se puede juzgar como diente ni como encía
+  con un recorte, y quitarlo no le da instancia a nadie.
+
+Lo que se propuso al cerrar §6.12, fundir los fragmentos con la pieza vecina, se descarta. El
+diagnóstico dice que el daño no está ahí, y fundir un fragmento no le devuelve el número a un
+diente cuyo cuerpo lleva otro.
+
+**Lo que ya se sabe, y por qué `dev-privado` no cuenta como prueba.** Las dos reglas salen de
+mirar esas 24 instancias. Sobre ellas, con τ = 0,3, dejan 4 coronas dañadas, ninguna ausente
+nueva y ninguna bien numerada de menos. Que pase en `dev-privado` es casi seguro y no
+demuestra nada. Lo que no se sabe es cuántos fantasmas vuelven (los pequeños y los de las
+arcadas en las que se abstiene) ni qué pasa con τ = 0,5 y 0,7. **La prueba es la reserva
+nueva**, que nadie ha mirado.
+
+**Elección, solo en `dev-privado`.** τ ∈ {0,3; 0,5; 0,7}, con la regla de siempre: el que
+deja menos fantasmas entre los que cumplen V1-V5; si empatan, el menor. Los 39,0 mm² y la
+mayoría no se mueven después de ver nada. **Si ningún τ pasa, la reserva nueva no se toca.**
+
+**Criterios.** Los V1-V5 de §6.11, sin cambiar ninguno. R es C2 en el pipeline real, el
+defecto. N es el número de piezas del experto en el conjunto medido.
+
+| | E1 v3 · verificador que se abstiene |
+|---|---|
+| V1 | fantasmas ≤ 0,5 × R |
+| V2 | ausentes ≤ R + 0,5 % de N |
+| V3 | piezas que pasan a < 85 % de corona respecto a R ≤ 0,5 % de N |
+| V4 | bien numeradas ≥ R |
+| V5 | en `dev`: bien numeradas ≥ R − 0,5 % de N, y fantasmas ≤ R |
+
+Se informa además, sin que sea criterio, en cuántas arcadas se abstiene y cuántas instancias
+deja sin juzgar por tamaño.
+
+**Una sola evaluación en la reserva nueva**, de V1-V4, desde un commit con el árbol limpio y
+con su `run-record.json`. El script se niega si ya existe cualquier resumen de ella. Antes hay
+que ejecutar `c2` y `puntua --version 2` sobre ella, que son minutos de GPU. Si pasa, la
+falsación en los casos clínicos sin ajustar nada, como en §6.12: el caso A tiene que seguir
+con sus 14 piezas anotadas bien numeradas, y el caso B se describe. Si falla, se escribe
+como negativo y la reserva queda gastada; quedan unos 180 pacientes del test privado sin
+bajar.
+
+**Lo que este plan no ataca.**
+
+- Las 103 desplazadas. En las arcadas en las que se abstiene sigue el error de C2, ahora
+  declarado.
+- Las 10 coronas dañadas de K5.
+- Qué es el defecto: si pasa, se añade como opción sobre C2, y adoptarlo lo decide el
+  responsable del proyecto. En el agente, una arcada en la que se abstiene sería una razón
+  para la revisión humana.
+
+**Coste previsto.** Ninguna GPU de entrenamiento. `c2` y `puntua` sobre la reserva nueva,
+minutos de GPU; elegir y evaluar, CPU.
 
 ## 7 · Consecuencia sobre el producto
 
