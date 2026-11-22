@@ -624,7 +624,7 @@ conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resol
 datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
 entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
 
-### 6.11 · La identidad de cada pieza: plan y criterios, fijados antes de construir nada (2026-11-20)
+### 6.11 · La identidad de cada pieza: plan, criterios y resultado negativo (2026-11-20 · 2026-11-22)
 
 **De dónde sale.** C2 (§6.10) separa bien los dientes, pero en la reserva deja 95
 fantasmas y 103 piezas con otro número. Este apartado ataca eso, y solo eso. Se escribe y
@@ -741,6 +741,86 @@ numeradas, y se dirá qué pasa con la 18 que nadie marcó; el caso B se describ
 - Entrenar el modelo de pieza: menos de una hora de GPU.
 - Predecir C2 en la reserva nueva: ~1,2 h.
 - Elegir y evaluar sobre las predicciones cacheadas: minutos.
+
+**Resultado (2026-11-22): negativo en `dev-privado`, así que la reserva nueva no se ha tocado.**
+
+Se construyó lo pre-registrado, sin cambiar ningún criterio:
+[`analysis_agents.identidad`](../../packages/analysis-agents/src/analysis_agents/identidad.py),
+[`scripts/entrena_pieza.py`](../../scripts/entrena_pieza.py) y
+[`scripts/benchmark_identidad.py`](../../scripts/benchmark_identidad.py).
+
+- **El modelo de pieza.** Se entrenó desde `b820698` con el árbol limpio, sobre las 1.080
+  arcadas de entrenamiento:
+  - 16.845 recortes para entrenar y 1.863 para validar;
+  - 14.141 piezas del experto, 4.133 parches de encía y 434 fantasmas de C2 minados sobre
+    esas mismas arcadas;
+  - 20 épocas de 8.000 recortes, semilla 0, unos 20 minutos de GPU.
+
+  Se quedó la época 19, la de menor pérdida de validación. En validación acierta si es
+  diente en el 99,5 % de los recortes y la posición en el 91,7 %.
+- **R, la referencia.** Sale de las predicciones cacheadas de §6.10, así que es idéntica a la
+  de entonces. Al recalcular las tres referencias que votan para obtener p₁, 7 vértices de
+  las 160 arcadas de `dev` y `dev-privado` salen con otra etiqueta. Es no-determinismo de la
+  GPU y no afecta a R.
+
+**Un error de implementación, encontrado en `dev-privado` y corregido** (`6afd214`). En el
+maxilar, el orden desde la línea media salía invertido: el signo del eje anterior de
+`marco_canonico` sirve para superponer arcadas, no es anatómico. En 30 arcadas había 39
+cuadrantes al revés y 18 bien. La primera elección dio, por eso, una renumeración que
+bajaba las piezas bien numeradas de 1.531 a 416. Ahora el extremo de la línea media se mide:
+es el más cercano al cuadrante contrario. Las rejillas de τ y w no cambiaron. La elección con
+el error se guarda junto a la buena (`eleccion-con-orden-invertido.json`). La tabla es la de
+después de corregirlo, desde `6afd214` con el árbol limpio.
+
+| E1 τ | Fantasmas | Ausentes | Coronas dañadas | Bien numeradas | V5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 95 | 48 | — | 1.531 | 508 · 13 fantasmas | |
+| 0,3 | **8** | 84 ✗ | 45 ✗ | 1.500 ✗ | 503 · 3 ✗ | no |
+| 0,5 | 2 | 96 ✗ | 61 ✗ | 1.492 ✗ | 499 · 1 ✗ | no |
+| 0,7 | 0 | 117 ✗ | 83 ✗ | 1.472 ✗ | 495 · 1 ✗ | no |
+
+| E2 w | Desplazadas | Bien numeradas | Rotas | FDI por vértice | N5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 103 | 1.531 | — | 0,888 | 508 | |
+| 0 | 121 ✗ | 1.513 ✗ | 28 ✗ | 0,879 ✗ | 507 | no |
+| 0,5 | 116 ✗ | 1.518 ✗ | 19 ✗ | 0,881 ✗ | 507 | no |
+| 1 | 113 ✗ | 1.521 ✗ | 15 ✗ | 0,883 | 508 | no |
+
+`dev-privado` tiene 120 arcadas y 1.657 piezas, así que el 0,5 % permite 8.
+
+**Por qué falla el verificador.** Separa bien los fantasmas: la mediana de su `p(diente)` es
+0,006. Pero con τ = 0,3 descarta 49 instancias que no son fantasmas, y 31 de ellas son
+dientes bien numerados y de tamaño completo (mediana de 5.036 vértices). Un 36 de 6.646
+vértices sale con 0,001. No es la pose ni el signo de las normales: en cuatro de esas
+piezas, la pose nativa de Teeth3DS+ y las normales invertidas dan lo mismo, y el modelo
+acierta su posición. Una explicación posible, no probada, es que los positivos se
+entrenaron con la frontera del experto movida ±1 mm, y el borde de C2 desborda varios
+milímetros sobre la encía, igual que los fantasmas.
+
+**Por qué falla la renumeración.** La evidencia de la forma no es independiente de la de C2
+donde haría falta. Frente a la posición del experto:
+- en las 1.531 piezas que C2 numera bien, el modelo de pieza acierta 1.366 (89 %);
+- en las 85 que C2 desplaza dentro del mismo cuadrante, solo 27 (32 %).
+
+Ve lo mismo que C2 justo donde C2 se equivoca, y de las 13 hemiarcadas corridas E2 arregla 2.
+Es el riesgo que este apartado declaró al empezar: si la forma vista de cerca no basta, sale
+negativo. Sale negativo, igual que el ancho en §6.5.
+
+**Lo que esto deja.**
+
+- **La reserva nueva sigue sin gastar.** Se lanzó su predicción con C2 (solo etiquetas,
+  reanudable, en la caché de `benchmark_separacion.py`) para que un intento posterior no
+  tenga que repetirla. Nadie ha comparado esas etiquetas con las del experto, ni se ha
+  ejecutado `c2`, `puntua` ni `evalua` sobre ella.
+- **Los casos clínicos no se ejecutaron.** No hay ningún componente que aplicar.
+- **C2 y el modelo por defecto no cambian.**
+- **Abierto:**
+  - un verificador entrenado con instancias de C2 emparejadas con el experto, en vez de la
+    pieza del experto movida ±1 mm. Es una hipótesis nueva que necesita su propio
+    pre-registro, y `dev-privado` ya se ha mirado para esta;
+  - la numeración corrida no se arregla con información local de la pieza. Haría falta algo
+    que cuente piezas a lo largo de la arcada y vea el hueco de la que falta, no qué forma
+    tiene cada una.
 
 ## 7 · Consecuencia sobre el producto
 
