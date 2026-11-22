@@ -73,6 +73,23 @@ def componente_principal(pos: np.ndarray, vertices: np.ndarray,
     return v[comp == int(np.argmax(np.bincount(comp)))]
 
 
+def areas_de_instancia(pos: np.ndarray, caras: np.ndarray,
+                       etiquetas: np.ndarray) -> dict[int, float]:
+    """`código → área en mm²` de cada instancia: un tercio de cada cara a cada vértice.
+
+    Es el tamaño con el que el verificador v3 (§6.13) decide qué no juzga. Por área y no
+    por número de vértices, porque la resolución de la malla va de 0,15 a 0,2 mm entre
+    escáneres y el número de vértices de una misma corona varía casi al doble.
+    """
+    pos = np.asarray(pos, dtype=np.float64)
+    tri = np.asarray(caras, dtype=np.int64)
+    a = 0.5 * np.linalg.norm(np.cross(pos[tri[:, 1]] - pos[tri[:, 0]],
+                                      pos[tri[:, 2]] - pos[tri[:, 0]]), axis=1)
+    por_vertice = np.zeros(len(pos))
+    np.add.at(por_vertice, tri.ravel(), np.repeat(a / 3.0, 3))
+    return {c: float(por_vertice[v].sum()) for c, v in instancias(etiquetas).items()}
+
+
 def distancia_con_signo(pos: np.ndarray, dentro: np.ndarray, radio: float,
                         arbol: cKDTree | None = None) -> tuple[np.ndarray, np.ndarray]:
     """`(índices, d)` de los vértices a menos de `radio` de la región `dentro`.

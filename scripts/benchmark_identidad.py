@@ -8,6 +8,8 @@
     uv run python scripts/benchmark_identidad.py evalua --modelo …/pieza.pt   # UNA vez
 
     # verificador v2 (§6.12): solo E1, con `--version 2` en puntua, elige, evalua y clinico
+    # área de cada corona en las arcadas de entrenamiento de Teeth3DS+ (§6.13), sin GPU
+    uv run python scripts/benchmark_identidad.py areas
     $G scripts/benchmark_identidad.py puntua --version 2 --split dev-privado --modelo …/pieza-v2.pt
 
 **Los conjuntos** (§6.11 de `docs/research/segmentacion-fdi-escaner.md`):
@@ -53,6 +55,7 @@ from analysis_agents.identidad import (  # noqa: E402
     MARGEN_RECORTE_MM,
     PESOS_C2,
     TAUS,
+    areas_de_instancia,
     componente_principal,
     distancia_con_signo,
     instancias,
@@ -636,6 +639,42 @@ def clinico(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── areas: el tamaño de las coronas en entrenamiento (§6.13) ────────────────────
+
+def _areas_de(par: tuple[str, str]) -> dict[str, float]:
+    pos, tri, experto = bm.carga_arcada(*par)
+    return {str(c): a for c, a in areas_de_instancia(pos, tri, experto).items()}
+
+
+def areas(args: argparse.Namespace) -> int:
+    """La mediana del área de cada corona del experto en las arcadas de entrenamiento.
+
+    Solo los pacientes de Teeth3DS+ de la partición `train`: los de OSF que también entran en
+    el entrenamiento están en npz sin caras, y el área necesita las caras. No mira `dev`,
+    `eval` ni ninguna reserva.
+    """
+    pares = [(p, a) for p in bm.particion(bm.pacientes())["train"] for a in bm.ARCADAS]
+    if args.limite:
+        pares = pares[: args.limite]
+    por_codigo: dict[str, list[float]] = {}
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        for k, fila in enumerate(grupo.map(_areas_de, pares, chunksize=4), 1):
+            for c, a in fila.items():
+                por_codigo.setdefault(c, []).append(a)
+            if k % 100 == 0:
+                print(f"  [{k}/{len(pares)}]", flush=True)
+    resumen = {c: {"n": len(v), "p50_mm2": float(np.median(v)),
+                   "p05_mm2": float(np.percentile(v, 5))}
+               for c, v in sorted(por_codigo.items(), key=lambda x: int(x[0]))}
+    incisivos = por_codigo.get("31", []) + por_codigo.get("41", [])
+    salida = {"set": "Teeth3DS+ train (sin OSF)", "arches": len(pares), "by_code": resumen,
+              "lower_central_incisor_p50_mm2": float(np.median(incisivos)),
+              "run_record": bs.registro(sys.argv)}
+    (SALIDA / "areas-entrenamiento.json").write_text(json.dumps(salida, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in salida.items() if k not in ("run_record",)}, indent=1))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -662,9 +701,12 @@ def main() -> int:
         s.add_argument("--modelo", type=Path, required=True)
         s.add_argument("--trabajos", type=int, default=6)
         s.add_argument("--version", type=int, choices=(1, 2), default=1)
+    ar = ordenes.add_parser("areas")
+    ar.add_argument("--trabajos", type=int, default=6)
+    ar.add_argument("--limite", type=int)
     args = ap.parse_args()
     return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua,
-            "clinico": clinico}[args.orden](args)
+            "clinico": clinico, "areas": areas}[args.orden](args)
 
 
 if __name__ == "__main__":

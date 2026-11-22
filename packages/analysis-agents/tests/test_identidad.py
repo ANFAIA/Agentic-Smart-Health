@@ -144,3 +144,15 @@ def test_la_componente_principal_suelta_el_trozo_lejano() -> None:
     principal = componente_principal(pos, np.arange(len(pos)))
     assert set(principal) == set(range(5, len(pos)))
     assert list(componente_principal(pos, np.array([3]))) == [3]
+
+
+def test_el_area_de_una_instancia_reparte_cada_cara_entre_sus_vertices():
+    from analysis_agents.identidad import areas_de_instancia
+
+    # Dos triángulos rectángulos de cateto 1 (0,5 mm² cada uno) formando un cuadrado.
+    pos = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
+    caras = np.array([[0, 1, 2], [0, 2, 3]])
+    areas = areas_de_instancia(pos, caras, np.array([11, 11, 11, 0]))
+    assert set(areas) == {11}
+    # El vértice 3 (encía) se lleva un tercio del segundo triángulo.
+    assert np.isclose(areas[11], 1.0 - 0.5 / 3)
