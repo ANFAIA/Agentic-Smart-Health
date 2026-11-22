@@ -1122,6 +1122,58 @@ criterio queda peor que R: lo que falla es que no quita suficientes fantasmas.
   verificador: tres reglas diseñadas sobre él, la última con sus fallos a la vista. Una
   cuarta que pasara ahí probaría todavía menos.
 
+### 6.14 · Numerar desde el primer molar: descartado en entrenamiento, sin pre-registro (2026-11-23)
+
+**De dónde sale.** Tras §6.13 el verificador se cierra. Ya lleva tres reglas diseñadas sobre
+`dev-privado`, y su techo son los fantasmas, no la numeración. Lo que queda grande son las
+103 piezas que C2 numera desplazadas.
+
+**Diagnóstico, en `dev-privado`.**
+
+- **El modelo de pieza v2 tampoco numera.** Da la posición del experto al 91,6 % de las
+  piezas que C2 numera bien y al 31,1 % de las desplazadas, frente al 89,2 % y al 34,0 %
+  del de §6.11. Aunque se entrenó con recortes de C2, mirar la pieza sola no basta.
+- **Dónde están las 103:**
+  - 59 en cuadrantes donde al paciente le falta una pieza (hasta el 7), casi siempre un
+    premolar extraído con el espacio cerrado;
+  - 20 en cuadrantes completos;
+  - 24 que pasan a otro cuadrante, la mayoría en la arcada que C2 falló entera (§6.13) y en
+    incisivos centrales junto a la línea media.
+
+  Por región, 62 son posteriores (C2 y experto en 4-8), 23 tocan un 1-3 y 18 cambian de
+  cuadrante.
+
+**La idea.** C2 numera desde la línea media, así que un premolar que falta corre todo lo que
+hay detrás. Un primer molar es mucho mayor que un premolar, así que se numeraría hacia atrás
+desde él: la primera instancia posterior con área de molar es el 6, y las de detrás el 7 y
+el 8.
+
+**Por qué se descarta antes de pre-registrarla.** El umbral salió de las instancias de C2
+bien numeradas en 480 arcadas de entrenamiento, con la limpieza actual
+(`benchmark_identidad.py areas --c2`, desde `34a4620` con el árbol limpio): 179,8 mm² en el
+maxilar y 164,8 en la mandíbula, con un 2,6 % y un 3,2 % de premolares y primeros molares
+mal clasificados. Antes de mirar ningún conjunto de evaluación, el borrador se probó en esas
+mismas arcadas, donde C2 numera bien casi todo y lo que cambie es sobre todo rotura:
+
+- **Rompe 33 piezas bien numeradas y arregla 6**, cambiando 21 de 480 arcadas. Eso es con
+  una guarda que deja intacto un cuadrante donde la regla crearía un 8 que C2 no puso; sin
+  ella rompe 92 y arregla 11. El criterio de rotura de §6.11 (N3) admitiría 8 en 1.657
+  piezas.
+- **La causa es el área, no la regla.** El área de una instancia de C2 lleva su desborde
+  sobre la encía. En los cuadrantes que rompe hay segundos premolares de 180 a 237 mm²,
+  mayores que el molar de detrás, y primeros molares de 39 a 100 mm², partidos o mal
+  recortados. Con esas colas no hay umbral que sirva.
+
+**Lo que esto deja.**
+
+- Ningún conjunto de evaluación se ha usado para esta regla; la reserva nueva sigue sin
+  gastar. El borrador queda fuera del repositorio, en
+  `data/processed/identidad/borrador-molar-6.14.py`.
+- **Abierto:** distinguir premolar de molar por la forma y no por el área, por ejemplo con
+  un clasificador de tipo sobre la corona recortada al margen, y medir su error en
+  entrenamiento antes que nada. Mientras ese error no esté claramente por debajo del de C2,
+  ninguna regla que corrija a C2 por el tipo puede ganar.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
