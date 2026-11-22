@@ -147,6 +147,8 @@ def predice(args: argparse.Namespace) -> int:
         bm.parse_obj(bm.MALLAS / r / f"{r}_{a}.obj")["positions"], dtype=np.float64))[:2]
         for r in refs for a in bm.ARCADAS}
     pares = arcadas(args.split, args.limite)
+    i, n = (int(x) for x in args.parte.split("/"))
+    pares = pares[i::n]  # la agregación es de un núcleo: se reparte en procesos
     destino_registro = SALIDA / sha[:12] / args.split / "run-record.json"
     destino_registro.parent.mkdir(parents=True, exist_ok=True)
     destino_registro.write_text(json.dumps(registro(sys.argv), indent=2) + "\n")
@@ -171,7 +173,9 @@ def predice(args: argparse.Namespace) -> int:
             salida[f"et_{r}"] = etiquetas
             salida[f"conf_{r}"] = np.float32(confianza(logp, etiquetas))
         destino.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(destino, **salida)
+        temporal = destino.with_suffix(".tmp.npz")
+        np.savez_compressed(temporal, **salida)
+        temporal.replace(destino)
         print(f"  [{k}/{len(pares)}] {paciente}_{arcada}: razón {float(origen[2]):.2f}",
               flush=True)
     return 0
@@ -397,6 +401,7 @@ def main() -> int:
     ordenes = ap.add_subparsers(dest="orden", required=True)
     p = ordenes.add_parser("predice")
     p.add_argument("--checkpoint", type=Path, required=True)
+    p.add_argument("--parte", default="0/1", help="i/n: solo las arcadas i, i+n, …")
     e = ordenes.add_parser("evalua")
     e.add_argument("--base", type=Path, default=bm.CHECKPOINT)
     e.add_argument("--candidato", type=Path, required=True)
