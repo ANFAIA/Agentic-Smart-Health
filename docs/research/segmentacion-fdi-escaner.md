@@ -624,6 +624,17 @@ conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resol
 datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
 entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
 
+**Decisión (2026-11-22): C2 pasa a ser el checkpoint por defecto de `segmentar_fdi.py`.** La
+toma el responsable del proyecto a la vista de esta tabla. **No la dicta el protocolo**, que
+decía lo contrario, y no se reescribe el resultado: C2 sigue sin cumplir K5. Lo que se acepta
+es un intercambio declarado. Se ganan 166 piezas bien numeradas de 1.657, el contacto pasa de
+0,86 a 0,17 mm y la mediana del margen de 2,23 a 0,96 mm. A cambio, 10 piezas que con la base
+conservaban al menos el 85 % de su corona dejan de conservarlo. Las cifras son las del
+pipeline medido, con `--referencias-entrenamiento 18`. El checkpoint de agosto sigue
+disponible con `--checkpoint data/processed/a3-checkpoints/normales-ce-baseline.pt`, y los
+bancos de pruebas (`benchmark_margen.py`, `benchmark_separacion.py`) siguen nombrando su base
+explícitamente, así que ninguna cifra anterior cambia.
+
 ### 6.11 · La identidad de cada pieza: plan, criterios y resultado negativo (2026-11-20 · 2026-11-22)
 
 **De dónde sale.** C2 (§6.10) separa bien los dientes, pero en la reserva deja 95
@@ -831,3 +842,7 @@ campo medido, informe, registro, procedencia— no depende de esta etapa.
 
 Es decir: la segmentación es la pieza no resuelta, y el formato está construido para que
 no resuelta signifique *separable*, no *contaminante*.
+
+Desde el 2026-11-22 las etiquetas por defecto salen de C2 (§6.10), por decisión del responsable
+y no por haber pasado los criterios. Eso no cambia la capa ni el estado: siguen siendo
+inferencia de un modelo, en `derived/`, `investigational`.
