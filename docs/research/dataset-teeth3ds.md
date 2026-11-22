@@ -85,9 +85,23 @@ las figuras embebidas.
 | `license.txt` + splits train/test (`.txt`) | OSF `xctdy` (`osf.io/xctdy`) | Sí (KB; `curl` a veces da 403 por rate-limit → usar navegador) |
 | **Mallas `.obj` + labels `.json`** (el dato real) | **Figshare** (release Teeth3DS+) y/o **Google Drive** (zips del reto) | **No limpiamente**: zips grandes / requiere navegador o `gdown` |
 
-> ⚠️ **El OSF `xctdy` NO contiene las mallas** — solo la licencia y los splits.
-> Las `.obj` están en Figshare / Google Drive
-> (`3D_scans_per_patient_obj_files.zip`, `..._b2.zip`).
+> ⚠️ **Corrección (2026-11-20): el OSF `xctdy` SÍ contiene las mallas**, en siete
+> componentes hijos (`data_part_1` … `data_part_7`, 0,6-1,5 GB cada zip): 968 pacientes,
+> 900 con etiquetas. Lo que se dijo arriba miraba solo la raíz del proyecto, donde están la
+> licencia y los splits. El Google Drive del reto tiene **300** de esos 900, y son
+> exactamente el `public-training-set-1` de 3DTeethSeg'22.
+>
+> | Split oficial del reto | Pacientes | En este repositorio |
+> |---|---:|---|
+> | `public-training-set-1` | 300 | los de `data/raw/teeth3ds/`: 240 entrenaron el modelo FDI, 60 son `dev` y `eval` |
+> | `public-training-set-2` | 300 | entrenamiento del modelo de noviembre, en npz (`data/processed/teeth3ds-osf-npz/`) |
+> | `private-testing-set` | 300 | 60 son la **reserva** ([`teeth3ds-reserva.txt`](teeth3ds-reserva.txt)), en `data/raw/teeth3ds-osf/` |
+>
+> [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py) lee el índice de
+> cada zip por HTTP Range y luego baja los zips **de uno en uno**, extrae lo que hace falta y
+> los borra: OSF limita el número de peticiones (429 a los pocos minutos de leer paciente a
+> paciente), no el ancho de banda, que ronda los 2,5 MB/s. Ver §6.10 de
+> `segmentacion-fdi-escaner.md`.
 
 ## 4. Licencia — RESUELTA: CC-BY 4.0 (con matiz documentado)
 

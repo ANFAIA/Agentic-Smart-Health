@@ -87,7 +87,7 @@ def predice(args: argparse.Namespace) -> int:
     from fusion_agents.marco import a_marco_de, marco_canonico
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    modelo, codigos, n_clases, _ = seg.carga_modelo(bm.CHECKPOINT, dev)
+    modelo, codigos, n_clases, meta = seg.carga_modelo(bm.CHECKPOINT, dev)
     refs = referencias()
     marcos = {(r, a): marco_canonico(np.asarray(
         bm.parse_obj(bm.MALLAS / r / f"{r}_{a}.obj")["positions"], dtype=np.float64))[:2]
@@ -109,7 +109,7 @@ def predice(args: argparse.Namespace) -> int:
                                           normales=normales)
             torch.manual_seed(0)
             logp, instancias = seg.infiere(modelo, codigos, n_clases, pos, v_ent, n_ent,
-                                           arcada, dev)
+                                           arcada, dev, trozo=meta["num_points"])
             etiquetas = seg.etiquetas_de(instancias, len(pos))
             salida[f"et_{r}"] = etiquetas
             salida[f"conf_{r}"] = np.float32(confianza(logp, etiquetas))
