@@ -100,13 +100,35 @@ def _reglas(tex: str) -> tuple[str, int]:
     return re.subn(r"\\hrule[^\n]*\n", "", tex)
 
 
+def _todos(tex: str) -> tuple[str, int]:
+    """`\\todo{...}` → `\\textbf{[TODO: ...]}`.
+
+    El `.tex` define `\\todo` con `\\newcommand` y un condicional (`\\iffinal`) que pandoc no
+    evalua: sin esto, la marca de lo pendiente desapareceria del `.docx` en silencio, y es
+    justo lo que un revisor necesita ver. El argumento puede llevar llaves anidadas, asi que
+    se recorre contando llaves en vez de con una expresion regular.
+    """
+    salida: list[str] = []
+    i = n = 0
+    marca = "\\todo{"
+    while (j := tex.find(marca, i)) != -1:
+        k, nivel = j + len(marca), 1
+        while k < len(tex) and nivel:
+            nivel += {"{": 1, "}": -1}.get(tex[k], 0)
+            k += 1
+        salida.append(tex[i:j] + "\\textbf{[TODO: " + tex[j + len(marca) : k - 1] + "]}")
+        i, n = k, n + 1
+    salida.append(tex[i:])
+    return "".join(salida), n
+
+
 def _citas(tex: str) -> tuple[str, int]:
     """`\\cite{clave}` → `[n]`, numerado como lo numera LaTeX.
 
     ⚠️ pandoc **descarta** un `\\cite` cuando no se le da un procesador de bibliografía, y
-    lo hace en silencio: deja la frase con un espacio antes del punto y sin referencia. Son
-    18 en este documento, y un revisor no tiene forma de saber que faltan. La bibliografía
-    es manual (`thebibliography`), así que el número es la posición del `\\bibitem`, que es
+    lo hace en silencio: deja la frase con un espacio antes del punto y sin referencia, y
+    un revisor no tiene forma de saber que faltan. La bibliografía es manual
+    (`thebibliography`), así que el número es la posición del `\\bibitem`, que es
     exactamente lo que LaTeX imprime.
 
     Los propios `\\bibitem` también pierden su número, así que se les antepone.
@@ -114,11 +136,15 @@ def _citas(tex: str) -> tuple[str, int]:
     claves = re.findall(r"\\bibitem\{([^}]+)\}", tex)
     orden = {clave: i for i, clave in enumerate(claves, start=1)}
 
-    def marca(m: re.Match[str]) -> str:
-        n = orden.get(m.group(1))
-        return f"[{n}]" if n else m.group(0)
+    def marcas(m: re.Match[str]) -> str:
+        # `\cite{a,b}` -> `[1, 2]`: pandoc descartaria la cita entera, no solo una clave.
+        claves_cita = [c.strip() for c in m.group(1).split(",")]
+        numeros = [orden.get(c) for c in claves_cita]
+        if any(x is None for x in numeros):
+            return m.group(0)
+        return "[" + ", ".join(str(x) for x in numeros) + "]"
 
-    tex, n = re.subn(r"\\cite\{([^},]+)\}", marca, tex)
+    tex, n = re.subn(r"\\cite\{([^}]+)\}", marcas, tex)
     # `\begin{thebibliography}{9}` lleva la etiqueta mas ancha como argumento, y pandoc la
     # deja caer como un «9» suelto justo antes de las referencias.
     tex = re.sub(r"(\\begin\{thebibliography\})\{[^}]*\}", r"\1", tex)
@@ -134,13 +160,14 @@ def prepara(tex: str) -> tuple[str, str, str, str, dict[str, int]]:
     tex, n_find = _findings(tex)
     tex, n_col = _columnas(tex)
     tex, n_cita = _citas(tex)
+    tex, n_todo = _todos(tex)
     # `\code` es un `\newcommand` simple y pandoc lo expande, pero a `\texttt{\small ...}`:
     # el `\small` dentro de un `texttt` le hace emitir un span vacio en algun caso. Se
     # normaliza a `\texttt` a secas, que es lo que se quiere en Word.
     tex, n_code = re.subn(r"\\code\{", r"\\texttt{", tex)
     return tex, titulo, autor, subtitulo, {
         "finding": n_find, "columnas": n_col, "code": n_code, "reglas": n_regla,
-        "citas": n_cita,
+        "citas": n_cita, "todo": n_todo,
     }
 
 
@@ -179,7 +206,7 @@ def convierte(fuente: Path, destino: Path, *, verboso: bool = True) -> int:
         print(f"  reescrito: {cuenta['finding']} cuadros `finding`, "
               f"{cuenta['columnas']} columnas, {cuenta['code']} `\\code`, "
               f"{cuenta['reglas']} reglas horizontales retiradas, "
-              f"{cuenta['citas']} citas numeradas")
+              f"{cuenta['citas']} citas numeradas, {cuenta['todo']} marcas TODO")
         # Los avisos de pandoc SE IMPRIMEN. Un «Could not convert» silenciado es
         # exactamente como se pierde un cuadro o una tabla sin que nadie lo note.
         if avisos:

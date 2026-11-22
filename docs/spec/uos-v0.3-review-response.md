@@ -1,6 +1,6 @@
 # UOS v0.3 — Respuesta actualizada a la revisión de Matías
 
-**Fecha de actualización:** 7 de octubre de 2026. **Ámbito:** white paper, especificación, implementación de referencia, ejecución del complete case y visor local. Las cifras del visor y del caso restaurado corresponden al 2 de octubre.
+**Fecha de actualización:** 10 de octubre de 2026; estado de las filas 1.2 y 4.1 y de los tags corregido el 20 de noviembre de 2026. **Ámbito:** white paper, especificación, implementación de referencia, ejecución del complete case y visor local. Las cifras del visor y del caso restaurado corresponden al 2 de octubre.
 
 **Actualización del 7 de octubre:** el ZIP original contiene 401 instancias en dos series de 100 y 301, con marcos distintos. La extracción anterior había sobrescrito cuatro archivos con nombres compartidos. Se prepararon copias separadas sin modificar los originales, se corrigieron procedencia y coordenadas y se ejecutó cada serie tres veces. Coinciden exactamente los ocho payloads binarios del UOS, los registros de proceso y las matrices dentro de cada serie. La calibración independiente y la alineación clínica siguen sin acreditarse. El protocolo reutiliza apariencia y etiquetas archivadas y no ejecuta el modelo de segmentación CBCT sobre estas series irregulares. Véase el [informe de verificación](uos-verification-2026-10-07.md).
 
@@ -115,7 +115,7 @@ El STL coloreado usa la convención no estándar RGB555/VisCAM; algunos receptor
 | Observación | Respuesta actual y límite |
 |---|---|
 | 1.1 Aptitud diagnóstica e historia de pérdida | **Parcial.** Hay registro por asset y estados de evidencia; no cálculo automático de aptitud clínica general ni validación diagnóstica por tarea. |
-| 1.2 DICOM: codificación e historia irreversible | **Implementado en el contrato y escritor.** Se distingue codificación actual de historia y se heredan pérdidas documentadas. La ejecución real aún no resuelve su fuente CBCT. |
+| 1.2 DICOM: codificación e historia irreversible | **Implementado en el contrato y escritor.** Se distingue codificación actual de historia y se heredan pérdidas documentadas. Desde el 7 de octubre (`6af4e57`) la ejecución real resuelve su fuente CBCT: las dos series del ZIP, de 100 y 301 instancias, se referencian por separado con hashes por instancia verificados contra el original. Resolver la fuente no acredita calibración ni alineación clínica. |
 | 1.3 JPEG y color | **Parcial.** Se registra pérdida JPEG detectable y se matiza la estimación regional. No se ha demostrado calibración; no se presupone 4:2:0 ni se publica EXIF completo. |
 | 1.4 STL como original recibido | **Corregido editorialmente.** Se distingue archivo recibido de formato nativo y preservación numérica de exactitud clínica. La cadena nativo→STL y su pérdida previa siguen sin caracterización completa. |
 | 1.5 Resolución y calibración | **Parcial.** Se registran muestreo y calibración desconocida cuando corresponde. Spacing o submuestreo no prueban resolución efectiva; no se ha calibrado el CBCT ni el color. |
@@ -142,7 +142,7 @@ El STL coloreado usa la convención no estándar RGB555/VisCAM; algunos receptor
 
 | Observación | Respuesta actual y límite |
 |---|---|
-| 4.1 Residual frente a TRE | **Corregido editorialmente.** El RMS se limita al ajuste observado. El TRE independiente, covarianza, condicionamiento y validación anatómica siguen pendientes. |
+| 4.1 Residual frente a TRE | **Herramienta implementada; medida pendiente.** El RMS se limita al ajuste observado. Desde el 10 de octubre `fusion_agents.tre` y `scripts/tre_puntos.py` calculan el TRE a partir de puntos marcados fuera del sistema según el [protocolo](uos-protocolo-puntos-anatomicos.md) (`490dfda`); desde el 9 de noviembre descartan los puntos CBCT que no caen sobre un corte real (`0601ca2`). Solo se ha probado con puntos sintéticos: no hay puntos de especialistas ni TRE de ningún caso, y el resultado no se escribe en el `.uos` automáticamente. Covarianza, condicionamiento y validación anatómica siguen pendientes. |
 | 4.2 Grafo y propagación | **Parcial.** Se comprueban caminos y discrepancias de matrices. No se propagan covarianzas ni se convierte la diferencia entre coeficientes en error anatómico en mm. |
 | 4.3 Transformaciones y cámara | **Parcial.** El pipeline sí resuelve poses mediante PnP; no hay contrato general completo de cámara, similitud y deformación. |
 | 4.4 Mandíbula y oclusión | **Parcial.** Hay frames y declaraciones de oclusión; no flujo bilateral, multioclusión o tracking validado. |
@@ -235,7 +235,7 @@ El visor muestra el registro declarado y distingue la procedencia de las etiquet
 | Procedencia CBCT del caso | Se corrigió `cbct=None`, se recuperaron del ZIP las 401 instancias y se separaron las dos series. Las seis exportaciones pasan la auditoría contra las fuentes externas y resuelven la procedencia del campo; no incluyen originales. La separación de fuentes no valida la alineación clínica. |
 | Verificación del 7 de octubre | 1.175 pruebas correctas, 2 omitidas y 2 advertencias existentes. Seis ejecuciones finales; ocho payloads binarios idénticos dentro de cada serie y STL/PLY regenerados idénticos en las seis. |
 
-Los resultados anteriores de 140, 303 y 307 pruebas pertenecen a fases de septiembre y a la integración del 1 de octubre; no deben confundirse con el total posterior de 1.168. Los resultados experimentales del paper no se sustituyen por las cifras del run nuevo.
+Los resultados anteriores de 140, 303 y 307 pruebas pertenecen a fases de septiembre y a la integración del 1 de octubre; no deben confundirse con los totales posteriores de 1.168 (correcciones) y 1.175 (verificación del 7 de octubre). Los resultados experimentales del paper no se sustituyen por las cifras del run nuevo.
 
 ## 7. Próximo trabajo y lo que se deja aplazado
 
@@ -280,7 +280,7 @@ Las correcciones de implementación están en `main` y publicadas en los reposit
 
 Estar publicados no implica despliegue ni validación. Antes del borrador de publicación definitivo se cerraron en una rama aparte los errores de tipos previos, el punto ciego de geometría embebida en HTML y la comprobación del esquema de fidelidad. Quedan, como decisiones del autor, la actualización y revisión editorial del paper, qué evidencias del caso se publican, quitar el sufijo `-draft` y crear el tag definitivo.
 
-El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. El 10 de octubre se movió el tag de pre-publicación `uos-spec-v0.3-draft` al commit que contiene el esquema actual, con autorización del responsable, para que el `$id` publicado resuelva a ese fichero. Los tags `uos-spec-v0.3` y `uos-spec-v0.2` no se tocaron. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; solo se ha movido el tag `-draft`, que existe para eso.
+El paper se ha actualizado con la extensión, el experimento reciente y sus limitaciones. Se añadió `RESUMEN_EN` a `scripts/restaura_apariencia.py` y se actualizó el inventario. El 10 de octubre se movió el tag de pre-publicación `uos-spec-v0.3-draft` al commit que contiene el esquema actual, con autorización del responsable, para que el `$id` publicado resuelva a ese fichero. El tag `uos-spec-v0.2` no se tocó. El tag de publicación `uos-spec-v0.3` no existe: la especificación exige que no se cree hasta publicar la versión. Las modificaciones y documentos del 7 de octubre se incorporan en commits separados de implementación y documentación, autorizados por el responsable del repositorio en `main`; solo se ha movido el tag `-draft`, que existe para eso.
 
 El PDF de esta respuesta se genera como artefacto local bajo `data/processed/reports/`, ignorado por Git. El Markdown permanece en el repositorio. No se incorporan el PDF de Matías, archivos originales, capturas con información clínica ni geometría de pacientes al historial.
 
