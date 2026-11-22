@@ -154,8 +154,15 @@ cual: R2b no lo sustituye.
   el filtro por defecto. El margen del filtro se eligió viendo el fantasma, y el filtro tiene
   un límite medido (coronas de 4 mm con la franja de referencia contaminada) en el que no
   quita nada.
-- **R2b sin ejecutar todavía**: se lanzó a las 13:25 y se paró en el corte de las 13:30, antes
-  de terminar; su salida parcial se borró. Se ejecuta entero antes de abrir ninguna entrega.
+- **R2b, ejecutado el 2026-11-22, 14:00–14:46** (el 20 se lanzó a las 13:25 y se paró en el
+  corte antes de terminar; aquella salida parcial se borró). `run-record.json`: `git_head`
+  `0088740f…`, `git_dirty: false`. `registro.json` existe, con `method`
+  `fusion_agents.anatomico` y `constants_sha256` igual a la huella de arriba; no hay
+  `sin_anatomico`. Contenedor
+  `data/processed/verification-20261120/series-c1bd42bdd9d7/anatomico-0088740/export/another_patient.uos`,
+  SHA-256 `3bbd881602bd2b46e232835adec98a8c4124da0f4d6f8b9e6f7abac051c8d736`.
+  Queda vetado, como R2: cobertura 0,48 (mínimo 0,5), frente a 0,50 de R2. Se puntúa esta
+  pose.
 
 **Secundario, no es un tercer método.** `--ajuste 16-mv,26-mv,13-c,23-c`, en la ejecución
 de R1 (no depende del registro del contenedor), calcula un registro rígido con esos cuatro
