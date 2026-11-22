@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# resumen-en: Trains a second C2 seed and a 2,048-point C2 and scores both against the baseline (section 6.15).
 # §6.15 de docs/research/segmentacion-fdi-escaner.md: una segunda semilla de C2 (C2-s1) y C2
 # con trozos de 2.048 puntos (D), medidos contra B en `dev` y en la reserva gastada.
 #
