@@ -441,14 +441,16 @@ verdad.
    protocolo del caso B son ~125 registros, casi todos sin incertidumbre: unas 9–10 h, más
    si la serie densa de B trae más contorno.
 
-**Ramas locales del workflow del 2026-11-20, no fusionadas y no subidas:**
-- `fix/losa-sigue-pose` (5c24a77…67b29ba): un filtro de orientación de normales que en el
-  fantasma con capa de esmalte de 1,2 mm baja el deslizamiento de 1,19 a 0,067 mm,
-  confirmado por ablación. Con esmalte de 0,6–1,0 mm deja 0,22–0,32 mm. La «ventana que
+**Ramas del workflow del 2026-11-20 que no se fusionan.** Se conservan como etiquetas de
+archivo (subidas el 2026-11-22) porque esta nota cita sus commits:
+- `fix/losa-sigue-pose` (5c24a77…67b29ba, etiqueta `archivo/registro-losa-sigue-pose`):
+  un filtro de orientación de normales que en el fantasma con capa de esmalte de 1,2 mm baja
+  el deslizamiento de 1,19 a 0,067 mm, confirmado por ablación. Con esmalte de 0,6–1,0 mm deja 0,22–0,32 mm. La «ventana que
   sigue a la pose» de esa misma rama no aporta nada y su guarda empeora un arranque; no
   debe entrar. Es el candidato siguiente para el sesgo de capa fina.
-- `worktree-wf_3f408c80-68c-3` (b0f6720): S bilateral con desfase. La verificación lo dejó
-  en cosmético y debilita las guardas; descartado.
+- `worktree-wf_3f408c80-68c-3` (b0f6720, etiqueta `archivo/registro-s-bilateral`): S
+  bilateral con desfase. La verificación lo dejó en cosmético y debilita las guardas;
+  descartado.
 - Los informes completos de los agentes y verificadores están en el diario del workflow
   `wf_3f408c80-68c` de la sesión.
 
@@ -720,8 +722,8 @@ encima. Verificado de forma independiente, todos los números se reproducen:
   que el fantasma de elipsoides convexos no tiene.
 - Un diente sin pliegue claro va al informe, no a la puerta.
 
-**No se integra.** El código queda en el commit `d6f2704` de la rama local
-`worktree-wf_c0df66f7-9fa-1` (sin publicar), con el interruptor apagado. Cortar en el
+**No se integra.** El código queda en el commit `d6f2704`, con el interruptor apagado,
+conservado en la etiqueta `archivo/registro-pliegue-cervical`. Cortar en el
 pliegue tira además mucha banda de corona verdadera (K2 conserva 2316 de 3700 vértices de
 corona), que es lo que (b) evita: (b) quita caras inclinadas y no altura.
 
