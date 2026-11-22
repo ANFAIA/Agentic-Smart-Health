@@ -394,7 +394,7 @@ verdad.
 
 **Estado.**
 - La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
-  272 tests verdes en la pasada completa del 2026-11-22 (fusión y orquestador), y ruff, mypy
+  274 tests verdes en la pasada del 2026-11-22 (fusión y orquestador), y ruff, mypy
   y los guardianes limpios.
 - El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
   anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
@@ -447,7 +447,8 @@ archivo (subidas el 2026-11-22) porque esta nota cita sus commits:
   un filtro de orientación de normales que en el fantasma con capa de esmalte de 1,2 mm baja
   el deslizamiento de 1,19 a 0,067 mm, confirmado por ablación. Con esmalte de 0,6–1,0 mm deja 0,22–0,32 mm. La «ventana que
   sigue a la pose» de esa misma rama no aporta nada y su guarda empeora un arranque; no
-  debe entrar. Es el candidato siguiente para el sesgo de capa fina.
+  debe entrar. Era el candidato siguiente para el sesgo de capa fina; probado solo el filtro
+  de sentido con criterios previos el 2026-11-22, resultado negativo (§12).
 - `worktree-wf_3f408c80-68c-3` (b0f6720, etiqueta `archivo/registro-s-bilateral`): S
   bilateral con desfase. La verificación lo dejó en cosmético y debilita las guardas;
   descartado.
@@ -856,3 +857,75 @@ contorno de C:
 por defecto. Después se pre-registra R3 para el caso A, antes de que llegue ningún punto, en
 `registro-caso-a-puntos-preregistro.md`. Si falla cualquiera, queda apagado y se escribe aquí
 como negativo. **El caso A no se ejecuta en esta medida.**
+
+### 12.1 · Resultado: negativo. El filtro queda apagado
+
+Medido después de fijar los criterios, desde el commit `d707b47`, con el árbol limpio, y una
+sola vez. Por la regla de decisión, `FILTRA_SENTIDO` queda en `False`.
+
+**Afinando desde la verdad** (rms de la banda, sin filtro → con él):
+
+| Fantasma | Desliza | C en la verdad | Margen de C frente a la peor equivocada | Poses, con y sin filtro |
+|---|---|---|---|---|
+| Esmalte macizo, denso | 0,084 → 0,086 | 0,975 → 0,975 | −0,006 → −0,006 | 0,003 mm |
+| Serie dispersa | 0,078 → 0,083 | 0,976 → 0,976 | −0,016 → −0,014 | 0,006 mm |
+| Capa, σ = 0,3 mm | 0,285 → 0,293 | 0,976 → 0,976 | −0,006 → −0,006 | 0,011 mm |
+| Capa, σ = 0,18 mm, dispersa | 0,078 → 0,083 | 0,976 → 0,976 | −0,016 → −0,014 | 0,006 mm |
+| Sobremordida | 0,044 → 0,049 | 0,972 → 0,972 | −0,004 → −0,005 | **0,038 mm** |
+| K1, encía de 1 mm | 0,043 → 0,048 | 0,959 → **0,948** | −0,018 → −0,029 | 0,010 mm |
+| K1, encía de 2 mm | 0,089 → 0,087 | 0,949 → 0,944 | −0,024 → −0,025 | 0,003 mm |
+| K2, coronas de 5 mm, encía de 3 mm | 0,073 → **0,336** | 0,826 → **0,545** | −0,037 → −0,021 | **0,305 mm** |
+| Cáscara de 1,2 mm, dentina a 1200 | **1,156 → 0,066** | 0,726 → 0,983 | −0,142 → −0,008 | 1,09 mm |
+| Cáscara de 1,0 mm, dentina a 1200 | 1,155 → 0,217 | 0,853 → 0,997 | −0,104 → +0,004 | 1,37 mm |
+| Cáscara de 0,8 mm, dentina a 1200 | 0,809 → 0,310 | 0,978 → 1,000 | −0,020 → +0,005 | 1,12 mm |
+| Cáscara de 0,6 mm, dentina a 1200 | 0,450 → 0,312 | 1,000 → 0,997 | +0,000 → −0,001 | 0,76 mm |
+| Capa, dentina a 1200 | 0,022 → 0,069 | 0,862 → 0,976 | −0,112 → −0,013 | 0,052 mm |
+| Capa, dentina a 1200, σ = 0,18 mm | 0,031 → 0,071 | 0,870 → 0,979 | −0,077 → −0,008 | 0,046 mm |
+
+**Búsqueda completa** (sin incertidumbre), sin filtro → con él: en ninguno hay veto.
+
+| Fantasma | Error de corona, mediana | Poses elegidas, con y sin filtro |
+|---|---|---|
+| Esmalte macizo, denso | 0,081 → 0,083 mm | **0,025 mm** |
+| Serie dispersa | 0,080 → 0,085 mm | 0,006 mm |
+| Cáscara de 1,2 mm, dentina a 1200 | 1,031 → 0,064 mm | — |
+
+**Criterio por criterio:**
+- **F1 se cumple:** 1,156 → 0,066 mm.
+- **F2 se cumple**, aunque no decide: baja en las tres cáscaras finas, hasta 0,22–0,31 mm.
+- **F3 falla en tres fantasmas:**
+  - K2 cambia 0,305 mm;
+  - la sobremordida, 0,038 mm, frente a un límite de 0,02;
+  - en K1 con encía de 1 mm, C en la verdad baja 0,011, frente a un límite de 0,01.
+- **F4 falla en K2:** C en la verdad baja 0,28. Ningún margen baja más de 0,02.
+- **F5 falla por poco:** en esmalte macizo las poses elegidas difieren 0,025 mm, frente a
+  0,02. El resto se cumple.
+- **F6 falla.** `test_el_desborde_sobre_la_encia_lleva_el_ajuste_hacia_la_raiz_sin_bajar_c`,
+  que fija que el desborde sobre la encía desliza el ajuste más de 0,3 mm con el filtro de
+  inclinación apagado, deja de cumplirse con el filtro de sentido encendido: desliza
+  0,076 mm.
+
+**Por qué falla K2** (diagnóstico hecho después; no cambia la decisión). La orientación hacia
+fuera se vota por diente sobre sus caras de banda. En K2 la encía desbordada es el 49–64 % de
+la banda de cada diente, y en 12 de los 14 dientes gana la votación. **En el fantasma, la
+encía está teselada con la orientación contraria a la de las coronas**: las caras laterales
+de corona tienen su normal hacia dentro y las de la encía hacia fuera. Así que, cuando gana
+la encía, las normales de la corona quedan hacia dentro, el filtro descarta las parejas
+buenas y lo que queda arrastra el ajuste.
+
+Un escaneo intraoral real suele venir con una orientación coherente en toda la malla. Si es
+así, este fallo sería del fantasma más que del método, pero eso **no se ha comprobado en
+ningún escaneo real**, y la regla fijada decide. La sobremordida y el 0,025 mm del esmalte
+macizo no tienen el mismo mecanismo (allí no hay encía desbordada) y no se han investigado.
+
+**Lo que queda.**
+- `FILTRA_SENTIDO = False`. Con él apagado, el ajuste y la puntuación son los de §11.3, bit a
+  bit. `huella_constantes` cambia, porque hay una constante nueva.
+- El fantasma conserva la cáscara y la dentina a 1200: el sesgo existe y está medido.
+- `test_el_filtro_de_sentido_arregla_la_cascara_y_se_rompe_con_la_encia_desbordada` fija las
+  dos cosas.
+- **Un segundo intento necesita su propio pre-registro.** Tendría que orientar las normales
+  sin votar sobre caras que pueden ser encía, por ejemplo con la coherencia de orientación
+  de la malla, y corregir antes la orientación del fantasma, declarándolo. Mientras tanto, el
+  sesgo por borde interior queda sin corregir: solo lo acotarán los puntos anatómicos.
+- El caso A no se ha ejecutado, y R3 no se pre-registra.

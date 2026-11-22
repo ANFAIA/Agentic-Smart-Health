@@ -164,7 +164,11 @@ PARED_CORONA_MAX = 0.45
 # una pareja solo vale si la normal del contorno hacia fuera del tejido denso y la de la
 # malla hacia fuera del diente forman menos de 90°, y lo que mira hacia dentro tampoco
 # puntúa. No tiene parámetro: los 90° son la definición de «hacia dentro».
-FILTRA_SENTIDO = True
+# ⚠️ **APAGADO: resultado negativo frente a los criterios fijados antes de medir.** Arregla
+# la cáscara (1,16 → 0,07 mm), pero la orientación por mayoría falla cuando la encía
+# desbordada es más de la mitad de la banda de un diente: en K2 orienta las coronas hacia
+# dentro, descarta las parejas buenas y C en la verdad cae de 0,83 a 0,55.
+FILTRA_SENTIDO = False
 
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
