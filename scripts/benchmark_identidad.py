@@ -10,6 +10,8 @@
     # verificador v2 (§6.12): solo E1, con `--version 2` en puntua, elige, evalua y clinico
     # área de cada corona en las arcadas de entrenamiento de Teeth3DS+ (§6.13), sin GPU
     uv run python scripts/benchmark_identidad.py areas
+    # y el umbral premolar/primer molar sobre las instancias de C2 en esas arcadas (§6.14)
+    uv run python scripts/benchmark_identidad.py areas --c2
     # verificador v3 (§6.13): el mismo modelo y las puntuaciones de la v2, otra regla
     uv run python scripts/benchmark_identidad.py elige --version 3 --modelo …/pieza-v2.pt
     $G scripts/benchmark_identidad.py puntua --version 2 --split dev-privado --modelo …/pieza-v2.pt
@@ -692,6 +694,36 @@ def _areas_de(par: tuple[str, str]) -> dict[str, float]:
     return {str(c): a for c, a in areas_de_instancia(pos, tri, experto).items()}
 
 
+def _areas_c2_de(par: tuple[str, str]) -> dict[str, list[float]]:
+    """Áreas de las instancias de C2 bien numeradas en una arcada de entrenamiento,
+    con la limpieza actual, por posición."""
+    minado = ep.MINADO / f"{par[0]}_{par[1]}.npz"
+    if not minado.is_file():
+        return {}
+    pos, tri, experto = bm.carga_arcada(*par)
+    c2 = bm.limpieza_actual(pos, np.load(minado)["et"].astype(np.int64))
+    ide = identidad_de_piezas(c2, experto)
+    a = areas_de_instancia(pos, tri, c2)
+    salida: dict[str, list[float]] = {}
+    for cod, e in ide["per_label"].items():
+        if e["status"] == "correct":
+            salida.setdefault(str(int(cod) % 10), []).append(a[int(cod)])
+    return salida
+
+
+def umbral_de_separacion(bajos: list[float], altos: list[float]) -> tuple[float, int]:
+    """El área `t` que menos instancias clasifica mal, y cuántas: es molar lo que mide `≥ t`,
+    así que un `bajo` falla si llega a `t` y un `alto` si no. Si empatan, el primer óptimo,
+    a medio camino entre ese valor observado y el anterior."""
+    b, a = np.sort(bajos), np.sort(altos)
+    candidatos = np.unique(np.concatenate([b, a]))
+    errores = (len(b) - np.searchsorted(b, candidatos, side="left")
+               + np.searchsorted(a, candidatos, side="left"))
+    k = int(np.argmin(errores))
+    t = (candidatos[k - 1] + candidatos[k]) / 2 if k > 0 else candidatos[k]
+    return float(t), int(errores[k])
+
+
 def areas(args: argparse.Namespace) -> int:
     """La mediana del área de cada corona del experto en las arcadas de entrenamiento.
 
@@ -702,6 +734,8 @@ def areas(args: argparse.Namespace) -> int:
     pares = [(p, a) for p in bm.particion(bm.pacientes())["train"] for a in bm.ARCADAS]
     if args.limite:
         pares = pares[: args.limite]
+    if args.c2:
+        return areas_c2(args, pares)
     por_codigo: dict[str, list[float]] = {}
     with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
         for k, fila in enumerate(grupo.map(_areas_de, pares, chunksize=4), 1):
@@ -718,6 +752,40 @@ def areas(args: argparse.Namespace) -> int:
               "run_record": bs.registro(sys.argv)}
     (SALIDA / "areas-entrenamiento.json").write_text(json.dumps(salida, indent=2) + "\n")
     print(json.dumps({k: v for k, v in salida.items() if k not in ("run_record",)}, indent=1))
+    return 0
+
+
+def areas_c2(args: argparse.Namespace, pares: list[tuple[str, str]]) -> int:
+    """§6.14: el área que separa un premolar (4, 5) de un primer molar (6), por arcada,
+    sobre las instancias de C2 bien numeradas en las arcadas de entrenamiento minadas.
+
+    Son las instancias de C2 y no las coronas del experto porque C2 desborda sobre la encía y
+    eso infla el área: el umbral tiene que estar en la escala que se va a medir.
+    """
+    por: dict[str, dict[str, list[float]]] = {a: {} for a in bm.ARCADAS}
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        for k, ((_, arcada), fila) in enumerate(
+                zip(pares, grupo.map(_areas_c2_de, pares, chunksize=4), strict=True), 1):
+            for posicion, v in fila.items():
+                por[arcada].setdefault(posicion, []).extend(v)
+            if k % 100 == 0:
+                print(f"  [{k}/{len(pares)}]", flush=True)
+    salida: dict[str, Any] = {"set": "Teeth3DS+ train (sin OSF), instancias de C2 bien "
+                              "numeradas con la limpieza actual", "arches": len(pares)}
+    for arcada, d in por.items():
+        premolares = d.get("4", []) + d.get("5", [])
+        molares = d.get("6", [])
+        t, errores = umbral_de_separacion(premolares, molares)
+        salida[arcada] = {
+            "by_position": {q: {"n": len(v), "p05_mm2": float(np.percentile(v, 5)),
+                                "p50_mm2": float(np.median(v)),
+                                "p95_mm2": float(np.percentile(v, 95))}
+                            for q, v in sorted(d.items())},
+            "premolar_vs_first_molar_mm2": t, "misclassified": errores,
+            "of": len(premolares) + len(molares)}
+    salida["run_record"] = bs.registro(sys.argv)
+    (SALIDA / "areas-c2-entrenamiento.json").write_text(json.dumps(salida, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in salida.items() if k != "run_record"}, indent=1))
     return 0
 
 
@@ -750,6 +818,8 @@ def main() -> int:
     ar = ordenes.add_parser("areas")
     ar.add_argument("--trabajos", type=int, default=6)
     ar.add_argument("--limite", type=int)
+    ar.add_argument("--c2", action="store_true",
+                    help="instancias de C2 y umbral premolar/primer molar (§6.14)")
     args = ap.parse_args()
     return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua,
             "clinico": clinico, "areas": areas}[args.orden](args)

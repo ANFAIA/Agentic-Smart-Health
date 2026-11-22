@@ -43,3 +43,18 @@ def test_el_desborde_solo_crece_sobre_encia_y_hasta_el_maximo() -> None:
         fuera = i2[d2 > 0]
         assert len(fuera) == 0 or d2[d2 > 0].max() <= ep.RADIO_REGION + 1e-9
 
+
+
+def test_el_umbral_de_separacion_minimiza_los_mal_clasificados():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    ruta = Path(__file__).resolve().parent.parent / "scripts/benchmark_identidad.py"
+    spec = importlib.util.spec_from_file_location("benchmark_identidad", ruta)
+    assert spec and spec.loader
+    bi = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("benchmark_identidad", bi)
+    spec.loader.exec_module(bi)
+    t, errores = bi.umbral_de_separacion([100.0, 110.0, 120.0, 175.0], [160.0, 180.0, 200.0])
+    assert errores == 1 and 120.0 < t <= 160.0
