@@ -394,7 +394,7 @@ verdad.
 
 **Estado.**
 - La rama `feat/registro-banda-escaner` tiene el método con la máscara de esmalte (§8),
-  264 tests verdes en la última pasada completa más los 3 de §11 por separado, y ruff, mypy
+  272 tests verdes en la pasada completa del 2026-11-22 (fusión y orquestador), y ruff, mypy
   y los guardianes limpios.
 - El protocolo del caso B sigue **sin congelar**. Sus huellas (§7 del protocolo) son
   anteriores a §8 y no valen: hay que recalcularlas con `--huellas` al congelar.
@@ -744,3 +744,32 @@ pero sale del mismo fantasma y de la misma forma de corona.
 - **Si A1 falla, no entra en la puerta.** Las medianas por diente quedan en el informe y el
   resultado se escribe aquí como negativo. Si solo falla A2, entra en la puerta y el límite
   se declara.
+
+**Resultado (medido después de fijar los criterios): A1 y A2 se cumplen. El aviso entra en la
+puerta.** Mediana de |n·oclusal| en la franja de referencia, entre los 14 dientes de cada
+escaneo:
+
+| Escaneo | Mínimo | Máximo | Dientes marcados |
+|---|---|---|---|
+| Cinta de siempre; 9 y 6,5 mm con y sin desborde, encía de 1 y 2 mm (A1) | 0,232 | 0,337 | 0 |
+| 5 mm, desborde 3, encía de 2, 3 y 4 mm (A1) | 0,276 | 0,369 | 0 |
+| 4,5 mm, desborde 3, encía de 3 mm (A1) | 0,308 | **0,409** | 0 |
+| 4,0 mm, desborde 3, encía de 1 mm (A2) | 0,413 | 0,604 | 10 de 14 |
+| 4,0 mm, desborde 3, encía de 2 mm (A2) | 0,445 | 0,641 | 12 de 14 |
+| 4,0 mm, desborde 3, encía de 3 mm (A2) | 0,559 | 0,645 | 14 de 14 |
+
+- **El margen es estrecho**: con 4,5 mm el máximo ya es 0,409, frente al umbral de 0,45.
+- **El aviso no arregla nada.** Con coronas de 4 mm el ajuste sigue deslizando; lo que
+  cambia es que el motivo llega a la puerta con los dientes afectados, en vez de callar.
+- **Sigue siendo un número del fantasma.** Una corona real con cúspides marcadas o un tercio
+  cervical abombado puede tener la franja alta más inclinada que 0,45 sin encía, y saldría
+  una falsa alarma. Una falsa alarma en la puerta cuesta una revisión; el silencio costaba
+  un registro desplazado.
+- El informe lleva por diente, en `scanner_band.inclination_filter`, las caras de
+  referencia, su mediana, las caras de banda y las quitadas. `huella_constantes` cambia
+  porque `PARED_CORONA_MAX` es una constante nueva, aunque el ajuste no cambia.
+
+Tests: `test_el_filtro_de_inclinacion_arregla_la_encia_vestibular_y_avisa_donde_no_puede`
+fija K2 (5 mm: 0,07 mm, sin avisos) y el límite (4 mm: sigue deslizando más de 1 mm, y al
+menos la mitad de los dientes avisan). `test_una_franja_contaminada_llega_a_la_puerta`
+fija el motivo.

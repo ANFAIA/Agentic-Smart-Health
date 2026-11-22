@@ -806,6 +806,57 @@ def test_sin_las_caras_inclinadas_la_encia_desbordada_ya_no_desliza_el_ajuste(
     assert reg.rms_desplazamiento((r, t), verdad) < tope
 
 
+@pytest.mark.parametrize(("corona_mm", "filtra"), [(5.0, True), (4.0, False)])
+def test_el_filtro_de_inclinacion_arregla_la_encia_vestibular_y_avisa_donde_no_puede(
+    monkeypatch, corona_mm: float, filtra: bool
+) -> None:
+    """K2 de §11.1 y su límite (§11.3), en serie densa con 3 mm de desborde y encía de 3 mm.
+
+    - Coronas clínicas de 5 mm: sin filtro el ajuste desliza 3,31 mm hacia la raíz; con él,
+      0,07 mm desde la verdad, y ningún diente se declara contaminado.
+    - Coronas de 4 mm: la papila llena la franja de referencia, el filtro apenas quita nada
+      y el ajuste sigue deslizando (4,26 mm medido). Eso no se arregla aquí; lo que se fija
+      es que ya no sea silencioso: al menos la mitad de los dientes van a la puerta.
+    """
+    import fantasma_arcada
+
+    monkeypatch.setattr(fantasma_arcada, "CORONA_CORTA_MM", corona_mm)
+    monkeypatch.setattr(fantasma_arcada, "GROSOR_ENCIA_MM", 3.0)
+    monkeypatch.setattr(anatomico, "FILTRA_INCLINACION", True)
+    campo, hu = campo_cbct(paso=PASO, raices="realistas")
+    centros = campo["centers"] + campo["origin"]
+    base, plano, _ = marco_cbct(centros, hu)
+    P, N2 = anatomico.contornos_losa(centros, hu, anatomico.UMBRAL_CONTORNO, plano, "upper")
+    verdad = (ROT_FICHERO.T, -ROT_FICHERO.T @ TRAS_FICHERO)
+    Vw, F, etq = escaneo_superior(encia="cuello", corona="corta", desborde_mm=3.0)
+    V = mueve(Vw, ROT_FICHERO, TRAS_FICHERO)
+    ejes, _ = anatomical_frame(V, etq)
+    esc = anatomico.Escaner.construye(V, F, etq, ejes)
+    contaminados = [c for c, v in esc.inclinacion.items() if v["contaminated"]]
+    reg = RegistroAnatomico(escaner=esc, base_cbct=base, plano=plano,
+                            contornos={anatomico.UMBRAL_CONTORNO: (P, N2)})
+    r, t, _, convergido = reg.afina(*verdad, P)
+    assert convergido
+    desliza = reg.rms_desplazamiento((r, t), verdad)
+    if filtra:
+        assert desliza < 0.2
+        assert contaminados == []
+    else:
+        assert desliza > 1.0, "si el filtro ya aguanta coronas de 4 mm, actualizar §11.3"
+        assert len(contaminados) >= len(esc.inclinacion) / 2
+
+
+def test_una_franja_contaminada_llega_a_la_puerta() -> None:
+    """El motivo nombra los dientes; sin dientes contaminados no hay motivo."""
+    base = {"scanner_band": {"inclination_filter": {
+        "wall_max": anatomico.PARED_CORONA_MAX, "contaminated": [],
+    }}}
+    assert not any("pared de corona" in m for m in motivos(base))
+    base["scanner_band"]["inclination_filter"]["contaminated"] = [11, 21]
+    aviso = [m for m in motivos(base) if "pared de corona" in m]
+    assert len(aviso) == 1 and "11, 21" in aviso[0]
+
+
 def _snap() -> TwinSnapshot:
     return TwinSnapshot(
         acquisition_id="A1",

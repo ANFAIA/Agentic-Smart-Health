@@ -148,6 +148,12 @@ FILTRA_INCLINACION = True
 ALTO_BANDA_SUPERIOR_MM = 3.5
 PERCENTIL_INCLINACION = 50.0
 MARGEN_INCLINACION = 0.20
+# ⚠️ Y su límite (§11.3): cuando la papila llena más de la mitad de la franja de referencia,
+# la mediana cae en encía y el filtro no quita nada, en silencio. Una franja cuya mediana de
+# |n·oclusal| pasa de `PARED_CORONA_MAX` ya no parece pared de corona, y ese diente va a la
+# puerta. 0,45 es el p99 de la pared de corona del fantasma junto a las cúspides; se fijó
+# antes de medir el detector, pero sale del mismo fantasma.
+PARED_CORONA_MAX = 0.45
 
 # Losa de contornos del CBCT, en altura sobre el plano oclusal (horizontal) hacia la raíz de
 # la arcada escaneada. Ancha a propósito: la banda del escáner (1,5–6 mm sobre cada
@@ -408,7 +414,7 @@ def banda_escaner(
 
 def caras_de_pared(
     altura: np.ndarray, inclinacion: np.ndarray, etiqueta: np.ndarray, en_banda: np.ndarray,
-    puntas: Mapping[int, float],
+    puntas: Mapping[int, float], diagnostico: dict[int, dict[str, Any]] | None = None,
 ) -> np.ndarray:
     """Máscara de caras de banda cuya |n·oclusal| cabe en la pared de corona de su diente.
 
@@ -417,6 +423,9 @@ def caras_de_pared(
     inclinación de sus caras de banda entre `MARGEN_MORDIDA_MM` y `ALTO_BANDA_SUPERIOR_MM`
     bajo la cúspide, más `MARGEN_INCLINACION`. Un diente sin caras en esa franja se deja
     entero: sin referencia propia no se quita nada. Fuera de la banda devuelve `False`.
+
+    Con `diagnostico`, deja por diente las caras de referencia, su mediana de |n·oclusal|,
+    las caras de banda y las quitadas, y si la franja está contaminada (§11.3).
     """
     apta = en_banda.copy()
     for c, punta in puntas.items():
@@ -424,9 +433,21 @@ def caras_de_pared(
         prof = punta - altura
         ref = m & (prof >= MARGEN_MORDIDA_MM) & (prof <= ALTO_BANDA_SUPERIOR_MM)
         if not ref.any():
+            if diagnostico is not None:
+                diagnostico[int(c)] = {"reference_faces": 0, "band_faces": int(m.sum()),
+                                       "removed": 0, "reference_median": None,
+                                       "contaminated": False}
             continue
         umbral = float(np.percentile(inclinacion[ref], PERCENTIL_INCLINACION)) + MARGEN_INCLINACION
-        apta[m & (inclinacion > umbral)] = False
+        quitadas = m & (inclinacion > umbral)
+        apta[quitadas] = False
+        if diagnostico is not None:
+            mediana = float(np.median(inclinacion[ref]))
+            diagnostico[int(c)] = {
+                "reference_faces": int(ref.sum()), "band_faces": int(m.sum()),
+                "removed": int(quitadas.sum()), "reference_median": round(mediana, 3),
+                "contaminated": mediana > PARED_CORONA_MAX,
+            }
     return apta
 
 
@@ -638,6 +659,9 @@ class Escaner:
     normal_cara: np.ndarray = field(repr=False, compare=False)
     caras_de: np.ndarray = field(repr=False, compare=False)
     inicio: np.ndarray = field(repr=False, compare=False)
+    # Por diente, lo que vio el filtro de inclinación (§11.3); vacío si está apagado.
+    inclinacion: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False,
+                                                   compare=False)
 
     def mas_cercano(
         self, q: np.ndarray, *, solo_banda: bool = False
@@ -720,10 +744,11 @@ class Escaner:
                                 where=norma > 0)
         banda_cara = banda[F].all(axis=1)
         ajuste_cara = banda_cara.copy()
+        inclinacion: dict[int, dict[str, Any]] = {}
         if FILTRA_INCLINACION:
             ajuste_cara &= caras_de_pared(
                 h[F].mean(axis=1), np.abs(normal_cara @ oclusal), etiqueta_cara, banda_cara,
-                alturas_punta,
+                alturas_punta, diagnostico=inclinacion,
             )
         orden = np.argsort(F.ravel(), kind="stable")
         inicio = np.searchsorted(F.ravel()[orden], np.arange(len(V) + 1))
@@ -734,6 +759,7 @@ class Escaner:
             centro=centro, arcada=str(ejes.arcada), puntas=puntas, arbol=cKDTree(V),
             etiqueta_cara=etiqueta_cara, banda_cara=banda_cara, ajuste_cara=ajuste_cara,
             normal_cara=normal_cara, caras_de=orden // 3, inicio=inicio,
+            inclinacion=inclinacion,
         )
 
     def dientes_en_banda(self) -> list[int]:
@@ -1478,6 +1504,14 @@ def prepara_anatomico(
             "n_vertices": int(escaner.banda.sum()),
             "teeth": escaner.dientes_en_banda(),
             "mm_below_cusp": [MARGEN_MORDIDA_MM, ALTO_BANDA_MM],
+            "inclination_filter": {
+                "enabled": FILTRA_INCLINACION,
+                "wall_max": PARED_CORONA_MAX,
+                "per_tooth": {str(c): v for c, v in sorted(escaner.inclinacion.items())},
+                "contaminated": sorted(
+                    c for c, v in escaner.inclinacion.items() if v["contaminated"]
+                ),
+            },
         },
         "contour": {
             "threshold": UMBRAL_CONTORNO,
@@ -1590,6 +1624,15 @@ def motivos(informe: Mapping[str, Any]) -> list[str]:
         salida.append(
             f"una semejanza pediría escalar el escáner ×{escala:.4f}: ningún modelo rígido "
             "encaja todas las piezas a la vez"
+        )
+    filtro = informe.get("scanner_band", {}).get("inclination_filter", {})
+    if filtro.get("contaminated"):
+        dientes = ", ".join(str(c) for c in filtro["contaminated"])
+        salida.append(
+            f"en {dientes} la franja alta de la banda ya no parece pared de corona (mediana de "
+            f"|n·oclusal| > {filtro['wall_max']}): la encía etiquetada como diente puede "
+            "llenarla, el filtro de inclinación no la quita y el ajuste puede bajar hacia la "
+            "raíz sin que lo vete nada (§11.3)"
         )
     if informe.get("arch_mismatch"):
         salida.append(str(informe["arch_mismatch"]))
