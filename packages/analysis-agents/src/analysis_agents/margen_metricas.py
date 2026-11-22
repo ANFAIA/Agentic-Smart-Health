@@ -173,6 +173,106 @@ def identidad_de_piezas(pred: np.ndarray, experto: np.ndarray) -> dict[str, Any]
     return salida
 
 
+# Una pieza que cede al vecino, o le toma, más de esta fracción de su área de experto no
+# está bien separada. Es el umbral con el que se hizo el diagnóstico de noviembre (§6.10).
+SANGRADO_MAXIMO = 0.10
+# Un contacto entre dos piezas del experto con menos vértices de frontera es una esquina
+# que se toca en un punto, no una frontera que medir.
+VERTICES_MINIMOS_DE_CONTACTO = 5
+
+
+def _aristas_unicas(tri: np.ndarray) -> np.ndarray:
+    e = np.concatenate([tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]])
+    return np.unique(np.sort(e, axis=1), axis=0)
+
+
+def _frontera(aristas: np.ndarray, etq: np.ndarray, a: set[int], b: set[int]) -> np.ndarray:
+    """Vértices de las aristas que unen una etiqueta de `a` con una de `b`."""
+    la, lb = etq[aristas[:, 0]], etq[aristas[:, 1]]
+    ina, inb = np.isin(la, list(a)), np.isin(lb, list(b))
+    ina2, inb2 = np.isin(lb, list(a)), np.isin(la, list(b))
+    sel = (ina & inb) | (ina2 & inb2)
+    return np.unique(aristas[sel].ravel())
+
+
+def separacion_interproximal(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
+                             experto: np.ndarray) -> dict[str, Any]:
+    """Si cada diente está bien SEPARADO de sus vecinos, aparte de su número y su margen.
+
+    ⚠️ **Por qué hace falta.** El margen corona-encía mide la frontera con la encía y
+    `identidad_de_piezas` mide el número; ninguna de las dos ve que la etiqueta de un
+    diente se coma un tercio del de al lado si ambos conservan su código. En el visor es
+    lo que más se nota al resaltar una pieza.
+
+    Las etiquetas predichas se emparejan con las piezas del experto como en
+    `identidad_de_piezas` —por solape, sin mirar el código—, así que un desplazamiento de
+    número no se cuenta dos veces: aquí solo importa DÓNDE cae la frontera.
+
+    - `contacts`: por cada par de piezas del experto que comparten frontera, la distancia
+      simétrica entre esa frontera y la que la predicción pone entre las etiquetas
+      emparejadas con ellas (p50 y p95, mm). `None` si alguna no tiene etiqueta o la
+      predicción no las separa: se cuentan aparte en `unresolved`.
+    - `per_tooth`: fracción del área de cada pieza que lleva la etiqueta de OTRA pieza
+      (`ceded`) y área de otras piezas que lleva la suya, relativa a la propia (`taken`).
+    """
+    from scipy.spatial import cKDTree
+
+    pred = np.asarray(pred, dtype=np.int64)
+    experto = np.asarray(experto, dtype=np.int64)
+    identidad = identidad_de_piezas(pred, experto)
+    pareja = {int(k): v["expert"] for k, v in identidad["per_label"].items()
+              if v["expert"] is not None}
+    suyas: dict[int, set[int]] = {}
+    for etiqueta, pieza in pareja.items():
+        suyas.setdefault(pieza, set()).add(etiqueta)
+    dueno = np.zeros_like(pred)
+    for etiqueta, pieza in pareja.items():
+        dueno[pred == etiqueta] = pieza
+    area = area_por_vertice(pos, tri)
+    diente = experto > 0
+    ajeno = diente & (dueno > 0) & (dueno != experto)
+
+    aristas = _aristas_unicas(tri)
+    piezas = sorted(int(t) for t in np.unique(experto) if t > 0)
+    contactos: list[dict[str, Any]] = []
+    for i, t1 in enumerate(piezas):
+        for t2 in piezas[i + 1:]:
+            fe = _frontera(aristas, experto, {t1}, {t2})
+            if len(fe) < VERTICES_MINIMOS_DE_CONTACTO:
+                continue
+            fila: dict[str, Any] = {"teeth": [t1, t2], "p50_mm": None, "p95_mm": None}
+            if t1 in suyas and t2 in suyas:
+                fp = _frontera(aristas, pred, suyas[t1], suyas[t2])
+                if len(fp):
+                    d = np.concatenate([cKDTree(pos[fp]).query(pos[fe])[0],
+                                        cKDTree(pos[fe]).query(pos[fp])[0]])
+                    fila["p50_mm"] = float(np.median(d))
+                    fila["p95_mm"] = float(np.percentile(d, 95))
+            contactos.append(fila)
+
+    por_pieza: dict[str, dict[str, float]] = {}
+    for t in piezas:
+        propia = experto == t
+        a_t = float(area[propia].sum()) or 1.0
+        lleva_la_suya = np.isin(pred, list(suyas.get(t, set())))
+        por_pieza[str(t)] = {
+            "ceded": float(area[propia & ajeno].sum() / a_t),
+            "taken": float(area[lleva_la_suya & diente & (experto != t)].sum() / a_t),
+        }
+    resueltos = np.array([c["p50_mm"] for c in contactos if c["p50_mm"] is not None])
+    sangran = sum(max(v["ceded"], v["taken"]) > SANGRADO_MAXIMO for v in por_pieza.values())
+    return {
+        "contacts": contactos,
+        "resolved": int(len(resueltos)),
+        "unresolved": int(len(contactos) - len(resueltos)),
+        "contact_p50_mm": float(np.median(resueltos)) if len(resueltos) else None,
+        "ceded_area_fraction": float(area[ajeno].sum() / max(float(area[diente].sum()), 1e-12)),
+        "teeth": len(piezas),
+        "teeth_bleeding": int(sangran),
+        "per_tooth": por_pieza,
+    }
+
+
 def metricas_de_arcada(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
                        experto: np.ndarray) -> dict[str, Any]:
     """Todas las medidas de una arcada. `pred` y `experto`: código FDI por vértice, 0 = encía."""
@@ -221,6 +321,7 @@ def metricas_de_arcada(pos: np.ndarray, tri: np.ndarray, pred: np.ndarray,
         },
         "per_tooth": {str(t): v for t, v in piezas.items()},
         "identity": identidad_de_piezas(pred, experto),
+        "separation": separacion_interproximal(pos, tri, pred, experto),
     }
 
 
@@ -240,6 +341,8 @@ RESUMIBLES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("concavity_ratio", ("concavity_ratio", "pred")),
     ("width_error_p50_mm", ("width_error_mm", "p50")),
     ("width_error_p90_mm", ("width_error_mm", "p90")),
+    ("contact_p50_mm", ("separation", "contact_p50_mm")),
+    ("ceded_area_fraction", ("separation", "ceded_area_fraction")),
 )
 
 
@@ -279,6 +382,18 @@ def agrega(arcadas: list[dict[str, Any]]) -> dict[str, Any]:
                          "missing", "expert", "labels")},
             "perfect_arches": int(sum(i["perfect"] for i in identidades)),
             "arches_with_ghost": int(sum(i["ghost"] > 0 for i in identidades)),
+        }
+    separaciones = [a["separation"] for a in arcadas if "separation" in a]
+    if separaciones:
+        todos = np.array([c["p50_mm"] for s in separaciones for c in s["contacts"]
+                          if c["p50_mm"] is not None])
+        resumen["separation"] = {
+            # Mediana sobre TODOS los contactos de todas las arcadas, no media de medianas:
+            # una arcada con dos contactos no pesa lo mismo que una con trece.
+            "contact_p50_mm_pooled": float(np.median(todos)) if len(todos) else None,
+            "contacts_over_1mm": int((todos > 1.0).sum()),
+            **{k: int(sum(s[k] for s in separaciones))
+               for k in ("resolved", "unresolved", "teeth", "teeth_bleeding")},
         }
     return resumen
 

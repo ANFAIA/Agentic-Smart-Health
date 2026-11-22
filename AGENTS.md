@@ -531,7 +531,7 @@ ZIP preparation preserves same-named instances in separate series directories. T
 | Field | Value |
 |---|---|
 | **Location** | `packages/fusion-agents/` (`geometric.py` · `semantic.py` · `registration.py` · `twin.py`) |
-| **Version** | `geometric-fusion-agent` **0.2.0** · `semantic-fusion-agent` `0.1.0` |
+| **Version** | `geometric-fusion-agent` **0.3.0** · `semantic-fusion-agent` `0.1.0` |
 | **Status** | `active` |
 | **Pipeline phase** | 2 · Geometric fusion **and** 4 · Semantic fusion (separated by segmentation) |
 | **Common contract** | `FusionOutput` + `BaseFusionAgent` in `fusion_agents/base.py` |
@@ -638,6 +638,33 @@ FusionOutput
   is the worst-measured direction, and the gate gets how much the pose moves across contour
   thresholds rather than the residual. See
   [the research note](docs/research/registro-por-cortes.md).
+- ⚠️ `geometric-fusion-agent` — **an optional anatomical registration with no randomness and
+  no possible flip** (`fusion_agents.anatomico`, `--registro anatomico`). On case B the old
+  dense-series path moved the pose 1–3 mm with the subsample seed and the vertex order of the
+  file, and flipped in ~30 % of seeds with the same rms as a good pose. The new path takes a
+  per-tooth band of the scanner, fits CBCT tooth contours to it point-to-plane from 81 fixed
+  starts per anchor, and picks the basin with a section distance that is not the fitted
+  objective. Nine flip hypotheses are fitted only to measure how far they lose, and a basin
+  whose axes, coverage or cusp height contradict the anatomy is vetoed, which sets the
+  confidence to 0. It declares per tooth what moves the pose: contour threshold,
+  leave-one-tooth-out, basin ambiguity, signed residual, conditioning and scale. **That is
+  precision, not accuracy.** ⚠️ **It works on the synthetic phantom and FAILS on clinical
+  case A:** every basin is vetoed, and from the slice-registration pose the fit slides
+  7–10 mm towards the roots, because a slab reaching 14 mm above the bite lets the crown band
+  fit root walls of similar width. A registration took ~22 min there. Since the §8
+  correction only crown contour is fitted (a contour point counts if its slice has enamel,
+  ≥ 1800, within 1.5 mm), and the valley anchor needs a second peak at least a quarter the
+  height of the first. Case A no longer slides to the roots: it lands 3 mm from the slice
+  registration instead of 14, declares 1.6–4 mm uncertainty per tooth and takes 11 min. It is
+  still **vetoed by coverage (0.43 < 0.5)**, and with no ground truth there is no honest way
+  to tell a bad registration from a miscalibrated guard. A proposed change to coverage that
+  made it pass was reverted: it only helped wrong poses on the phantom. ⚠️ On the phantom,
+  scanner FDI labels that overflow onto the gingiva put gum into the band and pull the fit
+  0.4–4.4 mm toward the root with no veto (research note §11), an accuracy bias still to be
+  fixed. So the case B
+  protocol ([`registro-anatomico-protocolo.md`](docs/research/registro-anatomico-protocolo.md))
+  is still suspended and not frozen, and the default `auto` is unchanged. See
+  [the research note](docs/research/registro-anatomico.md) §7–§8.
 - `geometric-fusion-agent` — **the ICP residual is still not a TRE.** Since 2026-10-10,
   `fusion_agents.tre` and `scripts/tre_puntos.py` measure target registration error from
   landmarks that specialists mark outside the system, per
@@ -667,6 +694,11 @@ FusionOutput
 |---|---|---|
 | 2026-08-04 | 0.1.0 | Initial registration. ADR 004; `RigidTransform` in `core-schemas` (contract 1.3.0); complete semantic fusion; geometric fusion with multiscale ICP (coarse stage missing); idempotent insertion into the time series; wired into the orchestrator. |
 | 2026-08-10 | 0.2.0 (geometric) | Registration measured against a real patient with CBCT + scanner ([`scripts/registro_ios_cbct.py`](scripts/registro_ios_cbct.py)). Confidence now comes from the **overlapping population**, ε becomes **per modality pair** (0.5 mm volume-derived · 1.5 mm intraoral↔CBCT), a **minimum overlap** gate is added, and the **coarse stage** (`icp_global`) ADR 004 left pending is implemented. Additive: a registrar that does not measure overlap behaves exactly as before. |
+| 2026-11-22 | 0.3.0 (geometric) | Direction filter for the inner crown edge (`FILTRA_SENTIDO`), **off: negative against criteria fixed before measuring**. With dentin below the contour threshold the isosurface also draws the enamel–dentin junction, which the enamel mask keeps; on a 1.2 mm enamel-shell phantom it drags the fit 1.16 mm towards the root, and the filter brings that to 0.07 mm. It fails elsewhere: orienting normals by a per-tooth vote lets overflowing gum win, and on the phantom that turns the crown normals inward (dense 5 mm crowns with 3 mm overflow: 0.07 → 0.34 mm, coverage at the truth 0.83 → 0.55); overbite and solid enamel move past their 0.02 mm limits. Behaviour with it off is unchanged; the constant fingerprint changes. No contract change. |
+| 2026-11-22 | 0.3.0 (geometric) | The inclination filter is no longer silent where it cannot act: a tooth whose upper band median |n·occlusal| exceeds 0.45 (`PARED_CORONA_MAX`, the phantom's crown-wall p99) goes to the gate. Criteria fixed before measuring: no tooth flagged on any phantom scan where the filter works (highest median 0.409), at least half flagged on the 4 mm crown cliff (10–14 of 14). It warns, it does not fix: those fits still slide. Real crowns not measured. No contract change. |
+| 2026-11-20 | 0.3.0 (geometric) | Anatomical registration: band faces steeper than the tooth's own crown walls (|n·occlusal| above the median of the upper band plus 0.20) are no longer paired or scored in S; C still counts them. Scanner FDI labels overflowing onto the gum no longer slide the arch towards the root on the phantom (sparse 0.41 → 0.04 mm, dense with buccal gum 3.31 → 0.07 mm). The margin was set after seeing the phantom, not a priori; real crowns not measured. Default `auto` unchanged. No contract change. |
+| 2026-11-20 | 0.3.0 (geometric) | Anatomical registration fits crown contour only (enamel within 1.5 mm in the same slice), ignores a second enamel peak below a quarter of the first, Phantom with realistic roots: crown error 0.081 mm median, as before. Case A: no longer slides to the roots, 1.6–4 mm declared uncertainty, still vetoed by coverage (0.43), no ground truth. The enamel radius (1.0 and 2.0 mm) is refitted into the uncertainty. Default `auto` unchanged. No contract change. |
+| 2026-11-20 | 0.3.0 (geometric) | Optional anatomical registration (`fusion_agents.anatomico`): per-tooth scanner band, CBCT contours at a fixed threshold, deterministic starts, flip hypotheses that cannot win, selection by section distance, and a `veto` field on `RegistrationResult` that sends contradictory anatomy to the gate with confidence 0. Fails on clinical case A (vetoed; the fit slides towards the roots), so the case B precision protocol is suspended and not frozen. Default `auto` unchanged. No contract change. |
 | 2026-11-09 | 0.2.0 (geometric) | Registration by slices for sparse CBCT series (`fusion_agents.por_cortes`): anatomical starting pose from FDI and DICOM axes, inverse ICP restricted to the band above the bite, and a gate reason with the slice count, the gaps and the pose spread across contour thresholds. Used only when the scanner has FDI labels and the series is sparse; dense series keep the old path, which is measured better there. No contract change. |
 | 2026-11-09 | 0.2.0 (geometric) | `tre_puntos.py --cbct-serie`: with a sparse series the viewer shows interpolated image in the gaps, so each CBCT landmark must sit on a real slice (within 0.05 mm); the rest are excluded and declared, and each kept point reports half its largest neighbouring gap as the floor of its height error. The landmark protocol gains a section on sparse series. No contract change. | <!--const:TOLERANCIA_CORTE_MM-->
 
@@ -801,6 +833,9 @@ SegmentationOutput
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-11-22 | 0.1.0 | **C2 becomes the default checkpoint of `segmentar_fdi.py`, by the project lead's decision, not by passing the criteria.** On the 120 held-out arches it still fails the K5 damage clause (10 teeth newly below 85 % of their crown against a limit of 8), and that result is not rewritten. The trade accepted is 1,365 → 1,531 of 1,657 teeth correctly numbered, contact 0.86 → 0.17 mm and margin median 2.23 → 0.96 mm, measured with `--referencias-entrenamiento 18`. The August checkpoint stays available with `--checkpoint`; the benchmarks keep naming their baseline explicitly, so no earlier figure changes. Labels stay Layer 3 and `investigational`. No contract change. |
+| 2026-11-22 | 0.1.0 | Per-tooth identity (§6.11 of the research note), pre-registered in `4038be6` before any code: a crop model ([`scripts/entrena_pieza.py`](scripts/entrena_pieza.py)) looks at each C2 instance at mesh resolution, and either drops it to gum when `p(tooth) < τ` (E1) or renumbers each quadrant in order (E2), scored by [`scripts/benchmark_identidad.py`](scripts/benchmark_identidad.py). Selection ran on the spent held-out set, renamed `dev-privado`. **Both fail there, so the new 60-patient held-out set was not evaluated.** E1 removes 87 of 95 ghosts at the lowest τ but also 31 correctly numbered full-size teeth (missing 48 → 84). E2 cannot undo C2's shifts: the crop model gets the expert's position for 89 % of the teeth C2 numbers right and for only 32 % of those it shifts. A reversed midline order in the upper arch was found and fixed on `dev-privado` before the final selection. Nothing in the agent changes; C2 stays opt-in. No contract change. |
+| 2026-11-20 | 0.1.0 | Tooth separation: on `dev`, 165 of 520 teeth cede or take more than 10 % of their area to a neighbour, and the interproximal boundary sits 0.75 mm from the expert's. The cause hypothesised is resolution: the model reads 2,048-point chunks, about 2 mm apart. [`scripts/entrena_fdi_escaner.py`](scripts/entrena_fdi_escaner.py) retrains the same Point Transformer with larger chunks, rotation augmentation and 300 more Teeth3DS+ patients, with resumable training. A new metric, `margen_metricas.separacion_interproximal`, measures it, and a 60-patient held-out set from the challenge's private test set is versioned before download. On `dev`, the 8,192-point candidate with ±15° rotation passes the six criteria pre-registered in [`scripts/benchmark_separacion.py`](scripts/benchmark_separacion.py): contact 0.75 → 0.16 mm, bleeding teeth 165 → 19, correctly numbered 498 → 508. On the 120 held-out arches, evaluated once, it fails one clause: contact 0.86 → 0.17 mm, bleeding teeth 789 → 103 of 1,657 and correctly numbered 1,365 → 1,531, but 10 teeth newly fall below 85 % of their crown, against a 0.5 % limit (8). So it does **not** become the default and stays opt-in (`--checkpoint`). On the clinical cases, unadjusted, it numbers case A's 14 annotated teeth correctly and adds an unconfirmed third molar in each case. `segmentar_fdi.py` reads the chunk size from the checkpoint. No contract change. |
 | 2026-11-10 | 0.1.0 | `--margen-gingival aplica-experto`: the crease bar drops to the expert's 5th percentile (`analysis_agents.frontera.umbrales_de_pliegue`), only when every labelled tooth is maxillary. Tested once on the clinical upper arch at the project lead's request, declared as the deciding test: teeth 11 and 12 go from 3.54 and 4.14 mm to 0.22 and 0.15 mm from the blind line, no crown below 98 %, 22 still declined. Confirming it needs a new blind annotation. Default stays `no`. No contract change. |
 | 2026-11-10 | 0.1.0 | Third margin attempt, for the teeth the method declines: on `dev` they are 193 of 544 and carry almost all the remaining error (median 2.16 mm against 0.08 for moved teeth). `M9` accepts a crease as clear as the expert's own 5th percentile; with criteria fixed beforehand against `M5`, it brings 41 declined teeth from 1.57 to 0.12 mm but damages 5 of 520 crowns against a 0.5 % limit, so it is not applied and the annotators' lines were not used. No contract change. |
 | 2026-11-09 | 0.1.0 | Second attempt at the margin method's over-trim: two gentler variants of `ancla_al_pliegue` were added to the benchmark with a selection rule fixed before running them. Neither met it on `dev`, so `eval` was not touched. On the clinical case, against a periodontist's blind margin line, the method as shipped brings the margin from 3.53 to 0.19 mm with no tooth losing over 6% of its crown, against 0.15 mm between the two annotations. One case and one annotator, so the method stays off by default. No contract change. |

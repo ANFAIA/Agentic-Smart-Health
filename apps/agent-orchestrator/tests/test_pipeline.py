@@ -1016,3 +1016,105 @@ def test_el_motivo_de_un_informe_ilegible_no_lleva_el_NOMBRE_del_fichero(
     for trozo in (apellidos, "PEREZ", "GOMEZ", "MARIA"):
         assert trozo not in motivos, f"«{trozo}» sale del contenedor dentro del motivo"
     assert "sha256:" in motivos, "y se identifica por su hash, no por su nombre"
+
+
+# --- elección del registrador (`registro=`) --------------------------------- #
+def test_un_registro_desconocido_se_rechaza(pipeline: IngestionPipeline, case_dir: Path) -> None:
+    """Una errata no puede caer en silencio al camino de siempre."""
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    with pytest.raises(ValueError, match="registro desconocido"):
+        pipeline.prepara_registro(result, malla=case_dir / "arcada.obj", registro="anatómico")
+    with pytest.raises(ValueError, match="registro desconocido"):
+        pipeline.fuse(result, malla=case_dir / "arcada.obj", registro="icp")
+
+
+def test_el_registro_clasico_es_el_camino_de_siempre_aunque_haya_etiquetas(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    """`clasico` ni siquiera intenta el registro por cortes: mismas nubes que sin etiquetas.
+
+    Con `auto`, esas mismas etiquetas (que no son de este escaneo) se intentan y se
+    declaran; con `clasico` no hay nada que declarar porque no se intenta nada.
+    """
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    malla = case_dir / "arcada.obj"
+    malas = np.zeros(3, dtype=int)
+    antes = pipeline.prepara_registro(result, malla=malla)
+    clasico = pipeline.prepara_registro(
+        result, malla=malla, etiquetas_origen=malas, registro="clasico"
+    )
+    auto = pipeline.prepara_registro(result, malla=malla, etiquetas_origen=malas)
+    assert antes is not None and clasico is not None and auto is not None
+
+    assert np.array_equal(clasico[0], antes[0]) and np.array_equal(clasico[1], antes[1])
+    assert set(clasico[2]) == set(antes[2])
+    assert "registrador" not in clasico[2]
+    assert "sin_por_cortes" not in clasico[2] and "sin_anatomico" not in clasico[2]
+    assert "sin_por_cortes" in auto[2]
+
+
+def test_el_registro_anatomico_sin_etiquetas_cae_al_de_siempre_y_lo_dice(
+    pipeline: IngestionPipeline, case_dir: Path
+) -> None:
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    fusionado = pipeline.fuse(result, malla=case_dir / "arcada.obj", registro="anatomico")
+
+    assert fusionado.snapshot.provenance.transform is not None
+    assert any("se pidió el registro anatómico" in m for m in fusionado.hitl_reasons)
+    assert fusionado.registration_report is not None
+    assert "sin_anatomico" in fusionado.registration_report
+    assert "registrador" not in fusionado.registration_report
+
+
+def test_el_registro_anatomico_pasa_por_fusion_agents_anatomico(
+    pipeline: IngestionPipeline, case_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El cableado, no el método: el caso sintético no trae etiquetas FDI con las que
+    `anatomical_frame` mida ejes, así que el marco y `prepara_anatomico` se sustituyen
+    y se comprueba qué reciben y qué hace `fuse` con lo que devuelven. El método se
+    prueba en `packages/fusion-agents/tests/test_anatomico.py`."""
+    import export_agents.anatomia as anatomia
+    import fusion_agents.anatomico as anatomico
+    from fusion_agents import RegistrationResult
+
+    result = pipeline.run(CaseInput.from_case_dir(case_dir, patient_id="PAC-001"))
+    superficie = pipeline.store.load(result.snapshot.surface_ref)
+    n = len(superficie["positions"])
+    etiquetas = np.ones(n, dtype=int)
+    base = type("Base", (), {"arcada": "upper"})()
+    recibido: dict = {}
+    nube = _nube()
+
+    def marco(V, etq):
+        recibido["marco"] = (len(V), len(etq))
+        return base, ""
+
+    def registrador(source, target):
+        return RegistrationResult((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, 1, True,
+                                  rms_overlap_mm=0.0, overlap_fraction=0.9)
+
+    def prepara(campo, hu, V, F, etq, ejes, *, normales=None, arcada_nombre=None):
+        recibido.update(V=V, F=F, etq=etq, ejes=ejes, hu=hu)
+        return nube, nube, registrador, {
+            "method": "fusion_agents.anatomico",
+            "search": {"veto": None},
+            "uncertainty": {"conditioning": {"worst_axis": "superior"}},
+        }
+
+    monkeypatch.setattr(anatomia, "anatomical_frame", marco)
+    monkeypatch.setattr(anatomico, "prepara_anatomico", prepara)
+    fusionado = pipeline.fuse(
+        result, malla=case_dir / "arcada.obj", etiquetas_origen=etiquetas, registro="anatomico"
+    )
+
+    assert recibido["marco"] == (n, n)
+    assert len(recibido["V"]) == n and np.array_equal(recibido["etq"], etiquetas)
+    assert np.array_equal(recibido["F"], superficie["faces"])
+    assert recibido["ejes"] is base and recibido["hu"] is not None
+    informe = fusionado.registration_report
+    assert informe is not None and informe["method"] == "fusion_agents.anatomico"
+    assert informe["arcada"] == "maxilar" and "registrador" not in informe
+    assert fusionado.snapshot.provenance.transform is not None
+    assert any("no un TRE" in m for m in fusionado.hitl_reasons)
+    # Ni el registro por cortes ni el de siempre se intentaron.
+    assert not any("por cortes" in m for m in fusionado.hitl_reasons)

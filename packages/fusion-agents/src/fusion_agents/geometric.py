@@ -62,7 +62,7 @@ class GeometricFusionAgent(BaseFusionAgent):
     """
 
     name = "geometric-fusion-agent"
-    version = "0.2.0"
+    version = "0.3.0"
 
     def __init__(
         self,
@@ -95,20 +95,25 @@ class GeometricFusionAgent(BaseFusionAgent):
         resultado = self.registrar(source, target)
         solape = resultado.overlap_fraction
         escaso = solape is not None and solape < self.min_overlap
+        vetado = resultado.veto is not None
         confianza = (
             0.0
-            if escaso
+            if escaso or vetado
             else min(max(1.0 - resultado.rms_efectivo_mm / self.epsilon_mm, 0.0), 1.0)
         )
 
         motivos: list[str] = []
+        if vetado:
+            # El registrador sabe algo que el residuo no ve: que la pose no es creíble
+            # aunque haya convergido. Mismo trato que el solapamiento escaso.
+            motivos.append(f"registro vetado: {resultado.veto}")
         if escaso:
             motivos.append(
                 f"solo el {solape:.1%} de la nube tiene contrapartida (mínimo "
                 f"{self.min_overlap:.0%}): con tan pocos puntos emparejados el residuo "
                 f"de {resultado.rms_efectivo_mm:.3f} mm no dice si el registro es bueno"
             )
-        elif confianza < self.hitl_threshold:
+        elif not vetado and confianza < self.hitl_threshold:
             motivos.append(
                 f"registro con rms {resultado.rms_efectivo_mm:.3f} mm sobre una banda de "
                 f"{self.epsilon_mm:.3f} mm → confianza {confianza:.2f}, bajo el umbral "

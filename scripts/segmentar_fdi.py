@@ -10,10 +10,18 @@ deliberada: `packages/tooth-aggregation` está escrito **sin depender de torch**
 la agregación punto→diente se instale y se testee en el workspace normal, y el *forward*
 del modelo sea cosa del llamante. Este script es ese llamante.
 
-Reutiliza `data/processed/a3-checkpoints/normales-ce-baseline.pt` SIN reentrenar, y no
-el otro checkpoint de A3: está medido que `normales-ce-boundary-centroid` está
-**degenerado en mandibular** (0,193 de acierto; mapea sistemáticamente códigos
-inferiores a superiores).
+Por defecto usa `data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt` (C2, de
+`scripts/entrena_fdi_escaner.py`) desde el 2026-11-22. ⚠️ **Es una decisión del
+responsable del proyecto, no un criterio cumplido.** En la reserva de 120 arcadas C2 numeró
+bien 1.531 de 1.657 piezas frente a 1.365 del checkpoint de agosto, pero falló una cláusula
+pre-registrada: 10 piezas pasan a conservar menos del 85 % de su corona, con un límite de 8
+(§6.10 de `docs/research/segmentacion-fdi-escaner.md`). Esas cifras son con
+`--referencias-entrenamiento 18`; sin referencias no se canoniza la pose y no valen.
+
+El checkpoint de agosto, `normales-ce-baseline.pt`, sigue disponible con `--checkpoint`
+y es la base contra la que se midieron todos los métodos hasta §6.10. No se usa el otro
+checkpoint de A3: está medido que `normales-ce-boundary-centroid` está **degenerado en
+mandibular** (0,193 de acierto; mapea sistemáticamente códigos inferiores a superiores).
 
 ## La pose, que es lo que hacía falta y no estaba
 
@@ -89,8 +97,11 @@ from tooth_aggregation import aggregate_teeth  # noqa: E402
 vtk.vtkObject.GlobalWarningDisplayOff()
 
 CHUNK, PASADAS = 2048, 3   # trozos del TAMAÑO DE ENTRENAMIENTO: misma distribución
+DIM_MODELO = (32, 64, 128, 256, 512)
 KNN_INST, MIN_INST, MERGE_MULT = 8, 30, 12.0
 RAZON_DUDOSA = 0.6
+# C2 por decisión del responsable (2026-11-22), pese a fallar K5 en la reserva: §6.10.
+CHECKPOINT_POR_DEFECTO = RAIZ / "data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt"
 FDI_INFERIOR = list(range(48, 40, -1)) + list(range(31, 39))
 FDI_SUPERIOR = list(range(18, 10, -1)) + list(range(21, 29))
 
@@ -217,26 +228,28 @@ def normales_vtk(V: np.ndarray, caras: np.ndarray) -> np.ndarray:
 
 
 @torch.no_grad()
-def logprob_denso(modelo, pos, x, n_clases: int, dev: str) -> np.ndarray:
+def logprob_denso(modelo, pos, x, n_clases: int, dev: str,
+                  trozo: int = CHUNK) -> np.ndarray:
     """Log-probabilidades por vértice, acumuladas en trozos del tamaño de entrenamiento.
 
-    Un subconjunto aleatorio de 2048 puntos es exactamente lo que el modelo vio con
+    Un subconjunto aleatorio de `trozo` puntos es exactamente lo que el modelo vio con
     `FixedPoints`, así que no hay desajuste de distribución. Pasar la malla entera de
-    golpe sí lo tendría: el grafo kNN saldría de otra densidad.
+    golpe sí lo tendría: el grafo kNN saldría de otra densidad. `trozo` lo dicta el
+    checkpoint (`num_points`): 2048 para el de agosto.
     """
     modelo.eval()
     n = len(pos)
     acc = torch.zeros(n, n_clases, device=dev)
     cnt = torch.zeros(n, device=dev)
-    por_lote = CHUNK * 8
+    por_lote = trozo * max(1, 16384 // trozo)
     for _ in range(PASADAS):
         perm = torch.randperm(n, device=dev)
-        pad = (-n) % CHUNK  # completa el último trozo: evita grafos diminutos
+        pad = (-n) % trozo  # completa el último trozo: evita grafos diminutos
         if pad:
             perm = torch.cat([perm, perm[torch.randint(n, (pad,), device=dev)]])
         for s in range(0, len(perm), por_lote):
             sub = perm[s : s + por_lote]
-            b = torch.arange(len(sub), device=dev) // CHUNK
+            b = torch.arange(len(sub), device=dev) // trozo
             acc.index_add_(0, sub, modelo(x[sub], pos[sub], b))
             cnt.index_add_(0, sub, torch.ones(len(sub), device=dev))
     return (acc / cnt.clamp_min(1)[:, None]).cpu().numpy()
@@ -252,17 +265,25 @@ def restringe_a_arcada(logp: np.ndarray, codigos: list[int], arcada: str) -> np.
 
 
 def carga_modelo(checkpoint: Path, dev: str):
-    """`(modelo, codigos, n_clases, meta)` de un checkpoint; `meta` lleva nombre y semilla."""
+    """`(modelo, codigos, n_clases, meta)` de un checkpoint.
+
+    `meta` lleva nombre, semilla y `num_points`, el tamaño de trozo con que se entrenó. El
+    de agosto no lo guardaba y se entrenó con 2048; un checkpoint de
+    `scripts/entrena_fdi_escaner.py` lo declara, y la inferencia tiene que usar el mismo.
+    """
     ck = torch.load(checkpoint, map_location=dev, weights_only=False)
     codigos = list(ck["codes"])
     n_clases, in_ch = int(ck["K"]), int(ck["in_ch"])
-    modelo = Net(in_ch, n_clases, dim_model=[32, 64, 128, 256, 512], k=16).to(dev)
+    modelo = Net(in_ch, n_clases, dim_model=list(ck.get("dim_model", DIM_MODELO)),
+                 k=16).to(dev)
     modelo.load_state_dict(ck["state_dict"])
-    return modelo, codigos, n_clases, {"name": ck["name"], "seed": ck["seed"]}
+    return modelo, codigos, n_clases, {"name": ck["name"], "seed": ck["seed"],
+                                       "num_points": int(ck.get("num_points", CHUNK))}
 
 
 def infiere(modelo, codigos, n_clases: int, V: np.ndarray, V_ent: np.ndarray,
-            N_ent: np.ndarray, arcada: str, dev: str, *, restringir: bool = True):
+            N_ent: np.ndarray, arcada: str, dev: str, *, restringir: bool = True,
+            trozo: int = CHUNK):
     """`(logp, instancias)`: inferencia densa, arcada restringida y agregación a dientes.
 
     `V` son las posiciones en milímetros, que es donde se agrega; `V_ent` y `N_ent`, las
@@ -277,7 +298,7 @@ def infiere(modelo, codigos, n_clases: int, V: np.ndarray, V_ent: np.ndarray,
     logp = logprob_denso(
         modelo, d.pos.to(dev),
         torch.from_numpy(np.ascontiguousarray(N_ent, dtype=np.float32)).to(dev),
-        n_clases, dev,
+        n_clases, dev, trozo=trozo,
     )
     if restringir:
         logp = restringe_a_arcada(logp, codigos, arcada)
@@ -319,8 +340,9 @@ def main() -> int:
     ap.add_argument("--escaneo", type=Path, required=True)
     ap.add_argument("--arcada", choices=("lower", "upper"), required=True)
     ap.add_argument("--salida", type=Path, required=True)
-    ap.add_argument("--checkpoint", type=Path,
-                    default=RAIZ / "data/processed/a3-checkpoints/normales-ce-baseline.pt")
+    ap.add_argument("--checkpoint", type=Path, default=CHECKPOINT_POR_DEFECTO,
+                    help="Por defecto C2 (fdi-8k-rot15-s0.pt). El de agosto: "
+                         "data/processed/a3-checkpoints/normales-ce-baseline.pt")
     ap.add_argument("--referencia", type=Path, action="append", default=None,
                     help="OBJ de Teeth3DS+ que define la pose esperada por el modelo. "
                          "Sin él no se canoniza, que es lo que rompe la inferencia. "
@@ -361,7 +383,8 @@ def main() -> int:
             V_ent, N_ent = a_marco_de(V, origen[:2], marco_canonico(V_ref)[:2], normales=N)
             torch.manual_seed(0)
             logp_r, inst_r = infiere(modelo, codigos, n_clases, V, V_ent, N_ent, args.arcada,
-                                     dev, restringir=not args.sin_restringir)
+                                     dev, restringir=not args.sin_restringir,
+                                     trozo=meta["num_points"])
             clave = ruta.stem
             segmentaciones[clave] = etiquetas_de(inst_r, len(V)).astype(np.int64)
             confianzas[clave] = confianza(logp_r, segmentaciones[clave])
@@ -378,7 +401,7 @@ def main() -> int:
               "ejes como Teeth3DS+, la salida sera de la arcada equivocada.")
         logp, instancias = infiere(
             modelo, codigos, n_clases, V, V, N, args.arcada, dev,
-            restringir=not args.sin_restringir,
+            restringir=not args.sin_restringir, trozo=meta["num_points"],
         )
         etiquetas_votadas = None
     _, _, P, _ = marco_arcada(V)
@@ -408,6 +431,18 @@ def main() -> int:
     etiquetas = (etiquetas_de(instancias, len(V)) if etiquetas_votadas is None
                  else etiquetas_votadas.astype(np.int16))
     np.save(args.salida / f"etiquetas_{args.arcada}.npy", etiquetas)
+    # La malla tal como se ingirió y las etiquetas tras la limpieza de `caso_completo.py`,
+    # juntas: es lo que miden `mide_segmentacion.py` y `puntua_margen.py` sin un `.uos`.
+    spec = importlib.util.spec_from_file_location("benchmark_margen",
+                                                  RAIZ / "scripts/benchmark_margen.py")
+    assert spec and spec.loader
+    bm = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, bm)
+    spec.loader.exec_module(bm)
+    np.savez_compressed(args.salida / f"segmentacion_{args.arcada}.npz", V=V,
+                        F=np.asarray(arte["faces"], dtype=np.int64),
+                        etiquetas=etiquetas.astype(np.int16),
+                        limpias=bm.limpieza_actual(V, etiquetas).astype(np.int16))
     np.save(args.salida / f"logprob_{args.arcada}.npy", logp.astype(np.float32))
     destino_json = args.salida / f"fdi_{args.arcada}.json"
     destino_json.write_text(

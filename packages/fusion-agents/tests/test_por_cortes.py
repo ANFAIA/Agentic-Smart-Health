@@ -10,12 +10,14 @@ from fusion_agents.por_cortes import (
     SerieDensa,
     banda,
     contornos,
+    contornos_con_normales,
     describe_cortes,
     motivos,
     pose_inicial,
     prepara_por_cortes,
 )
 from fusion_agents.registration import quaternion_to_matrix
+from scipy.spatial import cKDTree
 
 # Semiejes de cada corona y altura de su centro sobre el plano oclusal: la cúspide queda
 # en −0,5 y la parte más ancha por encima de la banda, como en una corona real, que se
@@ -187,3 +189,65 @@ def test_una_serie_continua_se_deja_al_camino_de_siempre() -> None:
     campo, hu = _campo(list(np.arange(-4, 9, 0.3)))
     with pytest.raises(SerieDensa):
         prepara_por_cortes(campo, hu, _superficie(), EJES_LPS, "upper", plano=0.0)
+
+
+def _contornos_antes_de_las_normales(
+    centros: np.ndarray, hu: np.ndarray, umbral: float, z_min: float, z_max: float
+) -> np.ndarray:
+    """`contornos` tal como estaba antes de delegar en `contornos_con_normales`, copiado
+    literalmente: es la referencia contra la que se comprueba que el cambio no movió nada."""
+    centros = np.asarray(centros, dtype=np.float64)
+    hu = np.asarray(hu)
+    z_redondo = np.round(centros[:, 2], 3)
+    salida = []
+    for z in np.unique(z_redondo):
+        if not z_min <= z <= z_max:
+            continue
+        en_corte = z_redondo == z
+        duro = centros[en_corte & (hu >= umbral)]
+        if len(duro) < 10:
+            continue
+        arbol = cKDTree(duro[:, :2])
+        paso = float(np.median(arbol.query(duro[:, :2], k=2)[0][:, 1]))
+        vecinos = arbol.query_ball_point(duro[:, :2], r=1.5 * paso)
+        borde = np.array([len(v) < 9 for v in vecinos])
+        if not borde.any():
+            continue
+        fuera = np.array([duro[i, :2] - duro[vecinos[i], :2].mean(0)
+                          for i in np.flatnonzero(borde)])
+        norma = np.linalg.norm(fuera, axis=1, keepdims=True)
+        fuera = np.divide(fuera, norma, out=np.zeros_like(fuera), where=norma > 1e-9)
+        puntos = duro[borde].copy()
+        puntos[:, :2] += 0.5 * paso * fuera
+        salida.append(puntos)
+    return np.vstack(salida) if salida else np.empty((0, 3))
+
+
+@pytest.mark.parametrize("umbral", [1100.0, 1400.0, 1900.0])
+@pytest.mark.parametrize("alturas", [DISPERSA, list(np.arange(-4, 9, 0.3))],
+                         ids=["dispersa", "continua"])
+def test_contornos_no_cambia_al_delegar_en_contornos_con_normales(alturas, umbral) -> None:
+    """`por_cortes` registra con `contornos`; el registro anatómico, con sus normales. La
+    refactorización no puede mover ni un bit de lo primero."""
+    campo, hu = _campo(alturas)
+    mundo = campo["centers"] + campo["origin"]
+    antes = _contornos_antes_de_las_normales(mundo, hu, umbral, -10.0, 10.0)
+    ahora = contornos(mundo, hu, umbral, -10.0, 10.0)
+    assert len(antes) > 0
+    assert ahora.tobytes() == antes.tobytes()
+
+    puntos, normales = contornos_con_normales(mundo, hu, umbral, -10.0, 10.0)
+    assert puntos.tobytes() == antes.tobytes()
+    assert normales.shape == (len(puntos), 2)
+    np.testing.assert_allclose(np.linalg.norm(normales, axis=1), 1.0, atol=1e-12)
+    # Hacia fuera: se alejan del centro de su corona (el hueso lejano, y > 20, aparte).
+    dientes = puntos[:, 1] < 20
+    c = _centros()[np.argmin(np.linalg.norm(
+        puntos[dientes, None, :2] - _centros()[None, :, :2], axis=-1), axis=1)]
+    assert np.all(np.einsum("ij,ij->i", puntos[dientes, :2] - c[:, :2], normales[dientes]) > 0)
+
+
+def test_contornos_con_normales_vacio_da_dos_arrays_vacios() -> None:
+    campo, hu = _campo([2.0])
+    puntos, normales = contornos_con_normales(campo["centers"], hu, 1400.0, 50.0, 60.0)
+    assert puntos.shape == (0, 3) and normales.shape == (0, 2)

@@ -474,6 +474,365 @@ resultado, y la elección se hizo sobre las dos anotaciones de este caso, que de
 para medirla. Confirmarla exige una línea nueva trazada a ciegas, sobre este caso u otro
 maxilar. Es un caso.
 
+### 6.10 · La separación entre dientes, y un modelo reentrenado para ella (2026-11-20)
+
+**Diagnóstico, sobre `dev` y antes de proponer nada.** Con el pipeline real —voto entre 3
+de 18 referencias y la limpieza de `caso_completo.py`— y las predicciones ya cacheadas, se
+contó cada fallo por pieza del experto (40 arcadas, 520 piezas):
+
+| Fallo | Medida | Piezas afectadas |
+|---|---|---:|
+| Numeración | etiqueta emparejada con otra pieza, o pieza sin etiqueta | 22 (4 %) |
+| **Separación** | la pieza cede o toma más del 10 % de su área a una vecina | **165 (32 %)** |
+| | … más del 30 % | 36 |
+| Frontera interproximal | distancia a la del experto, mediana por contacto | 0,72 mm; 146 de 439 contactos > 1 mm |
+
+La pose no lo explica: con la pose original de Teeth3DS+ salen 147 piezas y 0,72 mm. El
+sangrado es una franja pegada al vecino (mediana 0,4-0,5 mm de la pieza dueña), no
+fragmentos sueltos. Y es lo que cabe esperar de cómo ve el modelo la arcada: trozos de
+2.048 puntos, que sobre unos 9.500 mm² dejan ~2,15 mm entre puntos, cuando la malla tiene
+0,17 mm entre vértices. El error de frontera crece con ese espaciado (Spearman 0,36 sobre
+40 arcadas): es una correlación modesta y se toma como hipótesis, no como causa probada.
+
+Así que el fallo que se ataca es la **separación**, y por la vía de la causa: reentrenar el
+mismo Point Transformer con más puntos por trozo. La numeración y el margen no son el
+objetivo, pero no pueden empeorar.
+
+**El conjunto reservado.** Los 300 pacientes descargados son todos el
+`public-training-set-1` de 3DTeethSeg'22 y están gastados: 240 entrenaron el modelo y 60 son
+`dev` y `eval`. El proyecto OSF `xctdy` tiene el dataset entero en siete zips (ver
+`dataset-teeth3ds.md` §3); de los 600 pacientes que faltan, 300 son el `private-testing-set`
+del reto, que no ha visto **nadie** con datos públicos. La reserva son 60 de ellos, elegidos
+con semilla fija por [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py)
+y versionados en [`teeth3ds-reserva.txt`](teeth3ds-reserva.txt) antes de bajar ninguno. Los
+otros 300, el `public-training-set-2`, se usan para entrenar.
+
+**El candidato.** [`scripts/entrena_fdi_escaner.py`](../../scripts/entrena_fdi_escaner.py):
+la arquitectura, la entrada y la pérdida del notebook; trozos de 8.192 puntos, giros
+aleatorios de hasta ±N° (nunca espejo, que cambiaría el lado FDI) y 1.080 arcadas en vez de
+480. Se prueban como mucho tres valores de giro y se elige en `dev`.
+
+**La métrica nueva.** `margen_metricas.separacion_interproximal`: por cada par de piezas del
+experto que se tocan, la distancia simétrica entre su frontera y la predicha; por pieza, el
+área cedida y tomada. Empareja las etiquetas con las piezas por solape, como
+`identidad_de_piezas`, así que un número cambiado no cuenta como frontera mal puesta.
+
+**Criterios, fijados en este commit antes de entrenar** (`scripts/benchmark_separacion.py`).
+C = candidato, B = `normales-ce-baseline.pt`, los dos en el pipeline real:
+
+| | Criterio |
+|---|---|
+| K1 | mediana de todos los contactos de C ≤ 0,75 × la de B, y mejora en ≥ 70 % de las arcadas |
+| K2 | piezas que sangran > 10 %: C ≤ 0,75 × B |
+| K3 | piezas bien numeradas C ≥ B, y fantasmas C ≤ B |
+| K4 | la distancia del voto al techo de la pose nativa no crece |
+| K5 | falso diente ≤ B + 0,01, falsa encía ≤ B + 0,5 puntos, piezas que pasan a < 85 % de corona ≤ 0,5 % |
+| K6 | acierto FDI por vértice de diente ≥ B − 0,005 |
+
+**Precisión del protocolo, fijada antes de ver ningún candidato** (2026-11-20, mientras
+entrenaba el primero). Las configuraciones son tres y en este orden: 16.384 puntos con
+±15°; 8.192 con ±15°; y la resolución ganadora con ±30°. Gana la resolución con menor
+contacto p50 en `dev` entre las que cumplen K3; el candidato final es, de las tres, la de
+menor contacto p50 entre las que cumplen K1-K6 en `dev` (`benchmark_separacion.py elige`).
+La semilla extra que preveía el plan no se entrena, por tiempo.
+
+Si C no los cumple todos en `dev`, la reserva no se toca y esto se cierra como negativo. La
+reserva se evalúa **una vez** (el script se niega a repetirlo). Si cumple todo, C pasa a ser
+el checkpoint por defecto de `segmentar_fdi.py`; si no, queda disponible y declarado.
+
+Las anotaciones de las doctoras (14 curvas del maxilar del caso A) solo entran al final,
+como falsación: dan la identidad de cada pieza pero no la frontera entre dientes que se
+tocan, y ya se usaron para numerar.
+
+**Resultado en `dev` (2026-11-20).** Los tres candidatos entrenaron 60 épocas con semilla 0
+sobre las 1.080 arcadas y se midieron con `benchmark_separacion.py evalua --split dev` contra
+la base, desde `6602771` con el árbol limpio:
+
+| | Contacto p50 | Contactos > 1 mm | Sangran > 10 % | Correctas | Fantasmas | Falso diente | Falsa encía | FDI por vértice | K1-K6 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| B, base | 0,75 mm | 152 de 428 | 165 de 520 | 498 | 19 | 0,454 | 0,0070 | 0,884 | — |
+| C1, 16.384 pts, ±15° | 0,22 mm | 6 de 437 | 22 | 506 | 15 | 0,257 | 0,0021 | 0,936 | falla K4 |
+| **C2, 8.192 pts, ±15°** | **0,16 mm** | 11 de 438 | 19 | 508 | 13 | 0,283 | 0,0017 | 0,946 | **cumple** |
+| C3, 8.192 pts, ±30° | 0,23 mm | 13 de 439 | 18 | 509 | 14 | 0,305 | 0,0015 | 0,945 | falla K4 |
+
+Los tres mejoran el contacto en las 40 arcadas. C1 y C3 fallan solo K4, y por una pieza
+cada uno: el voto se queda una pieza por debajo de lo que daría la pose nativa (506 frente a
+507, 509 frente a 510), cuando con la base coincidían. El criterio pedía que esa distancia no
+creciera y creció, así que quedan fuera, aunque sea por poco. Por la regla fijada, la
+resolución ganadora fue 8.192 (0,16 frente a 0,22 mm) y el candidato final es **C2**. Que
+8.192 puntos separe mejor que 16.384 contradice la hipótesis de partida, según la cual más
+resolución sería mejor. Con una sola semilla no se puede saber si es una diferencia real o
+ruido de entrenamiento, y no se ha investigado.
+
+C2 pasó la puerta, así que la reserva se predijo con B y con C2 y se evaluó una vez.
+
+**Resultado en la reserva (2026-11-20): negativo, por un criterio.** 120 arcadas de 60
+pacientes del `private-testing-set`, evaluadas con `benchmark_separacion.py evalua --split
+reserva` desde `6602771` con el árbol limpio (`run-record.json` junto a cada predicción):
+
+| Criterio | B | C2 | |
+|---|---:|---:|---|
+| K1 contacto p50 | 0,86 mm | 0,17 mm; mejora en las 118 arcadas con contactos | cumple |
+| K2 piezas que sangran > 10 % | 789 de 1.657 | 103 | cumple |
+| K3 bien numeradas · fantasmas | 1.365 · 106 | 1.531 · 95 | cumple |
+| K4 techo − voto | 42 | 14 | cumple |
+| K5 falso diente · falsa encía | 0,358 · 0,065 | 0,255 · 0,019 | cumple |
+| K5 piezas que **pasan** a < 85 % de corona | — | **10 de 1.657 (0,60 %)** | **no cumple** (límite 0,5 %) |
+| K6 FDI por vértice de diente | 0,738 | 0,888 | cumple |
+
+Cinco criterios y medio se cumplen con holgura. Lo que falla es la cláusula de daño de K5:
+10 piezas que con la base conservaban al menos el 85 % de su corona bajan de ese umbral con
+C2, cuando el límite era 8 (0,5 % de 1.657). El total de piezas por debajo del 85 % baja de
+152 a 33, pero el criterio contaba solo las que empeoran, a propósito: un método que arregla
+muchas piezas y estropea unas pocas no debe compensar unas con otras. Así que, por la regla
+fijada, **C2 no pasa a ser el checkpoint por defecto**. Queda disponible y declarado
+(`segmentar_fdi.py --checkpoint`), igual que `M9` y `ancla_al_pliegue`.
+
+Dos cosas que se ven en la reserva y no estaban previstas. La base rinde mucho peor aquí que
+en `dev`: el 82 % de las piezas bien numeradas frente al 96 %, y 74 de 120 arcadas con algún
+fantasma. Son pacientes del test privado del reto, que nadie ha visto con datos públicos, y es
+la primera medida de la base fuera de la distribución con la que se entrenó. Lo que C2 gana
+también es mayor aquí: 166 piezas bien numeradas más, frente a 10 en `dev`. Y el margen
+mejora sin tocarlo: la mediana pasa de 2,23 a 0,96 mm del experto, efecto secundario de las
+1.080 arcadas y de los trozos más finos, no de ninguna regla de margen. No se ha separado qué
+parte de la mejora viene de los trozos y qué parte del doble de datos. Para eso haría falta
+entrenar 2.048 puntos con las 1.080 arcadas, y ese experimento no estaba en el protocolo.
+
+**Falsación en los casos clínicos, sin ajustar nada.** Se segmentaron el maxilar del caso A
+y las dos arcadas del caso B con B y con C2. Las 14 curvas de margen de las dos anotadoras del
+caso A ya estaban gastadas, así que no se leen como validación:
+
+- **Identidad, caso A.** Con C2 las 14 piezas anotadas se emparejan con su propio número y
+  ninguna queda sin etiqueta. Con B se emparejaban por solape igual, pero a la 21 (y a la 17,
+  según una de las anotaciones) no le quedaba etiqueta mayoritaria. C2 añade además una
+  **18** de 109 mm² que ninguna anotadora marcó. No se sabe si existe esa pieza; si no existe,
+  es un fantasma del tipo que K3 cuenta.
+- **Margen, caso A.** Hay 3,53 y 3,64 mm de la línea con B, y 0,88 y 0,98 mm con C2, sin
+  ninguna pieza por debajo del 85 % de corona. Entre las dos anotadoras hay unos 0,15 mm.
+  Coincide en dirección con la reserva; no es una medida independiente.
+- **Caso B**, sin anotación. Las piezas que superan el ancho anatómico pasan de 8 a 5 en el
+  maxilar y de 2 a 1 en la mandíbula. C2 añade una **38** de 35 mm² en la mandíbula, de nuevo
+  sin forma de saber si es real.
+
+Nada de lo clínico contradice la reserva. La pega coincide con la que la reserva ya cuenta:
+los fantasmas bajan poco (106 → 95) y en los dos casos aparece un tercer molar que nadie ha
+confirmado.
+
+**Lo que queda abierto.** (1) El daño de corona de K5: mirar las 10 piezas de la reserva no
+vale para ajustar, porque la reserva ya está gastada; un intento nuevo necesita su propio
+conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resolución de
+datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
+entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
+
+**Decisión (2026-11-22): C2 pasa a ser el checkpoint por defecto de `segmentar_fdi.py`.** La
+toma el responsable del proyecto a la vista de esta tabla. **No la dicta el protocolo**, que
+decía lo contrario, y no se reescribe el resultado: C2 sigue sin cumplir K5. Lo que se acepta
+es un intercambio declarado. Se ganan 166 piezas bien numeradas de 1.657, el contacto pasa de
+0,86 a 0,17 mm y la mediana del margen de 2,23 a 0,96 mm. A cambio, 10 piezas que con la base
+conservaban al menos el 85 % de su corona dejan de conservarlo. Las cifras son las del
+pipeline medido, con `--referencias-entrenamiento 18`. El checkpoint de agosto sigue
+disponible con `--checkpoint data/processed/a3-checkpoints/normales-ce-baseline.pt`, y los
+bancos de pruebas (`benchmark_margen.py`, `benchmark_separacion.py`) siguen nombrando su base
+explícitamente, así que ninguna cifra anterior cambia.
+
+### 6.11 · La identidad de cada pieza: plan, criterios y resultado negativo (2026-11-20 · 2026-11-22)
+
+**De dónde sale.** C2 (§6.10) separa bien los dientes, pero en la reserva deja 95
+fantasmas y 103 piezas con otro número. Este apartado ataca eso, y solo eso. Se escribe y
+se versiona antes de escribir el código y de entrenar nada.
+
+**La reserva de §6.10 pasa a ser desarrollo.** Ya se evaluó una vez, así que no puede
+volver a medir nada. Sí puede servir para elegir: son pacientes del test privado, donde el
+modelo falla cuatro veces más que en `dev`. Aquí se la llama `dev-privado`: 120 arcadas,
+1.657 piezas. `dev` está cerca del techo para la numeración (508 de 520 con C2) y no
+distinguiría una mejora de ruido. Lo que se elija se mide en una **reserva nueva**: 60
+pacientes del `private-testing-set` que no están en la primera, elegidos con semilla
+20261121 por `fetch_teeth3ds_osf.py reserva-2` y versionados en
+[`teeth3ds-reserva-2.txt`](teeth3ds-reserva-2.txt) en este commit, antes de bajar ninguno.
+
+**Diagnóstico en `dev-privado`**, con C2 en el pipeline real (voto entre 3 de 18
+referencias y la limpieza actual), mirado después de gastar esa reserva:
+
+| Fallo | Cuántos | Cómo se reparten |
+|---|---:|---|
+| Fantasmas | 95 | **75 son un «8»**: un tercer molar puesto sobre la encía detrás del último diente. Mediana de 64 mm², tamaño de diente; solo 17 bajan de 30 mm² |
+| Desplazadas | 103 | **84 están en 13 arcadas** con tres o más: hemiarcadas enteras corridas un puesto. 76 caen en la pieza vecina |
+| Ausentes | 48 | piezas reales sin etiqueta propia (mediana de 120 mm²) |
+| Coronas dañadas respecto a la base | 10 | **6 en una sola arcada**, que pierde el frente entero |
+
+En `dev`, más pequeño, el patrón es el mismo: 13 fantasmas, y 10 de las 11 desplazadas son
+de un solo paciente.
+
+**Lo que este diagnóstico descarta.** Se pensó en un método de dos etapas que primero
+detecta cada diente y después lo segmenta, porque daría mejores instancias. Se midió el
+techo de esa idea: con las instancias **del experto**, perfectas, y el número por mayoría
+de C2 dentro de cada una, salen 1.528 de 1.657 piezas bien numeradas, contra las 1.531 de
+hoy. En `dev`, 510 frente a 508. **Las fronteras ya no son lo que numera mal**; el error
+está en qué número cree el modelo que lleva cada pieza. Mejorar las instancias no lo arregla.
+
+**La hipótesis.** El modelo de puntos ve cada pieza a 2 mm de resolución de trozo y decide su
+número sobre todo por la posición en la arcada. Por eso, cuando falta un premolar, corre la
+hemiarcada, y por eso pone un «8» en la encía detrás del 7. Un segundo modelo que mire **cada
+pieza recortada, a resolución de malla**, puede ver lo que el primero no ve: si hay corona
+(cúspides, esmalte convexo) o solo encía, y si es un premolar o un molar. Esta evidencia es
+independiente de la posición. Lo que tumbó §6.5 fue que el ancho de la corona era demasiado
+débil para vencer errores de alta confianza. Aquí la prueba es la misma: si la forma vista
+de cerca no basta, sale negativo.
+
+**Lo que se construye**, sobre las instancias de C2, sin tocar sus fronteras:
+
+- **Recorte por pieza.** Los vértices de la instancia y los que quedan a menos de 2 mm de
+  ella, hasta 4.096 puntos, con normales. Va centrado en la pieza y en el sistema de la pose
+  votada, porque la orientación distingue un incisivo de un molar.
+- **El modelo de pieza.** Un clasificador de nube de puntos con dos cabezas: `p(diente)` y
+  `p(posición 1…8 dentro del cuadrante)`. El cuadrante lo sigue poniendo C2: 76 de las 103
+  desplazadas caen en la vecina del mismo cuadrante. Se entrena con los 540 pacientes de
+  entrenamiento de §6.10 y nunca con `dev`, `eval` ni ninguna reserva (lo comprueba
+  `entrena_fdi_escaner.arcadas_de_entrenamiento`):
+  - positivos: las piezas del experto, con la frontera dilatada o erosionada hasta 1 mm y
+    hasta un 30 % de la pieza quitado, para parecerse a lo que entrega C2;
+  - negativos: parches de encía del tamaño de un molar, por detrás de la última pieza y en
+    otras zonas, más los fantasmas que dé C2 en entrenamiento.
+
+  Para parar a tiempo se valida con el 10 % de los pacientes de entrenamiento. Una semilla.
+- **E1, el verificador.** Antes de numerar, una instancia con `p(diente) < τ` pasa a encía.
+- **E2, la renumeración.** Por cuadrante, las instancias se ordenan a lo largo de la arcada
+  desde la línea media. Se elige la secuencia de posiciones estrictamente creciente, con
+  huecos permitidos, que maximiza Σ [log p₂(posición) + w · log p₁(posición)]: p₂ es el
+  modelo de pieza y p₁ la log-probabilidad media de C2 en la instancia.
+
+**Elección, solo en `dev-privado`.** τ ∈ {0,3; 0,5; 0,7} y w ∈ {0; 0,5; 1}, como mucho
+nueve combinaciones, sin más valores después de verlas:
+
+- τ: el que deja menos fantasmas entre los que cumplen V1-V5; si empatan, el menor.
+- w: el que deja menos desplazadas entre los que cumplen N1-N5; si empatan, el mayor.
+
+E1 y E2 se juzgan **por separado**, cada uno con sus criterios. Si solo pasa uno, se adopta
+ese. Si ninguno pasa en `dev-privado`, la reserva nueva no se toca y esto se cierra como
+negativo.
+
+**Criterios.** R es la referencia: C2 en el pipeline real, la misma ejecución que en §6.10.
+N es el número de piezas del experto en el conjunto medido.
+
+| | E1 · verificador |
+|---|---|
+| V1 | fantasmas ≤ 0,5 × R |
+| V2 | ausentes ≤ R + 0,5 % de N: el verificador no borra dientes reales |
+| V3 | piezas que pasan a < 85 % de corona respecto a R ≤ 0,5 % de N |
+| V4 | bien numeradas ≥ R |
+| V5 | en `dev`: bien numeradas ≥ R − 0,5 % de N, y fantasmas ≤ R |
+
+| | E2 · renumeración |
+|---|---|
+| N1 | desplazadas ≤ 0,75 × R |
+| N2 | bien numeradas ≥ R |
+| N3 | piezas bien numeradas con R que pasan a mal numeradas ≤ 0,5 % de N: es el fallo de §6.5 |
+| N4 | acierto FDI por vértice de diente ≥ R − 0,005 |
+| N5 | en `dev`: bien numeradas ≥ R − 0,5 % de N |
+
+Los dos juntos, si los dos pasan: la frontera entre dientes (contacto p50) ≤ R + 0,02 mm,
+porque ninguno debería moverla.
+
+**Una sola evaluación en la reserva nueva**, desde un commit con el árbol limpio y con su
+`run-record.json`. El script se negará a repetirla, como en §6.10. Después, la falsación en los casos
+clínicos sin ajustar nada: el caso A tiene que seguir con sus 14 piezas anotadas bien
+numeradas, y se dirá qué pasa con la 18 que nadie marcó; el caso B se describe.
+
+**Lo que este plan no ataca, dicho para que nadie lo suponga.**
+
+- Las 48 ausentes: si una pieza real no tiene instancia propia, renumerar no se la da.
+- La arcada que pierde el frente: es un fallo de C2 en una arcada entera, no de identidad.
+- Que C2 pase a ser el checkpoint por defecto: falló K5 en §6.10 y eso no cambia aquí. Si E1
+  o E2 pasan, se añaden al camino opt-in de C2; decidir qué es el defecto es del responsable
+  del proyecto.
+
+**Coste previsto.**
+
+- Bajar la reserva nueva: ~1,5 GB y unas dos horas, por el límite de OSF.
+- Entrenar el modelo de pieza: menos de una hora de GPU.
+- Predecir C2 en la reserva nueva: ~1,2 h.
+- Elegir y evaluar sobre las predicciones cacheadas: minutos.
+
+**Resultado (2026-11-22): negativo en `dev-privado`, así que la reserva nueva no se ha tocado.**
+
+Se construyó lo pre-registrado, sin cambiar ningún criterio:
+[`analysis_agents.identidad`](../../packages/analysis-agents/src/analysis_agents/identidad.py),
+[`scripts/entrena_pieza.py`](../../scripts/entrena_pieza.py) y
+[`scripts/benchmark_identidad.py`](../../scripts/benchmark_identidad.py).
+
+- **El modelo de pieza.** Se entrenó desde `b820698` con el árbol limpio, sobre las 1.080
+  arcadas de entrenamiento:
+  - 16.845 recortes para entrenar y 1.863 para validar;
+  - 14.141 piezas del experto, 4.133 parches de encía y 434 fantasmas de C2 minados sobre
+    esas mismas arcadas;
+  - 20 épocas de 8.000 recortes, semilla 0, unos 20 minutos de GPU.
+
+  Se quedó la época 19, la de menor pérdida de validación. En validación acierta si es
+  diente en el 99,5 % de los recortes y la posición en el 91,7 %.
+- **R, la referencia.** Sale de las predicciones cacheadas de §6.10, así que es idéntica a la
+  de entonces. Al recalcular las tres referencias que votan para obtener p₁, 7 vértices de
+  las 160 arcadas de `dev` y `dev-privado` salen con otra etiqueta. Es no-determinismo de la
+  GPU y no afecta a R.
+
+**Un error de implementación, encontrado en `dev-privado` y corregido** (`6afd214`). En el
+maxilar, el orden desde la línea media salía invertido: el signo del eje anterior de
+`marco_canonico` sirve para superponer arcadas, no es anatómico. En 30 arcadas había 39
+cuadrantes al revés y 18 bien. La primera elección dio, por eso, una renumeración que
+bajaba las piezas bien numeradas de 1.531 a 416. Ahora el extremo de la línea media se mide:
+es el más cercano al cuadrante contrario. Las rejillas de τ y w no cambiaron. La elección con
+el error se guarda junto a la buena (`eleccion-con-orden-invertido.json`). La tabla es la de
+después de corregirlo, desde `6afd214` con el árbol limpio.
+
+| E1 τ | Fantasmas | Ausentes | Coronas dañadas | Bien numeradas | V5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 95 | 48 | — | 1.531 | 508 · 13 fantasmas | |
+| 0,3 | **8** | 84 ✗ | 45 ✗ | 1.500 ✗ | 503 · 3 ✗ | no |
+| 0,5 | 2 | 96 ✗ | 61 ✗ | 1.492 ✗ | 499 · 1 ✗ | no |
+| 0,7 | 0 | 117 ✗ | 83 ✗ | 1.472 ✗ | 495 · 1 ✗ | no |
+
+| E2 w | Desplazadas | Bien numeradas | Rotas | FDI por vértice | N5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 103 | 1.531 | — | 0,888 | 508 | |
+| 0 | 121 ✗ | 1.513 ✗ | 28 ✗ | 0,879 ✗ | 507 | no |
+| 0,5 | 116 ✗ | 1.518 ✗ | 19 ✗ | 0,881 ✗ | 507 | no |
+| 1 | 113 ✗ | 1.521 ✗ | 15 ✗ | 0,883 | 508 | no |
+
+`dev-privado` tiene 120 arcadas y 1.657 piezas, así que el 0,5 % permite 8.
+
+**Por qué falla el verificador.** Separa bien los fantasmas: la mediana de su `p(diente)` es
+0,006. Pero con τ = 0,3 descarta 49 instancias que no son fantasmas, y 31 de ellas son
+dientes bien numerados y de tamaño completo (mediana de 5.036 vértices). Un 36 de 6.646
+vértices sale con 0,001. No es la pose ni el signo de las normales: en cuatro de esas
+piezas, la pose nativa de Teeth3DS+ y las normales invertidas dan lo mismo, y el modelo
+acierta su posición. Una explicación posible, no probada, es que los positivos se
+entrenaron con la frontera del experto movida ±1 mm, y el borde de C2 desborda varios
+milímetros sobre la encía, igual que los fantasmas.
+
+**Por qué falla la renumeración.** La evidencia de la forma no es independiente de la de C2
+donde haría falta. Frente a la posición del experto:
+- en las 1.531 piezas que C2 numera bien, el modelo de pieza acierta 1.366 (89 %);
+- en las 85 que C2 desplaza dentro del mismo cuadrante, solo 27 (32 %).
+
+Ve lo mismo que C2 justo donde C2 se equivoca, y de las 13 hemiarcadas corridas E2 arregla 2.
+Es el riesgo que este apartado declaró al empezar: si la forma vista de cerca no basta, sale
+negativo. Sale negativo, igual que el ancho en §6.5.
+
+**Lo que esto deja.**
+
+- **La reserva nueva sigue sin gastar.** Se lanzó su predicción con C2 (solo etiquetas,
+  reanudable, en la caché de `benchmark_separacion.py`) para que un intento posterior no
+  tenga que repetirla. Nadie ha comparado esas etiquetas con las del experto, ni se ha
+  ejecutado `c2`, `puntua` ni `evalua` sobre ella.
+- **Los casos clínicos no se ejecutaron.** No hay ningún componente que aplicar.
+- **C2 y el modelo por defecto no cambian.**
+- **Abierto:**
+  - un verificador entrenado con instancias de C2 emparejadas con el experto, en vez de la
+    pieza del experto movida ±1 mm. Es una hipótesis nueva que necesita su propio
+    pre-registro, y `dev-privado` ya se ha mirado para esta;
+  - la numeración corrida no se arregla con información local de la pieza. Haría falta algo
+    que cuente piezas a lo largo de la arcada y vea el hueco de la que falta, no qué forma
+    tiene cada una.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
@@ -483,3 +842,7 @@ campo medido, informe, registro, procedencia— no depende de esta etapa.
 
 Es decir: la segmentación es la pieza no resuelta, y el formato está construido para que
 no resuelta signifique *separable*, no *contaminante*.
+
+Desde el 2026-11-22 las etiquetas por defecto salen de C2 (§6.10), por decisión del responsable
+y no por haber pasado los criterios. Eso no cambia la capa ni el estado: siguen siendo
+inferencia de un modelo, en `derived/`, `investigational`.
