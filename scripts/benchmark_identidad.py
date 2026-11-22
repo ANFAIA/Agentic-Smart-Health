@@ -10,6 +10,8 @@
     # verificador v2 (§6.12): solo E1, con `--version 2` en puntua, elige, evalua y clinico
     # área de cada corona en las arcadas de entrenamiento de Teeth3DS+ (§6.13), sin GPU
     uv run python scripts/benchmark_identidad.py areas
+    # verificador v3 (§6.13): el mismo modelo y las puntuaciones de la v2, otra regla
+    uv run python scripts/benchmark_identidad.py elige --version 3 --modelo …/pieza-v2.pt
     $G scripts/benchmark_identidad.py puntua --version 2 --split dev-privado --modelo …/pieza-v2.pt
 
 **Los conjuntos** (§6.11 de `docs/research/segmentacion-fdi-escaner.md`):
@@ -26,8 +28,10 @@ de `caso_completo.py`. `c2` recalcula, solo para esas 3, la log-probabilidad de 
 necesita (p₁), y comprueba que las etiquetas salen idénticas a las cacheadas.
 
 **La versión 2** (§6.12) recorta cada instancia desde su componente principal, guarda en
-`pieza-v2/` y solo elige y evalúa E1. La reserva nueva se evalúa una vez en total, sea con
-la versión que sea: `evalua` se niega si ya existe cualquier resumen de ella.
+`pieza-v2/` y solo elige y evalúa E1. **La versión 3** (§6.13) usa ese mismo modelo y esas
+mismas puntuaciones, sin `puntua` propio, y cambia solo la regla: `verifica_v3`. La reserva
+nueva se evalúa una vez en total, sea con la versión que sea: `evalua` se niega si ya existe
+cualquier resumen de ella.
 
 Los recortes de cada pieza se ponen en la pose de la referencia más confiada, que es la pose
 de Teeth3DS+ con la que se entrenó el modelo de pieza. El orden desde la línea media se mide
@@ -63,6 +67,7 @@ from analysis_agents.identidad import (  # noqa: E402
     recorte,
     renumera,
     verifica,
+    verifica_v3,
 )
 from analysis_agents.margen_metricas import (  # noqa: E402
     CORONA_MINIMA_CONSERVADA,
@@ -102,16 +107,17 @@ def ruta_c2(split: str, paciente: str, arcada: str) -> Path:
 
 
 def ruta_pieza(split: str, paciente: str, arcada: str, version: int = 1) -> Path:
-    return SALIDA / ("pieza-v2" if version == 2 else "pieza") / split / f"{paciente}_{arcada}.npz"
+    # La versión 3 reutiliza las puntuaciones de la 2: solo cambia la regla.
+    return SALIDA / ("pieza-v2" if version >= 2 else "pieza") / split / f"{paciente}_{arcada}.npz"
 
 
 def ruta_eleccion(version: int) -> Path:
-    return SALIDA / ("eleccion-v2.json" if version == 2 else "eleccion.json")
+    return SALIDA / (f"eleccion-v{version}.json" if version >= 2 else "eleccion.json")
 
 
 def recorte_de_instancia(pos, nrm, vs, arbol, rng, version: int):  # type: ignore[no-untyped-def]
-    """El recorte que ve el modelo de pieza; en la versión 2, desde la componente principal."""
-    if version == 2:
+    """El recorte que ve el modelo de pieza; desde la versión 2, desde la componente principal."""
+    if version >= 2:
         vs = componente_principal(pos, vs)
     idx, d = distancia_con_signo(pos, vs, MARGEN_RECORTE_MM, arbol)
     return recorte(pos, nrm, idx, d, rng)
@@ -252,11 +258,22 @@ def puntua_recortes(modelo, recortes, dev: str, lote: int = 16):  # type: ignore
 
 # ── Variantes y métricas (CPU) ──────────────────────────────────────────────────
 
-def variantes(R, pos, centro, marco, p_diente, p2, p1, tau=None, w=None):  # type: ignore[no-untyped-def]
-    """`{nombre: etiquetas}`: R, E1 con cada τ, E2 con cada w y, si se dan, E1+E2."""
+def variantes(R, pos, centro, marco, p_diente, p2, p1, tau=None, w=None,  # type: ignore[no-untyped-def]
+              version=1, areas=None, registro=None):
+    """`{nombre: etiquetas}`: R, E1 con cada τ, E2 con cada w y, si se dan, E1+E2.
+
+    En la versión 3, E1 es `verifica_v3` con las `areas` de cada instancia, y lo que decide
+    en cada τ se deja en `registro`.
+    """
     salida = {"R": R}
     for t in TAUS:
-        salida[f"E1_{t}"] = verifica(R, p_diente, t)[0]
+        if version == 3:
+            salida[f"E1_{t}"], reg = verifica_v3(R, p_diente, t, areas)
+            if registro is not None:
+                registro[str(t)] = {"abstains": reg["abstains"],
+                                    "too_small": len(reg["too_small"])}
+        else:
+            salida[f"E1_{t}"] = verifica(R, p_diente, t)[0]
     for peso in PESOS_C2:
         salida[f"E2_{peso}"] = renumera(R, pos, centro, marco, p2, p1, peso)[0]
     if tau is not None and w is not None:
@@ -290,9 +307,13 @@ def evalua_arcada(trabajo: tuple[str, str, str, float | None, float | None, bool
     p_diente = {int(c): float(v) for c, v in zip(s["codigos"], s["p_diente"], strict=True)}
     p2 = {int(c): v for c, v in zip(s["codigos"], s["p2"], strict=True)}
     R = z["R"].astype(np.int64)
-    vs = variantes(R, pos, z["centro"], z["marco"], p_diente, p2, p1, tau, w)
+    v3: dict[str, Any] = {}
+    vs = variantes(R, pos, z["centro"], z["marco"], p_diente, p2, p1, tau, w, version,
+                   areas_de_instancia(pos, tri, R) if version == 3 else None, v3)
     fila: dict[str, Any] = {"patient": paciente, "jaw": arcada,
                             "variants": {k: metricas(v, experto) for k, v in vs.items()}}
+    if version == 3:
+        fila["v3"] = v3
     if con_contacto:
         fila["contact_p50_mm"] = {
             k: [c["p50_mm"] for c in separacion_interproximal(pos, tri, vs[k], experto)
@@ -395,9 +416,11 @@ def elige(args: argparse.Namespace) -> int:
         c = criterios_e1(filas, f"E1_{t}")
         c["V5_dev"] = criterio_dev(filas_dev, f"E1_{t}", fantasmas=True)
         c["all_pass"] = _todas(c)
+        if args.version == 3:
+            c["v3"] = {"dev-privado": resumen_v3(filas, t), "dev": resumen_v3(filas_dev, t)}
         e1[str(t)] = c
     e2 = {}
-    # §6.12: la versión 2 solo es el verificador; E2 no se vuelve a evaluar.
+    # §6.12 y §6.13: desde la versión 2 solo es el verificador; E2 no se vuelve a evaluar.
     for w in (PESOS_C2 if args.version == 1 else ()):
         c = criterios_e2(filas, f"E2_{w}")
         c["N5_dev"] = criterio_dev(filas_dev, f"E2_{w}", fantasmas=False)
@@ -421,13 +444,20 @@ def elige(args: argparse.Namespace) -> int:
     return 0
 
 
+def resumen_v3(filas: list[dict], tau: float) -> dict[str, int]:
+    """Lo que decidió `verifica_v3` en un conjunto: informativo, no es criterio (§6.13)."""
+    return {"arches_abstained": sum(f["v3"][str(tau)]["abstains"] for f in filas),
+            "instances_too_small": sum(f["v3"][str(tau)]["too_small"] for f in filas)}
+
+
 def si(x: bool) -> str:
     return "cumple" if x else "**NO cumple**"
 
 
 def informe_eleccion(s: dict) -> str:
-    v2 = s.get("version", 1) == 2
-    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)" if v2 else "")
+    v2 = {2: " · verificador v2 (§6.12)", 3: " · verificador v3 (§6.13)"}.get(
+        s.get("version", 1), "")
+    lineas = ["# Identidad por pieza" + v2
               + " · elección en `dev-privado` (y `dev` para V5/N5)", "",
               "| E1 τ | Fantasmas R → E1 | Ausentes | Coronas dañadas | Correctas | V5 dev "
               "| Todo |", "|---|---|---|---|---|---|---|"]
@@ -454,6 +484,13 @@ def informe_eleccion(s: dict) -> str:
             f"({si(c['N4_tooth_fdi']['pass'])}) "
             f"| {c['N5_dev']['correct_R']} → {c['N5_dev']['correct']} ({si(c['N5_dev']['pass'])}) "
             f"| {si(c['all_pass'])} |")
+    if s.get("version", 1) == 3:
+        lineas += ["", "Informativo, no es criterio: arcadas en las que se abstiene e instancias "
+                   "que no juzga por tamaño.", "", "| τ | `dev-privado` | `dev` |", "|---|---|---|"]
+        for t, c in s["E1"].items():
+            a, b = c["v3"]["dev-privado"], c["v3"]["dev"]
+            lineas.append(f"| {t} | {a['arches_abstained']} · {a['instances_too_small']} "
+                          f"| {b['arches_abstained']} · {b['instances_too_small']} |")
     ch = s["chosen"]
     lineas += ["", f"**Elegidos:** τ = {ch['tau']}, w = {ch['w']}. `None` = ninguno cumple; "
                "ese componente se cierra como negativo sin tocar la reserva.", ""]
@@ -463,7 +500,7 @@ def informe_eleccion(s: dict) -> str:
 # ── evalua: la reserva nueva, UNA vez ───────────────────────────────────────────
 
 def evalua(args: argparse.Namespace) -> int:
-    destino = SALIDA / ("resumen-reserva-2-v2.json" if args.version == 2
+    destino = SALIDA / (f"resumen-reserva-2-v{args.version}.json" if args.version >= 2
                         else "resumen-reserva-2.json")
     hechos = sorted(SALIDA.glob("resumen-reserva-2*.json"))
     if hechos:
@@ -487,6 +524,8 @@ def evalua(args: argparse.Namespace) -> int:
         c = criterios_e1(filas, f"E1_{tau}")
         c["V5_dev"] = eleccion["E1"][str(tau)]["V5_dev"]
         c["all_pass"] = _todas(c)
+        if args.version == 3:
+            c["v3"] = resumen_v3(filas, tau)
         salida["E1"] = c
     if w is not None:
         c = criterios_e2(filas, f"E2_{w}")
@@ -514,8 +553,9 @@ def evalua(args: argparse.Namespace) -> int:
 
 
 def informe_reserva(s: dict) -> str:
-    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)"
-                                      if s.get("version", 1) == 2 else "")
+    lineas = ["# Identidad por pieza"
+              + {2: " · verificador v2 (§6.12)", 3: " · verificador v3 (§6.13)"}.get(
+                  s.get("version", 1), "")
               + " · `reserva-2`, evaluada una vez", "",
               f"{s['arches']} arcadas de {s['patients']} pacientes. τ = {s['chosen']['tau']}, "
               f"w = {s['chosen']['w']}, elegidos en `dev-privado`.", ""]
@@ -532,6 +572,9 @@ def informe_reserva(s: dict) -> str:
                    f"{si(c['V4_correct']['pass'])} |",
                    f"| V5 en `dev` | | | {si(c['V5_dev']['pass'])} |", "",
                    f"**E1: {'cumple todos' if c['all_pass'] else 'NO cumple todos'}.**", ""]
+        if "v3" in c:
+            lineas += [f"Se abstiene en {c['v3']['arches_abstained']} arcadas y deja sin juzgar "
+                       f"{c['v3']['instances_too_small']} instancias por tamaño.", ""]
     if "E2" in s:
         c = s["E2"]
         lineas += ["| E2 | R | E2 | |", "|---|---:|---:|---|",
@@ -621,7 +664,10 @@ def clinico(args: argparse.Namespace) -> int:
                                     "position_model": int(np.argmax(p2[c])) + 1,
                                     "position_c2": int(np.argmax(p1[c])) + 1}
                                     for c in cods}}
-    if tau is not None:
+    if tau is not None and args.version == 3:
+        columnas["E1"], registro["E1_v3"] = verifica_v3(
+            R, p_diente, tau, areas_de_instancia(V, F, R))
+    elif tau is not None:
         columnas["E1"], registro["E1_removed"] = verifica(R, p_diente, tau)
     if w is not None:
         columnas["E2"], registro["E2"] = renumera(R, V, origen[0], origen[1], p2, p1, w)
@@ -695,12 +741,12 @@ def main() -> int:
     cl.add_argument("--arcada", choices=("upper", "lower"), required=True)
     cl.add_argument("--modelo", type=Path, required=True)
     cl.add_argument("--salida", type=Path, required=True)
-    cl.add_argument("--version", type=int, choices=(1, 2), default=1)
+    cl.add_argument("--version", type=int, choices=(1, 2, 3), default=1)
     for nombre in ("elige", "evalua"):
         s = ordenes.add_parser(nombre)
         s.add_argument("--modelo", type=Path, required=True)
         s.add_argument("--trabajos", type=int, default=6)
-        s.add_argument("--version", type=int, choices=(1, 2), default=1)
+        s.add_argument("--version", type=int, choices=(1, 2, 3), default=1)
     ar = ordenes.add_parser("areas")
     ar.add_argument("--trabajos", type=int, default=6)
     ar.add_argument("--limite", type=int)
