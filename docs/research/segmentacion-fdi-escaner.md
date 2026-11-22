@@ -984,7 +984,7 @@ Las 11 ausentes nuevas salen de esos dos grupos.
 - **Siguiente:** §6.13, que mira por qué se rechazan esos 6 dientes enteros y fija cuándo no
   debe actuar el verificador.
 
-### 6.13 · El verificador que se abstiene: plan y criterios (2026-11-23)
+### 6.13 · El verificador que se abstiene: plan, criterios y resultado negativo (2026-11-23)
 
 **De dónde sale.** §6.12 dejó el verificador v2 cerca: quitaba 77 de los 95 fantasmas sin
 quitar ningún diente entero bien numerado, pero fallaba V2, V3 y V4. Este apartado no
@@ -1075,6 +1075,52 @@ bajar.
 
 **Coste previsto.** Ninguna GPU de entrenamiento. `c2` y `puntua` sobre la reserva nueva,
 minutos de GPU; elegir y evaluar, CPU.
+
+**Resultado (2026-11-23): negativo en `dev-privado`, por poco. La reserva nueva sigue sin
+tocar.**
+
+Se construyó lo pre-registrado, sin cambiar la mayoría, los 39,0 mm² ni los τ:
+`analysis_agents.identidad.verifica_v3` y `benchmark_identidad.py --version 3`, sobre las
+puntuaciones de `pieza-v2-s0.pt` que ya estaban guardadas. La elección se ejecutó desde
+`29a32ea` con el árbol limpio.
+
+| E1 v3 τ | Fantasmas (V1) | Ausentes (V2) | Coronas dañadas (V3) | Bien numeradas (V4) | V5 en `dev` | |
+|---|---|---|---|---|---|---|
+| R | 95 | 48 | — | 1.531 | 508 · 13 | |
+| 0,3 | 50 ✗ | 48 | 4 | 1.531 | 508 · 9 | no |
+| 0,5 | 46 | 50 | 4 | 1.529 ✗ | 508 · 6 | no |
+| 0,7 | 44 | 50 | 4 | 1.529 ✗ | 507 · 6 | no |
+| v2 (§6.12), τ = 0,3 | 18 | 59 ✗ | 13 ✗ | 1.525 ✗ | 508 · 6 | no |
+
+Los límites, con N = 1.657: V1 pide como mucho 47 fantasmas, V2 permite 56 ausentes, V3 8
+coronas y V4 exige 1.531. Con τ = 0,3 sobran 3 fantasmas; con 0,5 y 0,7 faltan 2 piezas bien
+numeradas. Ningún τ pasa, así que **la reserva nueva no se evalúa** y los casos clínicos no
+se ejecutan.
+
+**Lo que funcionó como se esperaba.** La abstención actúa en las dos arcadas del diagnóstico
+y en ninguna otra, ni en `dev-privado` ni en `dev`. Con τ = 0,3 ya no queda ninguna ausente
+nueva ni ninguna bien numerada de menos, y las coronas dañadas bajan de 13 a 4. Ningún
+criterio queda peor que R: lo que falla es que no quita suficientes fantasmas.
+
+**Lo que falló, mirado en `dev-privado` después de la elección.**
+
+- **El tamaño no separa un fantasma de un fragmento.** De las 40 instancias que se dejan sin
+  juzgar con τ = 0,3, 27 son fantasmas, de 0,1 a 37,8 mm². Los 6 fragmentos bien numerados
+  que había que proteger miden de 1,9 a 29,8 mm², dentro del mismo intervalo. Con cualquier
+  umbral de tamaño, proteger los unos devuelve los otros.
+- **Con τ = 0,5 se pierden dos piezas bien numeradas** que no son fragmentos. Una es un 27
+  cuya instancia cubre el 80 % del diente y puntúa 0,32. La otra es un 47 repartido entre
+  tres etiquetas de C2; la del 47 cubre el 43 % y puntúa 0,48.
+
+**Lo que esto deja.**
+
+- **La reserva nueva sigue sin gastar**, igual que tras §6.12.
+- **El defecto no cambia**: C2 sin verificador.
+- **Abierto, y necesitaría su propio pre-registro:** distinguir un fragmento pequeño sobre un
+  diente de un fantasma pequeño sobre encía por dónde está y no por cuánto mide. Por ejemplo,
+  qué parte de su borde toca otra pieza de C2. `dev-privado` está ya muy mirado para el
+  verificador: tres reglas diseñadas sobre él, la última con sus fallos a la vista. Una
+  cuarta que pasara ahí probaría todavía menos.
 
 ## 7 · Consecuencia sobre el producto
 
