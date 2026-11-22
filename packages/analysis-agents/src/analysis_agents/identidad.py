@@ -11,6 +11,9 @@ Aquí está la parte que no necesita GPU, pre-registrada en §6.11 antes de escr
 
 - `recorte`: la pieza y lo que la rodea a menos de `MARGEN_RECORTE_MM`, a resolución de
   malla y en milímetros, que es lo que ve el modelo de pieza.
+- `componente_principal`: la mayor componente conexa de una instancia, de la que sale el
+  recorte del verificador v2 (§6.12). Una etiqueta de C2 puede aparecer también a 40 mm,
+  y un recorte centrado en la media de las dos mira entre ambas.
 - `verifica` (**E1**): una instancia con `p(diente) < τ` pasa a encía.
 - `renumera` (**E2**): por cuadrante, las instancias en orden desde la línea media reciben la
   secuencia de posiciones estrictamente creciente que maximiza
@@ -27,6 +30,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 # Lo que se recorta alrededor de cada pieza: el borde de la vecina y de la encía es parte de
@@ -38,6 +43,9 @@ POSICIONES = 8
 # Los valores que se prueban en `dev-privado`, fijados en §6.11 antes de construir nada.
 TAUS = (0.3, 0.5, 0.7)
 PESOS_C2 = (0.0, 0.5, 1.0)
+# Dos vértices de una instancia están unidos si distan menos de esto (§6.12). La malla va a
+# ~0,2 mm, así que una corona entera es una componente y un trozo a 40 mm es otra.
+RADIO_COMPONENTE_MM = 1.0
 
 
 def instancias(etiquetas: np.ndarray) -> dict[int, np.ndarray]:
@@ -45,6 +53,24 @@ def instancias(etiquetas: np.ndarray) -> dict[int, np.ndarray]:
     `margen_metricas.identidad_de_piezas`, y así se compara."""
     e = np.asarray(etiquetas, dtype=np.int64)
     return {int(c): np.flatnonzero(e == c) for c in np.unique(e) if c > 0}
+
+
+def componente_principal(pos: np.ndarray, vertices: np.ndarray,
+                         radio: float = RADIO_COMPONENTE_MM) -> np.ndarray:
+    """Los vértices de la mayor componente conexa de `vertices`, unidos a menos de `radio`.
+
+    No mira las caras: el caché de entrenamiento no las tiene, y así entrenar e inferir
+    usan exactamente lo mismo. Si empatan, la de menor índice.
+    """
+    v = np.asarray(vertices, dtype=np.int64)
+    if len(v) <= 1:
+        return v
+    pares = cKDTree(np.asarray(pos, dtype=np.float64)[v]).query_pairs(
+        radio, output_type="ndarray")
+    grafo = coo_matrix((np.ones(len(pares), dtype=np.int8), (pares[:, 0], pares[:, 1])),
+                       shape=(len(v), len(v)))
+    _, comp = connected_components(grafo, directed=False)
+    return v[comp == int(np.argmax(np.bincount(comp)))]
 
 
 def distancia_con_signo(pos: np.ndarray, dentro: np.ndarray, radio: float,
