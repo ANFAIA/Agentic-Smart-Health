@@ -1364,6 +1364,45 @@ confirmada en datos no vistos. Si no, se dirá qué falla. En los dos casos se p
 comparación de C2 y D contra B en `reserva-2`, que responde con datos no vistos a la pregunta
 de §6.15. **Nada cambia el defecto por sí solo**: lo decide el responsable del proyecto.
 
+**Resultado (2026-11-23): negativo.** Se ejecutó desde `9e33e4c` con el árbol limpio, sin GPU,
+con las predicciones de §6.15 ya guardadas. CT no cumple ni R1 ni R2 en ninguno de los dos
+conjuntos, así que **`reserva-2` no se ha tocado**.
+
+| `dev-privado`, 120 arcadas | B | D | C2 | CT | Ruido | R2 |
+|---|---:|---:|---:|---:|---:|---|
+| Contacto, mediana (mm) | 0,857 | 0,316 | 0,174 | 0,174 | 0,010 | cumple |
+| Piezas que sangran | 789 | 140 | 103 | 108 | 20 | cumple |
+| Bien numeradas | 1.365 | 1.531 | 1.531 | 1.523 | 6 | **no cumple** |
+| Fantasmas | 106 | 88 | 95 | 109 | 13 | **no cumple** |
+| Encía como diente | 0,358 | 0,319 | 0,255 | 0,277 | 0,011 | **no cumple** |
+| Diente como encía | 0,065 | 0,019 | 0,019 | 0,010 | 0,001 | cumple |
+| Coronas nuevas < 85 % | 0 | 1 | 10 | 1 | — | — |
+| FDI por vértice | 0,738 | 0,881 | 0,888 | 0,890 | 0,001 | cumple |
+
+En `dev`, CT falla R2 en bien numeradas (508 → 506), fantasmas (13 → 16) y encía como diente
+(0,283 → 0,293). Falla también R1 por K4, con un hueco de pose de 0 a 1. En `dev-privado` falla
+R1 por K3, con 109 fantasmas frente a los 106 de B.
+
+**Lo que hace la regla.**
+
+- **Arregla lo que se buscaba.** Las coronas dañadas pasan de 10 a 1 y la encía marcada como
+  diente baja a la mitad.
+- **Se dispara demasiado.** Actúa en 101 piezas de 57 arcadas, cuando las coronas perdidas
+  eran 10.
+- **El motivo de esas falsas alarmas es la vara de medir.** En 63 de esas 101 piezas, C2 ya
+  conservaba entre el 70 y el 85 % de la pieza de D. Lo que falta no es corona: es el
+  desborde de D sobre la encía, que D tiene mayor que C2. La regla mide "corona perdida"
+  contra la frontera de D, y esa frontera es peor que la de C2. Así trae a cada una unos
+  1.200 vértices de encía, y con ellos fantasmas y algún número cambiado.
+- **Las piezas de verdad perdidas quedan por debajo**, entre el 24 y el 82 % en C2. Solo 18 de
+  los 101 disparos están por debajo del 50 %.
+
+**Lo que no se hace.** Bajar el umbral hasta separar unas de otras sería ajustarlo sobre
+`dev-privado`, el conjunto donde se diagnosticó y que ya ha decidido dos veces sobre esta
+pregunta. Una versión así solo podría confirmarse en `reserva-2`, y debería escribirse antes
+con un umbral que no salga de mirar estas cifras. Queda abierto. C2 sigue siendo el defecto, y
+la comparación de C2 y D en datos no vistos sigue pendiente de que alguien gaste esa reserva.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
