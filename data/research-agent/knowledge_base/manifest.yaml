@@ -280,3 +280,25 @@ documentos:
     sha256: a1227a479ecff08c38b9798521e0dc4504fd1aa4e4310ac29bb8e188a07b00ca
     bytes: 1785877
     nota: "Descubierto por watch_literature.py el 2026-08-31 (consulta: all:\"CBCT\" AND all:\"segmentation\"). Relevancia sin revisar."
+  - fichero: "FrameSeg3D_ Learned Local Frames for Segmenting Small Parts on High-Resolution 3D Scans - 2611.22124v1.pdf"
+    titulo: "FrameSeg3D: Learned Local Frames for Segmenting Small Parts on High-Resolution 3D Scans"
+    anio: 2026
+    fuente: arxiv
+    id: "2611.22124v1"
+    url: "https://arxiv.org/pdf/2611.22124v1"
+    licencia: "CC BY 4.0"
+    redistribuible: true
+    sha256: 49c5cfc35586c12c2399e58bd16a9e32e60b6984f6a0716d4fbf0ef4d5ecacc1
+    bytes: 10653382
+    nota: "Descubierto por watch_literature.py el 2026-11-23 (consulta: all:\"intraoral scan\"). Relevancia sin revisar."
+  - fichero: "Same Evidence_ Different Verdicts_ Delivery of CT Images and DICOM Metadata Changes VLM Quality-Control Decisi - 2611.18790v1.pdf"
+    titulo: "Same Evidence, Different Verdicts: Delivery of CT Images and DICOM Metadata Changes VLM Quality-Control Decisions"
+    anio: 2026
+    fuente: arxiv
+    id: "2611.18790v1"
+    url: "https://arxiv.org/pdf/2611.18790v1"
+    licencia: "arXiv perpetual non-exclusive 1.0"
+    redistribuible: false
+    sha256: 0b876450bd0d3632015cacfa2ca649ea9332ab05ae628017fd367e69904effe2
+    bytes: 428558
+    nota: "Descubierto por watch_literature.py el 2026-11-23 (consulta: all:\"DICOM\"). Relevancia sin revisar."
