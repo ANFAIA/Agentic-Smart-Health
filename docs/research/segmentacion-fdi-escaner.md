@@ -1455,6 +1455,45 @@ solo: lo decide el responsable del proyecto. Si no cumple, se dirá qué criteri
 `aplica-experto` queda fuera: se eligió sobre el caso clínico, solo vale en el maxilar y no
 tiene una fila en el benchmark.
 
+**Resultado (2026-11-23): negativo con la regla fijada.** Se ejecutó desde `eee3993` con el
+árbol limpio, sin GPU. **Ninguna variante cumple A1-A6 con la holgura en los dos conjuntos,
+así que `reserva-2` no se ha tocado.**
+
+| | `dev`: encía como diente | Subida de falsa encía | Dañadas | `dev-privado`: encía como diente | Subida de falsa encía | Dañadas |
+|---|---:|---:|---:|---:|---:|---:|
+| `M1`, C2 + limpieza | 0,283 | — | — | 0,255 | — | — |
+| `M5` | 0,117 | +1,09 pt | 2 de 520 | 0,088 | +1,52 pt | 8 de 1.657 |
+| `M7`, núcleo 0,4 | 0,135 | +0,85 pt | 0 | 0,103 | +1,23 pt | 1 |
+| `M8`, pliegue ≥ 2,0 | 0,175 | +0,72 pt | 1 | 0,142 | +0,96 pt | 2 |
+| `M9` | 0,108 | +1,24 pt | 4 | 0,067 | +1,79 pt | 12 |
+
+Con los límites completos de A3 (+1,0 pt y 1 % de piezas):
+
+- `M8` cumple A1-A6 en los dos conjuntos.
+- `M7` los cumple en `dev` y en `dev-privado` falla A3 por la subida de falsa encía.
+- `M5` y `M9` fallan A3 en los dos.
+
+La holgura exige +0,5 pt y ninguna llega. En las cuatro, A1, A2, A4, A5 y A6 se cumplen con
+margen. El margen mejora en el 96-99 % de las arcadas de `dev-privado`, con una mediana de
+0,7 a 0,8 mm más cerca del experto, y sobre etiquetas del experto el acuerdo sigue en
+0,998-1,000.
+
+**Lo que cambia frente a B, y lo que no.**
+
+- **La hipótesis se cumple a medias.** Sobre C2 el método casi no rompe coronas: `M7` daña 1
+  de 1.657 y `M8` 2, frente a las 13 de 1.065 de §6.2. Y quita entre la mitad y dos tercios de
+  la encía marcada como diente.
+- **Lo que lo para ahora es la falsa encía media.** El corte deja como encía algo más de un
+  punto de corona por arcada. Es un recorte fino y repartido, no coronas mutiladas.
+- **`dev` vuelve a salir más optimista que `dev-privado`**, entre 1,2 y 1,4 veces en la subida
+  de falsa encía. La holgura estaba puesta justo para eso.
+
+**Lo que no se hace aquí.** Elegir ahora `M8`, que es la única que cumple A1-A6 con los
+límites completos, sería cambiar la regla después de ver los números. `reserva-2` sigue intacta
+y podría juzgarla de forma independiente, pero solo si esa elección se escribe como una
+desviación declarada antes de evaluarla. Esa decisión es del responsable del proyecto y no se
+toma aquí. El defecto de `--margen-gingival` sigue en `no`.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
