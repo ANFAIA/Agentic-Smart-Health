@@ -1582,6 +1582,34 @@ cuenta con lo siguiente:
 
 Ninguna de estas cifras es una validación clínica: todo es Teeth3DS+.
 
+**Diagnóstico posterior: de dónde salen las 28 coronas.** Se hizo pieza a pieza, después de
+gastar `reserva-2`, solo para describir; no se cambia ningún criterio. La mayoría salen de dos
+arcadas superiores que C2 y D pierden casi enteras.
+
+| | C2 | D |
+|---|---:|---:|
+| Coronas dañadas frente a B | 28 en 6 arcadas | 24 en 4 arcadas |
+| En las dos arcadas superiores perdidas | 20 | 22 |
+| Comunes a C2 y D | 21 | 21 |
+| Fuera de las arcadas con 5 o más | 3 | 2 |
+| Ya bajo el 85 % antes de las limpiezas | 28 | 24 |
+
+- **En esas dos arcadas el fallo es de pose, no de corona.** En la pose nativa de Teeth3DS+, C2 y
+  D marcan como diente el 100 % de las piezas del experto. En las 18 poses canónicas marcan entre
+  el 0 y el 24 %, y el voto no puede rescatar lo que pierden todas. B, en esas mismas poses,
+  conserva entre el 83 y el 100 %. Encaja con que K4 falle en los dos modelos nuevos.
+- **La tercera arcada es una inferior de C2** (cuatro premolares y un incisivo), con razón de orientación
+  0,45. Dos de las tres referencias más confiadas de C2 dejan la arcada al 70-72 %, y el voto
+  las sigue. D elige tres al 99 % y no pierde nada allí.
+- **Fuera de esos tres casos, el daño de C2 es de 3 coronas en 1.672**, por debajo de lo que vio
+  `dev-privado`. Todas las pérdidas salen de la red y del voto: las limpiezas no hunden ninguna.
+
+Así que el punto débil de C2 en datos nuevos no es la corona sino la robustez a la pose
+canónica: en algunas arcadas, C2 y D fallan en todas las poses canónicas mientras B aguanta en
+ellas. No se ha medido por qué. Cualquier remedio, por ejemplo volver a la pose nativa cuando todas las
+referencias pierden la arcada, necesitaría un conjunto de evaluación nuevo, porque los tres que
+hay ya se han mirado.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
