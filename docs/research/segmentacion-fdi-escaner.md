@@ -1525,6 +1525,63 @@ En los dos casos se publican K1-K6 de C2 y D. `reserva-2` queda gastada para tod
 cerrojo común impide repetir la evaluación. Nada cambia el defecto de `--margen-gingival` ni
 del modelo por sí solo.
 
+**Resultado (ejecutado desde `bdb1645`, árbol limpio, 120 arcadas y 1.672 piezas).** **`M8`
+cumple A1-A6 con los límites completos en `reserva-2`.** Así que el método queda confirmado
+sobre C2 en datos no vistos de Teeth3DS+, con una salvedad: la variante se eligió con una
+regla relajada después de ver `dev` y `dev-privado`.
+
+| `M8` frente a `M1` (C2 + limpieza) | `dev` | `dev-privado` | `reserva-2` | Límite completo |
+|---|---:|---:|---:|---:|
+| Encía marcada como diente | 0,283 → 0,175 | 0,255 → 0,142 | 0,252 → 0,140 | — |
+| Subida de falsa encía (A3) | +0,72 pt | +0,96 pt | +0,96 pt | ≤ +1,0 pt |
+| Coronas dañadas (A3) | 1 de 520 | 2 de 1.657 | 1 de 1.672 | ≤ 1 % |
+| Arcadas con mejor margen (A1) | — | — | 93 % | — |
+| Mediana del margen hasta el experto (A1) | — | — | 0,66 mm más cerca | — |
+| Acuerdo sobre etiquetas del experto (A6) | — | — | 1,000 | — |
+
+- **La subida de falsa encía es justo la de `dev-privado`**, +0,96 puntos, y queda a 0,04 del
+  límite. El método cumple, pero sin margen. Con la holgura de §6.17 (+0,5) habría fallado, como
+  en los otros dos conjuntos.
+- **Las coronas no se rompen**: 1 de 1.672 pasa a menos del 85 %.
+- **Las otras tres variantes se midieron en la misma pasada, sin elegirse**, y repiten lo de
+  `dev-privado`. `M5` y `M7` fallan A3 por la subida de falsa encía (+1,41 y +1,16 pt). `M9`
+  falla A3 por la falsa encía (+1,90 pt) y daña 12 coronas.
+
+**C2 y D frente a B en `reserva-2` (K1-K6, informativo).** Ninguno de los dos cumple.
+
+| | B | C2 | D |
+|---|---:|---:|---:|
+| Contacto interproximal, K1 | 0,89 mm | 0,17 mm | 0,32 mm |
+| Piezas que sangran a la vecina, K2 | 835 | 138 | 163 |
+| Bien numeradas de 1.672, K3 | 1.359 | 1.546 | 1.530 |
+| Fantasmas, K3 | 88 | 85 | 76 |
+| Techo nativo − voto, K4 | 12 | 16 · **falla** | 34 · **falla** |
+| Encía como diente, K5 | 0,382 | 0,252 | 0,320 |
+| Coronas que pasan a < 85 %, K5 (límite 8) | — | 28 · **falla** | 24 · **falla** |
+| Acuerdo FDI por pieza, K6 | 0,724 | 0,887 | 0,867 |
+
+- **La ventaja de D en las coronas no se repite.** En `dev-privado` D dañaba 1 corona frente a
+  10 de C2, y en `reserva-2` daña 24 frente a 28. Lo que §6.15 atribuyó a la resolución era, al
+  menos en parte, propio de ese conjunto. D sigue sin ser alternativa a C2: C2 separa y numera
+  mejor, y D tampoco cumple K5.
+- **El daño de C2 se triplica respecto a `dev-privado`**: 28 coronas, el 1,7 % de las piezas,
+  frente al límite de 8. Es la peor cifra de K5 medida con C2. No se ha diagnosticado aquí si se
+  concentra en pocas arcadas, como pasaba en `dev-privado`.
+- **K4 falla en los dos**, cosa que no pasaba en `dev-privado`. El voto se queda más lejos de la
+  pose nativa que con B: 16 piezas con C2 y 34 con D, frente a 12.
+
+**Lo que esto cambia, y lo que no.** `reserva-2` queda gastada para todo. `--margen-gingival`
+sigue en `no` y C2 sigue siendo el modelo por defecto. Ninguna de las dos cosas cambia por sí
+sola. Encender `M8` por defecto es una decisión del responsable del proyecto. Para tomarla
+cuenta con lo siguiente:
+
+- un método confirmado en datos no vistos, elegido con una desviación declarada;
+- una falsa encía al borde del límite;
+- un modelo base que en esos mismos datos daña 28 coronas antes de que actúe el método, y que
+  `M8` no repara.
+
+Ninguna de estas cifras es una validación clínica: todo es Teeth3DS+.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
