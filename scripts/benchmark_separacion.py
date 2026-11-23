@@ -665,6 +665,20 @@ def elige_margen(dev: dict, reserva: dict) -> dict:
     return {"passing": pasan, "chosen": orden[0] if orden else None}
 
 
+# §6.18: desviación declarada. La variante la nombra quien decide, y solo se acepta si
+# cumple A1-A6 con los límites completos en `dev` y en la reserva gastada.
+DESVIACION_6_18 = "M8"
+
+
+def elige_por_desviacion(dev: dict, reserva: dict, variante: str) -> dict:
+    if variante != DESVIACION_6_18:
+        raise SystemExit(f"⚠ §6.18 declara {DESVIACION_6_18}, no {variante}.")
+    for nombre, s in (("dev", dev), ("reserva", reserva)):
+        if not s["variants"][variante]["criteria"].get("all_pass"):
+            raise SystemExit(f"⚠ {variante} no cumple A1-A6 completos en {nombre}; no sigo.")
+    return {"passing": [variante], "chosen": variante, "deviation": "6.18"}
+
+
 def informe_6_17(salida: dict) -> str:
     si = lambda ok: "cumple" if ok else "**no**"  # noqa: E731
     lineas = [f"# §6.17 · `ancla_al_pliegue` sobre C2 · `{salida['split']}`", "",
@@ -710,7 +724,8 @@ def margen(args: argparse.Namespace) -> int:
             previos[previo] = json.loads(r.read_text())
             if previos[previo]["checkpoints"]["C2"] != shas["C2"]:
                 raise SystemExit(f"⚠ {r} se midió con otro C2; no sigo.")
-        eleccion = elige_margen(previos["dev"], previos["reserva"])
+        eleccion = (elige_por_desviacion(previos["dev"], previos["reserva"], args.desviacion)
+                    if args.desviacion else elige_margen(previos["dev"], previos["reserva"]))
         if eleccion["chosen"] is None:
             raise SystemExit("⚠ ninguna variante pasó en `dev` y la reserva: no se toca.")
         if args.base is None or args.d is None:
@@ -789,6 +804,7 @@ def main() -> int:
     ma.add_argument("--c2", type=Path, required=True)
     ma.add_argument("--base", type=Path, help="B; solo en reserva-2")
     ma.add_argument("--d", type=Path, help="D; solo en reserva-2")
+    ma.add_argument("--desviacion", help="§6.18: variante declarada para reserva-2 (M8)")
     ma.add_argument("--trabajos", type=int, default=6)
     ma.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     ma.set_defaults(funcion=margen)

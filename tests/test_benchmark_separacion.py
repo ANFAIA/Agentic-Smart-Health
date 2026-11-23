@@ -130,3 +130,16 @@ def test_el_cerrojo_de_reserva_2_tambien_lo_cierra_el_margen(tmp_path, monkeypat
     assert bs.reserva_2_gastada() is None
     (tmp_path / "margen-reserva-2.json").write_text("{}")
     assert bs.reserva_2_gastada() is not None
+
+
+def test_la_desviacion_de_6_18_solo_acepta_m8_si_cumple_los_limites_completos():
+    import pytest
+
+    def salida(cumple: bool) -> dict:
+        return {"variants": {v: {"criteria": {"all_pass": cumple}} for v in bs.VARIANTES_MARGEN}}
+    e = bs.elige_por_desviacion(salida(True), salida(True), "M8")
+    assert e["chosen"] == "M8" and e["deviation"] == "6.18"
+    with pytest.raises(SystemExit):
+        bs.elige_por_desviacion(salida(True), salida(True), "M7")
+    with pytest.raises(SystemExit):
+        bs.elige_por_desviacion(salida(True), salida(False), "M8")
