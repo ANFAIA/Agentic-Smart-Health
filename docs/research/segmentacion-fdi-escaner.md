@@ -1403,6 +1403,58 @@ pregunta. Una versión así solo podría confirmarse en `reserva-2`, y debería 
 con un umbral que no salga de mirar estas cifras. Queda abierto. C2 sigue siendo el defecto, y
 la comparación de C2 y D en datos no vistos sigue pendiente de que alguien gaste esa reserva.
 
+### 6.17 · El margen con C2: `ancla_al_pliegue` sobre el modelo nuevo (pre-registro, 2026-11-23)
+
+**De dónde sale.** El defecto más grande que le queda a C2 es la encía marcada como diente:
+0,283 de media por arcada en `dev` y 0,255 en `dev-privado`. Pesa mucho más que las 10
+coronas de §6.15-6.16. Hay un método para eso, `ancla_al_pliegue`, con tres intentos:
+
+| Intento | Resultado |
+|---|---|
+| §6.2, `M5` | En `eval` bajó la encía marcada como diente del 45 % al 11 %, pero falló A3 por recortar corona: 13 de 1.065 piezas, contra un límite de 10. |
+| §6.7, `M7` y `M8` | Recortaban menos. No pasaron en `dev` la holgura que se les exigió. |
+| §6.8, `M9` | Dañaba coronas en `dev`. |
+
+Los tres se midieron sobre B, el modelo de agosto. Desde el 2026-11-22 el defecto es C2, que
+parte de un margen mucho más cerca del del experto (2,23 → 0,96 mm de mediana, §6.10).
+**Nadie ha medido el método sobre C2.** La hipótesis es que, con menos encía que quitar,
+recorte menos corona.
+
+**Qué se mide.** Las cuatro variantes ya escritas en `scripts/benchmark_margen.py`, sin tocar
+ni una constante: `M5`, `M7`, `M8` y `M9`. Cada una se aplica después de la limpieza actual,
+como en el pipeline. La base es `M1`: C2 votado entre 3 de 18 referencias, más la limpieza
+actual. Es el pipeline de hoy. Cada variante se aplica también a las etiquetas del experto,
+para A6.
+
+**Dónde.** Con las predicciones de C2 ya guardadas de §6.10, sin GPU. En `dev`, 40 arcadas
+que ni B ni C2 vieron al entrenar, pero en las que se ajustaron las constantes del método en
+§6.2, así que no lo miden de forma independiente. Y en `dev-privado`, 120 arcadas que nunca se
+han usado para el margen.
+
+**Criterios, fijados ahora.** Son los A1-A6 de §6.2, con las mismas constantes y el mismo
+código (`benchmark_margen.criterios`).
+
+1. **Elección.** Pasa una variante que cumpla A1-A6 en `dev` y en `dev-privado` con A3 a la
+   mitad de su límite: subida de falsa encía ≤ 0,5 puntos y piezas dañadas ≤ 0,5 %. Es la
+   misma holgura de §6.7, puesta entonces porque `eval` salió unas 1,5 veces peor que `dev`.
+2. Si pasa más de una, se elige la de menos encía marcada como diente en `dev-privado`. A
+   igualdad, la de menos piezas dañadas.
+3. **Si no pasa ninguna**, se escribe como negativo y `reserva-2` no se toca.
+
+**La reserva nueva, una vez.** Si hay variante elegida, se evalúa `reserva-2` una sola vez,
+con el cerrojo común de §6.16. Ahí la variante tiene que cumplir A1-A6 con los límites
+completos frente a `M1`.
+
+Como la reserva solo se puede gastar una vez, en la misma evaluación se predicen B y D y se
+miden C2 y D contra B con K1-K6. Eso responde también, en datos no vistos, a la pregunta de
+§6.15 de si D o C2.
+
+**Qué se dirá.** Si la variante cumple en `reserva-2`, se dirá que el método está confirmado
+sobre C2 en Teeth3DS+. No es validación clínica, y el defecto de `--margen-gingival` no cambia
+solo: lo decide el responsable del proyecto. Si no cumple, se dirá qué criterio falla.
+`aplica-experto` queda fuera: se eligió sobre el caso clínico, solo vale en el maxilar y no
+tiene una fila en el benchmark.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
