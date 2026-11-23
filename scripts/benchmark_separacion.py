@@ -395,6 +395,85 @@ def elige(args: argparse.Namespace) -> int:
     return 0 if eleccion["chosen"] else 4
 
 
+# ── compara: §6.15, la lectura fijada antes de entrenar C2-s1 y D ─────────────────────────
+#
+# C2-s1 es C2 con otra semilla y D es C2 con trozos de 2.048 puntos. |C2-s1 − C2| es el ruido
+# de semilla de cada cifra; B → D se atribuye a los datos y D → C2 a la resolución solo si la
+# diferencia es MAYOR que ese ruido. Nada de esto elige ni cambia el defecto.
+
+CIFRAS_6_15 = {  # cifra: (criterio, clave de B, clave del candidato)
+    "contact_p50_mm": ("K1_contact", "B", "C"),
+    "bleeding_teeth": ("K2_bleeding", "B", "C"),
+    "correct": ("K3_numbering", "correct_B", "correct_C"),
+    "ghosts": ("K3_numbering", "ghost_B", "ghost_C"),
+    "pose_gap": ("K4_pose", "gap_B", "gap_C"),
+    "false_tooth": ("K5_margin", "false_tooth_B", "false_tooth_C"),
+    "false_gum": ("K5_margin", "false_gum_B", "false_gum_C"),
+    # Respecto a B, así que la de B es 0 por definición.
+    "newly_under_retained": ("K5_margin", None, "newly_under_retained"),
+    "tooth_fdi": ("K6_tooth_fdi", "B", "C"),
+}
+
+
+def lee_6_15(aceptacion: dict[str, dict]) -> dict[str, Any]:
+    """`aceptacion`: `{"C2": …, "C2-s1": …, "D": …}`, el bloque `acceptance` de cada resumen
+    contra B. Devuelve, por cifra, los cuatro valores, el ruido y a qué se atribuye cada salto."""
+    tabla: dict[str, Any] = {}
+    for cifra, (k, clave_b, clave_c) in CIFRAS_6_15.items():
+        v = {m: float(a["criteria"][k][clave_c]) for m, a in aceptacion.items()}
+        b = float(aceptacion["C2"]["criteria"][k][clave_b]) if clave_b else 0.0
+        ruido = abs(v["C2-s1"] - v["C2"])
+        datos, resolucion = v["D"] - b, v["C2"] - v["D"]
+        tabla[cifra] = {"B": b, **v, "seed_noise": ruido,
+                        "data_effect": datos, "data_exceeds_noise": abs(datos) > ruido,
+                        "resolution_effect": resolucion,
+                        "resolution_exceeds_noise": abs(resolucion) > ruido}
+    return {"figures": tabla,
+            "all_pass_vs_B": {m: bool(a["criteria"]["all_pass"]) for m, a in aceptacion.items()}}
+
+
+def informe_6_15(salida: dict) -> str:
+    def f(x: float) -> str:
+        return f"{x:.3f}" if abs(x) < 10 and x != int(x) else f"{x:.0f}"
+    lineas = [f"# §6.15 · semilla y resolución frente a datos · `{salida['split']}`", "",
+              "| Cifra | B | D (2.048) | C2 | C2-s1 | Ruido de semilla | Datos (B → D) "
+              "| Resolución (D → C2) |", "|---|---:|---:|---:|---:|---:|---|---|"]
+    def marca(efecto: float, supera: bool) -> str:
+        return f"{f(efecto)} " + ("(**mayor que el ruido**)" if supera
+                                  else "(no se distingue del ruido)")
+
+    for cifra, t in salida["figures"].items():
+        datos = marca(t["data_effect"], t["data_exceeds_noise"])
+        res = marca(t["resolution_effect"], t["resolution_exceeds_noise"])
+        lineas.append(f"| {cifra} | {f(t['B'])} | {f(t['D'])} | {f(t['C2'])} | {f(t['C2-s1'])} "
+                      f"| {f(t['seed_noise'])} | {datos} | {res} |")
+    lineas += ["", "K1-K6 contra B (solo información): " + ", ".join(
+        f"{m} {'cumple' if ok else 'no cumple'}" for m, ok in salida["all_pass_vs_B"].items()),
+        "", "Con dos semillas el ruido está mal estimado. Nada de esto cambia el defecto.", ""]
+    return "\n".join(lineas)
+
+
+def compara(args: argparse.Namespace) -> int:
+    modelos = {"C2": args.c2, "C2-s1": args.c2_s1, "D": args.d}
+    aceptacion = {}
+    for nombre, ck in modelos.items():
+        r = SALIDA / f"resumen-{args.split}-{sha_de(ck)[:12]}.json"
+        if not r.is_file():
+            raise SystemExit(f"Falta {r}: ejecuta `evalua --split {args.split}` con {ck}.")
+        datos = json.loads(r.read_text())
+        if datos["checkpoints"]["B"] != sha_de(args.base):
+            raise SystemExit(f"⚠ {r} no se midió contra {args.base}.")
+        aceptacion[nombre] = datos["acceptance"]
+    salida: dict[str, Any] = {"section": "6.15", "split": args.split,
+                              "checkpoints": {k: sha_de(v) for k, v in modelos.items()},
+                              **lee_6_15(aceptacion), "run_record": registro(sys.argv)}
+    destino = SALIDA / f"comparacion-6-15-{args.split}.json"
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_15(salida))
+    print(informe_6_15(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -410,6 +489,13 @@ def main() -> int:
     el.add_argument("--modo", choices=("resolucion", "final"), required=True)
     el.add_argument("--candidatos", type=Path, nargs="+", required=True)
     el.set_defaults(funcion=elige)
+    co = ordenes.add_parser("compara", help="§6.15: semilla y resolución frente a datos")
+    co.add_argument("--split", choices=("dev", "reserva"), required=True)
+    co.add_argument("--base", type=Path, default=bm.CHECKPOINT)
+    co.add_argument("--c2", type=Path, required=True)
+    co.add_argument("--c2-s1", type=Path, required=True)
+    co.add_argument("--d", type=Path, required=True)
+    co.set_defaults(funcion=compara)
     # `reserva-2` solo se predice aquí: la evalúa `benchmark_identidad.py`, una vez (§6.11).
     for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2")),
                                  (e, evalua, ("dev", "reserva"))):

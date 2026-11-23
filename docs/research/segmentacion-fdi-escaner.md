@@ -622,7 +622,7 @@ confirmado.
 vale para ajustar, porque la reserva ya está gastada; un intento nuevo necesita su propio
 conjunto (quedan 240 pacientes del test privado sin bajar). (2) Distinguir resolución de
 datos, como se dice arriba. (3) Una segunda semilla de C2, que el plan preveía y no se
-entrenó. (4) Los fantasmas, que el reentrenamiento apenas toca.
+entrenó. (2) y (3) se atacan en §6.15. (4) Los fantasmas, que el reentrenamiento apenas toca.
 
 **Decisión (2026-11-22): C2 pasa a ser el checkpoint por defecto de `segmentar_fdi.py`.** La
 toma el responsable del proyecto a la vista de esta tabla. **No la dicta el protocolo**, que
@@ -1191,6 +1191,58 @@ mismas arcadas, donde C2 numera bien casi todo y lo que cambie es sobre todo rot
 
   Es una medida exploratoria, con dos scripts que no están en el repositorio:
   `data/processed/identidad/medida-tipo-6.14.py` y `medida-tipo-experto-6.14.py`.
+
+### 6.15 · Lo que §6.10 dejó sin medir: una segunda semilla de C2, y resolución frente a datos (2026-11-23)
+
+**De dónde sale.** §6.10 dejó abiertas dos preguntas sobre C2, que es el defecto desde el
+2026-11-22. **¿Cuánto de su resultado es la semilla?** Solo se entrenó una vez, y que 8.192
+puntos separara mejor que 16.384 quedó sin saber si era real o ruido. **¿Cuánto viene de los
+trozos de 8.192 puntos y cuánto del doble de datos?** C2 cambió las dos cosas a la vez, y
+también los giros y las épocas. Esto se escribe y se versiona antes de entrenar.
+
+**Lo que se entrena.** `scripts/entrena_fdi_escaner.py`, sin cambiar el código. Las mismas
+1.080 arcadas, 60 épocas, lote 4, ±15° y el resto de argumentos por defecto, como C2:
+
+| | Puntos por trozo | Semilla | Para qué |
+|---|---:|---:|---|
+| C2 (ya entrenado) | 8.192 | 0 | — |
+| **C2-s1** | 8.192 | 1 | cuánto se mueve C2 al cambiar solo la semilla |
+| **D** | 2.048 | 0 | C2 con los trozos de la base: aísla la resolución |
+
+Con eso, **B → D** es el efecto de los datos (con los giros y las 60 épocas, que van juntos y
+no se separan) y **D → C2** el de la resolución.
+
+**Dónde se mide.** Con `benchmark_separacion.py` en el pipeline real, contra B, como en §6.10:
+en `dev` (40 arcadas) y en la primera reserva, que ya está gastada y ahora se llama
+`dev-privado` (120 arcadas, 1.657 piezas). Las cifras de C2 y B ahí ya existen y no se
+recalculan. **La reserva nueva no se toca**, ni los casos clínicos.
+
+**Cómo se leerá, fijado ahora.**
+
+- **La semilla.** Para cada cifra de K1-K6 y para las piezas bien numeradas, la diferencia
+  |C2-s1 − C2| es el ruido de semilla. Se dice además si C2-s1 cumpliría K1-K6 contra B en cada
+  conjunto, pero solo como información.
+- **Resolución frente a datos.** Una diferencia D → C2 o B → D se atribuye a la resolución o a
+  los datos solo si es mayor que el ruido de semilla en esa misma cifra. Si no, se dice que no
+  se distingue del ruido. Con dos semillas el ruido está mal estimado, y así se dirá.
+- **Nada de esto cambia el defecto.** C2 sigue siéndolo pase lo que pase; si C2-s1 o D salen
+  mejores, se cuenta, y cambiar el defecto lo decide el responsable del proyecto.
+
+**Coste previsto.** Unas 4 h de GPU para entrenar, con la de C2 (87 min) como referencia, y
+unas 3 h por modelo para predecir en `dev` y `dev-privado` (31 y 137 min con C2). Unos 0,2 GB
+de disco por modelo.
+
+**Cómo se ejecuta.** Todo va en [`scripts/entrena_6_15.sh`](../../scripts/entrena_6_15.sh):
+los dos entrenamientos uno detrás de otro, la predicción y la evaluación de cada modelo en
+los dos conjuntos, y al final `benchmark_separacion.py compara`, que aplica la lectura de
+arriba ya escrita en código (`lee_6_15`) y deja `comparacion-6-15-dev.md` y
+`comparacion-6-15-reserva.md`. Se niega a arrancar con el árbol sucio o sin este
+pre-registro en la historia. Si se corta, relanzarlo sigue donde iba. Se ejecuta con:
+
+    systemd-inhibit --what=sleep:idle --why="§6.15" bash scripts/entrena_6_15.sh
+
+El código de lectura se versionó junto con el script, después de este pre-registro y antes
+de entrenar nada.
 
 ## 7 · Consecuencia sobre el producto
 
