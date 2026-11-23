@@ -1290,6 +1290,80 @@ Lo que dice, con la regla de arriba:
 sustituyen lo decide el responsable del proyecto; para que contara como resultado haría falta
 la reserva nueva, que sigue sin tocar.
 
+### 6.16 · C2 con D de testigo para no perder coronas (pre-registro, 2026-11-23)
+
+**De dónde sale.** El único criterio que C2 falla frente a B es el daño de K5, y §6.15 lo
+atribuye a la resolución: D deja 1 corona nueva por debajo del 85 % y C2 deja 10. Se miraron
+esas coronas en `dev-privado`, con las predicciones ya guardadas:
+
+- **Las 10 salen ya dañadas de la red**, antes de las cinco limpiezas, que no empeoran
+  ninguna.
+- **6 de las 10 están en una sola arcada superior**, en la que C2 pierde 11, 12, 13, 21, 22 y
+  26. B y D están bien ahí.
+- **Cambian con la semilla.** C2-s1 comparte con C2 solo 2 de sus 8 coronas dañadas, y en esa
+  misma arcada pierde 23, 24, 25 y 26.
+- **D no falla en ninguna de las 10**, y su única corona dañada no lo está en C2.
+- **La confianza no lo detecta.** En esa arcada C2 está más seguro que B.
+
+Son fallos raros y gruesos que no coinciden entre modelos, así que se propone combinar dos
+modelos, sin reentrenar. Como el diagnóstico se hizo en `dev-privado`, ese conjunto ya no
+mide esta regla. Para eso está la reserva nueva.
+
+**La regla, `rescata_coronas`.** Entran las etiquetas votadas de C2 y de D, antes de limpiar,
+con las mismas 18 referencias y el mismo voto entre 3.
+
+1. Se recorre cada pieza de D. Las de menos de 39,0 mm² se dejan
+   (`identidad.AREA_MINIMA_MM2`, la mitad de la corona mediana de un incisivo central inferior
+   en arcadas de entrenamiento). Es el mismo suelo de §6.13 y está para no importar
+   fantasmas pequeños de D.
+2. Si C2 marca como diente al menos el 85 % de los vértices de esa pieza
+   (`CORONA_MINIMA_CONSERVADA`, el umbral de K5), no se hace nada.
+3. Si no, **solo los vértices de esa pieza que C2 marca como encía** reciben un código.
+   - Es el código de C2 más frecuente dentro de la pieza, si al menos la mitad de los vértices
+     de C2 con ese código caen dentro de ella; es decir, si ese código es el trozo que C2
+     conserva de este diente.
+   - Si no, es el código de D.
+
+   Los vértices que C2 llama diente no se tocan nunca. La regla no puede quitar diente, solo
+   añadirlo.
+4. Después, las cinco limpiezas de siempre, una vez.
+
+En la pose nativa se aplica lo mismo, para que K4 esté definido. El coste es ejecutar D además
+de C2, alrededor de un 60 % más de tiempo de predicción. Se llama CT a C2 con la regla.
+
+**Qué puede salir mal, dicho antes.**
+
+- La regla importa el desborde de D sobre la encía donde actúa, y D desborda más que C2
+  (0,319 frente a 0,255).
+- Puede importar un fantasma grande de D.
+- Puede duplicar un código si C2 ya usa en otra pieza el número que trae D.
+
+Las tres cosas las miden K3, K5 y el contacto.
+
+**Criterios, fijados ahora.** CT tiene que cumplir los dos en `dev` y en `dev-privado`.
+
+- **R1.** K1-K6 contra B, con las mismas constantes y el mismo código que en §6.10.
+- **R2.** No empeorar a C2 más que el ruido de semilla medido en §6.15 en ese mismo conjunto:
+  contacto, piezas que sangran, fantasmas, falso diente y falsa encía
+  ≤ C2 + ruido; bien numeradas y FDI por vértice ≥ C2 − ruido. El ruido se lee de
+  `comparacion-6-15-<conjunto>.json`; en `dev`, en ese orden, 0,004 mm, 3, 1, 0,007, 0,000, 1 y 0,002,
+  y en `dev-privado` 0,010 mm, 20, 13, 0,011, 0,001, 6 y 0,001.
+
+**La reserva nueva, una vez.** Si CT cumple R1 y R2 en los dos conjuntos, se evalúa
+`reserva-2` una sola vez: 60 pacientes, 120 arcadas que nadie ha mirado. Se miden B, C2, D y
+CT juntos, y R1 y R2 se leen con el ruido de `dev-privado`, que tiene las mismas 120 arcadas.
+C2 ya está predicho ahí (2026-11-22, sin métricas). B y D se predicen con el mismo script.
+
+Esa evaluación **gasta la reserva para todo**, también para el verificador de identidad de
+§6.11-6.13, que ya no la tenía asignada porque falló antes. Los dos scripts comparten desde
+ahora un único cerrojo. Si CT no cumple en `dev` o en `dev-privado`, se escribe como negativo y
+`reserva-2` no se toca.
+
+**Qué se dirá en cada caso.** Si CT cumple R1 y R2 en `reserva-2`, se dirá que la regla está
+confirmada en datos no vistos. Si no, se dirá qué falla. En los dos casos se publica la
+comparación de C2 y D contra B en `reserva-2`, que responde con datos no vistos a la pregunta
+de §6.15. **Nada cambia el defecto por sí solo**: lo decide el responsable del proyecto.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
