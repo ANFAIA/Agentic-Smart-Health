@@ -15,6 +15,9 @@ Aquí está la parte que no necesita GPU, pre-registrada en §6.11 antes de escr
   recorte del verificador v2 (§6.12). Una etiqueta de C2 puede aparecer también a 40 mm,
   y un recorte centrado en la media de las dos mira entre ambas.
 - `verifica` (**E1**): una instancia con `p(diente) < τ` pasa a encía.
+- `verifica_v3` (§6.13): E1, salvo en una arcada donde rechazaría más de la mitad de las
+  instancias, que es una arcada en la que C2 falló entera, y salvo en instancias de menos
+  de `AREA_MINIMA_MM2`.
 - `renumera` (**E2**): por cuadrante, las instancias en orden desde la línea media reciben la
   secuencia de posiciones estrictamente creciente que maximiza
   `Σ [log p₂(posición) + w · log p₁(posición)]`.
@@ -46,6 +49,10 @@ PESOS_C2 = (0.0, 0.5, 1.0)
 # Dos vértices de una instancia están unidos si distan menos de esto (§6.12). La malla va a
 # ~0,2 mm, así que una corona entera es una componente y un trozo a 40 mm es otra.
 RADIO_COMPONENTE_MM = 1.0
+# Por debajo de esto una instancia no se juzga (§6.13): la mitad de la mediana del área de la
+# corona más pequeña, el incisivo central inferior, 78,0 mm² en 480 arcadas de entrenamiento
+# de Teeth3DS+ (`benchmark_identidad.py areas`, desde 5b1f39b). Fijado antes de evaluar.
+AREA_MINIMA_MM2 = 39.0
 
 
 def instancias(etiquetas: np.ndarray) -> dict[int, np.ndarray]:
@@ -71,6 +78,23 @@ def componente_principal(pos: np.ndarray, vertices: np.ndarray,
                        shape=(len(v), len(v)))
     _, comp = connected_components(grafo, directed=False)
     return v[comp == int(np.argmax(np.bincount(comp)))]
+
+
+def areas_de_instancia(pos: np.ndarray, caras: np.ndarray,
+                       etiquetas: np.ndarray) -> dict[int, float]:
+    """`código → área en mm²` de cada instancia: un tercio de cada cara a cada vértice.
+
+    Es el tamaño con el que el verificador v3 (§6.13) decide qué no juzga. Por área y no
+    por número de vértices, porque la resolución de la malla va de 0,15 a 0,2 mm entre
+    escáneres y el número de vértices de una misma corona varía casi al doble.
+    """
+    pos = np.asarray(pos, dtype=np.float64)
+    tri = np.asarray(caras, dtype=np.int64)
+    a = 0.5 * np.linalg.norm(np.cross(pos[tri[:, 1]] - pos[tri[:, 0]],
+                                      pos[tri[:, 2]] - pos[tri[:, 0]]), axis=1)
+    por_vertice = np.zeros(len(pos))
+    np.add.at(por_vertice, tri.ravel(), np.repeat(a / 3.0, 3))
+    return {c: float(por_vertice[v].sum()) for c, v in instancias(etiquetas).items()}
 
 
 def distancia_con_signo(pos: np.ndarray, dentro: np.ndarray, radio: float,
@@ -136,6 +160,36 @@ def verifica(etiquetas: np.ndarray, p_diente: dict[int, float],
     for c in quitadas:
         e[e == c] = 0
     return e, quitadas
+
+
+def verifica_v3(etiquetas: np.ndarray, p_diente: dict[int, float], tau: float,
+                areas: dict[int, float], area_minima: float = AREA_MINIMA_MM2,
+                ) -> tuple[np.ndarray, dict[str, Any]]:
+    """**E1 v3** (§6.13). `(etiquetas, registro)`.
+
+    Como `verifica`, con dos excepciones fijadas antes de evaluar:
+
+    - Si más de la mitad de las instancias puntuadas tienen `p(diente) < τ`, no se quita
+      ninguna y `registro["abstains"]` lo dice. Un escaneo de arcada es dientes casi entero;
+      cuando el modelo dice lo contrario, lo que ha fallado es la segmentación, y borrar
+      deja sin corona los dientes reales sobre los que montaba.
+    - Una instancia de menos de `area_minima` mm² no se juzga: un fragmento así no le da
+      instancia a nadie si se quita.
+    """
+    e = np.asarray(etiquetas, dtype=np.int64).copy()
+    presentes = sorted(c for c in instancias(e) if c in p_diente)
+    rechazadas = [c for c in presentes if p_diente[c] < tau]
+    pequenas = [c for c in rechazadas if areas[c] < area_minima]
+    registro: dict[str, Any] = {"instances": len(presentes), "rejected": len(rechazadas),
+                                "abstains": 2 * len(rechazadas) > len(presentes),
+                                "too_small": pequenas, "removed": []}
+    if registro["abstains"]:
+        return e, registro
+    for c in rechazadas:
+        if c not in pequenas:
+            e[e == c] = 0
+            registro["removed"].append(c)
+    return e, registro
 
 
 def asigna_posiciones(puntos: np.ndarray) -> list[int] | None:

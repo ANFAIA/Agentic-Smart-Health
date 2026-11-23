@@ -144,3 +144,41 @@ def test_la_componente_principal_suelta_el_trozo_lejano() -> None:
     principal = componente_principal(pos, np.arange(len(pos)))
     assert set(principal) == set(range(5, len(pos)))
     assert list(componente_principal(pos, np.array([3]))) == [3]
+
+
+def test_el_area_de_una_instancia_reparte_cada_cara_entre_sus_vertices():
+    from analysis_agents.identidad import areas_de_instancia
+
+    # Dos triángulos rectángulos de cateto 1 (0,5 mm² cada uno) formando un cuadrado.
+    pos = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
+    caras = np.array([[0, 1, 2], [0, 2, 3]])
+    areas = areas_de_instancia(pos, caras, np.array([11, 11, 11, 0]))
+    assert set(areas) == {11}
+    # El vértice 3 (encía) se lleva un tercio del segundo triángulo.
+    assert np.isclose(areas[11], 1.0 - 0.5 / 3)
+
+
+def test_el_verificador_v3_se_abstiene_en_una_arcada_que_rechazaria_entera():
+    from analysis_agents.identidad import verifica_v3
+
+    e = np.array([0, 11, 11, 12, 12, 13, 13])
+    areas = {11: 100.0, 12: 100.0, 13: 100.0}
+    # Rechaza 2 de 3: más de la mitad, así que no toca nada.
+    salida, reg = verifica_v3(e, {11: 0.1, 12: 0.2, 13: 0.9}, 0.3, areas)
+    assert reg["abstains"] and reg["removed"] == []
+    assert np.array_equal(salida, e)
+    # Rechaza 1 de 3: la quita.
+    salida, reg = verifica_v3(e, {11: 0.1, 12: 0.9, 13: 0.9}, 0.3, areas)
+    assert not reg["abstains"] and reg["removed"] == [11]
+    assert not (salida == 11).any() and (salida == 12).sum() == 2
+
+
+def test_el_verificador_v3_no_juzga_los_fragmentos_pequenos():
+    from analysis_agents.identidad import verifica_v3
+
+    e = np.array([0, 11, 12, 13, 14, 15])
+    p = {11: 0.1, 12: 0.9, 13: 0.9, 14: 0.9, 15: 0.1}
+    salida, reg = verifica_v3(e, p, 0.3, {11: 10.0, 12: 90.0, 13: 90.0, 14: 90.0, 15: 39.0},
+                              area_minima=39.0)
+    assert reg["too_small"] == [11] and reg["removed"] == [15]
+    assert (salida == 11).sum() == 1 and not (salida == 15).any()

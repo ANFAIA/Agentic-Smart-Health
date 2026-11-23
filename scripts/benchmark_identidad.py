@@ -8,6 +8,12 @@
     uv run python scripts/benchmark_identidad.py evalua --modelo …/pieza.pt   # UNA vez
 
     # verificador v2 (§6.12): solo E1, con `--version 2` en puntua, elige, evalua y clinico
+    # área de cada corona en las arcadas de entrenamiento de Teeth3DS+ (§6.13), sin GPU
+    uv run python scripts/benchmark_identidad.py areas
+    # y el umbral premolar/primer molar sobre las instancias de C2 en esas arcadas (§6.14)
+    uv run python scripts/benchmark_identidad.py areas --c2
+    # verificador v3 (§6.13): el mismo modelo y las puntuaciones de la v2, otra regla
+    uv run python scripts/benchmark_identidad.py elige --version 3 --modelo …/pieza-v2.pt
     $G scripts/benchmark_identidad.py puntua --version 2 --split dev-privado --modelo …/pieza-v2.pt
 
 **Los conjuntos** (§6.11 de `docs/research/segmentacion-fdi-escaner.md`):
@@ -24,8 +30,10 @@ de `caso_completo.py`. `c2` recalcula, solo para esas 3, la log-probabilidad de 
 necesita (p₁), y comprueba que las etiquetas salen idénticas a las cacheadas.
 
 **La versión 2** (§6.12) recorta cada instancia desde su componente principal, guarda en
-`pieza-v2/` y solo elige y evalúa E1. La reserva nueva se evalúa una vez en total, sea con
-la versión que sea: `evalua` se niega si ya existe cualquier resumen de ella.
+`pieza-v2/` y solo elige y evalúa E1. **La versión 3** (§6.13) usa ese mismo modelo y esas
+mismas puntuaciones, sin `puntua` propio, y cambia solo la regla: `verifica_v3`. La reserva
+nueva se evalúa una vez en total, sea con la versión que sea: `evalua` se niega si ya existe
+cualquier resumen de ella.
 
 Los recortes de cada pieza se ponen en la pose de la referencia más confiada, que es la pose
 de Teeth3DS+ con la que se entrenó el modelo de pieza. El orden desde la línea media se mide
@@ -53,6 +61,7 @@ from analysis_agents.identidad import (  # noqa: E402
     MARGEN_RECORTE_MM,
     PESOS_C2,
     TAUS,
+    areas_de_instancia,
     componente_principal,
     distancia_con_signo,
     instancias,
@@ -60,6 +69,7 @@ from analysis_agents.identidad import (  # noqa: E402
     recorte,
     renumera,
     verifica,
+    verifica_v3,
 )
 from analysis_agents.margen_metricas import (  # noqa: E402
     CORONA_MINIMA_CONSERVADA,
@@ -99,16 +109,17 @@ def ruta_c2(split: str, paciente: str, arcada: str) -> Path:
 
 
 def ruta_pieza(split: str, paciente: str, arcada: str, version: int = 1) -> Path:
-    return SALIDA / ("pieza-v2" if version == 2 else "pieza") / split / f"{paciente}_{arcada}.npz"
+    # La versión 3 reutiliza las puntuaciones de la 2: solo cambia la regla.
+    return SALIDA / ("pieza-v2" if version >= 2 else "pieza") / split / f"{paciente}_{arcada}.npz"
 
 
 def ruta_eleccion(version: int) -> Path:
-    return SALIDA / ("eleccion-v2.json" if version == 2 else "eleccion.json")
+    return SALIDA / (f"eleccion-v{version}.json" if version >= 2 else "eleccion.json")
 
 
 def recorte_de_instancia(pos, nrm, vs, arbol, rng, version: int):  # type: ignore[no-untyped-def]
-    """El recorte que ve el modelo de pieza; en la versión 2, desde la componente principal."""
-    if version == 2:
+    """El recorte que ve el modelo de pieza; desde la versión 2, desde la componente principal."""
+    if version >= 2:
         vs = componente_principal(pos, vs)
     idx, d = distancia_con_signo(pos, vs, MARGEN_RECORTE_MM, arbol)
     return recorte(pos, nrm, idx, d, rng)
@@ -249,11 +260,22 @@ def puntua_recortes(modelo, recortes, dev: str, lote: int = 16):  # type: ignore
 
 # ── Variantes y métricas (CPU) ──────────────────────────────────────────────────
 
-def variantes(R, pos, centro, marco, p_diente, p2, p1, tau=None, w=None):  # type: ignore[no-untyped-def]
-    """`{nombre: etiquetas}`: R, E1 con cada τ, E2 con cada w y, si se dan, E1+E2."""
+def variantes(R, pos, centro, marco, p_diente, p2, p1, tau=None, w=None,  # type: ignore[no-untyped-def]
+              version=1, areas=None, registro=None):
+    """`{nombre: etiquetas}`: R, E1 con cada τ, E2 con cada w y, si se dan, E1+E2.
+
+    En la versión 3, E1 es `verifica_v3` con las `areas` de cada instancia, y lo que decide
+    en cada τ se deja en `registro`.
+    """
     salida = {"R": R}
     for t in TAUS:
-        salida[f"E1_{t}"] = verifica(R, p_diente, t)[0]
+        if version == 3:
+            salida[f"E1_{t}"], reg = verifica_v3(R, p_diente, t, areas)
+            if registro is not None:
+                registro[str(t)] = {"abstains": reg["abstains"],
+                                    "too_small": len(reg["too_small"])}
+        else:
+            salida[f"E1_{t}"] = verifica(R, p_diente, t)[0]
     for peso in PESOS_C2:
         salida[f"E2_{peso}"] = renumera(R, pos, centro, marco, p2, p1, peso)[0]
     if tau is not None and w is not None:
@@ -287,9 +309,13 @@ def evalua_arcada(trabajo: tuple[str, str, str, float | None, float | None, bool
     p_diente = {int(c): float(v) for c, v in zip(s["codigos"], s["p_diente"], strict=True)}
     p2 = {int(c): v for c, v in zip(s["codigos"], s["p2"], strict=True)}
     R = z["R"].astype(np.int64)
-    vs = variantes(R, pos, z["centro"], z["marco"], p_diente, p2, p1, tau, w)
+    v3: dict[str, Any] = {}
+    vs = variantes(R, pos, z["centro"], z["marco"], p_diente, p2, p1, tau, w, version,
+                   areas_de_instancia(pos, tri, R) if version == 3 else None, v3)
     fila: dict[str, Any] = {"patient": paciente, "jaw": arcada,
                             "variants": {k: metricas(v, experto) for k, v in vs.items()}}
+    if version == 3:
+        fila["v3"] = v3
     if con_contacto:
         fila["contact_p50_mm"] = {
             k: [c["p50_mm"] for c in separacion_interproximal(pos, tri, vs[k], experto)
@@ -392,9 +418,11 @@ def elige(args: argparse.Namespace) -> int:
         c = criterios_e1(filas, f"E1_{t}")
         c["V5_dev"] = criterio_dev(filas_dev, f"E1_{t}", fantasmas=True)
         c["all_pass"] = _todas(c)
+        if args.version == 3:
+            c["v3"] = {"dev-privado": resumen_v3(filas, t), "dev": resumen_v3(filas_dev, t)}
         e1[str(t)] = c
     e2 = {}
-    # §6.12: la versión 2 solo es el verificador; E2 no se vuelve a evaluar.
+    # §6.12 y §6.13: desde la versión 2 solo es el verificador; E2 no se vuelve a evaluar.
     for w in (PESOS_C2 if args.version == 1 else ()):
         c = criterios_e2(filas, f"E2_{w}")
         c["N5_dev"] = criterio_dev(filas_dev, f"E2_{w}", fantasmas=False)
@@ -418,13 +446,20 @@ def elige(args: argparse.Namespace) -> int:
     return 0
 
 
+def resumen_v3(filas: list[dict], tau: float) -> dict[str, int]:
+    """Lo que decidió `verifica_v3` en un conjunto: informativo, no es criterio (§6.13)."""
+    return {"arches_abstained": sum(f["v3"][str(tau)]["abstains"] for f in filas),
+            "instances_too_small": sum(f["v3"][str(tau)]["too_small"] for f in filas)}
+
+
 def si(x: bool) -> str:
     return "cumple" if x else "**NO cumple**"
 
 
 def informe_eleccion(s: dict) -> str:
-    v2 = s.get("version", 1) == 2
-    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)" if v2 else "")
+    v2 = {2: " · verificador v2 (§6.12)", 3: " · verificador v3 (§6.13)"}.get(
+        s.get("version", 1), "")
+    lineas = ["# Identidad por pieza" + v2
               + " · elección en `dev-privado` (y `dev` para V5/N5)", "",
               "| E1 τ | Fantasmas R → E1 | Ausentes | Coronas dañadas | Correctas | V5 dev "
               "| Todo |", "|---|---|---|---|---|---|---|"]
@@ -451,6 +486,13 @@ def informe_eleccion(s: dict) -> str:
             f"({si(c['N4_tooth_fdi']['pass'])}) "
             f"| {c['N5_dev']['correct_R']} → {c['N5_dev']['correct']} ({si(c['N5_dev']['pass'])}) "
             f"| {si(c['all_pass'])} |")
+    if s.get("version", 1) == 3:
+        lineas += ["", "Informativo, no es criterio: arcadas en las que se abstiene e instancias "
+                   "que no juzga por tamaño.", "", "| τ | `dev-privado` | `dev` |", "|---|---|---|"]
+        for t, c in s["E1"].items():
+            a, b = c["v3"]["dev-privado"], c["v3"]["dev"]
+            lineas.append(f"| {t} | {a['arches_abstained']} · {a['instances_too_small']} "
+                          f"| {b['arches_abstained']} · {b['instances_too_small']} |")
     ch = s["chosen"]
     lineas += ["", f"**Elegidos:** τ = {ch['tau']}, w = {ch['w']}. `None` = ninguno cumple; "
                "ese componente se cierra como negativo sin tocar la reserva.", ""]
@@ -460,7 +502,7 @@ def informe_eleccion(s: dict) -> str:
 # ── evalua: la reserva nueva, UNA vez ───────────────────────────────────────────
 
 def evalua(args: argparse.Namespace) -> int:
-    destino = SALIDA / ("resumen-reserva-2-v2.json" if args.version == 2
+    destino = SALIDA / (f"resumen-reserva-2-v{args.version}.json" if args.version >= 2
                         else "resumen-reserva-2.json")
     hechos = sorted(SALIDA.glob("resumen-reserva-2*.json"))
     if hechos:
@@ -484,6 +526,8 @@ def evalua(args: argparse.Namespace) -> int:
         c = criterios_e1(filas, f"E1_{tau}")
         c["V5_dev"] = eleccion["E1"][str(tau)]["V5_dev"]
         c["all_pass"] = _todas(c)
+        if args.version == 3:
+            c["v3"] = resumen_v3(filas, tau)
         salida["E1"] = c
     if w is not None:
         c = criterios_e2(filas, f"E2_{w}")
@@ -511,8 +555,9 @@ def evalua(args: argparse.Namespace) -> int:
 
 
 def informe_reserva(s: dict) -> str:
-    lineas = ["# Identidad por pieza" + (" · verificador v2 (§6.12)"
-                                      if s.get("version", 1) == 2 else "")
+    lineas = ["# Identidad por pieza"
+              + {2: " · verificador v2 (§6.12)", 3: " · verificador v3 (§6.13)"}.get(
+                  s.get("version", 1), "")
               + " · `reserva-2`, evaluada una vez", "",
               f"{s['arches']} arcadas de {s['patients']} pacientes. τ = {s['chosen']['tau']}, "
               f"w = {s['chosen']['w']}, elegidos en `dev-privado`.", ""]
@@ -529,6 +574,9 @@ def informe_reserva(s: dict) -> str:
                    f"{si(c['V4_correct']['pass'])} |",
                    f"| V5 en `dev` | | | {si(c['V5_dev']['pass'])} |", "",
                    f"**E1: {'cumple todos' if c['all_pass'] else 'NO cumple todos'}.**", ""]
+        if "v3" in c:
+            lineas += [f"Se abstiene en {c['v3']['arches_abstained']} arcadas y deja sin juzgar "
+                       f"{c['v3']['instances_too_small']} instancias por tamaño.", ""]
     if "E2" in s:
         c = s["E2"]
         lineas += ["| E2 | R | E2 | |", "|---|---:|---:|---|",
@@ -618,7 +666,10 @@ def clinico(args: argparse.Namespace) -> int:
                                     "position_model": int(np.argmax(p2[c])) + 1,
                                     "position_c2": int(np.argmax(p1[c])) + 1}
                                     for c in cods}}
-    if tau is not None:
+    if tau is not None and args.version == 3:
+        columnas["E1"], registro["E1_v3"] = verifica_v3(
+            R, p_diente, tau, areas_de_instancia(V, F, R))
+    elif tau is not None:
         columnas["E1"], registro["E1_removed"] = verifica(R, p_diente, tau)
     if w is not None:
         columnas["E2"], registro["E2"] = renumera(R, V, origen[0], origen[1], p2, p1, w)
@@ -633,6 +684,108 @@ def clinico(args: argparse.Namespace) -> int:
     (args.salida / f"identidad_{args.arcada}.json").write_text(
         json.dumps(registro, indent=2) + "\n")
     print(json.dumps({k: v for k, v in registro.items() if k != "run_record"}, indent=1))
+    return 0
+
+
+# ── areas: el tamaño de las coronas en entrenamiento (§6.13) ────────────────────
+
+def _areas_de(par: tuple[str, str]) -> dict[str, float]:
+    pos, tri, experto = bm.carga_arcada(*par)
+    return {str(c): a for c, a in areas_de_instancia(pos, tri, experto).items()}
+
+
+def _areas_c2_de(par: tuple[str, str]) -> dict[str, list[float]]:
+    """Áreas de las instancias de C2 bien numeradas en una arcada de entrenamiento,
+    con la limpieza actual, por posición."""
+    minado = ep.MINADO / f"{par[0]}_{par[1]}.npz"
+    if not minado.is_file():
+        return {}
+    pos, tri, experto = bm.carga_arcada(*par)
+    c2 = bm.limpieza_actual(pos, np.load(minado)["et"].astype(np.int64))
+    ide = identidad_de_piezas(c2, experto)
+    a = areas_de_instancia(pos, tri, c2)
+    salida: dict[str, list[float]] = {}
+    for cod, e in ide["per_label"].items():
+        if e["status"] == "correct":
+            salida.setdefault(str(int(cod) % 10), []).append(a[int(cod)])
+    return salida
+
+
+def umbral_de_separacion(bajos: list[float], altos: list[float]) -> tuple[float, int]:
+    """El área `t` que menos instancias clasifica mal, y cuántas: es molar lo que mide `≥ t`,
+    así que un `bajo` falla si llega a `t` y un `alto` si no. Si empatan, el primer óptimo,
+    a medio camino entre ese valor observado y el anterior."""
+    b, a = np.sort(bajos), np.sort(altos)
+    candidatos = np.unique(np.concatenate([b, a]))
+    errores = (len(b) - np.searchsorted(b, candidatos, side="left")
+               + np.searchsorted(a, candidatos, side="left"))
+    k = int(np.argmin(errores))
+    t = (candidatos[k - 1] + candidatos[k]) / 2 if k > 0 else candidatos[k]
+    return float(t), int(errores[k])
+
+
+def areas(args: argparse.Namespace) -> int:
+    """La mediana del área de cada corona del experto en las arcadas de entrenamiento.
+
+    Solo los pacientes de Teeth3DS+ de la partición `train`: los de OSF que también entran en
+    el entrenamiento están en npz sin caras, y el área necesita las caras. No mira `dev`,
+    `eval` ni ninguna reserva.
+    """
+    pares = [(p, a) for p in bm.particion(bm.pacientes())["train"] for a in bm.ARCADAS]
+    if args.limite:
+        pares = pares[: args.limite]
+    if args.c2:
+        return areas_c2(args, pares)
+    por_codigo: dict[str, list[float]] = {}
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        for k, fila in enumerate(grupo.map(_areas_de, pares, chunksize=4), 1):
+            for c, a in fila.items():
+                por_codigo.setdefault(c, []).append(a)
+            if k % 100 == 0:
+                print(f"  [{k}/{len(pares)}]", flush=True)
+    resumen = {c: {"n": len(v), "p50_mm2": float(np.median(v)),
+                   "p05_mm2": float(np.percentile(v, 5))}
+               for c, v in sorted(por_codigo.items(), key=lambda x: int(x[0]))}
+    incisivos = por_codigo.get("31", []) + por_codigo.get("41", [])
+    salida = {"set": "Teeth3DS+ train (sin OSF)", "arches": len(pares), "by_code": resumen,
+              "lower_central_incisor_p50_mm2": float(np.median(incisivos)),
+              "run_record": bs.registro(sys.argv)}
+    (SALIDA / "areas-entrenamiento.json").write_text(json.dumps(salida, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in salida.items() if k not in ("run_record",)}, indent=1))
+    return 0
+
+
+def areas_c2(args: argparse.Namespace, pares: list[tuple[str, str]]) -> int:
+    """§6.14: el área que separa un premolar (4, 5) de un primer molar (6), por arcada,
+    sobre las instancias de C2 bien numeradas en las arcadas de entrenamiento minadas.
+
+    Son las instancias de C2 y no las coronas del experto porque C2 desborda sobre la encía y
+    eso infla el área: el umbral tiene que estar en la escala que se va a medir.
+    """
+    por: dict[str, dict[str, list[float]]] = {a: {} for a in bm.ARCADAS}
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        for k, ((_, arcada), fila) in enumerate(
+                zip(pares, grupo.map(_areas_c2_de, pares, chunksize=4), strict=True), 1):
+            for posicion, v in fila.items():
+                por[arcada].setdefault(posicion, []).extend(v)
+            if k % 100 == 0:
+                print(f"  [{k}/{len(pares)}]", flush=True)
+    salida: dict[str, Any] = {"set": "Teeth3DS+ train (sin OSF), instancias de C2 bien "
+                              "numeradas con la limpieza actual", "arches": len(pares)}
+    for arcada, d in por.items():
+        premolares = d.get("4", []) + d.get("5", [])
+        molares = d.get("6", [])
+        t, errores = umbral_de_separacion(premolares, molares)
+        salida[arcada] = {
+            "by_position": {q: {"n": len(v), "p05_mm2": float(np.percentile(v, 5)),
+                                "p50_mm2": float(np.median(v)),
+                                "p95_mm2": float(np.percentile(v, 95))}
+                            for q, v in sorted(d.items())},
+            "premolar_vs_first_molar_mm2": t, "misclassified": errores,
+            "of": len(premolares) + len(molares)}
+    salida["run_record"] = bs.registro(sys.argv)
+    (SALIDA / "areas-c2-entrenamiento.json").write_text(json.dumps(salida, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in salida.items() if k != "run_record"}, indent=1))
     return 0
 
 
@@ -656,15 +809,20 @@ def main() -> int:
     cl.add_argument("--arcada", choices=("upper", "lower"), required=True)
     cl.add_argument("--modelo", type=Path, required=True)
     cl.add_argument("--salida", type=Path, required=True)
-    cl.add_argument("--version", type=int, choices=(1, 2), default=1)
+    cl.add_argument("--version", type=int, choices=(1, 2, 3), default=1)
     for nombre in ("elige", "evalua"):
         s = ordenes.add_parser(nombre)
         s.add_argument("--modelo", type=Path, required=True)
         s.add_argument("--trabajos", type=int, default=6)
-        s.add_argument("--version", type=int, choices=(1, 2), default=1)
+        s.add_argument("--version", type=int, choices=(1, 2, 3), default=1)
+    ar = ordenes.add_parser("areas")
+    ar.add_argument("--trabajos", type=int, default=6)
+    ar.add_argument("--limite", type=int)
+    ar.add_argument("--c2", action="store_true",
+                    help="instancias de C2 y umbral premolar/primer molar (§6.14)")
     args = ap.parse_args()
     return {"c2": c2, "puntua": puntua, "elige": elige, "evalua": evalua,
-            "clinico": clinico}[args.orden](args)
+            "clinico": clinico, "areas": areas}[args.orden](args)
 
 
 if __name__ == "__main__":
