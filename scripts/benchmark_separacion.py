@@ -493,6 +493,7 @@ def reserva_2_gastada() -> Path | None:
     """El cerrojo común de `reserva-2`: el primer resultado escrito por cualquiera de los
     dos benchmarks que la evalúan. Mientras exista, ninguno vuelve a evaluarla."""
     hechos = sorted([*SALIDA.glob("testigo-reserva-2*.json"),
+                     *SALIDA.glob("margen-reserva-2*.json"),
                      *RESULTADO_RESERVA_2_IDENTIDAD.glob("resumen-reserva-2*.json")])
     return hechos[0] if hechos else None
 
@@ -611,6 +612,148 @@ def testigo(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── §6.17: `ancla_al_pliegue` sobre C2, fijado antes de escribir este código ─────────────
+#
+# Las variantes y los criterios A1-A6 son los de `benchmark_margen.py`, sin tocar. La base
+# `M1` es C2 votado + limpieza actual. Se elige en `dev` y en la reserva gastada con A3 a la
+# mitad de su límite; `reserva-2` se evalúa UNA vez con la elegida y los límites completos,
+# y en esa misma pasada se miden C2 y D contra B con K1-K6.
+
+VARIANTES_MARGEN = ("M5", "M7", "M8", "M9")
+HOLGURA_MARGEN = bm.HOLGURA_DEV
+
+
+def evalua_arcada_margen(trabajo: tuple[str, str, str, dict[str, str]]) -> dict:
+    split, paciente, arcada, shas = trabajo
+    pos, tri, experto = carga(split, paciente, arcada)
+    z = np.load(ruta(shas["C2"], split, paciente, arcada))
+    votada, _ = _etiquetas(z, bp.referencias())
+    m1 = bm.limpieza_actual(pos, votada)
+    etiquetas = {"M1": m1}
+    for v in VARIANTES_MARGEN:
+        etiquetas[v] = np.asarray(bm.REFINAMIENTOS[v][1](pos, tri, m1), dtype=np.int64)
+    for e, (_, origen) in bm.SOBRE_EXPERTO.items():
+        if origen in VARIANTES_MARGEN:
+            metodo = bm.REFINAMIENTOS[origen][1]
+            etiquetas[e] = np.asarray(metodo(pos, tri, experto), dtype=np.int64)
+    fila: dict = {"patient": paciente, "jaw": arcada,
+                  "methods": {k: metricas_de_arcada(pos, tri, v, experto)
+                              for k, v in etiquetas.items()}}
+    if "B" in shas:  # solo en `reserva-2`: C2 y D contra B, K1-K6
+        fila["vs_B"] = {m: evalua_arcada((split, paciente, arcada,
+                                          {"B": shas["B"], "C": shas[m]}))["models"]
+                        for m in ("C2", "D")}
+    return fila
+
+
+def con_holgura(c: dict, holgura: float = HOLGURA_MARGEN) -> bool:
+    """A1-A6 con A3 a `holgura` de su límite, como en §6.7."""
+    if not c:
+        return False
+    a3 = c["A3_overtrim"]
+    resto = all(v["pass"] for k, v in c.items() if k.startswith("A") and k != "A3_overtrim")
+    return bool(resto and a3["false_gum_rise"] <= holgura * bm.SUBIDA_FALSA_ENCIA
+                and a3["newly_under_retained_fraction"] <= holgura * bm.PIEZAS_DANADAS)
+
+
+def elige_margen(dev: dict, reserva: dict) -> dict:
+    """`dev`, `reserva`: la salida de `margen` en cada conjunto. Regla de §6.17."""
+    pasan = [v for v in VARIANTES_MARGEN
+             if dev["variants"][v]["slack_pass"] and reserva["variants"][v]["slack_pass"]]
+    orden = sorted(pasan, key=lambda v: (reserva["variants"][v]["false_tooth"],
+                                         reserva["variants"][v]["newly_under_retained"]))
+    return {"passing": pasan, "chosen": orden[0] if orden else None}
+
+
+def informe_6_17(salida: dict) -> str:
+    si = lambda ok: "cumple" if ok else "**no**"  # noqa: E731
+    lineas = [f"# §6.17 · `ancla_al_pliegue` sobre C2 · `{salida['split']}`", "",
+              f"Base `M1` (C2 + limpieza): encía marcada diente {salida['base_false_tooth']:.3f}.",
+              "", "| Variante | Encía como diente | Subida falsa encía | Dañadas | A1 | A2 | A3 "
+              "| A4 | A5 | A6 | Con holgura |", "|---|---:|---:|---:|---|---|---|---|---|---|---|"]
+    for v, d in salida["variants"].items():
+        c = d["criteria"]
+        a = [si(c[k]["pass"]) for k in ("A1_margin", "A2_agreement", "A3_overtrim",
+                                        "A4_labelled_fraction", "A5_width",
+                                        "A6_truth_untouched")]
+        lineas.append(f"| {v} | {d['false_tooth']:.3f} | "
+                      f"{c['A3_overtrim']['false_gum_rise'] * 100:+.2f} pt | "
+                      f"{d['newly_under_retained']} de {c['A3_overtrim']['teeth']} | "
+                      + " | ".join(a) + f" | {si(d['slack_pass'])} |")
+    if "vs_B" in salida:
+        lineas += ["", "K1-K6 contra B: " + ", ".join(
+            f"{m} {'cumple' if k['criteria']['all_pass'] else 'no cumple'}"
+            for m, k in salida["vs_B"].items())]
+    if "chosen" in salida:
+        lineas += ["", f"**Elegida para `reserva-2`:** {salida['chosen'] or 'ninguna'}."]
+    if "confirmed" in salida:
+        lineas += ["", f"**{salida['candidate']} en `reserva-2`, A1-A6 con límites completos: "
+                   f"{'cumple' if salida['confirmed'] else 'NO cumple'}.**"]
+    return "\n".join(lineas + [""])
+
+
+def margen(args: argparse.Namespace) -> int:
+    shas = {"C2": sha_de(args.c2)}
+    destino = SALIDA / f"margen-{args.split}.json"
+    eleccion = None
+    if args.split == "reserva-2":
+        gastada = reserva_2_gastada()
+        if gastada:
+            print(f"⚠ `reserva-2` ya se evaluó ({gastada}). Se evalúa UNA vez.", file=sys.stderr)
+            return 3
+        previos = {}
+        for previo in ("dev", "reserva"):
+            r = SALIDA / f"margen-{previo}.json"
+            if not r.is_file():
+                raise SystemExit(f"⚠ falta {r}: la variante se elige antes en `dev` y en la "
+                                 "reserva gastada.")
+            previos[previo] = json.loads(r.read_text())
+            if previos[previo]["checkpoints"]["C2"] != shas["C2"]:
+                raise SystemExit(f"⚠ {r} se midió con otro C2; no sigo.")
+        eleccion = elige_margen(previos["dev"], previos["reserva"])
+        if eleccion["chosen"] is None:
+            raise SystemExit("⚠ ninguna variante pasó en `dev` y la reserva: no se toca.")
+        if args.base is None or args.d is None:
+            raise SystemExit("⚠ en `reserva-2` se miden también B y D: pasa --base y --d.")
+        shas.update({"B": sha_de(args.base), "D": sha_de(args.d)})
+    pares = arcadas(args.split, args.limite)
+    faltan = [(p, a, x) for p, a in pares for x in shas.values()
+              if not ruta(x, args.split, p, a).is_file()]
+    if faltan:
+        print(f"Faltan {len(faltan)} predicciones; ejecuta `predice`.", file=sys.stderr)
+        return 2
+    rec = registro(sys.argv)
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        filas = list(grupo.map(evalua_arcada_margen,
+                               [(args.split, p, a, shas) for p, a in pares]))
+    variantes = {}
+    for v in VARIANTES_MARGEN:
+        c = bm.criterios(filas, v)
+        variantes[v] = {
+            "criteria": c, "slack_pass": con_holgura(c),
+            "false_tooth": float(np.mean([f["methods"][v]["false_tooth_rate"] for f in filas])),
+            "newly_under_retained": c["A3_overtrim"]["newly_under_retained"]}
+    salida: dict[str, Any] = {
+        "section": "6.17", "split": args.split, "arches": len(filas), "checkpoints": shas,
+        "base_false_tooth": float(np.mean([f["methods"]["M1"]["false_tooth_rate"]
+                                           for f in filas])),
+        "variants": variantes, "run_record": rec,
+        "scope": "Teeth3DS+ only; not the project's clinical cases",
+    }
+    if eleccion is not None:
+        salida.update(eleccion)
+        salida["candidate"] = eleccion["chosen"]
+        salida["confirmed"] = bool(variantes[eleccion["chosen"]]["criteria"]["all_pass"])
+        salida["vs_B"] = {m: criterios([{**f, "models": f["vs_B"][m]} for f in filas])
+                          for m in ("C2", "D")}
+    if args.limite:
+        destino = destino.with_name(destino.stem + f"-limite{args.limite}.json")
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_17(salida))
+    print(informe_6_17(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -641,6 +784,14 @@ def main() -> int:
     te.add_argument("--trabajos", type=int, default=6)
     te.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     te.set_defaults(funcion=testigo)
+    ma = ordenes.add_parser("margen", help="§6.17: ancla_al_pliegue sobre C2")
+    ma.add_argument("--split", choices=("dev", "reserva", "reserva-2"), required=True)
+    ma.add_argument("--c2", type=Path, required=True)
+    ma.add_argument("--base", type=Path, help="B; solo en reserva-2")
+    ma.add_argument("--d", type=Path, help="D; solo en reserva-2")
+    ma.add_argument("--trabajos", type=int, default=6)
+    ma.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
+    ma.set_defaults(funcion=margen)
     # `reserva-2` se predice aquí y se evalúa una vez en total: con `testigo` (§6.16) o con
     # `benchmark_identidad.py evalua` (§6.11), lo que llegue antes. Ver `reserva_2_gastada`.
     for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2")),

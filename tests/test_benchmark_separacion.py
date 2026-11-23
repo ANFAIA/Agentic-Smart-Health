@@ -95,3 +95,38 @@ def test_el_cerrojo_de_reserva_2_es_comun_a_los_dos_benchmarks(tmp_path, monkeyp
     assert bs.reserva_2_gastada() is None
     (tmp_path / "id" / "resumen-reserva-2-v3.json").write_text("{}")
     assert bs.reserva_2_gastada() == tmp_path / "id" / "resumen-reserva-2-v3.json"
+
+
+def _a(pasa_resto: bool = True, subida: float = 0.0, danadas: float = 0.0) -> dict:
+    c = {k: {"pass": pasa_resto} for k in ("A1_margin", "A2_agreement", "A4_labelled_fraction",
+                                           "A5_width", "A6_truth_untouched")}
+    c["A3_overtrim"] = {"pass": True, "false_gum_rise": subida,
+                        "newly_under_retained_fraction": danadas}
+    return c
+
+
+def test_la_holgura_de_6_17_es_la_mitad_de_a3_y_exige_el_resto():
+    assert bs.con_holgura(_a(subida=0.005, danadas=0.005))
+    assert not bs.con_holgura(_a(subida=0.0051))
+    assert not bs.con_holgura(_a(danadas=0.0051))
+    assert not bs.con_holgura(_a(pasa_resto=False))
+    assert not bs.con_holgura({})
+
+
+def test_6_17_elige_la_que_pasa_en_los_dos_con_menos_encia_como_diente():
+    def salida(pasan: set[str], falso: dict[str, float]) -> dict:
+        return {"variants": {v: {"slack_pass": v in pasan, "false_tooth": falso.get(v, 0.5),
+                                 "newly_under_retained": 0} for v in bs.VARIANTES_MARGEN}}
+    dev = salida({"M5", "M7", "M8"}, {})
+    reserva = salida({"M5", "M7", "M9"}, {"M5": 0.20, "M7": 0.15, "M9": 0.10})
+    e = bs.elige_margen(dev, reserva)
+    assert e["passing"] == ["M5", "M7"] and e["chosen"] == "M7"
+    assert bs.elige_margen(salida(set(), {}), reserva)["chosen"] is None
+
+
+def test_el_cerrojo_de_reserva_2_tambien_lo_cierra_el_margen(tmp_path, monkeypatch):
+    monkeypatch.setattr(bs, "SALIDA", tmp_path)
+    monkeypatch.setattr(bs, "RESULTADO_RESERVA_2_IDENTIDAD", tmp_path / "nada")
+    assert bs.reserva_2_gastada() is None
+    (tmp_path / "margen-reserva-2.json").write_text("{}")
+    assert bs.reserva_2_gastada() is not None
