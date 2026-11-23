@@ -72,3 +72,26 @@ def test_la_lectura_de_6_15_solo_atribuye_lo_que_supera_el_ruido_de_semilla():
     assert t["correct"]["data_exceeds_noise"]
     # La rotura de corona se cuenta contra B, que vale 0 por definición.
     assert t["newly_under_retained"]["B"] == 0.0 and t["newly_under_retained"]["data_effect"] == 12
+
+
+def test_r2_de_6_16_tolera_el_ruido_de_semilla_y_ni_un_paso_mas():
+    ruido = {"contact_p50_mm": 0.01, "bleeding_teeth": 20, "ghosts": 13, "false_tooth": 0.011,
+             "false_gum": 0.001, "correct": 6, "tooth_fdi": 0.001}
+    c2 = _aceptacion(0.17, 1531, 10)
+    dentro = _aceptacion(0.18, 1525, 2)                 # contacto +0,01 y −6 correctas: justo
+    fuera = _aceptacion(0.17, 1524, 2)                  # −7 correctas: una de más
+    r = bs.lee_6_16({"C2": c2, "D": c2, "CT": dentro}, ruido)
+    assert r["R2"] and r["R1"]
+    r = bs.lee_6_16({"C2": c2, "D": c2, "CT": fuera}, ruido)
+    assert not r["R2"] and not r["R2_figures"]["correct"]["pass"]
+    assert r["R2_figures"]["contact_p50_mm"]["pass"]
+
+
+def test_el_cerrojo_de_reserva_2_es_comun_a_los_dos_benchmarks(tmp_path, monkeypatch):
+    monkeypatch.setattr(bs, "SALIDA", tmp_path / "sep")
+    monkeypatch.setattr(bs, "RESULTADO_RESERVA_2_IDENTIDAD", tmp_path / "id")
+    (tmp_path / "sep").mkdir()
+    (tmp_path / "id").mkdir()
+    assert bs.reserva_2_gastada() is None
+    (tmp_path / "id" / "resumen-reserva-2-v3.json").write_text("{}")
+    assert bs.reserva_2_gastada() == tmp_path / "id" / "resumen-reserva-2-v3.json"

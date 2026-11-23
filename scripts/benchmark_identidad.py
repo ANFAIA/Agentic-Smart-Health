@@ -504,7 +504,8 @@ def informe_eleccion(s: dict) -> str:
 def evalua(args: argparse.Namespace) -> int:
     destino = SALIDA / (f"resumen-reserva-2-v{args.version}.json" if args.version >= 2
                         else "resumen-reserva-2.json")
-    hechos = sorted(SALIDA.glob("resumen-reserva-2*.json"))
+    gastada = bs.reserva_2_gastada()  # el cerrojo es común con `benchmark_separacion testigo`
+    hechos = [gastada] if gastada else []
     if hechos:
         print(f"⚠ La reserva nueva ya se evaluó ({hechos[0]}). Se evalúa UNA vez, con la "
               "versión que sea.", file=sys.stderr)

@@ -46,6 +46,7 @@ from analysis_agents.margen_metricas import (  # noqa: E402
     metricas_de_arcada,
 )
 from analysis_agents.pose_votada import vota  # noqa: E402
+from analysis_agents.testigo import rescata_coronas  # noqa: E402
 
 
 def _carga(nombre: str, ruta: Path):  # type: ignore[no-untyped-def]
@@ -474,6 +475,142 @@ def compara(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── §6.16: C2 con D de testigo, fijado antes de escribir este código ─────────────────────
+#
+# CT = C2 con `rescata_coronas` usando D de testigo, sobre las etiquetas votadas sin limpiar
+# (y lo mismo en la pose nativa, para K4); luego la limpieza de siempre. R1: CT cumple K1-K6
+# contra B. R2: CT no empeora a C2 más que el ruido de semilla de §6.15 en ese conjunto.
+# Si CT cumple R1 y R2 en `dev` y en la reserva gastada, `reserva-2` se evalúa UNA vez con
+# B, C2, D y CT juntos, y se lee con el ruido de la reserva gastada (también 120 arcadas).
+
+# cifra de §6.15 → +1 si más es peor, −1 si más es mejor
+SENTIDO_R2 = {"contact_p50_mm": 1, "bleeding_teeth": 1, "ghosts": 1, "false_tooth": 1,
+              "false_gum": 1, "correct": -1, "tooth_fdi": -1}
+RESULTADO_RESERVA_2_IDENTIDAD = RAIZ / "data/processed/identidad"
+
+
+def reserva_2_gastada() -> Path | None:
+    """El cerrojo común de `reserva-2`: el primer resultado escrito por cualquiera de los
+    dos benchmarks que la evalúan. Mientras exista, ninguno vuelve a evaluarla."""
+    hechos = sorted([*SALIDA.glob("testigo-reserva-2*.json"),
+                     *RESULTADO_RESERVA_2_IDENTIDAD.glob("resumen-reserva-2*.json")])
+    return hechos[0] if hechos else None
+
+
+def evalua_arcada_testigo(trabajo: tuple[str, str, str, dict[str, str]]) -> dict:
+    split, paciente, arcada, shas = trabajo
+    pos, tri, experto = carga(split, paciente, arcada)
+    refs = bp.referencias()
+    crudas = {}
+    for papel, sha in shas.items():
+        z = np.load(ruta(sha, split, paciente, arcada))
+        crudas[papel] = _etiquetas(z, refs)
+        razon = float(z["razon"])
+    votada, rescates = rescata_coronas(pos, tri, crudas["C2"][0], crudas["D"][0])
+    nativa, _ = rescata_coronas(pos, tri, crudas["C2"][1], crudas["D"][1])
+    crudas["CT"] = (votada, nativa)
+    fila: dict = {"patient": paciente, "jaw": arcada, "orientation_ratio": razon,
+                  "rescued": rescates, "models": {}}
+    for papel, (v, n) in crudas.items():
+        v, n = bm.limpieza_actual(pos, v), bm.limpieza_actual(pos, n)
+        fila["models"][papel] = {"voted": metricas_de_arcada(pos, tri, v, experto),
+                                 "native_identity": identidad_de_piezas(n, experto)}
+    return fila
+
+
+def _valores(aceptacion: dict) -> dict[str, float]:
+    return {c: float(aceptacion["criteria"][k][clave_c])
+            for c, (k, _, clave_c) in CIFRAS_6_15.items()}
+
+
+def lee_6_16(aceptacion: dict[str, dict], ruido: dict[str, float]) -> dict[str, Any]:
+    """`aceptacion`: `{"C2": …, "D": …, "CT": …}` contra B. R1 y R2 tal como se fijaron."""
+    v = {m: _valores(a) for m, a in aceptacion.items()}
+    r2 = {}
+    for cifra, sentido in SENTIDO_R2.items():
+        tope = v["C2"][cifra] + sentido * ruido[cifra]
+        r2[cifra] = {"C2": v["C2"][cifra], "CT": v["CT"][cifra], "noise": ruido[cifra],
+                     "pass": bool(sentido * (v["CT"][cifra] - tope) <= 0)}
+    return {"values": v, "R1": bool(aceptacion["CT"]["criteria"]["all_pass"]),
+            "R2": all(x["pass"] for x in r2.values()), "R2_figures": r2,
+            "all_pass_vs_B": {m: bool(a["criteria"]["all_pass"]) for m, a in aceptacion.items()}}
+
+
+def informe_6_16(salida: dict) -> str:
+    def f(x: float) -> str:
+        return f"{x:.3f}" if abs(x) < 10 and x != int(x) else f"{x:.0f}"
+    v, r2 = salida["values"], salida["R2_figures"]
+    lineas = [f"# §6.16 · C2 con D de testigo · `{salida['split']}`", "",
+              f"Piezas rescatadas: {salida['rescued_teeth']} en {salida['rescued_arches']} "
+              f"de {salida['arches']} arcadas.", "",
+              "| Cifra | B | D | C2 | CT | Ruido | R2 |", "|---|---:|---:|---:|---:|---:|---|"]
+    for cifra in CIFRAS_6_15:
+        b = salida["B"][cifra]
+        r = r2.get(cifra)
+        marca = "—" if r is None else ("cumple" if r["pass"] else "**NO cumple**")
+        ruido = "" if r is None else f(r["noise"])
+        lineas.append(f"| {cifra} | {f(b)} | {f(v['D'][cifra])} | {f(v['C2'][cifra])} "
+                      f"| {f(v['CT'][cifra])} | {ruido} | {marca} |")
+    lineas += ["", "K1-K6 contra B: " + ", ".join(
+        f"{m} {'cumple' if ok else 'no cumple'}" for m, ok in salida["all_pass_vs_B"].items()),
+        "", f"**R1 {'cumple' if salida['R1'] else 'NO cumple'} · "
+        f"R2 {'cumple' if salida['R2'] else 'NO cumple'}.** Nada de esto cambia el defecto.", ""]
+    return "\n".join(lineas)
+
+
+def testigo(args: argparse.Namespace) -> int:
+    shas = {"B": sha_de(args.base), "C2": sha_de(args.c2), "D": sha_de(args.d)}
+    destino = SALIDA / f"testigo-{args.split}.json"
+    if args.split == "reserva-2":
+        gastada = reserva_2_gastada()
+        if gastada:
+            print(f"⚠ `reserva-2` ya se evaluó ({gastada}). Se evalúa UNA vez.", file=sys.stderr)
+            return 3
+        for previo in ("dev", "reserva"):
+            r = SALIDA / f"testigo-{previo}.json"
+            if not r.is_file():
+                raise SystemExit(f"⚠ falta {r}: CT se mide antes en `dev` y en la reserva gastada.")
+            datos = json.loads(r.read_text())
+            if datos["checkpoints"] != shas:
+                raise SystemExit(f"⚠ {r} se midió con otros checkpoints; no sigo.")
+            if not (datos["R1"] and datos["R2"]):
+                raise SystemExit(f"⚠ CT no cumple R1 y R2 en {previo}: `reserva-2` no se toca.")
+    pares = arcadas(args.split, args.limite)
+    faltan = [(p, a, x) for p, a in pares for x in shas.values()
+              if not ruta(x, args.split, p, a).is_file()]
+    if faltan:
+        print(f"Faltan {len(faltan)} predicciones; ejecuta `predice`.", file=sys.stderr)
+        return 2
+    rec = registro(sys.argv)
+    trabajos = [(args.split, p, a, shas) for p, a in pares]
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        filas = list(grupo.map(evalua_arcada_testigo, trabajos))
+    aceptacion = {m: criterios([{**f, "models": {"B": f["models"]["B"], "C": f["models"][m]}}
+                                for f in filas]) for m in ("C2", "D", "CT")}
+    fuente = "reserva" if args.split == "reserva-2" else args.split
+    comparacion = json.loads((SALIDA / f"comparacion-6-15-{fuente}.json").read_text())
+    ruido = {c: float(t["seed_noise"]) for c, t in comparacion["figures"].items()}
+    b = {c: (float(aceptacion["C2"]["criteria"][k][clave_b]) if clave_b else 0.0)
+         for c, (k, clave_b, _) in CIFRAS_6_15.items()}
+    salida: dict[str, Any] = {
+        "section": "6.16", "split": args.split, "arches": len(filas), "checkpoints": shas,
+        "noise_from": f"comparacion-6-15-{fuente}.json", "B": b,
+        **lee_6_16(aceptacion, ruido),
+        "rescued_teeth": sum(len(f["rescued"]) for f in filas),
+        "rescued_arches": sum(1 for f in filas if f["rescued"]),
+        "acceptance": aceptacion, "run_record": rec,
+        "per_arch": [{"patient": f["patient"], "jaw": f["jaw"], "rescued": f["rescued"]}
+                     for f in filas],
+        "scope": "Teeth3DS+ only; not the project's clinical cases",
+    }
+    if args.limite:
+        destino = destino.with_name(destino.stem + f"-limite{args.limite}.json")
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_16(salida))
+    print(informe_6_16(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -496,7 +633,16 @@ def main() -> int:
     co.add_argument("--c2-s1", type=Path, required=True)
     co.add_argument("--d", type=Path, required=True)
     co.set_defaults(funcion=compara)
-    # `reserva-2` solo se predice aquí: la evalúa `benchmark_identidad.py`, una vez (§6.11).
+    te = ordenes.add_parser("testigo", help="§6.16: C2 con D de testigo para las coronas")
+    te.add_argument("--split", choices=("dev", "reserva", "reserva-2"), required=True)
+    te.add_argument("--base", type=Path, default=bm.CHECKPOINT)
+    te.add_argument("--c2", type=Path, required=True)
+    te.add_argument("--d", type=Path, required=True)
+    te.add_argument("--trabajos", type=int, default=6)
+    te.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
+    te.set_defaults(funcion=testigo)
+    # `reserva-2` se predice aquí y se evalúa una vez en total: con `testigo` (§6.16) o con
+    # `benchmark_identidad.py evalua` (§6.11), lo que llegue antes. Ver `reserva_2_gastada`.
     for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2")),
                                  (e, evalua, ("dev", "reserva"))):
         sub.add_argument("--split", choices=splits, required=True)
