@@ -1494,6 +1494,37 @@ y podría juzgarla de forma independiente, pero solo si esa elección se escribe
 desviación declarada antes de evaluarla. Esa decisión es del responsable del proyecto y no se
 toma aquí. El defecto de `--margen-gingival` sigue en `no`.
 
+### 6.18 · `M8` a `reserva-2`: desviación declarada de §6.17 (2026-11-23)
+
+**Qué se cambia y quién lo decide.** El responsable del proyecto decide llevar `M8` a
+`reserva-2` aunque no pasó la holgura de §6.17. Es una desviación de la regla fijada y se
+escribe antes de evaluar nada en esa reserva.
+
+**Por qué es razonable, y por qué no deja de ser una desviación.**
+
+- La holgura se puso en §6.7, porque con B `dev` salió 1,5 veces más optimista que `eval`.
+  Aquí la elección ya mira `dev-privado`, que son 120 arcadas que nunca se habían usado para
+  el margen.
+- `M8` cumple A1-A6 con los límites completos en los dos conjuntos.
+- La desviación es elegir la variante después de ver los números, con una regla más laxa
+  que la fijada. La prueba sigue siendo honesta porque `reserva-2` no la ha visto nadie.
+- Las otras tres variantes no se llevan, y no se ajusta ninguna constante.
+
+**Qué se evalúa, una vez.** `M8` frente a `M1` (C2 + limpieza) en las 120 arcadas de
+`reserva-2`, con A1-A6 y sus límites completos: subida de falsa encía ≤ +1,0 punto y ≤ 1 %
+de piezas dañadas. En la misma pasada se predicen B y D y se miden C2 y D contra B con K1-K6,
+como fijó §6.17.
+
+**Qué se dirá.**
+
+- **Si `M8` cumple**, se dirá que el método está confirmado sobre C2 en datos no vistos de
+  Teeth3DS+, elegido con una regla relajada después de ver `dev` y `dev-privado`.
+- **Si no cumple**, se dirá qué criterio falla y el método sigue apagado.
+
+En los dos casos se publican K1-K6 de C2 y D. `reserva-2` queda gastada para todo, y el
+cerrojo común impide repetir la evaluación. Nada cambia el defecto de `--margen-gingival` ni
+del modelo por sí solo.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
