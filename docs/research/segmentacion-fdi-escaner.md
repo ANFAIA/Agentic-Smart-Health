@@ -1708,6 +1708,87 @@ las demás se reutiliza la misma predicción, porque es idéntica por construcci
 - Si sale bien, no cambia ningún defecto por sí solo: encender `O` en `segmentar_fdi.py` y
   `M10` en `--margen-gingival` lo decide el responsable del proyecto.
 
+**Resultado (ejecutado desde `54bf7fc`, árbol limpio).** **Se confirman los dos
+candidatos**, con la puerta superada en los tres conjuntos gastados.
+
+Antes de la evaluación hubo tres incidencias:
+
+- La primera versión de `predice --orienta-borde` sobrescribía el registro de la predicción
+  normal de C2 en `dev`. Se corrigió en `c2a1e91`, y junto a los `.npz` queda una nota con
+  lo que se sabe del registro perdido.
+- O4 leía K5 de un sitio que no era. Saltó al ensayarlo con B sobre `reserva-2`, que ya
+  estaba gastada, y se corrigió en `54bf7fc` antes de tocar `reserva-3`.
+- El equipo se apagó con 116 de 120 arcadas de C2 predichas. Se reanudó desde el mismo
+  commit, sin repetir lo ya hecho.
+
+| Puerta, en conjuntos gastados | `dev` | `dev-privado` | `reserva-2` |
+|---|---:|---:|---:|
+| Arcadas que el borde da la vuelta (y estaban al revés) | 0 (0) | 2 (2) | 4 (4) |
+| `O`: bien numeradas, C2 → con `O` | 508 → 508 | 1.531 → 1.551 | 1.546 → 1.580 |
+| `O`: coronas que pierde | 0 | 0 | 0 |
+| `M10`: subida de falsa encía | +0,17 pt | +0,32 pt | +0,31 pt |
+| `M10`: coronas dañadas | 0 de 520 | 2 de 1.657 | 1 de 1.672 |
+| `M10`: A1-A6 con holgura | cumple | cumple | cumple |
+
+**`reserva-3`: 120 arcadas y 1.648 piezas, evaluadas una vez.**
+
+**`O`: confirmada.** Cumple O1-O4.
+
+- Hay una sola arcada al revés, una inferior. El borde le da la vuelta a esa y a ninguna
+  más.
+- Su razón de dispersión era 0,61, por debajo de todas las invertidas vistas antes
+  (0,78-1,00). Un umbral sobre la razón no la habría encontrado; la regla del borde sí.
+- Con `O`, C2 numera bien 1.556 piezas frente a 1.543 y no pierde ninguna corona.
+- Frente a B, las coronas que pasan a menos del 85 % bajan de 3 a 2, con un límite de 8.
+
+El beneficio aquí es pequeño porque en esta reserva solo había una arcada al revés. Lo que
+confirma `reserva-3` es que la regla acierta el sentido en las 120, sin dar la vuelta a
+ninguna bien orientada, y que donde actúa recupera la arcada.
+
+| C2 frente a B en `reserva-3` | B | C2 | C2 con `O` |
+|---|---:|---:|---:|
+| Contacto interproximal, K1 | 0,89 mm | 0,18 mm | 0,18 mm |
+| Piezas que sangran a la vecina, K2 | 736 | 103 | 101 |
+| Bien numeradas de 1.648, K3 | 1.392 | 1.543 | 1.556 |
+| Fantasmas, K3 | 100 | 95 | 93 |
+| Coronas que pasan a < 85 %, K5 (límite 8) | — | 3 | 2 |
+| Acuerdo FDI por pieza, K6 | 0,762 | 0,900 | 0,907 |
+| K1-K6 | — | cumple | cumple |
+
+- **C2 cumple K1-K6 frente a B por primera vez en una reserva**, incluso sin `O`. La
+  cláusula de daño de K5, que suspendió con 10 y con 28 coronas, aquí la pasa con 3.
+- Junto con el diagnóstico de §6.18, esto apunta a que aquel daño venía sobre todo de
+  arcadas concretas, y no de un defecto repartido del modelo.
+
+**`M10`: confirmada.** Cumple A1-A6 con los límites completos y también con la holgura de
+§6.17, frente a `M1` (C2 + limpieza, sin `O`).
+
+| `reserva-3` | `M1` | `M8` | `M10` |
+|---|---:|---:|---:|
+| Encía marcada como diente | 0,258 | — | 0,154 |
+| Subida de falsa encía (A3) | — | +0,90 pt | +0,20 pt |
+| Coronas dañadas (A3) | — | 1 de 1.648 | 1 de 1.648 |
+| Arcadas con mejor margen (A1) | — | 95 % | 95 % |
+| Mediana del margen hasta el experto (A1) | — | 0,72 mm más cerca | 0,68 mm más cerca |
+| Acuerdo sobre etiquetas del experto (A6) | — | 0,9994 | 0,9994 |
+
+- Devolver la fila del pliegue reduce a menos de una cuarta parte la falsa encía que añade
+  `M8` (+0,90 → +0,20 puntos).
+- A cambio, el margen queda 0,04 mm menos cerca del experto. Sigue quitando el 40 % de la
+  encía marcada como diente, y no daña más coronas.
+- Es la primera variante de `ancla_al_pliegue` que pasa la holgura en datos no vistos.
+
+**Lo que esto cambia, y lo que no.**
+
+- `reserva-3` queda gastada, y quedan 120 pacientes del `private-testing-set` sin elegir.
+- `segmentar_fdi.py` sigue usando `marco_canonico`, y `--margen-gingival` sigue en `no`.
+  Encender `O` y `M10` lo decide el responsable del proyecto. La evidencia para decidirlo
+  es esta: las dos están confirmadas en datos no vistos de Teeth3DS+, con criterios fijados
+  antes.
+- Nada de esto es validación clínica. Los casos clínicos no se han usado, y un escáner
+  distinto puede cerrar o cortar la malla de otra forma. Sin borde abierto, `O` deja el
+  marco como estaba.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
