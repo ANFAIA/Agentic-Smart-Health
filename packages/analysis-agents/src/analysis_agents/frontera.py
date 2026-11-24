@@ -244,6 +244,10 @@ COBERTURA_MINIMA_PLIEGUE = 0.75
 # Ver §6.8-6.9 de `docs/research/segmentacion-fdi-escaner.md`.
 FUERZA_PLIEGUE_EXPERTO = 1.34
 COBERTURA_PLIEGUE_EXPERTO = 0.65
+# El listón de `M8` y `M10`, más exigente que el del método: con él `ancla_al_pliegue` daña
+# muchas menos coronas sobre C2 (§6.17-6.19). Es el que usan `--margen-gingival aplica` y
+# `propone` desde el 2026-11-24, seguido de `devuelve_anillos` (§6.20 de la nota).
+FUERZA_PLIEGUE_PRUDENTE = 2.0
 
 # Cuadrantes FDI del maxilar, permanentes y temporales.
 _CUADRANTES_MAXILAR = {1, 2, 5, 6}

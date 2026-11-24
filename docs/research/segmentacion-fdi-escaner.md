@@ -1839,6 +1839,35 @@ Se informa además, sin que decida nada, cómo queda `M1` con C2 frente al model
 
 Es un caso y una anotadora. Pase o no pase, no es validación clínica.
 
+**Resultado (2026-11-24), una ejecución desde `ce45fa0`: `M10` cumple P1 y P2.**
+
+| Contra la línea a ciegas | `M1` (C2 con `O`) | `M5` | `M10` |
+|---|---:|---:|---:|
+| Margen → línea, mediana del caso (P1) | 0,88 mm | 0,10 mm | **0,14 mm** (límite 0,20) |
+| Margen → línea, p95 | 4,59 mm | 0,42 mm | 3,90 mm |
+| Encía marcada diente | 24,4 % | 8,3 % | 11,3 % |
+| Corona marcada encía | 0,1 % | 2,3 % | 0,6 % |
+| Piezas con < 85 % de corona (P2) | 0 de 14 | 0 de 14 | **0 de 14** |
+
+Contra la segunda anotación sale lo mismo: 0,98, 0,11 y 0,19 mm.
+
+- **Así que `aplica` y `propone` pasan a `M10`.** El valor por defecto sigue en `no`, y
+  `aplica-experto` no cambia.
+- **El precio queda escrito.** `M10` declina el 17, el 24 y el 25, que `M5` movía. Esas tres
+  piezas se quedan como las deja C2 (0,32, 0,90 y 0,33 mm de la línea), y de ahí sale el p95.
+- **Lo que gana.** En las piezas que mueve, `M10` queda algo por fuera de la línea, con un
+  signo medio de +0,02 a +0,45 mm. `M5` queda algo por dentro, de −0,46 a +0,05 mm. La
+  corona marcada encía baja del 2,3 % al 0,6 %.
+  Es el mismo intercambio que en Teeth3DS+: menos recorte a cambio de algo más de desborde.
+- **C2 cambia más el caso que cualquier método.** Sin refinar, C2 deja el margen a 0,88 mm de
+  la línea. En §6.7, con el modelo de agosto, estaba a 3,53 mm. El listón de `M8`, que entonces
+  declinaba cinco piezas que `M5` movía, aquí declina tres.
+- C2 numera las 14 piezas anotadas como la periodoncista y añade un 18 que nadie ha anotado,
+  como ya hacía. La razón de orientación es 0,62, y el borde no da la vuelta al marco.
+
+Las anotaciones de este caso quedan gastadas también para `M10`. Es un caso y una anotadora:
+no es validación clínica.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
