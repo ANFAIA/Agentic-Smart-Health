@@ -1244,6 +1244,52 @@ pre-registro en la historia. Si se corta, relanzarlo sigue donde iba. Se ejecuta
 El código de lectura se versionó junto con el script, después de este pre-registro y antes
 de entrenar nada.
 
+**Resultado (2026-11-23).** Todo salió de `882ccb2` con el árbol limpio; el `run_record` de
+cada resumen lo dice. C2-s1 es `fdi-8k-rot15-s1.pt` (sha256 `2a400b682a32`, 43 min) y D es
+`fdi-2k-rot15-s0.pt` (`d0d953b9310d`, 10 min). Cada época tardó la mitad que al entrenar C2,
+y todo junto llevó menos de 5 h de GPU contra unas 10 previstas. En `dev-privado`,
+1.657 piezas:
+
+| Cifra | B | D (2.048) | C2 | C2-s1 | Ruido de semilla | Datos (B → D) | Resolución (D → C2) |
+|---|---:|---:|---:|---:|---:|---|---|
+| Contacto, mediana (mm) | 0,857 | 0,316 | 0,174 | 0,164 | 0,010 | −0,541 | −0,142 |
+| Piezas que sangran | 789 | 140 | 103 | 83 | 20 | −649 | −37 |
+| Bien numeradas | 1.365 | 1.531 | 1.531 | 1.537 | 6 | +166 | 0, no se distingue |
+| Fantasmas | 106 | 88 | 95 | 82 | 13 | −18 | +7, no se distingue |
+| Techo − voto (pose) | 42 | 9 | 14 | 12 | 2 | −33 | +5 |
+| Encía como diente | 0,358 | 0,319 | 0,255 | 0,244 | 0,011 | −0,040 | −0,064 |
+| Diente como encía | 0,065 | 0,019 | 0,019 | 0,019 | 0,001 | −0,046 | 0, no se distingue |
+| Coronas nuevas < 85 % | 0 | 1 | 10 | 8 | 2 | +1, no se distingue | +9 |
+| FDI por vértice | 0,738 | 0,881 | 0,888 | 0,889 | 0,001 | +0,143 | +0,006 |
+
+En `dev`, 520 piezas, el patrón es el mismo: contacto 0,754 → 0,301 por los datos y
+→ 0,160 por la resolución, bien numeradas 498 → 509 por los datos y −1, dentro del ruido,
+por la resolución. Tablas completas en `comparacion-6-15-dev.md` y `-reserva.md`, sin
+versionar.
+
+Lo que dice, con la regla de arriba:
+
+- **La numeración es cosa de los datos.** Las 166 piezas más que C2 numera bien frente a B
+  están ya en D. Los trozos de 8.192 puntos no añaden ninguna, ni en `dev`.
+- **La separación es de los dos.** Los datos quitan la mayor parte del contacto, de 0,86 a
+  0,32 mm. La resolución lo lleva a 0,17 mm y quita otras 37 piezas que sangran y 6 puntos de
+  encía marcada como diente. Las dos partes salen mayores que el ruido.
+- **El daño de K5 viene de la resolución.** D deja 1 corona nueva por debajo del 85 % y C2 deja
+  10, con un ruido de 2. La resolución también abre 5 piezas más de hueco de pose. Lo que §6.10
+  midió como único fallo de C2 es el precio de sus trozos grandes, no de los datos.
+- **La semilla mueve poco las cifras de separación y bastante el veredicto.** C2-s1 queda a 6
+  piezas bien numeradas y a 0,01 mm de contacto de C2. Pero deja 8 coronas dañadas, justo en el
+  límite, y cumple K1-K6 en `dev-privado`, donde C2 no cumple. En `dev` le pasa al revés: falla
+  K4 por un hueco de pose de 0 → 1. Que C2 falle K5 por 10 contra 8 está a la distancia de una
+  semilla. Con dos semillas el ruido está mal estimado; la cifra de 2 coronas puede ser mayor.
+- **D cumple K1-K6 en los dos conjuntos**, solo como información: `dev-privado` ya estaba
+  gastado y D no era candidato. Es el modelo que numera como C2 sin el daño en las coronas, a
+  cambio de un contacto de 0,32 mm en vez de 0,17.
+
+**Nada de esto cambia el defecto**, como se fijó. C2 sigue siéndolo. Si D o C2-s1 lo
+sustituyen lo decide el responsable del proyecto; para que contara como resultado haría falta
+la reserva nueva, que sigue sin tocar.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
