@@ -949,8 +949,9 @@ def seccion_6_19(args: argparse.Namespace) -> int:
             return 3
         if args.base is None:
             raise SystemExit("⚠ en `reserva-3` se mide también B (O4): pasa --base.")
-        shas["B"] = sha_de(args.base)
         puerta = puerta_6_19(shas["C2"])
+    if args.base is not None:  # en un gastado, solo para ejercitar O4 antes de reserva-3
+        shas["B"] = sha_de(args.base)
     pares = arcadas(args.split, args.limite)
     faltan = [(p, a, x) for p, a in pares for x in shas.values()
               if not ruta(x, args.split, p, a).is_file()]
@@ -1027,7 +1028,7 @@ def main() -> int:
     s19 = ordenes.add_parser("seccion-6-19", help="§6.19: arcada al revés y fila del pliegue")
     s19.add_argument("--split", choices=SPLITS_6_19, required=True)
     s19.add_argument("--c2", type=Path, required=True)
-    s19.add_argument("--base", type=Path, help="B; solo en reserva-3 (O4)")
+    s19.add_argument("--base", type=Path, help="B, para O4; obligatorio en reserva-3")
     s19.add_argument("--trabajos", type=int, default=6)
     s19.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     s19.set_defaults(funcion=seccion_6_19)
