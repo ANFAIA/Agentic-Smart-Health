@@ -158,7 +158,10 @@ def predice(args: argparse.Namespace) -> int:
     pares = arcadas(args.split, args.limite)
     i, n = (int(x) for x in args.parte.split("/"))
     pares = pares[i::n]  # la agregación es de un núcleo: se reparte en procesos
-    destino_registro = SALIDA / sha[:12] / args.split / "run-record.json"
+    # ⚠️ Con --orienta-borde el registro va al directorio del borde: escribirlo en el de
+    # siempre sobrescribió el de la predicción normal de `dev` el 2026-11-24.
+    carpeta = f"{sha[:12]}-borde" if args.orienta_borde else sha[:12]
+    destino_registro = SALIDA / carpeta / args.split / "run-record.json"
     destino_registro.parent.mkdir(parents=True, exist_ok=True)
     destino_registro.write_text(json.dumps(registro(sys.argv), indent=2) + "\n")
     for k, (paciente, arcada) in enumerate(pares, 1):
