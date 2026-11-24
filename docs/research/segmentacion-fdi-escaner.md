@@ -1290,6 +1290,326 @@ Lo que dice, con la regla de arriba:
 sustituyen lo decide el responsable del proyecto; para que contara como resultado haría falta
 la reserva nueva, que sigue sin tocar.
 
+### 6.16 · C2 con D de testigo para no perder coronas (pre-registro, 2026-11-23)
+
+**De dónde sale.** El único criterio que C2 falla frente a B es el daño de K5, y §6.15 lo
+atribuye a la resolución: D deja 1 corona nueva por debajo del 85 % y C2 deja 10. Se miraron
+esas coronas en `dev-privado`, con las predicciones ya guardadas:
+
+- **Las 10 salen ya dañadas de la red**, antes de las cinco limpiezas, que no empeoran
+  ninguna.
+- **6 de las 10 están en una sola arcada superior**, en la que C2 pierde 11, 12, 13, 21, 22 y
+  26. B y D están bien ahí.
+- **Cambian con la semilla.** C2-s1 comparte con C2 solo 2 de sus 8 coronas dañadas, y en esa
+  misma arcada pierde 23, 24, 25 y 26.
+- **D no falla en ninguna de las 10**, y su única corona dañada no lo está en C2.
+- **La confianza no lo detecta.** En esa arcada C2 está más seguro que B.
+
+Son fallos raros y gruesos que no coinciden entre modelos, así que se propone combinar dos
+modelos, sin reentrenar. Como el diagnóstico se hizo en `dev-privado`, ese conjunto ya no
+mide esta regla. Para eso está la reserva nueva.
+
+**La regla, `rescata_coronas`.** Entran las etiquetas votadas de C2 y de D, antes de limpiar,
+con las mismas 18 referencias y el mismo voto entre 3.
+
+1. Se recorre cada pieza de D. Las de menos de 39,0 mm² se dejan
+   (`identidad.AREA_MINIMA_MM2`, la mitad de la corona mediana de un incisivo central inferior
+   en arcadas de entrenamiento). Es el mismo suelo de §6.13 y está para no importar
+   fantasmas pequeños de D.
+2. Si C2 marca como diente al menos el 85 % de los vértices de esa pieza
+   (`CORONA_MINIMA_CONSERVADA`, el umbral de K5), no se hace nada.
+3. Si no, **solo los vértices de esa pieza que C2 marca como encía** reciben un código.
+   - Es el código de C2 más frecuente dentro de la pieza, si al menos la mitad de los vértices
+     de C2 con ese código caen dentro de ella; es decir, si ese código es el trozo que C2
+     conserva de este diente.
+   - Si no, es el código de D.
+
+   Los vértices que C2 llama diente no se tocan nunca. La regla no puede quitar diente, solo
+   añadirlo.
+4. Después, las cinco limpiezas de siempre, una vez.
+
+En la pose nativa se aplica lo mismo, para que K4 esté definido. El coste es ejecutar D además
+de C2, alrededor de un 60 % más de tiempo de predicción. Se llama CT a C2 con la regla.
+
+**Qué puede salir mal, dicho antes.**
+
+- La regla importa el desborde de D sobre la encía donde actúa, y D desborda más que C2
+  (0,319 frente a 0,255).
+- Puede importar un fantasma grande de D.
+- Puede duplicar un código si C2 ya usa en otra pieza el número que trae D.
+
+Las tres cosas las miden K3, K5 y el contacto.
+
+**Criterios, fijados ahora.** CT tiene que cumplir los dos en `dev` y en `dev-privado`.
+
+- **R1.** K1-K6 contra B, con las mismas constantes y el mismo código que en §6.10.
+- **R2.** No empeorar a C2 más que el ruido de semilla medido en §6.15 en ese mismo conjunto:
+  contacto, piezas que sangran, fantasmas, falso diente y falsa encía
+  ≤ C2 + ruido; bien numeradas y FDI por vértice ≥ C2 − ruido. El ruido se lee de
+  `comparacion-6-15-<conjunto>.json`; en `dev`, en ese orden, 0,004 mm, 3, 1, 0,007, 0,000, 1 y 0,002,
+  y en `dev-privado` 0,010 mm, 20, 13, 0,011, 0,001, 6 y 0,001.
+
+**La reserva nueva, una vez.** Si CT cumple R1 y R2 en los dos conjuntos, se evalúa
+`reserva-2` una sola vez: 60 pacientes, 120 arcadas que nadie ha mirado. Se miden B, C2, D y
+CT juntos, y R1 y R2 se leen con el ruido de `dev-privado`, que tiene las mismas 120 arcadas.
+C2 ya está predicho ahí (2026-11-22, sin métricas). B y D se predicen con el mismo script.
+
+Esa evaluación **gasta la reserva para todo**, también para el verificador de identidad de
+§6.11-6.13, que ya no la tenía asignada porque falló antes. Los dos scripts comparten desde
+ahora un único cerrojo. Si CT no cumple en `dev` o en `dev-privado`, se escribe como negativo y
+`reserva-2` no se toca.
+
+**Qué se dirá en cada caso.** Si CT cumple R1 y R2 en `reserva-2`, se dirá que la regla está
+confirmada en datos no vistos. Si no, se dirá qué falla. En los dos casos se publica la
+comparación de C2 y D contra B en `reserva-2`, que responde con datos no vistos a la pregunta
+de §6.15. **Nada cambia el defecto por sí solo**: lo decide el responsable del proyecto.
+
+**Resultado (2026-11-23): negativo.** Se ejecutó desde `9e33e4c` con el árbol limpio, sin GPU,
+con las predicciones de §6.15 ya guardadas. CT no cumple ni R1 ni R2 en ninguno de los dos
+conjuntos, así que **`reserva-2` no se ha tocado**.
+
+| `dev-privado`, 120 arcadas | B | D | C2 | CT | Ruido | R2 |
+|---|---:|---:|---:|---:|---:|---|
+| Contacto, mediana (mm) | 0,857 | 0,316 | 0,174 | 0,174 | 0,010 | cumple |
+| Piezas que sangran | 789 | 140 | 103 | 108 | 20 | cumple |
+| Bien numeradas | 1.365 | 1.531 | 1.531 | 1.523 | 6 | **no cumple** |
+| Fantasmas | 106 | 88 | 95 | 109 | 13 | **no cumple** |
+| Encía como diente | 0,358 | 0,319 | 0,255 | 0,277 | 0,011 | **no cumple** |
+| Diente como encía | 0,065 | 0,019 | 0,019 | 0,010 | 0,001 | cumple |
+| Coronas nuevas < 85 % | 0 | 1 | 10 | 1 | — | — |
+| FDI por vértice | 0,738 | 0,881 | 0,888 | 0,890 | 0,001 | cumple |
+
+En `dev`, CT falla R2 en bien numeradas (508 → 506), fantasmas (13 → 16) y encía como diente
+(0,283 → 0,293). Falla también R1 por K4, con un hueco de pose de 0 a 1. En `dev-privado` falla
+R1 por K3, con 109 fantasmas frente a los 106 de B.
+
+**Lo que hace la regla.**
+
+- **Arregla lo que se buscaba.** Las coronas dañadas pasan de 10 a 1 y la encía marcada como
+  diente baja a la mitad.
+- **Se dispara demasiado.** Actúa en 101 piezas de 57 arcadas, cuando las coronas perdidas
+  eran 10.
+- **El motivo de esas falsas alarmas es la vara de medir.** En 63 de esas 101 piezas, C2 ya
+  conservaba entre el 70 y el 85 % de la pieza de D. Lo que falta no es corona: es el
+  desborde de D sobre la encía, que D tiene mayor que C2. La regla mide "corona perdida"
+  contra la frontera de D, y esa frontera es peor que la de C2. Así trae a cada una unos
+  1.200 vértices de encía, y con ellos fantasmas y algún número cambiado.
+- **Las piezas de verdad perdidas quedan por debajo**, entre el 24 y el 82 % en C2. Solo 18 de
+  los 101 disparos están por debajo del 50 %.
+
+**Lo que no se hace.** Bajar el umbral hasta separar unas de otras sería ajustarlo sobre
+`dev-privado`, el conjunto donde se diagnosticó y que ya ha decidido dos veces sobre esta
+pregunta. Una versión así solo podría confirmarse en `reserva-2`, y debería escribirse antes
+con un umbral que no salga de mirar estas cifras. Queda abierto. C2 sigue siendo el defecto, y
+la comparación de C2 y D en datos no vistos sigue pendiente de que alguien gaste esa reserva.
+
+### 6.17 · El margen con C2: `ancla_al_pliegue` sobre el modelo nuevo (pre-registro, 2026-11-23)
+
+**De dónde sale.** El defecto más grande que le queda a C2 es la encía marcada como diente:
+0,283 de media por arcada en `dev` y 0,255 en `dev-privado`. Pesa mucho más que las 10
+coronas de §6.15-6.16. Hay un método para eso, `ancla_al_pliegue`, con tres intentos:
+
+| Intento | Resultado |
+|---|---|
+| §6.2, `M5` | En `eval` bajó la encía marcada como diente del 45 % al 11 %, pero falló A3 por recortar corona: 13 de 1.065 piezas, contra un límite de 10. |
+| §6.7, `M7` y `M8` | Recortaban menos. No pasaron en `dev` la holgura que se les exigió. |
+| §6.8, `M9` | Dañaba coronas en `dev`. |
+
+Los tres se midieron sobre B, el modelo de agosto. Desde el 2026-11-22 el defecto es C2, que
+parte de un margen mucho más cerca del del experto (2,23 → 0,96 mm de mediana, §6.10).
+**Nadie ha medido el método sobre C2.** La hipótesis es que, con menos encía que quitar,
+recorte menos corona.
+
+**Qué se mide.** Las cuatro variantes ya escritas en `scripts/benchmark_margen.py`, sin tocar
+ni una constante: `M5`, `M7`, `M8` y `M9`. Cada una se aplica después de la limpieza actual,
+como en el pipeline. La base es `M1`: C2 votado entre 3 de 18 referencias, más la limpieza
+actual. Es el pipeline de hoy. Cada variante se aplica también a las etiquetas del experto,
+para A6.
+
+**Dónde.** Con las predicciones de C2 ya guardadas de §6.10, sin GPU. En `dev`, 40 arcadas
+que ni B ni C2 vieron al entrenar, pero en las que se ajustaron las constantes del método en
+§6.2, así que no lo miden de forma independiente. Y en `dev-privado`, 120 arcadas que nunca se
+han usado para el margen.
+
+**Criterios, fijados ahora.** Son los A1-A6 de §6.2, con las mismas constantes y el mismo
+código (`benchmark_margen.criterios`).
+
+1. **Elección.** Pasa una variante que cumpla A1-A6 en `dev` y en `dev-privado` con A3 a la
+   mitad de su límite: subida de falsa encía ≤ 0,5 puntos y piezas dañadas ≤ 0,5 %. Es la
+   misma holgura de §6.7, puesta entonces porque `eval` salió unas 1,5 veces peor que `dev`.
+2. Si pasa más de una, se elige la de menos encía marcada como diente en `dev-privado`. A
+   igualdad, la de menos piezas dañadas.
+3. **Si no pasa ninguna**, se escribe como negativo y `reserva-2` no se toca.
+
+**La reserva nueva, una vez.** Si hay variante elegida, se evalúa `reserva-2` una sola vez,
+con el cerrojo común de §6.16. Ahí la variante tiene que cumplir A1-A6 con los límites
+completos frente a `M1`.
+
+Como la reserva solo se puede gastar una vez, en la misma evaluación se predicen B y D y se
+miden C2 y D contra B con K1-K6. Eso responde también, en datos no vistos, a la pregunta de
+§6.15 de si D o C2.
+
+**Qué se dirá.** Si la variante cumple en `reserva-2`, se dirá que el método está confirmado
+sobre C2 en Teeth3DS+. No es validación clínica, y el defecto de `--margen-gingival` no cambia
+solo: lo decide el responsable del proyecto. Si no cumple, se dirá qué criterio falla.
+`aplica-experto` queda fuera: se eligió sobre el caso clínico, solo vale en el maxilar y no
+tiene una fila en el benchmark.
+
+**Resultado (2026-11-23): negativo con la regla fijada.** Se ejecutó desde `eee3993` con el
+árbol limpio, sin GPU. **Ninguna variante cumple A1-A6 con la holgura en los dos conjuntos,
+así que `reserva-2` no se ha tocado.**
+
+| | `dev`: encía como diente | Subida de falsa encía | Dañadas | `dev-privado`: encía como diente | Subida de falsa encía | Dañadas |
+|---|---:|---:|---:|---:|---:|---:|
+| `M1`, C2 + limpieza | 0,283 | — | — | 0,255 | — | — |
+| `M5` | 0,117 | +1,09 pt | 2 de 520 | 0,088 | +1,52 pt | 8 de 1.657 |
+| `M7`, núcleo 0,4 | 0,135 | +0,85 pt | 0 | 0,103 | +1,23 pt | 1 |
+| `M8`, pliegue ≥ 2,0 | 0,175 | +0,72 pt | 1 | 0,142 | +0,96 pt | 2 |
+| `M9` | 0,108 | +1,24 pt | 4 | 0,067 | +1,79 pt | 12 |
+
+Con los límites completos de A3 (+1,0 pt y 1 % de piezas):
+
+- `M8` cumple A1-A6 en los dos conjuntos.
+- `M7` los cumple en `dev` y en `dev-privado` falla A3 por la subida de falsa encía.
+- `M5` y `M9` fallan A3 en los dos.
+
+La holgura exige +0,5 pt y ninguna llega. En las cuatro, A1, A2, A4, A5 y A6 se cumplen con
+margen. El margen mejora en el 96-99 % de las arcadas de `dev-privado`, con una mediana de
+0,7 a 0,8 mm más cerca del experto, y sobre etiquetas del experto el acuerdo sigue en
+0,998-1,000.
+
+**Lo que cambia frente a B, y lo que no.**
+
+- **La hipótesis se cumple a medias.** Sobre C2 el método casi no rompe coronas: `M7` daña 1
+  de 1.657 y `M8` 2, frente a las 13 de 1.065 de §6.2. Y quita entre la mitad y dos tercios de
+  la encía marcada como diente.
+- **Lo que lo para ahora es la falsa encía media.** El corte deja como encía algo más de un
+  punto de corona por arcada. Es un recorte fino y repartido, no coronas mutiladas.
+- **`dev` vuelve a salir más optimista que `dev-privado`**, entre 1,2 y 1,4 veces en la subida
+  de falsa encía. La holgura estaba puesta justo para eso.
+
+**Lo que no se hace aquí.** Elegir ahora `M8`, que es la única que cumple A1-A6 con los
+límites completos, sería cambiar la regla después de ver los números. `reserva-2` sigue intacta
+y podría juzgarla de forma independiente, pero solo si esa elección se escribe como una
+desviación declarada antes de evaluarla. Esa decisión es del responsable del proyecto y no se
+toma aquí. El defecto de `--margen-gingival` sigue en `no`.
+
+### 6.18 · `M8` a `reserva-2`: desviación declarada de §6.17 (2026-11-23)
+
+**Qué se cambia y quién lo decide.** El responsable del proyecto decide llevar `M8` a
+`reserva-2` aunque no pasó la holgura de §6.17. Es una desviación de la regla fijada y se
+escribe antes de evaluar nada en esa reserva.
+
+**Por qué es razonable, y por qué no deja de ser una desviación.**
+
+- La holgura se puso en §6.7, porque con B `dev` salió 1,5 veces más optimista que `eval`.
+  Aquí la elección ya mira `dev-privado`, que son 120 arcadas que nunca se habían usado para
+  el margen.
+- `M8` cumple A1-A6 con los límites completos en los dos conjuntos.
+- La desviación es elegir la variante después de ver los números, con una regla más laxa
+  que la fijada. La prueba sigue siendo honesta porque `reserva-2` no la ha visto nadie.
+- Las otras tres variantes no se llevan, y no se ajusta ninguna constante.
+
+**Qué se evalúa, una vez.** `M8` frente a `M1` (C2 + limpieza) en las 120 arcadas de
+`reserva-2`, con A1-A6 y sus límites completos: subida de falsa encía ≤ +1,0 punto y ≤ 1 %
+de piezas dañadas. En la misma pasada se predicen B y D y se miden C2 y D contra B con K1-K6,
+como fijó §6.17.
+
+**Qué se dirá.**
+
+- **Si `M8` cumple**, se dirá que el método está confirmado sobre C2 en datos no vistos de
+  Teeth3DS+, elegido con una regla relajada después de ver `dev` y `dev-privado`.
+- **Si no cumple**, se dirá qué criterio falla y el método sigue apagado.
+
+En los dos casos se publican K1-K6 de C2 y D. `reserva-2` queda gastada para todo, y el
+cerrojo común impide repetir la evaluación. Nada cambia el defecto de `--margen-gingival` ni
+del modelo por sí solo.
+
+**Resultado (ejecutado desde `bdb1645`, árbol limpio, 120 arcadas y 1.672 piezas).** **`M8`
+cumple A1-A6 con los límites completos en `reserva-2`.** Así que el método queda confirmado
+sobre C2 en datos no vistos de Teeth3DS+, con una salvedad: la variante se eligió con una
+regla relajada después de ver `dev` y `dev-privado`.
+
+| `M8` frente a `M1` (C2 + limpieza) | `dev` | `dev-privado` | `reserva-2` | Límite completo |
+|---|---:|---:|---:|---:|
+| Encía marcada como diente | 0,283 → 0,175 | 0,255 → 0,142 | 0,252 → 0,140 | — |
+| Subida de falsa encía (A3) | +0,72 pt | +0,96 pt | +0,96 pt | ≤ +1,0 pt |
+| Coronas dañadas (A3) | 1 de 520 | 2 de 1.657 | 1 de 1.672 | ≤ 1 % |
+| Arcadas con mejor margen (A1) | — | — | 93 % | — |
+| Mediana del margen hasta el experto (A1) | — | — | 0,66 mm más cerca | — |
+| Acuerdo sobre etiquetas del experto (A6) | — | — | 1,000 | — |
+
+- **La subida de falsa encía es justo la de `dev-privado`**, +0,96 puntos, y queda a 0,04 del
+  límite. El método cumple, pero sin margen. Con la holgura de §6.17 (+0,5) habría fallado, como
+  en los otros dos conjuntos.
+- **Las coronas no se rompen**: 1 de 1.672 pasa a menos del 85 %.
+- **Las otras tres variantes se midieron en la misma pasada, sin elegirse**, y repiten lo de
+  `dev-privado`. `M5` y `M7` fallan A3 por la subida de falsa encía (+1,41 y +1,16 pt). `M9`
+  falla A3 por la falsa encía (+1,90 pt) y daña 12 coronas.
+
+**C2 y D frente a B en `reserva-2` (K1-K6, informativo).** Ninguno de los dos cumple.
+
+| | B | C2 | D |
+|---|---:|---:|---:|
+| Contacto interproximal, K1 | 0,89 mm | 0,17 mm | 0,32 mm |
+| Piezas que sangran a la vecina, K2 | 835 | 138 | 163 |
+| Bien numeradas de 1.672, K3 | 1.359 | 1.546 | 1.530 |
+| Fantasmas, K3 | 88 | 85 | 76 |
+| Techo nativo − voto, K4 | 12 | 16 · **falla** | 34 · **falla** |
+| Encía como diente, K5 | 0,382 | 0,252 | 0,320 |
+| Coronas que pasan a < 85 %, K5 (límite 8) | — | 28 · **falla** | 24 · **falla** |
+| Acuerdo FDI por pieza, K6 | 0,724 | 0,887 | 0,867 |
+
+- **La ventaja de D en las coronas no se repite.** En `dev-privado` D dañaba 1 corona frente a
+  10 de C2, y en `reserva-2` daña 24 frente a 28. Lo que §6.15 atribuyó a la resolución era, al
+  menos en parte, propio de ese conjunto. D sigue sin ser alternativa a C2: C2 separa y numera
+  mejor, y D tampoco cumple K5.
+- **El daño de C2 se triplica respecto a `dev-privado`**: 28 coronas, el 1,7 % de las piezas,
+  frente al límite de 8. Es la peor cifra de K5 medida con C2. No se ha diagnosticado aquí si se
+  concentra en pocas arcadas, como pasaba en `dev-privado`.
+- **K4 falla en los dos**, cosa que no pasaba en `dev-privado`. El voto se queda más lejos de la
+  pose nativa que con B: 16 piezas con C2 y 34 con D, frente a 12.
+
+**Lo que esto cambia, y lo que no.** `reserva-2` queda gastada para todo. `--margen-gingival`
+sigue en `no` y C2 sigue siendo el modelo por defecto. Ninguna de las dos cosas cambia por sí
+sola. Encender `M8` por defecto es una decisión del responsable del proyecto. Para tomarla
+cuenta con lo siguiente:
+
+- un método confirmado en datos no vistos, elegido con una desviación declarada;
+- una falsa encía al borde del límite;
+- un modelo base que en esos mismos datos daña 28 coronas antes de que actúe el método, y que
+  `M8` no repara.
+
+Ninguna de estas cifras es una validación clínica: todo es Teeth3DS+.
+
+**Diagnóstico posterior: de dónde salen las 28 coronas.** Se hizo pieza a pieza, después de
+gastar `reserva-2`, solo para describir; no se cambia ningún criterio. La mayoría salen de dos
+arcadas superiores que C2 y D pierden casi enteras.
+
+| | C2 | D |
+|---|---:|---:|
+| Coronas dañadas frente a B | 28 en 6 arcadas | 24 en 4 arcadas |
+| En las dos arcadas superiores perdidas | 20 | 22 |
+| Comunes a C2 y D | 21 | 21 |
+| Fuera de las arcadas con 5 o más | 3 | 2 |
+| Ya bajo el 85 % antes de las limpiezas | 28 | 24 |
+
+- **En esas dos arcadas el fallo es de pose, no de corona.** En la pose nativa de Teeth3DS+, C2 y
+  D marcan como diente el 100 % de las piezas del experto. En las 18 poses canónicas marcan entre
+  el 0 y el 24 %, y el voto no puede rescatar lo que pierden todas. B, en esas mismas poses,
+  conserva entre el 83 y el 100 %. Encaja con que K4 falle en los dos modelos nuevos.
+- **La tercera arcada es una inferior de C2** (cuatro premolares y un incisivo), con razón de orientación
+  0,45. Dos de las tres referencias más confiadas de C2 dejan la arcada al 70-72 %, y el voto
+  las sigue. D elige tres al 99 % y no pierde nada allí.
+- **Fuera de esos tres casos, el daño de C2 es de 3 coronas en 1.672**, por debajo de lo que vio
+  `dev-privado`. Todas las pérdidas salen de la red y del voto: las limpiezas no hunden ninguna.
+
+Así que el punto débil de C2 en datos nuevos no es la corona sino la robustez a la pose
+canónica: en algunas arcadas, C2 y D fallan en todas las poses canónicas mientras B aguanta en
+ellas. No se ha medido por qué. Cualquier remedio, por ejemplo volver a la pose nativa cuando todas las
+referencias pierden la arcada, necesitaría un conjunto de evaluación nuevo, porque los tres que
+hay ya se han mirado.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
