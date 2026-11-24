@@ -95,7 +95,7 @@ las figuras embebidas.
 > |---|---:|---|
 > | `public-training-set-1` | 300 | los de `data/raw/teeth3ds/`: 240 entrenaron el modelo FDI, 60 son `dev` y `eval` |
 > | `public-training-set-2` | 300 | entrenamiento del modelo de noviembre, en npz (`data/processed/teeth3ds-osf-npz/`) |
-> | `private-testing-set` | 300 | 60 son la **reserva** ([`teeth3ds-reserva.txt`](teeth3ds-reserva.txt)), gastada el 2026-11-20 y ahora `dev-privado`; otros 60, la **segunda reserva** ([`teeth3ds-reserva-2.txt`](teeth3ds-reserva-2.txt)), bajada el 2026-11-22 y **sin gastar**: §6.11 se paró en `dev-privado`. Las dos van a `data/raw/teeth3ds-osf/` |
+> | `private-testing-set` | 300 | 60 son la **reserva** ([`teeth3ds-reserva.txt`](teeth3ds-reserva.txt)), gastada el 2026-11-20 y ahora `dev-privado`; otros 60, la **segunda reserva** ([`teeth3ds-reserva-2.txt`](teeth3ds-reserva-2.txt)), bajada el 2026-11-22 y gastada el 2026-11-23 en §6.18; otros 60, la **tercera reserva** ([`teeth3ds-reserva-3.txt`](teeth3ds-reserva-3.txt)), fijada el 2026-11-24 antes de bajarla y **sin gastar**. Quedan 120 sin elegir. Las tres van a `data/raw/teeth3ds-osf/` |
 >
 > [`scripts/fetch_teeth3ds_osf.py`](../../scripts/fetch_teeth3ds_osf.py) lee el índice de
 > cada zip por HTTP Range y luego baja los zips **de uno en uno**, extrae lo que hace falta y

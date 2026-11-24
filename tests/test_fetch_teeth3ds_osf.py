@@ -69,6 +69,25 @@ def test_las_dos_reservas_versionadas_son_disjuntas() -> None:
     assert not set(segunda) & set(osf.ids_reserva())
 
 
+def test_la_tercera_reserva_no_repite_ninguna_anterior() -> None:
+    privados = [f"P{k:03d}" for k in range(300)]
+    primera = osf.elige_reserva(privados)
+    segunda = osf.elige_reserva_2(privados, primera)
+    tercera = osf.elige_reserva_3(privados, primera + segunda)
+    assert len(tercera) == osf.PACIENTES_RESERVA == len(set(tercera))
+    assert not set(tercera) & (set(primera) | set(segunda))
+    assert tercera == osf.elige_reserva_3(list(reversed(privados)), segunda + primera)
+    with pytest.raises(ValueError):
+        osf.elige_reserva_3(["A", "B"], ["Z"])
+
+
+def test_las_tres_reservas_versionadas_son_disjuntas() -> None:
+    tercera = osf.ids_reserva_3()
+    assert len(tercera) == osf.PACIENTES_RESERVA == len(set(tercera))
+    assert tercera == sorted(tercera)
+    assert not set(tercera) & (set(osf.ids_reserva()) | set(osf.ids_reserva_2()))
+
+
 def test_la_reserva_no_esta_en_los_datos_locales() -> None:
     """Los 300 locales son el public-training-set-1; la reserva sale del private-testing-set."""
     mallas = _RAIZ / "data/raw/teeth3ds/3D_scans_per_patient_obj_files"
@@ -77,6 +96,7 @@ def test_la_reserva_no_esta_en_los_datos_locales() -> None:
     locales = {d.name for d in mallas.iterdir()}
     assert not set(osf.ids_reserva()) & locales
     assert not set(osf.ids_reserva_2()) & locales
+    assert not set(osf.ids_reserva_3()) & locales
 
 
 def _zip_en_memoria(miembros: dict[str, bytes]) -> zipfile.ZipFile:
