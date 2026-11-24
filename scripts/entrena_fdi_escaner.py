@@ -68,6 +68,7 @@ def arcadas_de_entrenamiento(con_osf: bool) -> list[tuple[str, Path]]:
     particion = bm.particion(bm.pacientes())
     vetados = set(particion["dev"]) | set(particion["eval"])
     vetados |= set(osf.ids_reserva()) | set(osf.ids_reserva_2()) | set(osf.ids_reserva_3())
+    vetados |= set(osf.ids_reserva_4()) | set(osf.ids_reserva_5())
     salida = []
     for p in particion["train"]:
         for a in bm.ARCADAS:
