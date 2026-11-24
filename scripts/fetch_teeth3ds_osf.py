@@ -5,6 +5,8 @@
     uv run python scripts/fetch_teeth3ds_osf.py entrenamiento
     uv run python scripts/fetch_teeth3ds_osf.py reserva-2
     uv run python scripts/fetch_teeth3ds_osf.py reserva-3
+    uv run python scripts/fetch_teeth3ds_osf.py reserva-4
+    uv run python scripts/fetch_teeth3ds_osf.py reserva-5 --evaluacion-final
 
 **Por qué existe.** `fetch_teeth3ds.sh` baja los zips del Google Drive del reto, que son
 300 pacientes: exactamente el `public-training-set-1` de 3DTeethSeg'22. Con ellos se
@@ -20,8 +22,13 @@ pacientes etiquetados. Los otros 600 son el `public-training-set-2` y el
   que la primera dejó. La primera reserva se gastó el 2026-11-20 (§6.10 de
   `segmentacion-fdi-escaner.md`) y pasa a ser desarrollo; esta es la que la sustituye.
 - `reserva-3`: otros 60 del `private-testing-set`, con una tercera semilla, entre los 180
-  que dejaron las dos primeras. La segunda se gastó el 2026-11-23 (§6.18); quedan 120 sin
-  elegir para más adelante.
+  que dejaron las dos primeras. La segunda se gastó el 2026-11-23 (§6.18).
+- `reserva-4`: otros 60, con una cuarta semilla, entre los 120 que dejaron las tres
+  primeras. La tercera se gastó el 2026-11-24 (§6.19). Es la de la siguiente ronda de mejoras.
+- `reserva-5`: los 60 restantes del `private-testing-set`, sin semilla porque no queda
+  dónde elegir. **Es la evaluación final y está cerrada:** no se baja sin
+  `--evaluacion-final`, y no se usa para elegir nada. Con ella se acaba el
+  `private-testing-set`: después no queda ningún paciente de Teeth3DS+ sin ver.
 - `entrenamiento`: los 300 del `public-training-set-2`, convertidos a npz (posiciones,
   normales y etiquetas) para no ocupar 10 GB de OBJ.
 
@@ -91,6 +98,12 @@ LISTA_RESERVA_2 = RAIZ / "docs/research/teeth3ds-reserva-2.txt"
 # ni mirar ninguno de sus pacientes. Sale de los que las dos primeras dejaron.
 SEMILLA_RESERVA_3 = 20261124
 LISTA_RESERVA_3 = RAIZ / "docs/research/teeth3ds-reserva-3.txt"
+
+# ── Cuarta y quinta reservas, fijadas juntas el 2026-11-24, después de gastar la tercera y
+# antes de bajar ni mirar ninguno de sus pacientes. Entre las dos agotan el private-testing-set.
+SEMILLA_RESERVA_4 = 20261125
+LISTA_RESERVA_4 = RAIZ / "docs/research/teeth3ds-reserva-4.txt"
+LISTA_RESERVA_5 = RAIZ / "docs/research/teeth3ds-reserva-5.txt"
 
 DESTINO = RAIZ / "data/raw/teeth3ds-osf"
 MALLAS = DESTINO / "3D_scans_per_patient_obj_files"
@@ -212,6 +225,14 @@ def ids_reserva_2() -> list[str]:
 
 def ids_reserva_3() -> list[str]:
     return ids_de_fichero(LISTA_RESERVA_3)
+
+
+def ids_reserva_4() -> list[str]:
+    return ids_de_fichero(LISTA_RESERVA_4)
+
+
+def ids_reserva_5() -> list[str]:
+    return ids_de_fichero(LISTA_RESERVA_5)
 
 
 def pacientes_de_lista(texto: str) -> list[str]:
@@ -428,11 +449,59 @@ def reserva_3_derivada(solo_lista: bool = False) -> list[str]:
     return elegidos
 
 
+def elige_reservas_4_y_5(privados: list[str], anteriores: list[str]
+                         ) -> tuple[list[str], list[str]]:
+    """La cuarta reserva con su semilla, y la quinta como todo lo que queda después."""
+    if not set(anteriores) <= set(privados):
+        raise ValueError("las reservas anteriores no salen de esta lista de privados")
+    quedan = sorted(set(privados) - set(anteriores))
+    cuarta = elige_reserva(quedan, semilla=SEMILLA_RESERVA_4)
+    quinta = sorted(set(quedan) - set(cuarta))
+    if len(quinta) != PACIENTES_RESERVA:
+        raise ValueError(f"la quinta reserva tendría {len(quinta)} pacientes, no "
+                         f"{PACIENTES_RESERVA}")
+    return cuarta, quinta
+
+
+def reservas_4_y_5_derivadas(solo_lista: bool = False) -> tuple[list[str], list[str]]:
+    """Las dos últimas reservas, derivadas de la lista oficial; coinciden con las versionadas."""
+    cuarta, quinta = elige_reservas_4_y_5(
+        pacientes_de_lista(lista_oficial("private-testing-set")),
+        reserva_derivada() + reserva_2_derivada() + reserva_3_derivada())
+    for ruta, elegidos, cabecera in (
+            (LISTA_RESERVA_4, cuarta,
+             "# Cuarta reserva de Teeth3DS+: 60 pacientes del private-testing-set de\n"
+             "# 3DTeethSeg'22 que no están en ninguna reserva anterior, elegidos por\n"
+             "# scripts/fetch_teeth3ds_osf.py (semilla 20261125). Ver\n"
+             "# docs/research/dataset-teeth3ds.md. Se evalúa sobre ellos UNA vez.\n"),
+            (LISTA_RESERVA_5, quinta,
+             "# Quinta y última reserva de Teeth3DS+: los 60 pacientes del private-testing-set\n"
+             "# de 3DTeethSeg'22 que no están en ninguna otra reserva. CERRADA: solo para la\n"
+             "# evaluación final, no se usa para elegir nada. Ver\n"
+             "# docs/research/dataset-teeth3ds.md.\n")):
+        if solo_lista or not ruta.is_file():
+            ruta.write_text(cabecera + "\n".join(elegidos) + "\n")
+            print(f"→ {ruta} ({len(elegidos)} pacientes)")
+        elif ids_de_fichero(ruta) != elegidos:
+            raise SystemExit(f"⚠ {ruta.name} derivada no coincide con la versionada; no sigo.")
+    return cuarta, quinta
+
+
 def entrenamiento_osf() -> list[str]:
     return pacientes_de_lista(lista_oficial("public-training-set-2"))
 
 
 def baja(args: argparse.Namespace) -> int:
+    if args.orden in ("reserva-4", "reserva-5"):
+        cuarta, quinta = reservas_4_y_5_derivadas(solo_lista=args.solo_lista)
+        if args.solo_lista:
+            return 0
+        if args.orden == "reserva-5" and not args.evaluacion_final:
+            raise SystemExit("⚠ reserva-5 es la evaluación final: se baja solo con "
+                             "--evaluacion-final, cuando haya un candidato pre-registrado.")
+        elegidos = cuarta if args.orden == "reserva-4" else quinta
+        trae(elegidos, [], huellas_de=f"{args.orden}-sha256.json")
+        return 0
     if args.orden == "reserva-3":
         elegidos = reserva_3_derivada(solo_lista=args.solo_lista)
         if not args.solo_lista:
@@ -492,6 +561,14 @@ def main() -> int:
     r3 = ordenes.add_parser("reserva-3")
     r3.add_argument("--solo-lista", action="store_true",
                     help="Escribe la lista versionada y no baja nada.")
+    r4 = ordenes.add_parser("reserva-4")
+    r4.add_argument("--solo-lista", action="store_true",
+                    help="Escribe las listas de reserva-4 y reserva-5 y no baja nada.")
+    r5 = ordenes.add_parser("reserva-5")
+    r5.add_argument("--solo-lista", action="store_true",
+                    help="Escribe las listas de reserva-4 y reserva-5 y no baja nada.")
+    r5.add_argument("--evaluacion-final", action="store_true",
+                    help="Sin esto no se baja: es la reserva cerrada.")
     ordenes.add_parser("entrenamiento")
     ordenes.add_parser("todo", help="Las dos cosas, bajando cada zip una sola vez.")
     args = ap.parse_args()

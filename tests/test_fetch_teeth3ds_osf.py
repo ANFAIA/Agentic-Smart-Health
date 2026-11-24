@@ -88,6 +88,42 @@ def test_las_tres_reservas_versionadas_son_disjuntas() -> None:
     assert not set(tercera) & (set(osf.ids_reserva()) | set(osf.ids_reserva_2()))
 
 
+def test_la_cuarta_y_la_quinta_agotan_lo_que_queda() -> None:
+    privados = [f"P{k:03d}" for k in range(300)]
+    primera = osf.elige_reserva(privados)
+    segunda = osf.elige_reserva_2(privados, primera)
+    tercera = osf.elige_reserva_3(privados, primera + segunda)
+    cuarta, quinta = osf.elige_reservas_4_y_5(privados, primera + segunda + tercera)
+    assert len(cuarta) == len(quinta) == osf.PACIENTES_RESERVA
+    todas = primera + segunda + tercera + cuarta + quinta
+    assert sorted(todas) == privados
+    assert (cuarta, quinta) == osf.elige_reservas_4_y_5(list(reversed(privados)),
+                                                        tercera + segunda + primera)
+    with pytest.raises(ValueError):
+        osf.elige_reservas_4_y_5(["A", "B"], ["Z"])
+    with pytest.raises(ValueError):  # si no quedan exactamente dos reservas, no se inventa
+        osf.elige_reservas_4_y_5(privados, primera + segunda)
+
+
+def test_las_cinco_reservas_versionadas_son_disjuntas() -> None:
+    listas = [osf.ids_reserva(), osf.ids_reserva_2(), osf.ids_reserva_3(),
+              osf.ids_reserva_4(), osf.ids_reserva_5()]
+    for lista in listas:
+        assert len(lista) == osf.PACIENTES_RESERVA == len(set(lista))
+        assert lista == sorted(lista)
+    assert len(set().union(*map(set, listas))) == 5 * osf.PACIENTES_RESERVA
+
+
+def test_la_quinta_no_se_baja_sin_pedirlo(monkeypatch) -> None:
+    import argparse
+
+    monkeypatch.setattr(osf, "reservas_4_y_5_derivadas", lambda solo_lista=False: ([], []))
+    monkeypatch.setattr(osf, "trae", lambda *a, **k: pytest.fail("no debía bajar nada"))
+    with pytest.raises(SystemExit):
+        osf.baja(argparse.Namespace(orden="reserva-5", solo_lista=False,
+                                    evaluacion_final=False))
+
+
 def test_la_reserva_no_esta_en_los_datos_locales() -> None:
     """Los 300 locales son el public-training-set-1; la reserva sale del private-testing-set."""
     mallas = _RAIZ / "data/raw/teeth3ds/3D_scans_per_patient_obj_files"
@@ -97,6 +133,8 @@ def test_la_reserva_no_esta_en_los_datos_locales() -> None:
     assert not set(osf.ids_reserva()) & locales
     assert not set(osf.ids_reserva_2()) & locales
     assert not set(osf.ids_reserva_3()) & locales
+    assert not set(osf.ids_reserva_4()) & locales
+    assert not set(osf.ids_reserva_5()) & locales
 
 
 def _zip_en_memoria(miembros: dict[str, bytes]) -> zipfile.ZipFile:
