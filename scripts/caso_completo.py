@@ -541,13 +541,15 @@ def main() -> int:
         "--margen-gingival", choices=("no", "propone", "aplica", "aplica-experto"),
         default="no",
         help="Anclar el margen corona-encía de las etiquetas del escáner al surco "
-             "cervical (`analysis_agents.frontera.ancla_al_pliegue`). `propone` calcula "
-             "qué movería y lo declara sin cambiar nada; `aplica` lo cambia. Por defecto "
-             "`no`: en Teeth3DS+ recorta corona de más, por encima del límite fijado. "
+             "cervical. `propone` calcula qué movería y lo declara sin cambiar nada; "
+             "`aplica` lo cambia. Desde el 2026-11-24 los dos usan `M10`: "
+             "`ancla_al_pliegue` con el listón de surco 2,0 y después "
+             "`devuelve_anillos` (§6.19-6.20 de la nota de segmentación). Por defecto "
+             "`no`: solo está confirmado en Teeth3DS+ y en un caso clínico. "
              "Su acierto sobre un caso concreto solo lo dice una línea trazada sobre ese "
-             "caso: ver `scripts/puntua_margen.py`. `aplica-experto` acepta además las "
-             "piezas cuyo surco es tan claro como el de un experto (percentil 5), solo en "
-             "el maxilar: en la mandíbula dañó coronas y se usan los umbrales de siempre.",
+             "caso: ver `scripts/puntua_margen.py`. `aplica-experto` sigue siendo el "
+             "método de antes con el surco de un experto (percentil 5), solo en el "
+             "maxilar: en la mandíbula dañó coronas y se usan los umbrales de siempre.",
     )
     ap.add_argument(
         "--registro", choices=("auto", "anatomico", "clasico"), default="auto",
@@ -690,24 +692,41 @@ def main() -> int:
         # sobre este caso declinaba las 14 piezas. Es además el orden en que lo mide el
         # banco de pruebas. Los registros por pieza viajan al gate y al contenedor.
         if args.margen_gingival != "no":
+            from analysis_agents.frontera import ANILLOS_DEVUELTOS as _anillos
+            from analysis_agents.frontera import FUERZA_PLIEGUE_PRUDENTE as _prudente
             from analysis_agents.frontera import ancla_al_pliegue as _ancla
+            from analysis_agents.frontera import devuelve_anillos as _devuelve
             from analysis_agents.frontera import umbrales_de_pliegue as _umbrales
 
             # `aplica-experto`: el listón del surco baja al del margen de un experto, solo
             # en el maxilar. Ver `umbrales_de_pliegue` y la nota de investigación, §6.9.
             _criterio = "experto" if args.margen_gingival == "aplica-experto" else "metodo"
             _fuerza, _cobertura, _aviso = _umbrales(etq_ios, _criterio)
+            # `aplica` y `propone` son `M10` desde el 2026-11-24 (§6.20): el listón de `M8`
+            # y la fila del pliegue devuelta. `aplica-experto` sigue como estaba.
+            _m10 = _criterio == "metodo"
+            if _m10:
+                _fuerza = _prudente
             _anclada, _registros = _ancla(_V, _Fc, etq_ios, fuerza_minima=_fuerza,
                                           cobertura_minima=_cobertura)
+            _devueltos = 0
+            if _m10:
+                _cortada = _anclada
+                _anclada = _devuelve(_Fc, etq_ios, _cortada, _anillos)
+                _devueltos = int(((_cortada == 0) & (_anclada > 0)).sum())
             _movidas = {t: r for t, r in _registros.items() if r["moved"]}
             _declinadas = sorted(t for t, r in _registros.items() if r["declined"])
-            _cedidos = sum(r["moved"] for r in _movidas.values())
+            _cedidos = int(((etq_ios > 0) & (_anclada == 0)).sum())
             aplica = args.margen_gingival in ("aplica", "aplica-experto")
             margen_gingival = {
-                "method": "analysis_agents.frontera.ancla_al_pliegue",
+                "method": ("analysis_agents.frontera.ancla_al_pliegue + devuelve_anillos (M10)"
+                           if _m10 else "analysis_agents.frontera.ancla_al_pliegue"),
                 "applied": aplica,
                 "criterion": _criterio,
                 "thresholds": {"crease_strength": _fuerza, "crease_coverage": _cobertura},
+                "rings_returned": _anillos if _m10 else 0,
+                "vertices_returned": _devueltos,
+                # Los registros por pieza son del corte, ANTES de devolver los anillos.
                 "teeth": {str(t): r for t, r in sorted(_registros.items())},
             }
             print(f"  margen gingival ({'aplicado' if aplica else 'solo propuesto'}): "
@@ -716,9 +735,9 @@ def main() -> int:
             motivos_margen.append(
                 f"margen gingival {'anclado' if aplica else 'propuesto, NO aplicado'} al "
                 f"surco cervical en {len(_movidas)} piezas ({_cedidos:,} vértices): es una "
-                "corrección geométrica ajustada sobre Teeth3DS+, donde recorta corona de "
-                "más; su acierto en este caso solo lo dice una línea trazada sobre él "
-                "(scripts/puntua_margen.py)")
+                "corrección geométrica confirmada sobre Teeth3DS+ y sobre un solo caso "
+                "clínico, no validada; su acierto en este caso solo lo dice una línea "
+                "trazada sobre él (scripts/puntua_margen.py)")
             if _criterio == "experto" and _aviso is None:
                 motivos_margen.append(
                     "margen gingival con el listón del experto (surco ≥ "

@@ -1785,9 +1785,88 @@ ninguna bien orientada, y que donde actúa recupera la arcada.
   Encender `O` y `M10` lo decide el responsable del proyecto. La evidencia para decidirlo
   es esta: las dos están confirmadas en datos no vistos de Teeth3DS+, con criterios fijados
   antes.
+- **Decidido el mismo día:** `O` es el marco por defecto de `segmentar_fdi.py` desde el
+  2026-11-24, por decisión del responsable del proyecto. `--marco-canonico` devuelve el de
+  antes. `--margen-gingival` sigue igual; lo de `M10` va en §6.20.
 - Nada de esto es validación clínica. Los casos clínicos no se han usado, y un escáner
   distinto puede cerrar o cortar la malla de otra forma. Sin borde abierto, `O` deja el
   marco como estaba.
+
+### 6.20 · `M10` sobre el caso clínico: pre-registro de una comprobación única (2026-11-24)
+
+**Qué se decide.** Si `--margen-gingival aplica` y `propone` en `scripts/caso_completo.py`
+pasan de `M5`, que es lo que calculan hoy, a `M10`. El valor por defecto sigue en `no` pase lo
+que pase, y `aplica-experto` no cambia. El responsable del proyecto delegó la decisión; esta
+es la regla con la que se toma, escrita antes de mirar.
+
+**Sobre qué.** El caso clínico maxilar de §6.7, con sus dos anotaciones: la línea trazada a
+ciegas por la periodoncista, que es la que decide, y la segunda anotación, que solo se
+informa. Las etiquetas son las del pipeline de hoy: C2, con `O`, voto entre 18 referencias
+de entrenamiento y la limpieza de `caso_completo.py` (`M1`). `M5` y `M10` se aplican sobre
+ese mismo `M1` con `benchmark_margen.py refina`.
+
+**Lo que ya se sabe, y por qué no basta.**
+
+- En §6.7, con las etiquetas del modelo de agosto, `M8` dejó el margen a 1,80 mm de la línea
+  frente a 0,19 mm de `M5`. Su listón de surco (2,0) declinó el 17, el 21, el 24, el 25 y el 27,
+  que `M5` sí movía.
+- `M10` parte del corte de `M8` y solo devuelve vértices, así que en una pieza que `M8`
+  declina no puede hacer más. Lo esperable es que pierda.
+- Pero aquellas etiquetas eran de otro modelo. Con C2 el margen de partida es otro, y el surco
+  que encuentra el método depende de dónde empieza a buscarlo. Por eso se mide en vez de darlo
+  por supuesto.
+- Estas anotaciones ya eligieron `M9` en §6.9 y no sirven para medirlo. No se han usado
+  nunca con `M10` ni con C2.
+
+**Criterios, contra la línea a ciegas.**
+
+| | Criterio | Límite |
+|---|---|---|
+| P1 | Mediana del caso, margen → línea | `M10` ≤ `M5` + 0,10 mm |
+| P2 | Piezas con menos del 85 % de su corona | ninguna con `M10` |
+
+Si `M10` cumple los dos, `aplica` y `propone` pasan a `M10`. Si falla uno, se quedan en `M5`
+y el resultado se escribe como negativo. En los dos casos las anotaciones quedan gastadas
+también para `M10`.
+
+**Cómo se ejecuta, una vez y desde un commit limpio.**
+
+1. `segmentar_fdi.py --arcada upper --referencias-entrenamiento 18`.
+2. `benchmark_margen.py refina --metodo M5 --metodo M10`.
+3. `puntua_margen.py`, con las dos anotaciones y la malla cargada como LPS, igual que en §6.7.
+
+Se informa además, sin que decida nada, cómo queda `M1` con C2 frente al modelo de agosto.
+
+Es un caso y una anotadora. Pase o no pase, no es validación clínica.
+
+**Resultado (2026-11-24), una ejecución desde `ce45fa0`: `M10` cumple P1 y P2.**
+
+| Contra la línea a ciegas | `M1` (C2 con `O`) | `M5` | `M10` |
+|---|---:|---:|---:|
+| Margen → línea, mediana del caso (P1) | 0,88 mm | 0,10 mm | **0,14 mm** (límite 0,20) |
+| Margen → línea, p95 | 4,59 mm | 0,42 mm | 3,90 mm |
+| Encía marcada diente | 24,4 % | 8,3 % | 11,3 % |
+| Corona marcada encía | 0,1 % | 2,3 % | 0,6 % |
+| Piezas con < 85 % de corona (P2) | 0 de 14 | 0 de 14 | **0 de 14** |
+
+Contra la segunda anotación sale lo mismo: 0,98, 0,11 y 0,19 mm.
+
+- **Así que `aplica` y `propone` pasan a `M10`.** El valor por defecto sigue en `no`, y
+  `aplica-experto` no cambia.
+- **El precio queda escrito.** `M10` declina el 17, el 24 y el 25, que `M5` movía. Esas tres
+  piezas se quedan como las deja C2 (0,32, 0,90 y 0,33 mm de la línea), y de ahí sale el p95.
+- **Lo que gana.** En las piezas que mueve, `M10` queda algo por fuera de la línea, con un
+  signo medio de +0,02 a +0,45 mm. `M5` queda algo por dentro, de −0,46 a +0,05 mm. La
+  corona marcada encía baja del 2,3 % al 0,6 %.
+  Es el mismo intercambio que en Teeth3DS+: menos recorte a cambio de algo más de desborde.
+- **C2 cambia más el caso que cualquier método.** Sin refinar, C2 deja el margen a 0,88 mm de
+  la línea. En §6.7, con el modelo de agosto, estaba a 3,53 mm. El listón de `M8`, que entonces
+  declinaba cinco piezas que `M5` movía, aquí declina tres.
+- C2 numera las 14 piezas anotadas como la periodoncista y añade un 18 que nadie ha anotado,
+  como ya hacía. La razón de orientación es 0,62, y el borde no da la vuelta al marco.
+
+Las anotaciones de este caso quedan gastadas también para `M10`. Es un caso y una anotadora:
+no es validación clínica.
 
 ## 7 · Consecuencia sobre el producto
 
