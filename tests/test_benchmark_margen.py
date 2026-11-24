@@ -110,3 +110,23 @@ def test_sin_candidato_no_hay_veredicto() -> None:
     fila = _fila(0.5, 0.012, 0.95)
     del fila["methods"]["M5"]
     assert bm.criterios([fila]) == {} and bm.veredicto_md({}) == []
+
+
+def test_refina_escribe_una_clave_por_metodo_y_conserva_m1(tmp_path: Path,
+                                                         monkeypatch) -> None:
+    """`refina` parte de `limpias` y no la reescribe; cada método sale con su clave."""
+    import argparse
+
+    V = np.random.default_rng(0).normal(size=(6, 3))
+    F = np.array([[0, 1, 2], [2, 3, 4], [3, 4, 5]])
+    limpias = np.array([0, 11, 11, 0, 12, 12])
+    np.savez(tmp_path / "seg.npz", V=V, F=F, limpias=limpias)
+    # El método real necesita una arcada; aquí solo importa la fontanería.
+    monkeypatch.setitem(bm.REFINAMIENTOS, "M5", ("prueba", lambda p, f, e: np.where(e == 12, 0, e)))
+    args = argparse.Namespace(entrada=tmp_path / "seg.npz", salida=tmp_path / "r.npz",
+                              metodo=["M5"])
+    assert bm.refina(args) == 0
+    salida = np.load(tmp_path / "r.npz")
+    assert set(salida.files) == {"V", "F", "M1", "M5"}
+    assert (salida["M1"] == limpias).all()
+    assert (salida["M5"] == [0, 11, 11, 0, 0, 0]).all()

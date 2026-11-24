@@ -3,6 +3,8 @@
 
     ~/.venvs/dental-gpu/bin/python scripts/benchmark_margen.py predice --split dev
     uv run python scripts/benchmark_margen.py evalua --split dev --trabajos 6
+    uv run python scripts/benchmark_margen.py refina --entrada segmentacion_upper.npz \
+        --salida refinado.npz --metodo M5 --metodo M10
 
 **Qué responde.** Si un método de frontera acerca las etiquetas del modelo a las del
 experto, y a qué precio. Compara, sobre las mismas arcadas, las etiquetas tal cual salen
@@ -542,6 +544,31 @@ def evalua(args: argparse.Namespace) -> int:
     return 0
 
 
+def refina(args: argparse.Namespace) -> int:
+    """Aplica refinamientos a una segmentación ya limpia, sin etiquetas de experto.
+
+    Lee el `.npz` que escribe `segmentar_fdi.py` (`V`, `F` y `limpias`, que es `M1`) y
+    escribe otro con `V`, `F`, `M1` y una clave por método, que `puntua_margen.py` puntúa
+    con `--candidato NOMBRE=salida.npz:CLAVE`. No mide nada: es el paso que hace falta para
+    llevar un método a un caso que solo tiene líneas anotadas.
+    """
+    entrada = np.load(args.entrada)
+    V = np.asarray(entrada["V"], dtype=np.float64)
+    F = np.asarray(entrada["F"], dtype=np.int64)
+    m1 = np.asarray(entrada["limpias"], dtype=np.int64)
+    salida = {"V": V, "F": F, "M1": m1.astype(np.int16)}
+    for metodo in args.metodo:
+        salida[metodo] = np.asarray(REFINAMIENTOS[metodo][1](V, F, m1),
+                                    dtype=np.int16)
+        print(f"{metodo}: {int(((m1 > 0) & (salida[metodo] == 0)).sum()):,} vértices de "
+              f"diente pasan a encía, {int(((m1 == 0) & (salida[metodo] > 0)).sum()):,} "
+              "de encía a diente")
+    args.salida.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(args.salida, **salida)
+    print(f"→ {args.salida}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -564,6 +591,13 @@ def main() -> int:
                                   "ejecutar `eval`: ver `VARIANTES_SEGUNDO_INTENTO`.")
             sub.add_argument("--json", type=Path)
             sub.add_argument("--md", type=Path)
+    sub = ordenes.add_parser("refina", help="Aplica métodos a una segmentación ya hecha.")
+    sub.add_argument("--entrada", type=Path, required=True,
+                     help="`segmentacion_<arcada>.npz` de `segmentar_fdi.py`.")
+    sub.add_argument("--salida", type=Path, required=True)
+    sub.add_argument("--metodo", action="append", choices=sorted(REFINAMIENTOS),
+                     required=True)
+    sub.set_defaults(funcion=refina)
     args = ap.parse_args()
     return args.funcion(args)
 
