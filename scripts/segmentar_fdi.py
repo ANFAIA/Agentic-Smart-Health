@@ -39,6 +39,15 @@ autocomprobación sobre Teeth3DS+, una malla con razón de orientación 0,61 se 
 0,808 a 0,197 de acierto; las de razón 0,40-0,43 quedaron intactas. Por eso el script
 imprime la razón y avisa por encima de 0,6: no es un adorno.
 
+⚠️ **Desde el 2026-11-24 el sentido oclusal lo da el borde abierto del escaneo**
+(`analysis_agents.orientacion.marco_orientado`, el candidato `O` de §6.19), por decisión
+del responsable del proyecto tras confirmarse en `reserva-3`. `marco_canonico` decide el
+sentido por el ajuste de una parábola, y en 10 de 840 arcadas de Teeth3DS+ lo daba al
+revés: el eje oclusal apuntaba a la encía y C2 perdía la arcada casi entera. Un escaneo
+intraoral está abierto por la encía, así que si el borde queda por encima del centro se da
+la vuelta. Donde el borde ya está abajo sale el mismo marco que antes. `--marco-canonico`
+vuelve al comportamiento anterior, para reproducir cifras anteriores a §6.19.
+
 ## Decodificación restringida
 
 Se enmascaran los códigos de la arcada contraria antes de agregar. No es hacer trampa:
@@ -89,6 +98,7 @@ for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-agg
                  "analysis-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))
 
+from analysis_agents.orientacion import marco_orientado  # noqa: E402
 from analysis_agents.pose_votada import confianza, vota  # noqa: E402
 from fusion_agents.marco import a_marco_de, marco_arcada, marco_canonico  # noqa: E402
 from ingestion_agents import ArtifactStore, MeshAgent  # noqa: E402
@@ -350,6 +360,10 @@ def main() -> int:
     ap.add_argument("--referencias-entrenamiento", type=int, default=0, metavar="N",
                     help="Usa como referencias los N primeros pacientes de entrenamiento de "
                          "Teeth3DS+ (data/raw/teeth3ds). Recomendado: 18.")
+    ap.add_argument("--marco-canonico", action="store_true",
+                    help="Sentido oclusal por `marco_canonico`, como antes del 2026-11-24, "
+                         "en vez de por el borde abierto del escaneo (§6.19). Solo para "
+                         "reproducir cifras anteriores.")
     ap.add_argument("--sin-restringir", action="store_true",
                     help="No enmascarar la arcada contraria (para diagnóstico).")
     args = ap.parse_args()
@@ -368,12 +382,19 @@ def main() -> int:
     referencias = list(args.referencia or [])
     if args.referencias_entrenamiento:
         referencias += referencias_de_entrenamiento(args.referencias_entrenamiento, args.arcada)
-    origen = marco_canonico(V)
-    registro_pose: dict = {"orientation_ratio": float(origen[2]), "references": []}
+    if args.marco_canonico:
+        origen, volteado, marco = marco_canonico(V), False, "marco_canonico"
+    else:
+        _c, _R, _razon, volteado = marco_orientado(V, np.asarray(arte["faces"]))
+        origen, marco = (_c, _R, _razon), "marco_orientado"
+    registro_pose: dict = {"orientation_ratio": float(origen[2]), "frame": marco,
+                           "flipped_by_boundary": volteado, "references": []}
     if referencias:
         print(f"pose canonizada contra {len(referencias)} referencia(s) · razon de "
               f"orientacion {origen[2]:.2f}"
               + ("  ⚠ DUDOSA" if origen[2] > RAZON_DUDOSA else ""))
+        if volteado:
+            print("el borde abierto contradice a la parabola: eje oclusal invertido (§6.19)")
         segmentaciones, confianzas, logps, por_ref = {}, {}, {}, {}
         for ruta in referencias:
             lector = vtk.vtkOBJReader()

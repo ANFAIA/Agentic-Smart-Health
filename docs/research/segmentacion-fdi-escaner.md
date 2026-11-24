@@ -1785,6 +1785,9 @@ ninguna bien orientada, y que donde actúa recupera la arcada.
   Encender `O` y `M10` lo decide el responsable del proyecto. La evidencia para decidirlo
   es esta: las dos están confirmadas en datos no vistos de Teeth3DS+, con criterios fijados
   antes.
+- **Decidido el mismo día:** `O` es el marco por defecto de `segmentar_fdi.py` desde el
+  2026-11-24, por decisión del responsable del proyecto. `--marco-canonico` devuelve el de
+  antes. `--margen-gingival` sigue igual; lo de `M10` va en §6.20.
 - Nada de esto es validación clínica. Los casos clínicos no se han usado, y un escáner
   distinto puede cerrar o cortar la malla de otra forma. Sin borde abierto, `O` deja el
   marco como estaba.
