@@ -1868,6 +1868,63 @@ Contra la segunda anotación sale lo mismo: 0,98, 0,11 y 0,19 mm.
 Las anotaciones de este caso quedan gastadas también para `M10`. Es un caso y una anotadora:
 no es validación clínica.
 
+### 6.21 · C3: C2 reentrenado con las reservas gastadas, pre-registro para `reserva-4` (2026-11-24)
+
+**Diagnóstico, antes de proponer nada.** C2 con `O`, voto y limpieza, sobre las 400 arcadas
+ya gastadas (`dev`, `dev-privado`, `reserva-2` y `reserva-3`). Lo que queda de error es
+numeración, y no está repartido.
+
+| | `dev` | `dev-privado` | `reserva-2` | `reserva-3` |
+|---|---:|---:|---:|---:|
+| Arcadas | 40 | 120 | 120 | 120 |
+| Bien numeradas | 508 de 520 | 1.551 de 1.657 | 1.580 de 1.672 | 1.556 de 1.648 |
+| Desplazadas | 11 | 91 | 79 | 91 |
+| Fantasmas con código 8 | 0 | 74 | 78 | 72 |
+| Otros fantasmas | 13 | 22 | 8 | 21 |
+| Terceros molares anotados | 0 | 24 | 38 | 27 |
+| Cuadrantes con un hueco entre 1 y 7 | 35 de 80 | 39 de 240 | 41 de 240 | 48 de 240 |
+
+- **Las desplazadas se concentran.** 218 de las 272 están en arcadas con tres o más, y 188 en
+  un cuadrante al que le falta una pieza entre la 1 y la 7. Con la pose nativa el error es el
+  mismo en 237 de ellas, así que no es de pose: es el modelo, que cuenta posiciones.
+- **Los fantasmas son casi todos un 8 sobre la encía.** De los 288, 224 llevan código de tercer
+  molar, y solo 25 en un cuadrante donde el experto anotó un 8. Su centro queda a 8,6 mm por
+  detrás del 7, y apenas lo tocan.
+- **No son terceros molares sin anotar.** Su altura lo sugería: sube 7,2 mm sobre la encía, y
+  un 8 anotado sube 8,0. Pero vistos en cuatro arcadas al azar, son una franja de encía
+  lingual o retromolar junto al último molar, a casi la altura de su corona.
+- **Es otra población.** En `dev`, del `public-training-set`, hay un 44 % de cuadrantes con
+  hueco y solo 11 desplazadas, y no hay ni un tercer molar ni un 8 fantasma. En las tres
+  reservas del `private-testing-set` hay menos huecos, pero desplazan mucho más, y cada una
+  trae 24-38 terceros molares anotados. C2 se entrenó solo con pacientes públicos.
+
+**Candidato, uno solo.** C3: la receta exacta de C2 (8.192 puntos, ±15°, 60 épocas, semilla
+0), entrenada además con los 180 pacientes de las tres reservas gastadas
+(`entrena_fdi_escaner.py --con-reservas-gastadas`). Ya no miden nada sin sesgo, y son la
+población donde C2 falla. `dev` sigue fuera del entrenamiento, igual que `reserva-4` y
+`reserva-5`.
+
+**Cómo se mide.** C2 y C3, los dos con `O`, el voto entre 3 de 18 referencias y la limpieza
+de siempre (`benchmark_separacion.py seccion-6-21`).
+
+1. **Puerta en `dev`.** C3 no pierde más de 6 piezas bien numeradas frente a C2, que es el
+   ruido de semilla de §6.15, y cumple N3. Si no pasa, `reserva-4` no se toca.
+2. **`reserva-4`, una vez.** C3 tiene que cumplir los cinco criterios.
+
+| | Criterio, C3 frente a C2 | Límite | De dónde sale |
+|---|---|---|---|
+| N1 | Bien numeradas | ≥ C2 + 20 | 3 veces el ruido de semilla (6) |
+| N2 | Fantasmas | ≤ C2 + 13 | el ruido de semilla |
+| N3 | Coronas que pasan a < 85 % | ≤ 0,5 % de las piezas | K5 |
+| N4 | Contacto interproximal, mediana | ≤ C2 + 0,03 mm | 3 veces el ruido (0,010) |
+| N5 | Encía marcada diente | ≤ C2 + 0,033 | 3 veces el ruido (0,011) |
+
+**Lo que no se sabe y se dirá.** La ganancia de C3 sería en la población del
+`private-testing-set`, que es la de `reserva-4`. No dice nada de otro escáner ni de los casos
+clínicos. Si C3 cumple, pasa a ser el candidato a checkpoint por defecto, y el cambio lo
+decide el responsable del proyecto. Si no cumple, C2 sigue y el resultado se escribe como
+negativo.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

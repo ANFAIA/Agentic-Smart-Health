@@ -23,6 +23,11 @@ por frecuencia mediana) y la normalización son las del notebook, y `Net` se imp
 - Más pacientes: los 240 de entrenamiento de siempre más los 300 del `public-training-set-2`
   (`scripts/fetch_teeth3ds_osf.py entrenamiento`). `dev`, `eval` y la reserva quedan fuera,
   y se comprueba.
+- `--con-reservas-gastadas` (§6.21): añade los 180 pacientes del `private-testing-set` cuyas
+  reservas ya se gastaron (`reserva`, `reserva-2`, `reserva-3`). Ya no miden nada sin sesgo,
+  y son la población donde C2 falla: cuadrantes con hueco que se desplazan y 8 fantasmas
+  sobre la encía tras el último molar, que en el `public-training-set` casi no aparecen.
+  `reserva-4` y `reserva-5` siguen vetadas con o sin la opción.
 
 La partición es la de `benchmark_margen.particion`, sin tocar.
 """
@@ -58,16 +63,25 @@ def _carga(nombre: str, ruta: Path):  # type: ignore[no-untyped-def]
 bm = _carga("benchmark_margen", RAIZ / "scripts/benchmark_margen.py")
 osf = _carga("fetch_teeth3ds_osf", RAIZ / "scripts/fetch_teeth3ds_osf.py")
 CACHE_LOCAL = RAIZ / "data/processed/teeth3ds-local-npz"
+CACHE_GASTADAS = RAIZ / "data/processed/teeth3ds-osf-gastadas-npz"
 PESO_MAXIMO = 50.0  # el tope del notebook para el peso de una clase rara
 
 
 # ── Datos ───────────────────────────────────────────────────────────────────────
 
-def arcadas_de_entrenamiento(con_osf: bool) -> list[tuple[str, Path]]:
+def reservas_gastadas() -> list[str]:
+    """Los pacientes de las reservas ya evaluadas: `reserva`, `reserva-2` y `reserva-3`."""
+    return sorted(set(osf.ids_reserva()) | set(osf.ids_reserva_2()) | set(osf.ids_reserva_3()))
+
+
+def arcadas_de_entrenamiento(con_osf: bool, con_gastadas: bool = False
+                             ) -> list[tuple[str, Path]]:
     """`(nombre, npz)` de cada arcada de entrenamiento. Convierte a npz lo que falte."""
     particion = bm.particion(bm.pacientes())
     vetados = set(particion["dev"]) | set(particion["eval"])
-    vetados |= set(osf.ids_reserva()) | set(osf.ids_reserva_2()) | set(osf.ids_reserva_3())
+    vetados |= set(osf.ids_reserva_4()) | set(osf.ids_reserva_5())
+    if not con_gastadas:
+        vetados |= set(reservas_gastadas())
     vetados |= set(osf.ids_reserva_4()) | set(osf.ids_reserva_5())
     salida = []
     for p in particion["train"]:
@@ -83,6 +97,14 @@ def arcadas_de_entrenamiento(con_osf: bool) -> list[tuple[str, Path]]:
             raise SystemExit("No hay pacientes de OSF; ejecuta "
                              "`fetch_teeth3ds_osf.py entrenamiento` o usa --sin-osf.")
         salida += [(f.stem, f) for f in extra]
+    if con_gastadas:
+        for p in reservas_gastadas():
+            for a in bm.ARCADAS:
+                destino = CACHE_GASTADAS / f"{p}_{a}.npz"
+                if not destino.is_file():
+                    osf.a_npz(osf.MALLAS / p / f"{p}_{a}.obj",
+                              osf.ETIQUETAS / p / f"{p}_{a}.json", destino)
+                salida.append((f"{p}_{a}", destino))
     fuga = {n.rsplit("_", 1)[0] for n, _ in salida} & vetados
     if fuga:
         raise SystemExit(f"⚠ {len(fuga)} pacientes de evaluación en el entrenamiento: {fuga}")
@@ -119,6 +141,8 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--semilla", type=int, default=0)
     ap.add_argument("--sin-osf", action="store_true", help="Solo los 240 pacientes de siempre.")
+    ap.add_argument("--con-reservas-gastadas", action="store_true",
+                    help="Añade los 180 pacientes de reserva, reserva-2 y reserva-3 (§6.21).")
     ap.add_argument("--limite", type=int, help="Solo N arcadas (prueba de humo).")
     ap.add_argument("--salida", type=Path, required=True)
     ap.add_argument("--reanuda", action="store_true",
@@ -138,7 +162,7 @@ def main() -> int:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     t0 = time.perf_counter()
-    arcadas = arcadas_de_entrenamiento(not args.sin_osf)
+    arcadas = arcadas_de_entrenamiento(not args.sin_osf, args.con_reservas_gastadas)
     if args.limite:
         arcadas = arcadas[: args.limite]
     datos = []

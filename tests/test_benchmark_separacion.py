@@ -214,3 +214,55 @@ def test_o4_lee_k5_de_los_criterios_frente_a_b(monkeypatch):
     assert o["O4_crowns_vs_B"] == {"newly_under_retained": 9, "teeth": 1000, "pass": False}
     informe = bs.informe_6_19({"split": "x", "arches": 1, "O": o, "base_false_tooth": 0.2})
     assert "O4" in informe and "K1-K6 contra B" in informe
+
+
+def test_el_cerrojo_de_reserva_4_lo_cierra_el_primer_resultado_de_6_21(tmp_path, monkeypatch):
+    monkeypatch.setattr(bs, "SALIDA", tmp_path)
+    assert bs.reserva_4_gastada() is None
+    (tmp_path / "seccion-6-21-dev.json").write_text("{}")
+    assert bs.reserva_4_gastada() is None
+    (tmp_path / "seccion-6-21-reserva-4.json").write_text("{}")
+    assert bs.reserva_4_gastada() == tmp_path / "seccion-6-21-reserva-4.json"
+
+
+def test_la_puerta_de_6_21_exige_dev_con_los_mismos_checkpoints(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    monkeypatch.setattr(bs, "SALIDA", tmp_path)
+    shas = {"C2": "a", "C3": "b"}
+    with pytest.raises(SystemExit):
+        bs.puerta_6_21(shas)
+    (tmp_path / "seccion-6-21-dev.json").write_text(json.dumps(
+        {"checkpoints": shas, "C3": {"criteria": {"dev_gate": False}}}))
+    assert bs.puerta_6_21(shas) == {"pass": False}
+    with pytest.raises(SystemExit):
+        bs.puerta_6_21({"C2": "a", "C3": "otro"})
+
+
+def _k_6_21(correctas: tuple, fantasmas: tuple, danadas: int, contacto: tuple,
+            falso: tuple) -> dict:
+    return {"criteria": {
+        "K3_numbering": {"correct_B": correctas[0], "correct_C": correctas[1],
+                         "ghost_B": fantasmas[0], "ghost_C": fantasmas[1]},
+        "K5_margin": {"newly_under_retained": danadas, "teeth": 1600,
+                      "false_tooth_B": falso[0], "false_tooth_C": falso[1]},
+        "K1_contact": {"B": contacto[0], "C": contacto[1]}}, "summary": {}}
+
+
+def test_c3_cumple_n1_n5_solo_con_ganancia_clara_y_sin_retroceso(monkeypatch):
+    def con(k):  # type: ignore[no-untyped-def]
+        monkeypatch.setattr(bs, "criterios", lambda filas: k)
+        return bs.criterios_6_21([{"models": {"C2": {}, "C3": {}}}])["criteria"]
+    bien = con(_k_6_21((1550, 1570), (90, 103), 8, (0.18, 0.21), (0.25, 0.283)))
+    assert bien["all_pass"] and bien["dev_gate"]
+    assert not con(_k_6_21((1550, 1569), (90, 60), 0, (0.18, 0.18), (0.25, 0.25)))["all_pass"]
+    assert not con(_k_6_21((1550, 1600), (90, 104), 0, (0.18, 0.18), (0.25, 0.25)))["all_pass"]
+    rota = con(_k_6_21((1550, 1600), (90, 60), 9, (0.18, 0.18), (0.25, 0.25)))
+    assert not rota["all_pass"] and not rota["dev_gate"]
+    assert not con(_k_6_21((1550, 1600), (90, 60), 0, (0.18, 0.22), (0.25, 0.25)))["all_pass"]
+    assert not con(_k_6_21((1550, 1600), (90, 60), 0, (0.18, 0.18), (0.25, 0.29)))["all_pass"]
+    # La puerta de `dev` admite perder hasta el ruido de semilla, no más.
+    assert con(_k_6_21((500, 494), (10, 10), 0, (0.18, 0.18), (0.25, 0.25)))["dev_gate"]
+    assert not con(_k_6_21((500, 493), (10, 10), 0, (0.18, 0.18), (0.25, 0.25)))["dev_gate"]

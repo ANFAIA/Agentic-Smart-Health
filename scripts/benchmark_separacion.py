@@ -89,7 +89,7 @@ RETROCESO_FDI = 0.005        # K6: acierto FDI por vértice de diente ≥ B − 
 # Las dos reservas viven en el árbol de OSF. La segunda (§6.11) se predice con este mismo
 # script para que C2 corra exactamente igual que en la primera.
 RESERVAS = {"reserva": osf.ids_reserva, "reserva-2": osf.ids_reserva_2,
-            "reserva-3": osf.ids_reserva_3}
+            "reserva-3": osf.ids_reserva_3, "reserva-4": osf.ids_reserva_4}
 
 
 def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
@@ -989,6 +989,150 @@ def seccion_6_19(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── §6.21: C3, C2 reentrenado con las reservas gastadas, fijado antes de entrenar ─────────
+#
+# C2 y C3 se miden los dos con `O` (el marco por defecto desde §6.19) y la limpieza de
+# siempre. `criterios` da los números con B := C2 y C := C3; los umbrales son los de §6.21,
+# no los de K1-K6. La puerta es `dev`; `reserva-4` se evalúa una vez.
+SPLITS_6_21 = ("dev", "reserva-4")
+GANANCIA_CORRECTAS_6_21 = 20   # ≈ 3 veces el ruido de semilla de §6.15 (6)
+HOLGURA_FANTASMAS_6_21 = 13    # el ruido de semilla de §6.15
+HOLGURA_CONTACTO_6_21 = 0.03   # mm; 3 veces el ruido de semilla (0,010)
+HOLGURA_FALSO_DIENTE_6_21 = 0.033  # 3 veces el ruido de semilla (0,011)
+RETROCESO_DEV_6_21 = 6         # correctas que C3 puede perder en `dev`: el ruido de semilla
+
+
+def reserva_4_gastada() -> Path | None:
+    """El cerrojo de `reserva-4`: el primer resultado de §6.21 escrito sobre ella."""
+    hechos = sorted(SALIDA.glob("seccion-6-21-reserva-4*.json"))
+    return hechos[0] if hechos else None
+
+
+def _con_o(split: str, sha: str, paciente: str, arcada: str, pos: np.ndarray,
+           volteado: bool) -> tuple[np.ndarray, np.ndarray]:
+    """`(voto con O, nativa)` de un modelo, las dos ya limpias."""
+    refs = bp.referencias()
+    votada, nativa = _etiquetas(np.load(ruta(sha, split, paciente, arcada)), refs)
+    if volteado:
+        votada = _votada_borde(np.load(ruta_borde(sha, split, paciente, arcada)), refs)
+    return bm.limpieza_actual(pos, votada), bm.limpieza_actual(pos, nativa)
+
+
+def evalua_arcada_6_21(trabajo: tuple[str, str, str, dict[str, str]]) -> dict:
+    from analysis_agents.orientacion import marco_orientado
+
+    split, paciente, arcada, shas = trabajo
+    pos, tri, experto = carga(split, paciente, arcada)
+    _, _, razon, volteado = marco_orientado(pos, tri)
+    modelos = {}
+    for nombre, sha in shas.items():
+        votada, nativa = _con_o(split, sha, paciente, arcada, pos, volteado)
+        modelos[nombre] = {"voted": metricas_de_arcada(pos, tri, votada, experto),
+                           "native_identity": identidad_de_piezas(nativa, experto)}
+    return {"patient": paciente, "jaw": arcada, "orientation_ratio": float(razon),
+            "flipped": bool(volteado), "models": modelos}
+
+
+def criterios_6_21(filas: list[dict]) -> dict:
+    """N1-N5 de C3 frente a C2, los dos con `O`. Ver §6.21 de la nota."""
+    k = criterios([{**f, "models": {"B": f["models"]["C2"], "C": f["models"]["C3"]}}
+                   for f in filas])
+    c = k["criteria"]
+    n = {
+        "N1_correct": {"C2": c["K3_numbering"]["correct_B"],
+                       "C3": c["K3_numbering"]["correct_C"],
+                       "pass": c["K3_numbering"]["correct_C"]
+                       >= c["K3_numbering"]["correct_B"] + GANANCIA_CORRECTAS_6_21},
+        "N2_ghosts": {"C2": c["K3_numbering"]["ghost_B"], "C3": c["K3_numbering"]["ghost_C"],
+                      "pass": c["K3_numbering"]["ghost_C"]
+                      <= c["K3_numbering"]["ghost_B"] + HOLGURA_FANTASMAS_6_21},
+        "N3_crowns": {"newly_under_retained": c["K5_margin"]["newly_under_retained"],
+                      "teeth": c["K5_margin"]["teeth"],
+                      "pass": c["K5_margin"]["newly_under_retained"]
+                      <= PIEZAS_DANADAS * c["K5_margin"]["teeth"]},
+        "N4_contact": {"C2": c["K1_contact"]["B"], "C3": c["K1_contact"]["C"],
+                       "pass": c["K1_contact"]["C"]
+                       <= c["K1_contact"]["B"] + HOLGURA_CONTACTO_6_21},
+        "N5_false_tooth": {"C2": c["K5_margin"]["false_tooth_B"],
+                           "C3": c["K5_margin"]["false_tooth_C"],
+                           "pass": c["K5_margin"]["false_tooth_C"]
+                           <= c["K5_margin"]["false_tooth_B"] + HOLGURA_FALSO_DIENTE_6_21},
+    }
+    n["all_pass"] = all(v["pass"] for v in n.values() if isinstance(v, dict))
+    n["dev_gate"] = bool(n["N1_correct"]["C3"] >= n["N1_correct"]["C2"] - RETROCESO_DEV_6_21
+                         and n["N3_crowns"]["pass"])
+    return {"criteria": n, "summary": k["summary"]}
+
+
+def puerta_6_21(shas: dict[str, str]) -> dict:
+    r = SALIDA / "seccion-6-21-dev.json"
+    if not r.is_file():
+        raise SystemExit(f"⚠ falta {r}: la puerta de §6.21 se mide antes en `dev`.")
+    previo = json.loads(r.read_text())
+    if previo["checkpoints"] != shas:
+        raise SystemExit(f"⚠ {r} se midió con otros checkpoints; no sigo.")
+    return {"pass": previo["C3"]["criteria"]["dev_gate"]}
+
+
+def informe_6_21(r: dict) -> str:
+    si = lambda b: "cumple" if b else "**no**"  # noqa: E731
+    n = r["C3"]["criteria"]
+    lineas = [f"# §6.21 · C3 frente a C2, los dos con `O` · `{r['split']}`", "",
+              f"{r['arches']} arcadas; el borde da la vuelta a {r['flipped']}.", "",
+              "| Criterio | C2 | C3 | Veredicto |", "|---|---:|---:|---|",
+              f"| N1 · bien numeradas (≥ C2 + {GANANCIA_CORRECTAS_6_21}) | "
+              f"{n['N1_correct']['C2']} | {n['N1_correct']['C3']} | "
+              f"{si(n['N1_correct']['pass'])} |",
+              f"| N2 · fantasmas (≤ C2 + {HOLGURA_FANTASMAS_6_21}) | {n['N2_ghosts']['C2']} | "
+              f"{n['N2_ghosts']['C3']} | {si(n['N2_ghosts']['pass'])} |",
+              f"| N3 · coronas que pasan a < 85 % | — | {n['N3_crowns']['newly_under_retained']} "
+              f"de {n['N3_crowns']['teeth']} | {si(n['N3_crowns']['pass'])} |",
+              f"| N4 · contacto p50 (mm) | {n['N4_contact']['C2']:.3f} | "
+              f"{n['N4_contact']['C3']:.3f} | {si(n['N4_contact']['pass'])} |",
+              f"| N5 · encía como diente | {n['N5_false_tooth']['C2']:.3f} | "
+              f"{n['N5_false_tooth']['C3']:.3f} | {si(n['N5_false_tooth']['pass'])} |", "",
+              f"**N1-N5: {si(n['all_pass'])}. Puerta de `dev`: {si(n['dev_gate'])}.**", ""]
+    return "\n".join(lineas)
+
+
+def seccion_6_21(args: argparse.Namespace) -> int:
+    shas = {"C2": sha_de(args.c2), "C3": sha_de(args.c3)}
+    puerta = None
+    if args.split == "reserva-4":
+        gastada = reserva_4_gastada()
+        if gastada:
+            print(f"⚠ `reserva-4` ya se evaluó ({gastada}). Se evalúa UNA vez.", file=sys.stderr)
+            return 3
+        puerta = puerta_6_21(shas)
+        if not puerta["pass"]:
+            print("⚠ C3 no pasó la puerta de `dev`: `reserva-4` no se evalúa.", file=sys.stderr)
+            return 4
+    pares = arcadas(args.split, args.limite)
+    faltan = [(p, a, x) for p, a in pares for x in shas.values()
+              if not ruta(x, args.split, p, a).is_file()]
+    if faltan:
+        print(f"Faltan {len(faltan)} predicciones; ejecuta `predice`.", file=sys.stderr)
+        return 2
+    rec = registro(sys.argv)
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        filas = list(grupo.map(evalua_arcada_6_21, [(args.split, p, a, shas) for p, a in pares]))
+    salida: dict[str, Any] = {
+        "section": "6.21", "split": args.split, "arches": len(filas), "checkpoints": shas,
+        "flipped": sum(f["flipped"] for f in filas), "C3": criterios_6_21(filas),
+        "gate": puerta, "run_record": rec,
+        "per_arch": [{k: f[k] for k in ("patient", "jaw", "orientation_ratio", "flipped")}
+                     for f in filas],
+        "scope": "Teeth3DS+ only; not the project's clinical cases",
+    }
+    destino = SALIDA / f"seccion-6-21-{args.split}.json"
+    if args.limite:
+        destino = destino.with_name(destino.stem + f"-limite{args.limite}.json")
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_21(salida))
+    print(informe_6_21(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1035,11 +1179,19 @@ def main() -> int:
     s19.add_argument("--trabajos", type=int, default=6)
     s19.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     s19.set_defaults(funcion=seccion_6_19)
+    s21 = ordenes.add_parser("seccion-6-21", help="§6.21: C3 con las reservas gastadas")
+    s21.add_argument("--split", choices=SPLITS_6_21, required=True)
+    s21.add_argument("--c2", type=Path, required=True)
+    s21.add_argument("--c3", type=Path, required=True)
+    s21.add_argument("--trabajos", type=int, default=6)
+    s21.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
+    s21.set_defaults(funcion=seccion_6_21)
     # `reserva-2` se predice aquí y se evalúa una vez en total: con `testigo` (§6.16) o con
     # `benchmark_identidad.py evalua` (§6.11), lo que llegue antes. Ver `reserva_2_gastada`.
     p.add_argument("--orienta-borde", action="store_true",
                    help="§6.19: predice con el marco orientado por el borde, solo donde cambia")
-    for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2", "reserva-3")),
+    for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2", "reserva-3",
+                                               "reserva-4")),
                                  (e, evalua, ("dev", "reserva"))):
         sub.add_argument("--split", choices=splits, required=True)
         sub.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
