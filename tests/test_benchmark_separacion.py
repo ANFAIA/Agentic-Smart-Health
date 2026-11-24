@@ -200,3 +200,17 @@ def test_o_no_se_confirma_si_pierde_una_corona_o_deja_un_eje_al_reves():
     assert not o["O1_orientation"]["pass"] and not o["confirmed"]
     sin_vuelta = bs.criterios_6_19([_fila_6_19(0.99, False, {"11": 1.0}, {"11": 1.0}, (1, 1))])
     assert sin_vuelta["confirmed"] and not sin_vuelta["benefit_measured"]
+
+
+def test_o4_lee_k5_de_los_criterios_frente_a_b(monkeypatch):
+    """`criterios` devuelve {"criteria", "summary"}; O4 tiene que leer K5 de "criteria"."""
+    def falso(filas):  # type: ignore[no-untyped-def]
+        return {"criteria": {"K5_margin": {"newly_under_retained": 9, "teeth": 1000},
+                             "all_pass": False}, "summary": {}}
+    monkeypatch.setattr(bs, "criterios", falso)
+    fila = _fila_6_19(0.99, False, {"11": 1.0}, {"11": 1.0}, (1, 1))
+    fila["models"]["B"] = fila["models"]["C2"]
+    o = bs.criterios_6_19([fila])
+    assert o["O4_crowns_vs_B"] == {"newly_under_retained": 9, "teeth": 1000, "pass": False}
+    informe = bs.informe_6_19({"split": "x", "arches": 1, "O": o, "base_false_tooth": 0.2})
+    assert "O4" in informe and "K1-K6 contra B" in informe

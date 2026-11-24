@@ -877,7 +877,7 @@ def criterios_6_19(filas: list[dict]) -> dict:
         o["vs_B"] = {m: criterios([{**f, "models": {"B": f["models"]["B"],
                                                      "C": f["models"][m]}} for f in filas])
                      for m in ("C2", "C2O")}
-        k5 = o["vs_B"]["C2O"]["K5_margin"]
+        k5 = o["vs_B"]["C2O"]["criteria"]["K5_margin"]
         o["O4_crowns_vs_B"] = {"newly_under_retained": k5["newly_under_retained"],
                                "teeth": k5["teeth"],
                                "pass": k5["newly_under_retained"] <= PIEZAS_DANADAS * k5["teeth"]}
@@ -921,7 +921,7 @@ def informe_6_19(r: dict) -> str:
                   "arcada, así que el beneficio no se ha medido") + ".**", ""]
     if "vs_B" in o:
         lineas.append("K1-K6 contra B: " + ", ".join(
-            f"{'C2' if m == 'C2' else 'C2 con `O`'} {si(c['all_pass'])}"
+            f"{'C2' if m == 'C2' else 'C2 con `O`'} {si(c['criteria']['all_pass'])}"
             for m, c in o["vs_B"].items()))
         lineas.append("")
     m10 = r.get("M10")
