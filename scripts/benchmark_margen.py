@@ -56,6 +56,7 @@ from analysis_agents.frontera import (  # noqa: E402
     COBERTURA_PLIEGUE_EXPERTO,
     FUERZA_PLIEGUE_EXPERTO,
     ancla_al_pliegue,
+    devuelve_anillos,
     recorta_al_cuello,
     refina_fronteras,
     reparte_por_geodesica,
@@ -173,6 +174,10 @@ REFINAMIENTOS: dict[str, tuple[str, Callable[..., np.ndarray]]] = {
     "M9": ("limpieza + ancla_al_pliegue, surco como el del experto",
            lambda p, f, e: ancla_al_pliegue(p, f, e, fuerza_minima=FUERZA_PLIEGUE_EXPERTO,
                                             cobertura_minima=COBERTURA_PLIEGUE_EXPERTO)[0]),
+    # §6.19 (2026-11-24): `M8` devolviendo a su pieza la fila del pliegue que se lleva.
+    "M10": ("limpieza + ancla_al_pliegue, pliegue ≥ 2,0, devuelve 1 anillo",
+            lambda p, f, e: devuelve_anillos(f, e, ancla_al_pliegue(p, f, e,
+                                                                    fuerza_minima=2.0)[0])),
 }
 # Los que además se prueban sobre las etiquetas del EXPERTO: un método que estropea la
 # verdad de campo no puede estar arreglando nada.
@@ -181,6 +186,7 @@ SOBRE_EXPERTO: dict[str, tuple[str, str]] = {
     "E3": ("experto + ancla_al_pliegue, núcleo 0,4", "M7"),
     "E4": ("experto + ancla_al_pliegue, pliegue ≥ 2,0", "M8"),
     "E5": ("experto + ancla_al_pliegue, surco como el del experto", "M9"),
+    "E6": ("experto + ancla_al_pliegue, pliegue ≥ 2,0, devuelve 1 anillo", "M10"),
 }
 
 MAYOR_ES_MEJOR = ("binary_agreement", "binary_iou", "fdi_agreement", "tooth_fdi_agreement")

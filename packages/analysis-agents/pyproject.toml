@@ -10,6 +10,9 @@ dependencies = [
     # de artefactos, en cambio, NO se importa: se toma como `Protocol`
     # (`GaussianStore`) para no atar el análisis a la implementación de la ingesta.
     "ingestion-agents",
+    # El marco anatómico de una arcada (`fusion_agents.marco`) es una primitiva geométrica:
+    # `orientacion.marco_orientado` la reutiliza tal cual y solo corrige el sentido oclusal.
+    "fusion-agents",
     "tooth-aggregation",
     "numpy>=2.0",
     # `SegmentadorDental` busca la corona etiquetada más cercana con un KD-tree.
@@ -26,4 +29,5 @@ packages = ["src/analysis_agents"]
 [tool.uv.sources]
 core-schemas = { workspace = true }
 ingestion-agents = { workspace = true }
+fusion-agents = { workspace = true }
 tooth-aggregation = { workspace = true }

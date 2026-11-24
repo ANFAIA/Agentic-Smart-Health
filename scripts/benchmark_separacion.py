@@ -88,7 +88,8 @@ RETROCESO_FDI = 0.005        # K6: acierto FDI por vértice de diente ≥ B − 
 
 # Las dos reservas viven en el árbol de OSF. La segunda (§6.11) se predice con este mismo
 # script para que C2 corra exactamente igual que en la primera.
-RESERVAS = {"reserva": osf.ids_reserva, "reserva-2": osf.ids_reserva_2}
+RESERVAS = {"reserva": osf.ids_reserva, "reserva-2": osf.ids_reserva_2,
+            "reserva-3": osf.ids_reserva_3}
 
 
 def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
@@ -121,6 +122,12 @@ def ruta(sha: str, split: str, paciente: str, arcada: str) -> Path:
     return SALIDA / sha[:12] / split / f"{paciente}_{arcada}.npz"
 
 
+def ruta_borde(sha: str, split: str, paciente: str, arcada: str) -> Path:
+    """§6.19: la predicción con el marco orientado por el borde. Solo existe donde la regla
+    da la vuelta a la arcada; en las demás el marco es el mismo y se usa `ruta`."""
+    return SALIDA / f"{sha[:12]}-borde" / split / f"{paciente}_{arcada}.npz"
+
+
 def registro(argv: list[str]) -> dict:
     cc = _carga("caso_completo", RAIZ / "scripts/caso_completo.py")
     from datetime import UTC, datetime
@@ -135,6 +142,7 @@ def registro(argv: list[str]) -> dict:
 
 def predice(args: argparse.Namespace) -> int:
     import torch
+    from analysis_agents.orientacion import marco_orientado
     from analysis_agents.pose_votada import confianza
     from fusion_agents.marco import a_marco_de, marco_canonico
 
@@ -150,18 +158,29 @@ def predice(args: argparse.Namespace) -> int:
     pares = arcadas(args.split, args.limite)
     i, n = (int(x) for x in args.parte.split("/"))
     pares = pares[i::n]  # la agregación es de un núcleo: se reparte en procesos
-    destino_registro = SALIDA / sha[:12] / args.split / "run-record.json"
+    # ⚠️ Con --orienta-borde el registro va al directorio del borde: escribirlo en el de
+    # siempre sobrescribió el de la predicción normal de `dev` el 2026-11-24.
+    carpeta = f"{sha[:12]}-borde" if args.orienta_borde else sha[:12]
+    destino_registro = SALIDA / carpeta / args.split / "run-record.json"
     destino_registro.parent.mkdir(parents=True, exist_ok=True)
     destino_registro.write_text(json.dumps(registro(sys.argv), indent=2) + "\n")
     for k, (paciente, arcada) in enumerate(pares, 1):
-        destino = ruta(sha, args.split, paciente, arcada)
+        destino = (ruta_borde if args.orienta_borde else ruta)(sha, args.split, paciente, arcada)
         if destino.is_file():
             continue
         pos, tri, _ = carga(args.split, paciente, arcada)
+        if args.orienta_borde:
+            # §6.19: solo se predice donde el borde da la vuelta al marco; sin la pose nativa,
+            # que no depende del marco y ya está en `ruta`.
+            c, R, razon, volteado = marco_orientado(pos, tri)
+            if not volteado:
+                continue
+            origen, poses = (c, R, razon), refs
+        else:
+            origen, poses = marco_canonico(pos), [NATIVA, *refs]
         normales = seg.normales_vtk(pos.astype(np.float32), tri).astype(np.float64)
-        origen = marco_canonico(pos)
         salida: dict[str, Any] = {"razon": np.float32(origen[2])}
-        for r in [NATIVA, *refs]:
+        for r in poses:
             if r == NATIVA:
                 v_ent, n_ent = pos, normales
             else:
@@ -769,6 +788,207 @@ def margen(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── §6.19: la arcada al revés (`O`) y la fila del pliegue (`M10`), fijado en 4bfd94a ─────
+#
+# `O` = `analysis_agents.orientacion.marco_orientado` en la arcada que se segmenta; `M10` =
+# `M8` + `devuelve_anillos`. La puerta de `M10` son A1-A6 con holgura en los tres conjuntos
+# gastados; en `reserva-3`, A1-A6 con los límites completos. `O` se juzga con O1-O4.
+SPLITS_6_19 = ("dev", "reserva", "reserva-2", "reserva-3")
+GASTADOS_6_19 = ("dev", "reserva", "reserva-2")
+CANDIDATO_6_19, BASE_6_19 = "M10", "M1"
+EJE_NATIVO = np.array([0.0, 0.0, 1.0])  # en Teeth3DS+ el oclusal nativo es +z
+
+
+def reserva_3_gastada() -> Path | None:
+    """El cerrojo de `reserva-3`: el primer resultado de §6.19 escrito sobre ella."""
+    hechos = sorted(SALIDA.glob("seccion-6-19-reserva-3*.json"))
+    return hechos[0] if hechos else None
+
+
+def _votada_borde(z, refs: list[str]) -> np.ndarray:  # type: ignore[no-untyped-def]
+    seg = {r: z[f"et_{r}"].astype(np.int64) for r in refs}
+    votada, _ = vota(seg, {r: float(z[f"conf_{r}"]) for r in refs})
+    return votada
+
+
+def evalua_arcada_6_19(trabajo: tuple[str, str, str, dict[str, str]]) -> dict:
+    from analysis_agents.orientacion import marco_orientado
+    from fusion_agents.marco import marco_canonico
+
+    split, paciente, arcada, shas = trabajo
+    pos, tri, experto = carga(split, paciente, arcada)
+    refs = bp.referencias()
+    z = np.load(ruta(shas["C2"], split, paciente, arcada))
+    votada, nativa = _etiquetas(z, refs)
+    m1 = bm.limpieza_actual(pos, votada)
+    nativa = bm.limpieza_actual(pos, nativa)
+    _, R0, _ = marco_canonico(pos)
+    _, R, razon, volteado = marco_orientado(pos, tri)
+    o = m1
+    if volteado:
+        o = bm.limpieza_actual(pos, _votada_borde(
+            np.load(ruta_borde(shas["C2"], split, paciente, arcada)), refs))
+    etiquetas = {"M1": m1}
+    for v in ("M8", CANDIDATO_6_19):
+        etiquetas[v] = np.asarray(bm.REFINAMIENTOS[v][1](pos, tri, m1), dtype=np.int64)
+        e = bm.VERDAD_DE[v]
+        etiquetas[e] = np.asarray(bm.REFINAMIENTOS[v][1](pos, tri, experto), dtype=np.int64)
+    metodos = {k: metricas_de_arcada(pos, tri, v, experto) for k, v in etiquetas.items()}
+    id_nativa = identidad_de_piezas(nativa, experto)
+    modelos = {"C2": {"voted": metodos["M1"], "native_identity": id_nativa},
+               "C2O": {"voted": metodos["M1"] if not volteado
+                       else metricas_de_arcada(pos, tri, o, experto),
+                       "native_identity": id_nativa}}
+    if "B" in shas:
+        zb = np.load(ruta(shas["B"], split, paciente, arcada))
+        vb, nb = _etiquetas(zb, refs)
+        modelos["B"] = {"voted": metricas_de_arcada(pos, tri, bm.limpieza_actual(pos, vb),
+                                                    experto),
+                        "native_identity": identidad_de_piezas(bm.limpieza_actual(pos, nb),
+                                                               experto)}
+    return {"patient": paciente, "jaw": arcada, "orientation_ratio": float(razon),
+            "flipped": bool(volteado), "cos_canonical": float(R0[2] @ EJE_NATIVO),
+            "cos_oriented": float(R[2] @ EJE_NATIVO), "methods": metodos, "models": modelos}
+
+
+def criterios_6_19(filas: list[dict]) -> dict:
+    """O1-O4 de `O` frente a C2 (O4 solo con B), fijados en §6.19."""
+    piezas = perdidas = 0
+    for f in filas:
+        antes = f["models"]["C2"]["voted"]["per_tooth"]
+        despues = f["models"]["C2O"]["voted"]["per_tooth"]
+        piezas += len(antes)
+        perdidas += sum(1 for t, v in antes.items() if v["retained"] >= CORONA_MINIMA_CONSERVADA
+                        and despues[t]["retained"] < CORONA_MINIMA_CONSERVADA)
+    correctas = {m: sum(f["models"][m]["voted"]["identity"]["correct"] for f in filas)
+                 for m in ("C2", "C2O")}
+    contrarias = sum(1 for f in filas if f["cos_oriented"] <= 0)
+    o = {
+        "flipped": sum(f["flipped"] for f in filas),
+        "inverted_before": sum(1 for f in filas if f["cos_canonical"] <= 0),
+        "O1_orientation": {"against_native": contrarias, "pass": contrarias == 0},
+        "O2_no_crown_lost": {"teeth": piezas, "lost": perdidas, "pass": perdidas == 0},
+        "O3_numbering": {**correctas, "pass": correctas["C2O"] >= correctas["C2"]},
+    }
+    o["confirmed"] = all(o[k]["pass"] for k in ("O1_orientation", "O2_no_crown_lost",
+                                               "O3_numbering"))
+    o["benefit_measured"] = o["flipped"] > 0
+    if all("B" in f["models"] for f in filas):
+        o["vs_B"] = {m: criterios([{**f, "models": {"B": f["models"]["B"],
+                                                     "C": f["models"][m]}} for f in filas])
+                     for m in ("C2", "C2O")}
+        k5 = o["vs_B"]["C2O"]["criteria"]["K5_margin"]
+        o["O4_crowns_vs_B"] = {"newly_under_retained": k5["newly_under_retained"],
+                               "teeth": k5["teeth"],
+                               "pass": k5["newly_under_retained"] <= PIEZAS_DANADAS * k5["teeth"]}
+    return o
+
+
+def puerta_6_19(sha_c2: str) -> dict:
+    """La puerta de `M10`: A1-A6 con holgura en los tres conjuntos gastados, mismo C2."""
+    puerta: dict[str, Any] = {}
+    for s in GASTADOS_6_19:
+        r = SALIDA / f"seccion-6-19-{s}.json"
+        if not r.is_file():
+            raise SystemExit(f"⚠ falta {r}: la puerta de §6.19 se mide antes en {GASTADOS_6_19}.")
+        previo = json.loads(r.read_text())
+        if previo["checkpoints"]["C2"] != sha_c2:
+            raise SystemExit(f"⚠ {r} se midió con otro C2; no sigo.")
+        puerta[s] = previo["M10"]["slack_pass"]
+    puerta["pass"] = all(puerta[s] for s in GASTADOS_6_19)
+    return puerta
+
+
+def informe_6_19(r: dict) -> str:
+    si = lambda b: "cumple" if b else "**no**"  # noqa: E731
+    o = r["O"]
+    lineas = [f"# §6.19 · La arcada al revés y la fila del pliegue · `{r['split']}`", "",
+              f"{r['arches']} arcadas. El borde da la vuelta a {o['flipped']}; con "
+              f"`marco_canonico` estaban al revés {o['inverted_before']}.", "",
+              "| `O` frente a C2 | Valor | Veredicto |", "|---|---|---|",
+              f"| O1 · eje contra el +z nativo | {o['O1_orientation']['against_native']} | "
+              f"{si(o['O1_orientation']['pass'])} |",
+              f"| O2 · coronas que C2 conserva y `O` pierde | {o['O2_no_crown_lost']['lost']} de "
+              f"{o['O2_no_crown_lost']['teeth']} | {si(o['O2_no_crown_lost']['pass'])} |",
+              f"| O3 · bien numeradas | {o['O3_numbering']['C2']} → {o['O3_numbering']['C2O']} | "
+              f"{si(o['O3_numbering']['pass'])} |"]
+    if "O4_crowns_vs_B" in o:
+        o4 = o["O4_crowns_vs_B"]
+        lineas.append(f"| O4 · coronas que pasan a < 85 % frente a B | "
+                      f"{o4['newly_under_retained']} de {o4['teeth']} | {si(o4['pass'])} |")
+    lineas += ["", f"**`O`: {'confirmada' if o['confirmed'] else 'no confirmada'}"
+               + ("" if o["benefit_measured"] else "; la regla no dio la vuelta a ninguna "
+                  "arcada, así que el beneficio no se ha medido") + ".**", ""]
+    if "vs_B" in o:
+        lineas.append("K1-K6 contra B: " + ", ".join(
+            f"{'C2' if m == 'C2' else 'C2 con `O`'} {si(c['criteria']['all_pass'])}"
+            for m, c in o["vs_B"].items()))
+        lineas.append("")
+    m10 = r.get("M10")
+    if m10 is None:
+        lineas.append("**`M10` no se lleva a esta reserva: no pasó la puerta.**")
+    else:
+        a3 = m10["criteria"]["A3_overtrim"]
+        lineas += ["| `M10` frente a `M1` | A1 | A2 | A3 | A4 | A5 | A6 | Con holgura |",
+                   "|---|---|---|---|---|---|---|---|",
+                   "| " + f"subida falsa encía {100 * a3['false_gum_rise']:+.2f} pt, dañadas "
+                   f"{a3['newly_under_retained']} de {a3['teeth']}, encía como diente "
+                   f"{m10['false_tooth']:.3f} (M1 {r['base_false_tooth']:.3f}) | "
+                   + " | ".join(si(m10["criteria"][k]["pass"]) for k in
+                                ("A1_margin", "A2_agreement", "A3_overtrim",
+                                 "A4_labelled_fraction", "A5_width", "A6_truth_untouched"))
+                   + f" | {si(m10['slack_pass'])} |", "",
+                   f"**`M10`, A1-A6 con límites completos: {si(m10['criteria']['all_pass'])}.**"]
+    return "\n".join(lineas) + "\n"
+
+
+def seccion_6_19(args: argparse.Namespace) -> int:
+    shas = {"C2": sha_de(args.c2)}
+    puerta = None
+    if args.split == "reserva-3":
+        gastada = reserva_3_gastada()
+        if gastada:
+            print(f"⚠ `reserva-3` ya se evaluó ({gastada}). Se evalúa UNA vez.", file=sys.stderr)
+            return 3
+        if args.base is None:
+            raise SystemExit("⚠ en `reserva-3` se mide también B (O4): pasa --base.")
+        puerta = puerta_6_19(shas["C2"])
+    if args.base is not None:  # en un gastado, solo para ejercitar O4 antes de reserva-3
+        shas["B"] = sha_de(args.base)
+    pares = arcadas(args.split, args.limite)
+    faltan = [(p, a, x) for p, a in pares for x in shas.values()
+              if not ruta(x, args.split, p, a).is_file()]
+    if faltan:
+        print(f"Faltan {len(faltan)} predicciones; ejecuta `predice`.", file=sys.stderr)
+        return 2
+    rec = registro(sys.argv)
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        filas = list(grupo.map(evalua_arcada_6_19, [(args.split, p, a, shas) for p, a in pares]))
+    salida: dict[str, Any] = {
+        "section": "6.19", "split": args.split, "arches": len(filas), "checkpoints": shas,
+        "base_false_tooth": float(np.mean([f["methods"]["M1"]["false_tooth_rate"]
+                                           for f in filas])),
+        "O": criterios_6_19(filas), "gate": puerta, "run_record": rec,
+        "per_arch": [{k: f[k] for k in ("patient", "jaw", "orientation_ratio", "flipped",
+                                        "cos_canonical", "cos_oriented")} for f in filas],
+        "scope": "Teeth3DS+ only; not the project's clinical cases",
+    }
+    if puerta is None or puerta["pass"]:
+        c = bm.criterios(filas, CANDIDATO_6_19)
+        salida["M10"] = {"criteria": c, "slack_pass": con_holgura(c),
+                         "false_tooth": float(np.mean([f["methods"][CANDIDATO_6_19]
+                                                       ["false_tooth_rate"] for f in filas]))}
+        c8 = bm.criterios(filas, "M8")
+        salida["M8_reference"] = {"criteria": c8, "slack_pass": con_holgura(c8)}
+    destino = SALIDA / f"seccion-6-19-{args.split}.json"
+    if args.limite:
+        destino = destino.with_name(destino.stem + f"-limite{args.limite}.json")
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_19(salida))
+    print(informe_6_19(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -808,9 +1028,18 @@ def main() -> int:
     ma.add_argument("--trabajos", type=int, default=6)
     ma.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     ma.set_defaults(funcion=margen)
+    s19 = ordenes.add_parser("seccion-6-19", help="§6.19: arcada al revés y fila del pliegue")
+    s19.add_argument("--split", choices=SPLITS_6_19, required=True)
+    s19.add_argument("--c2", type=Path, required=True)
+    s19.add_argument("--base", type=Path, help="B, para O4; obligatorio en reserva-3")
+    s19.add_argument("--trabajos", type=int, default=6)
+    s19.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
+    s19.set_defaults(funcion=seccion_6_19)
     # `reserva-2` se predice aquí y se evalúa una vez en total: con `testigo` (§6.16) o con
     # `benchmark_identidad.py evalua` (§6.11), lo que llegue antes. Ver `reserva_2_gastada`.
-    for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2")),
+    p.add_argument("--orienta-borde", action="store_true",
+                   help="§6.19: predice con el marco orientado por el borde, solo donde cambia")
+    for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2", "reserva-3")),
                                  (e, evalua, ("dev", "reserva"))):
         sub.add_argument("--split", choices=splits, required=True)
         sub.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")

@@ -119,6 +119,7 @@ version = "0.1.0"
 source = { editable = "packages/analysis-agents" }
 dependencies = [
     { name = "core-schemas" },
+    { name = "fusion-agents" },
     { name = "ingestion-agents" },
     { name = "numpy" },
     { name = "scipy" },
@@ -128,6 +129,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "core-schemas", editable = "packages/core-schemas" },
+    { name = "fusion-agents", editable = "packages/fusion-agents" },
     { name = "ingestion-agents", editable = "packages/ingestion-agents" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "scipy", specifier = ">=1.14" },

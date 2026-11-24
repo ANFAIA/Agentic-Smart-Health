@@ -483,6 +483,41 @@ def ancla_al_pliegue(
     return salida, registros
 
 
+# Anillos de lo cedido que `devuelve_anillos` devuelve a su pieza. Ver §6.19 de la nota.
+ANILLOS_DEVUELTOS = 1
+
+
+def devuelve_anillos(tri: np.ndarray, antes: np.ndarray, despues: np.ndarray,
+                     anillos: int = ANILLOS_DEVUELTOS) -> np.ndarray:
+    """Devuelve a su pieza los `anillos` anillos de lo cedido más próximos a la corona.
+
+    **Por qué.** Sobre C2, `ancla_al_pliegue` corta casi donde el experto, pero se lleva la
+    fila de vértices del propio pliegue: en dev-privado y `reserva-2`, el 77 % de la falsa
+    encía que añade está a menos de 0,25 mm de la encía del experto. Devolver esa fila lleva
+    la subida de falsa encía de +0,96 a +0,32 puntos, y el desborde de 0,14 a 0,16.
+
+    Solo toca vértices que eran diente en `antes` y son encía en `despues`, y les da su
+    código de `antes`; un vértice que ya era encía no cambia nunca. En cada anillo vuelve lo
+    cedido que comparte arista con un vértice que es diente en ese momento.
+    """
+    tri = np.asarray(tri, dtype=np.int64)
+    antes = np.asarray(antes, dtype=np.int64)
+    salida = np.asarray(despues, dtype=np.int64).copy()
+    if antes.shape != salida.shape:
+        raise ValueError("antes y despues no etiquetan los mismos vértices")
+    cedido = (antes > 0) & (salida == 0)
+    a, b = _aristas(tri)
+    for _ in range(anillos):
+        diente = salida > 0
+        toca = np.zeros(len(salida), dtype=bool)
+        toca[a[diente[b]]] = True                      # `_aristas` ya da los dos sentidos
+        vuelve = cedido & ~diente & toca
+        if not vuelve.any():
+            break
+        salida[vuelve] = antes[vuelve]
+    return salida
+
+
 def refina_fronteras(pos: np.ndarray, tri: np.ndarray, etq: np.ndarray) -> np.ndarray:
     """Los dos refinamientos, en el orden que importa.
 

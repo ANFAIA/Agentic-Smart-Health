@@ -143,3 +143,74 @@ def test_la_desviacion_de_6_18_solo_acepta_m8_si_cumple_los_limites_completos():
         bs.elige_por_desviacion(salida(True), salida(True), "M7")
     with pytest.raises(SystemExit):
         bs.elige_por_desviacion(salida(True), salida(False), "M8")
+
+
+def test_el_cerrojo_de_reserva_3_lo_cierra_el_primer_resultado_de_6_19(tmp_path, monkeypatch):
+    monkeypatch.setattr(bs, "SALIDA", tmp_path)
+    assert bs.reserva_3_gastada() is None
+    (tmp_path / "seccion-6-19-reserva-2.json").write_text("{}")
+    assert bs.reserva_3_gastada() is None
+    (tmp_path / "seccion-6-19-reserva-3.json").write_text("{}")
+    assert bs.reserva_3_gastada() == tmp_path / "seccion-6-19-reserva-3.json"
+
+
+def test_la_puerta_de_6_19_exige_holgura_en_los_tres_gastados_con_el_mismo_c2(tmp_path,
+                                                                          monkeypatch):
+    import json
+
+    import pytest
+
+    monkeypatch.setattr(bs, "SALIDA", tmp_path)
+    with pytest.raises(SystemExit):
+        bs.puerta_6_19("abc")
+    for s, ok in (("dev", True), ("reserva", True), ("reserva-2", False)):
+        (tmp_path / f"seccion-6-19-{s}.json").write_text(json.dumps(
+            {"checkpoints": {"C2": "abc"}, "M10": {"slack_pass": ok}}))
+    assert bs.puerta_6_19("abc")["pass"] is False
+    (tmp_path / "seccion-6-19-reserva-2.json").write_text(json.dumps(
+        {"checkpoints": {"C2": "abc"}, "M10": {"slack_pass": True}}))
+    assert bs.puerta_6_19("abc")["pass"] is True
+    with pytest.raises(SystemExit):
+        bs.puerta_6_19("otro")
+
+
+def _fila_6_19(cos: float, volteado: bool, antes: dict, despues: dict, bien: tuple) -> dict:
+    def modelo(ret: dict, correctas: int) -> dict:
+        return {"voted": {"per_tooth": {t: {"retained": v} for t, v in ret.items()},
+                          "identity": {"correct": correctas}}}
+    return {"cos_canonical": -cos if volteado else cos, "cos_oriented": cos,
+            "flipped": volteado,
+            "models": {"C2": modelo(antes, bien[0]), "C2O": modelo(despues, bien[1])}}
+
+
+def test_o_se_confirma_sin_perder_coronas_ni_numeracion_y_con_el_eje_bien():
+    filas = [_fila_6_19(0.99, True, {"11": 0.1, "21": 0.2}, {"11": 1.0, "21": 0.99}, (0, 2)),
+             _fila_6_19(0.98, False, {"31": 1.0}, {"31": 1.0}, (1, 1))]
+    o = bs.criterios_6_19(filas)
+    assert o["confirmed"] and o["benefit_measured"]
+    assert o["flipped"] == 1 and o["inverted_before"] == 1
+    assert "O4_crowns_vs_B" not in o                       # sin B no hay O4
+
+
+def test_o_no_se_confirma_si_pierde_una_corona_o_deja_un_eje_al_reves():
+    pierde = [_fila_6_19(0.99, True, {"11": 0.9}, {"11": 0.5}, (1, 1))]
+    assert not bs.criterios_6_19(pierde)["O2_no_crown_lost"]["pass"]
+    al_reves = [_fila_6_19(-0.99, False, {"11": 1.0}, {"11": 1.0}, (1, 1))]
+    o = bs.criterios_6_19(al_reves)
+    assert not o["O1_orientation"]["pass"] and not o["confirmed"]
+    sin_vuelta = bs.criterios_6_19([_fila_6_19(0.99, False, {"11": 1.0}, {"11": 1.0}, (1, 1))])
+    assert sin_vuelta["confirmed"] and not sin_vuelta["benefit_measured"]
+
+
+def test_o4_lee_k5_de_los_criterios_frente_a_b(monkeypatch):
+    """`criterios` devuelve {"criteria", "summary"}; O4 tiene que leer K5 de "criteria"."""
+    def falso(filas):  # type: ignore[no-untyped-def]
+        return {"criteria": {"K5_margin": {"newly_under_retained": 9, "teeth": 1000},
+                             "all_pass": False}, "summary": {}}
+    monkeypatch.setattr(bs, "criterios", falso)
+    fila = _fila_6_19(0.99, False, {"11": 1.0}, {"11": 1.0}, (1, 1))
+    fila["models"]["B"] = fila["models"]["C2"]
+    o = bs.criterios_6_19([fila])
+    assert o["O4_crowns_vs_B"] == {"newly_under_retained": 9, "teeth": 1000, "pass": False}
+    informe = bs.informe_6_19({"split": "x", "arches": 1, "O": o, "base_false_tooth": 0.2})
+    assert "O4" in informe and "K1-K6 contra B" in informe
