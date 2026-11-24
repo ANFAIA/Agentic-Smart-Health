@@ -1792,6 +1792,53 @@ ninguna bien orientada, y que donde actúa recupera la arcada.
   distinto puede cerrar o cortar la malla de otra forma. Sin borde abierto, `O` deja el
   marco como estaba.
 
+### 6.20 · `M10` sobre el caso clínico: pre-registro de una comprobación única (2026-11-24)
+
+**Qué se decide.** Si `--margen-gingival aplica` y `propone` en `scripts/caso_completo.py`
+pasan de `M5`, que es lo que calculan hoy, a `M10`. El valor por defecto sigue en `no` pase lo
+que pase, y `aplica-experto` no cambia. El responsable del proyecto delegó la decisión; esta
+es la regla con la que se toma, escrita antes de mirar.
+
+**Sobre qué.** El caso clínico maxilar de §6.7, con sus dos anotaciones: la línea trazada a
+ciegas por la periodoncista, que es la que decide, y la segunda anotación, que solo se
+informa. Las etiquetas son las del pipeline de hoy: C2, con `O`, voto entre 18 referencias
+de entrenamiento y la limpieza de `caso_completo.py` (`M1`). `M5` y `M10` se aplican sobre
+ese mismo `M1` con `benchmark_margen.py refina`.
+
+**Lo que ya se sabe, y por qué no basta.**
+
+- En §6.7, con las etiquetas del modelo de agosto, `M8` dejó el margen a 1,80 mm de la línea
+  frente a 0,19 mm de `M5`. Su listón de surco (2,0) declinó el 17, el 21, el 24, el 25 y el 27,
+  que `M5` sí movía.
+- `M10` parte del corte de `M8` y solo devuelve vértices, así que en una pieza que `M8`
+  declina no puede hacer más. Lo esperable es que pierda.
+- Pero aquellas etiquetas eran de otro modelo. Con C2 el margen de partida es otro, y el surco
+  que encuentra el método depende de dónde empieza a buscarlo. Por eso se mide en vez de darlo
+  por supuesto.
+- Estas anotaciones ya eligieron `M9` en §6.9 y no sirven para medirlo. No se han usado
+  nunca con `M10` ni con C2.
+
+**Criterios, contra la línea a ciegas.**
+
+| | Criterio | Límite |
+|---|---|---|
+| P1 | Mediana del caso, margen → línea | `M10` ≤ `M5` + 0,10 mm |
+| P2 | Piezas con menos del 85 % de su corona | ninguna con `M10` |
+
+Si `M10` cumple los dos, `aplica` y `propone` pasan a `M10`. Si falla uno, se quedan en `M5`
+y el resultado se escribe como negativo. En los dos casos las anotaciones quedan gastadas
+también para `M10`.
+
+**Cómo se ejecuta, una vez y desde un commit limpio.**
+
+1. `segmentar_fdi.py --arcada upper --referencias-entrenamiento 18`.
+2. `benchmark_margen.py refina --metodo M5 --metodo M10`.
+3. `puntua_margen.py`, con las dos anotaciones y la malla cargada como LPS, igual que en §6.7.
+
+Se informa además, sin que decida nada, cómo queda `M1` con C2 frente al modelo de agosto.
+
+Es un caso y una anotadora. Pase o no pase, no es validación clínica.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
