@@ -2091,6 +2091,10 @@ perder ningún 8 real ni ninguna pieza bien numerada.
 **Con esto Teeth3DS+ queda agotado.** Las cinco reservas están gastadas. Cualquier cambio
 futuro tendrá que medirse sobre otro dataset o sobre casos clínicos anotados.
 
+**Modelo congelado para el paper:** C3 con el filtro, etiqueta `segmentacion-fdi-c3-v1`. Su
+ficha, con el sha256, los datos y las cifras finales, está en
+[`modelo-fdi-escaner-c3.md`](modelo-fdi-escaner-c3.md).
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
