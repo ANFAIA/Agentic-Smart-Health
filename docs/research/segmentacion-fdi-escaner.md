@@ -1925,6 +1925,47 @@ clínicos. Si C3 cumple, pasa a ser el candidato a checkpoint por defecto, y el 
 decide el responsable del proyecto. Si no cumple, C2 sigue y el resultado se escribe como
 negativo.
 
+**Resultado (2026-11-25), desde `3f36c4c`: negativo por un criterio.** C3 pasa la puerta
+de `dev`: 506 bien numeradas frente a 508, una corona dañada de 520. En `reserva-4`, 120
+arcadas evaluadas una vez, cumple cuatro de los cinco criterios. **Falla N2: los fantasmas
+suben de 103 a 126, con un límite de 116.**
+
+| `reserva-4`, 1.635 piezas | C2 | C3 | |
+|---|---:|---:|---|
+| N1 · bien numeradas | 1.551 | **1.595** | cumple (+44) |
+| N2 · fantasmas | 103 | **126** | **falla** (límite 116) |
+| N3 · coronas que pasan a < 85 % | — | 0 | cumple |
+| N4 · contacto, mediana | 0,169 mm | 0,186 mm | cumple |
+| N5 · encía marcada diente | 0,245 | 0,251 | cumple |
+| Desplazadas | 77 | 52 | |
+| Ausentes | 28 | 2 | |
+| Fragmentos | 21 | 14 | |
+| Piezas que sangran a la vecina | 110 | 33 | |
+
+**C2 sigue siendo el checkpoint por defecto.** La regla era conjunta, y un criterio fallado basta.
+
+**Diagnóstico posterior**, ya con `reserva-4` gastada.
+
+- **Todos los fantasmas de más llevan código de tercer molar.** Con código 8 pasan de 71 a
+  95; los demás, de 32 a 31.
+- **C3 sí aprendió los terceros molares.** Hay 30 anotados, y numera bien 27, frente a 8
+  de C2.
+- **Pero no aprendió dónde no los hay.** Pone un 8 en la encía de detrás del último molar
+  más a menudo que C2. La hipótesis de §6.21 era que la población privada arreglaría esos
+  fantasmas, y queda refutada: los empeora.
+- **Lo que sí confirma:** los desplazamientos y las ausencias venían de no haber visto esa
+  población. Las desplazadas bajan de 77 a 52 y las ausentes de 28 a 2.
+
+**Lo que queda.**
+
+- **Ya no hay conjunto fresco para elegir nada.** `reserva-4` queda gastada, y `reserva-5`
+  está cerrada para la evaluación final.
+- **Un filtro para los 8 dudosos.** Separar un 8 real de uno sobre la encía sería lo
+  siguiente, aplicado sobre C3 o sobre C2. Se tendría que ajustar sobre los conjuntos
+  gastados y llevarse una sola vez a `reserva-5`, y con eso se acaba Teeth3DS+.
+- **Adoptar C3 a pesar del fallo** sería una desviación declarada, como la de C2 en §6.10.
+  La decide el responsable del proyecto.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
