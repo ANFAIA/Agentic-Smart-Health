@@ -10,9 +10,19 @@ deliberada: `packages/tooth-aggregation` está escrito **sin depender de torch**
 la agregación punto→diente se instale y se testee en el workspace normal, y el *forward*
 del modelo sea cosa del llamante. Este script es ese llamante.
 
-Por defecto usa `data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt` (C2, de
-`scripts/entrena_fdi_escaner.py`) desde el 2026-11-22. ⚠️ **Es una decisión del
-responsable del proyecto, no un criterio cumplido.** En la reserva de 120 arcadas C2 numeró
+Por defecto usa `data/processed/a3-checkpoints/fdi-8k-rot15-s0-gastadas.pt` (C3) desde el
+2026-11-25. ⚠️ **Es una desviación declarada, no un criterio cumplido** (§6.21-6.22 de
+`docs/research/segmentacion-fdi-escaner.md`). C3 es la receta de C2 entrenada además con los
+180 pacientes de las reservas gastadas. En `reserva-4` numera bien 1.595 de 1.635 piezas
+frente a 1.551, pierde 2 en vez de 28 y desplaza 52 en vez de 77. Pero falló N2: deja 126
+fantasmas frente a 103, todos con código de tercer molar sobre la encía retromolar. Un 8 de
+más al fondo de la arcada se ve y se descarta; un número desplazado lleva un hallazgo al
+diente equivocado sin avisar. En el caso clínico numera las 14 piezas anotadas como la línea
+a ciegas, sin perder ninguna.
+
+C2 (`fdi-8k-rot15-s0.pt`) sigue disponible con `--checkpoint`. Fue el de por defecto del
+2026-11-22 al 2026-11-25, también por decisión del responsable del proyecto: en la reserva de
+120 arcadas numeró
 bien 1.531 de 1.657 piezas frente a 1.365 del checkpoint de agosto, pero falló una cláusula
 pre-registrada: 10 piezas pasan a conservar menos del 85 % de su corona, con un límite de 8
 (§6.10 de `docs/research/segmentacion-fdi-escaner.md`). Esas cifras son con
@@ -111,7 +121,7 @@ DIM_MODELO = (32, 64, 128, 256, 512)
 KNN_INST, MIN_INST, MERGE_MULT = 8, 30, 12.0
 RAZON_DUDOSA = 0.6
 # C2 por decisión del responsable (2026-11-22), pese a fallar K5 en la reserva: §6.10.
-CHECKPOINT_POR_DEFECTO = RAIZ / "data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt"
+CHECKPOINT_POR_DEFECTO = RAIZ / "data/processed/a3-checkpoints/fdi-8k-rot15-s0-gastadas.pt"
 FDI_INFERIOR = list(range(48, 40, -1)) + list(range(31, 39))
 FDI_SUPERIOR = list(range(18, 10, -1)) + list(range(21, 29))
 
@@ -351,7 +361,8 @@ def main() -> int:
     ap.add_argument("--arcada", choices=("lower", "upper"), required=True)
     ap.add_argument("--salida", type=Path, required=True)
     ap.add_argument("--checkpoint", type=Path, default=CHECKPOINT_POR_DEFECTO,
-                    help="Por defecto C2 (fdi-8k-rot15-s0.pt). El de agosto: "
+                    help="Por defecto C3 (fdi-8k-rot15-s0-gastadas.pt). C2: "
+                         "data/processed/a3-checkpoints/fdi-8k-rot15-s0.pt. El de agosto: "
                          "data/processed/a3-checkpoints/normales-ce-baseline.pt")
     ap.add_argument("--referencia", type=Path, action="append", default=None,
                     help="OBJ de Teeth3DS+ que define la pose esperada por el modelo. "

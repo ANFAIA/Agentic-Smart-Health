@@ -1996,6 +1996,19 @@ Las etiquetas que la línea no anota, como el 18 que ya añade C2, se informan p
 deciden. Si C3 cumple S1 y S2, pasa a ser el checkpoint por defecto. Si falla alguna, C2
 sigue y se escribe.
 
+**Resultado (2026-11-25), una ejecución desde `e081440`: C3 cumple S1 y S2.**
+
+- Numera las 14 piezas que anota la línea a ciegas con el mismo código, y
+  `puntua_margen.py` no declara ninguna renumeración.
+- Ninguna pieza anotada falta, y ninguna queda por debajo del 85 % de su corona.
+- Añade un 18 que la línea no anota, igual que C2.
+- Sin refinar el margen, deja la línea a 0,90 mm, frente a 0,88 con C2. Se informa, no
+  decide.
+
+**Así que C3 es el checkpoint por defecto de `segmentar_fdi.py` desde el 2026-11-25**, y C2
+queda disponible con `--checkpoint`. Es una desviación declarada sobre un criterio fallado,
+no una confirmación. Es un caso clínico, no validación clínica.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
