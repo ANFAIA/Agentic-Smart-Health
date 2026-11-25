@@ -1966,6 +1966,36 @@ suben de 103 a 126, con un límite de 116.**
 - **Adoptar C3 a pesar del fallo** sería una desviación declarada, como la de C2 en §6.10.
   La decide el responsable del proyecto.
 
+### 6.22 · C3 por desviación declarada, con una comprobación sobre el caso clínico (2026-11-25)
+
+**Qué se decide.** C3 falló N2 en `reserva-4` (§6.21), y ese resultado no se reescribe. Aun
+así pasa a ser el checkpoint por defecto de `segmentar_fdi.py`, por desviación declarada,
+como C2 en §6.10. El responsable del proyecto delegó la decisión.
+
+**El intercambio que se acepta**, en `reserva-4`:
+
+- **Gana:** 25 piezas menos con el número desplazado, 26 piezas menos sin encontrar y 44
+  más bien numeradas.
+- **Pierde:** 23 fantasmas más, todos con código de tercer molar, sobre la encía de detrás
+  del último molar.
+- **Por qué compensa:** un número desplazado o una pieza perdida hace que un hallazgo del
+  informe acabe en el diente equivocado sin que nada lo avise. Un 8 de más al fondo de la
+  arcada se ve, y se descarta.
+
+**La condición, fijada antes de ejecutarlo.** C3 se pasa una vez por el caso clínico maxilar,
+con 18 referencias y `O`, y se puntúa contra sus dos anotaciones con `puntua_margen.py`. No
+mide el margen, porque esas líneas ya están gastadas. Solo comprueba que C3 no rompe lo que C2
+hace bien en un escáner real:
+
+| | Comprobación, contra la línea a ciegas | C2 hoy |
+|---|---|---|
+| S1 | Las 14 piezas anotadas, con el mismo código, sin renumerar ninguna | cumple |
+| S2 | Ninguna pieza anotada ausente ni con menos del 85 % de su corona | cumple |
+
+Las etiquetas que la línea no anota, como el 18 que ya añade C2, se informan pero no
+deciden. Si C3 cumple S1 y S2, pasa a ser el checkpoint por defecto. Si falla alguna, C2
+sigue y se escribe.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
