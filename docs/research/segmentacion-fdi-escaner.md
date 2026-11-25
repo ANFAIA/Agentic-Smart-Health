@@ -2055,6 +2055,42 @@ Se informa también, sin que decida nada, si C3F cumple N1-N5 de §6.21 frente a
 si con el filtro ya no haría falta la desviación de §6.22. Si C3F cumple F1-F4, el filtro se
 aplica por defecto en `segmentar_fdi.py`. Si no, C3 sigue sin él y se escribe.
 
+**Puerta en `reserva-4`, desde `ccc4e37`: cumple.** Los 8 fantasma pasan de 95 a 30, sin
+perder ningún 8 real ni ninguna pieza bien numerada.
+
+**`reserva-5`, una vez, desde `ccc4e37`: confirmado.** Son 120 arcadas y 1.662 piezas.
+
+| `reserva-5` | C3 | C3F | |
+|---|---:|---:|---|
+| F1 · fantasmas con código 8 | 71 | 21 | cumple (límite 35) |
+| F2 · terceros molares bien numerados | 30 | 30 | cumple |
+| F3 · piezas bien numeradas | 1.583 | 1.583 | cumple |
+| F4 · coronas que pasan a < 85 % | — | 0 | cumple |
+| Fantasmas en total | 92 | 43 | |
+
+- **El filtro solo quita fantasmas.** Quita 68 instancias y no cambia ninguna pieza bien
+  numerada ni ningún tercer molar real.
+- **Frente a C2 cumple los cinco criterios de §6.21.** Es información, pero pre-registrada:
+
+  | Criterio de §6.21 | C2 | C3 con filtro |
+  |---|---:|---:|
+  | N1 · bien numeradas | 1.554 | 1.583 |
+  | N2 · fantasmas | 82 | 43 |
+  | N3 · coronas dañadas | — | 0 |
+  | N4 · contacto | 0,171 mm | 0,187 mm |
+  | N5 · encía marcada diente | 0,254 | 0,251 |
+
+  Así que C3 con el filtro ya no necesita la desviación de §6.22. Es la primera vez que un
+  modelo nuevo cumple todos los criterios contra el anterior en una reserva sin ver.
+- **El filtro se aplica por defecto en `segmentar_fdi.py`** desde el 2026-11-25.
+  `--sin-filtro-terceros` lo desactiva.
+- **En el caso clínico**, el 18 que C2 y C3 añadían sin anotar medía 0,4 mm², y el filtro lo
+  quita. Ahora salen exactamente las 14 piezas de la línea a ciegas. Eso no se ha medido
+  contra nada: es lo que sale al aplicarlo.
+
+**Con esto Teeth3DS+ queda agotado.** Las cinco reservas están gastadas. Cualquier cambio
+futuro tendrá que medirse sobre otro dataset o sobre casos clínicos anotados.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

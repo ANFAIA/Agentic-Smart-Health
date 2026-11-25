@@ -20,6 +20,12 @@ más al fondo de la arcada se ve y se descarta; un número desplazado lleva un h
 diente equivocado sin avisar. En el caso clínico numera las 14 piezas anotadas como la línea
 a ciegas, sin perder ninguna.
 
+Desde el mismo día, cada 18, 28, 38 o 48 de menos de 69 mm² vuelve a la encía antes de
+guardar (`identidad.quita_terceros_molares_pequenos`, §6.23). En `reserva-5`, el último
+conjunto sin ver de Teeth3DS+, eso deja los fantasmas de C3 en 43 frente a 92 sin perder
+ningún tercer molar real, y C3 con el filtro cumple frente a C2 los cinco criterios de §6.21.
+`--sin-filtro-terceros` lo desactiva.
+
 C2 (`fdi-8k-rot15-s0.pt`) sigue disponible con `--checkpoint`. Fue el de por defecto del
 2026-11-22 al 2026-11-25, también por decisión del responsable del proyecto: en la reserva de
 120 arcadas numeró
@@ -108,6 +114,7 @@ for _paquete in ("ingestion-agents", "fusion-agents", "core-schemas", "tooth-agg
                  "analysis-agents"):
     sys.path.insert(0, str(RAIZ / f"packages/{_paquete}/src"))
 
+from analysis_agents.identidad import quita_terceros_molares_pequenos  # noqa: E402
 from analysis_agents.orientacion import marco_orientado  # noqa: E402
 from analysis_agents.pose_votada import confianza, vota  # noqa: E402
 from fusion_agents.marco import a_marco_de, marco_arcada, marco_canonico  # noqa: E402
@@ -375,6 +382,9 @@ def main() -> int:
                     help="Sentido oclusal por `marco_canonico`, como antes del 2026-11-24, "
                          "en vez de por el borde abierto del escaneo (§6.19). Solo para "
                          "reproducir cifras anteriores.")
+    ap.add_argument("--sin-filtro-terceros", action="store_true",
+                    help="No devolver a la encía los terceros molares de menos de 69 mm² "
+                         "(§6.23). Solo para reproducir cifras anteriores.")
     ap.add_argument("--sin-restringir", action="store_true",
                     help="No enmascarar la arcada contraria (para diagnóstico).")
     args = ap.parse_args()
@@ -462,6 +472,15 @@ def main() -> int:
 
     etiquetas = (etiquetas_de(instancias, len(V)) if etiquetas_votadas is None
                  else etiquetas_votadas.astype(np.int16))
+    # §6.23: un 18, 28, 38 o 48 más pequeño que la corona de un tercer molar real es encía
+    # retromolar. Va antes de guardar, así que también lo ve `caso_completo.py --fdi`.
+    terceros_quitados: dict[int, float] = {}
+    if not args.sin_filtro_terceros:
+        filtradas, terceros_quitados = quita_terceros_molares_pequenos(
+            V, np.asarray(arte["faces"], dtype=np.int64), etiquetas)
+        etiquetas = filtradas.astype(np.int16)
+        for codigo, area in sorted(terceros_quitados.items()):
+            print(f"tercer molar {codigo} de {area:.0f} mm² devuelto a la encia (§6.23)")
     np.save(args.salida / f"etiquetas_{args.arcada}.npy", etiquetas)
     # La malla tal como se ingirió y las etiquetas tras la limpieza de `caso_completo.py`,
     # juntas: es lo que miden `mide_segmentacion.py` y `puntua_margen.py` sin un `.uos`.
@@ -480,7 +499,10 @@ def main() -> int:
     destino_json.write_text(
         json.dumps({"escaneo": args.escaneo.name, "arcada": args.arcada,
                     "modelo": meta["name"], "monotonia_rho": rho, "pose": registro_pose,
-                    "instancias": filas}, indent=2),
+                    "instancias": filas,
+                    "third_molars_removed": {str(c): round(a, 1)
+                                             for c, a in sorted(terceros_quitados.items())}},
+                   indent=2),
         encoding="utf-8",
     )
     print(f"→ {destino_json}")
