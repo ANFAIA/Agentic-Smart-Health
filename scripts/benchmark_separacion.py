@@ -89,7 +89,8 @@ RETROCESO_FDI = 0.005        # K6: acierto FDI por vértice de diente ≥ B − 
 # Las dos reservas viven en el árbol de OSF. La segunda (§6.11) se predice con este mismo
 # script para que C2 corra exactamente igual que en la primera.
 RESERVAS = {"reserva": osf.ids_reserva, "reserva-2": osf.ids_reserva_2,
-            "reserva-3": osf.ids_reserva_3, "reserva-4": osf.ids_reserva_4}
+            "reserva-3": osf.ids_reserva_3, "reserva-4": osf.ids_reserva_4,
+            "reserva-5": osf.ids_reserva_5}
 
 
 def arcadas(split: str, limite: int | None = None) -> list[tuple[str, str]]:
@@ -1008,13 +1009,20 @@ def reserva_4_gastada() -> Path | None:
     return hechos[0] if hechos else None
 
 
-def _con_o(split: str, sha: str, paciente: str, arcada: str, pos: np.ndarray,
-           volteado: bool) -> tuple[np.ndarray, np.ndarray]:
-    """`(voto con O, nativa)` de un modelo, las dos ya limpias."""
+def _votada_con_o(split: str, sha: str, paciente: str, arcada: str,
+                  volteado: bool) -> tuple[np.ndarray, np.ndarray]:
+    """`(voto con O, nativa)` de un modelo, sin limpiar."""
     refs = bp.referencias()
     votada, nativa = _etiquetas(np.load(ruta(sha, split, paciente, arcada)), refs)
     if volteado:
         votada = _votada_borde(np.load(ruta_borde(sha, split, paciente, arcada)), refs)
+    return votada, nativa
+
+
+def _con_o(split: str, sha: str, paciente: str, arcada: str, pos: np.ndarray,
+           volteado: bool) -> tuple[np.ndarray, np.ndarray]:
+    """`(voto con O, nativa)` de un modelo, las dos ya limpias."""
+    votada, nativa = _votada_con_o(split, sha, paciente, arcada, volteado)
     return bm.limpieza_actual(pos, votada), bm.limpieza_actual(pos, nativa)
 
 
@@ -1133,6 +1141,164 @@ def seccion_6_21(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── §6.23: el filtro de terceros molares pequeños sobre C3, fijado antes de evaluar ─────
+#
+# C3F = C3 con `identidad.quita_terceros_molares_pequenos` sobre el voto, ANTES de la
+# limpieza. La puerta es `reserva-4`, ya gastada, donde se hizo el diagnóstico; `reserva-5`,
+# la última reserva de Teeth3DS+, se evalúa una vez y solo con `--evaluacion-final`.
+SPLITS_6_23 = ("reserva-4", "reserva-5")
+PERDIDA_8_6_23 = 2       # terceros molares reales que el filtro puede perder
+PERDIDA_CORRECTAS_6_23 = 2
+
+
+def reserva_5_gastada() -> Path | None:
+    """El cerrojo de `reserva-5`: el primer resultado de §6.23 escrito sobre ella."""
+    hechos = sorted(SALIDA.glob("seccion-6-23-reserva-5*.json"))
+    return hechos[0] if hechos else None
+
+
+def evalua_arcada_6_23(trabajo: tuple[str, str, str, dict[str, str]]) -> dict:
+    from analysis_agents.identidad import quita_terceros_molares_pequenos
+    from analysis_agents.orientacion import marco_orientado
+
+    split, paciente, arcada, shas = trabajo
+    pos, tri, experto = carga(split, paciente, arcada)
+    _, _, razon, volteado = marco_orientado(pos, tri)
+    modelos, quitados = {}, {}
+    for nombre, sha in shas.items():
+        votada, nativa = _votada_con_o(split, sha, paciente, arcada, volteado)
+        variantes = [(nombre, votada)]
+        if nombre == "C3":
+            filtrada, quitados = quita_terceros_molares_pequenos(pos, tri, votada)
+            variantes.append(("C3F", filtrada))
+        id_nativa = identidad_de_piezas(bm.limpieza_actual(pos, nativa), experto)
+        for clave, et in variantes:
+            modelos[clave] = {"voted": metricas_de_arcada(pos, tri, bm.limpieza_actual(pos, et),
+                                                          experto),
+                              "native_identity": id_nativa}
+    return {"patient": paciente, "jaw": arcada, "orientation_ratio": float(razon),
+            "flipped": bool(volteado), "removed": {str(k): v for k, v in quitados.items()},
+            "models": modelos}
+
+
+def _terceros(filas: list[dict], modelo: str) -> dict[str, int]:
+    c = {"correct": 0, "ghost": 0}
+    for f in filas:
+        for lab, v in f["models"][modelo]["voted"]["identity"]["per_label"].items():
+            if int(lab) % 10 == 8 and v["status"] in c:
+                c[v["status"]] += 1
+    return c
+
+
+def criterios_6_23(filas: list[dict]) -> dict:
+    """F1-F4 de C3F frente a C3, y N1-N5 de C3F frente a C2 como información (§6.23)."""
+    k = criterios([{**f, "models": {"B": f["models"]["C3"], "C": f["models"]["C3F"]}}
+                   for f in filas])["criteria"]
+    t3, tf = _terceros(filas, "C3"), _terceros(filas, "C3F")
+    f = {
+        "F1_ghost_8": {"C3": t3["ghost"], "C3F": tf["ghost"],
+                       "pass": tf["ghost"] <= 0.5 * t3["ghost"]},
+        "F2_real_8": {"C3": t3["correct"], "C3F": tf["correct"],
+                      "pass": tf["correct"] >= t3["correct"] - PERDIDA_8_6_23},
+        "F3_correct": {"C3": k["K3_numbering"]["correct_B"], "C3F": k["K3_numbering"]["correct_C"],
+                       "pass": k["K3_numbering"]["correct_C"]
+                       >= k["K3_numbering"]["correct_B"] - PERDIDA_CORRECTAS_6_23},
+        "F4_crowns": {"newly_under_retained": k["K5_margin"]["newly_under_retained"],
+                      "teeth": k["K5_margin"]["teeth"],
+                      "pass": k["K5_margin"]["newly_under_retained"]
+                      <= PIEZAS_DANADAS * k["K5_margin"]["teeth"]},
+        "ghosts_total": {"C3": k["K3_numbering"]["ghost_B"], "C3F": k["K3_numbering"]["ghost_C"]},
+    }
+    f["all_pass"] = all(v["pass"] for v in f.values() if isinstance(v, dict) and "pass" in v)
+    salida: dict[str, Any] = {"criteria": f}
+    if all("C2" in x["models"] for x in filas):
+        salida["vs_C2"] = criterios_6_21(
+            [{**x, "models": {"C2": x["models"]["C2"], "C3": x["models"]["C3F"]}}
+             for x in filas])["criteria"]
+    return salida
+
+
+def puerta_6_23(shas: dict[str, str]) -> dict:
+    from analysis_agents.identidad import AREA_MINIMA_TERCER_MOLAR_MM2
+
+    r = SALIDA / "seccion-6-23-reserva-4.json"
+    if not r.is_file():
+        raise SystemExit(f"⚠ falta {r}: la puerta de §6.23 se mide antes en `reserva-4`.")
+    previo = json.loads(r.read_text())
+    if previo["checkpoints"] != shas or previo["area_min_mm2"] != AREA_MINIMA_TERCER_MOLAR_MM2:
+        raise SystemExit(f"⚠ {r} se midió con otros checkpoints u otro umbral; no sigo.")
+    return {"pass": previo["C3F"]["criteria"]["all_pass"]}
+
+
+def informe_6_23(r: dict) -> str:
+    si = lambda b: "cumple" if b else "**no**"  # noqa: E731
+    f = r["C3F"]["criteria"]
+    lineas = [f"# §6.23 · C3 con el filtro de terceros molares · `{r['split']}`", "",
+              f"{r['arches']} arcadas; umbral {r['area_min_mm2']} mm²; el filtro quita "
+              f"{r['removed']} instancias.", "",
+              "| Criterio, C3F frente a C3 | C3 | C3F | Veredicto |", "|---|---:|---:|---|",
+              f"| F1 · fantasmas con código 8 (≤ mitad) | {f['F1_ghost_8']['C3']} | "
+              f"{f['F1_ghost_8']['C3F']} | {si(f['F1_ghost_8']['pass'])} |",
+              f"| F2 · terceros molares bien numerados (≥ C3 − {PERDIDA_8_6_23}) | "
+              f"{f['F2_real_8']['C3']} | {f['F2_real_8']['C3F']} | {si(f['F2_real_8']['pass'])} |",
+              f"| F3 · bien numeradas (≥ C3 − {PERDIDA_CORRECTAS_6_23}) | "
+              f"{f['F3_correct']['C3']} | {f['F3_correct']['C3F']} | "
+              f"{si(f['F3_correct']['pass'])} |",
+              f"| F4 · coronas que pasan a < 85 % | — | {f['F4_crowns']['newly_under_retained']} "
+              f"de {f['F4_crowns']['teeth']} | {si(f['F4_crowns']['pass'])} |",
+              f"| Fantasmas en total | {f['ghosts_total']['C3']} | {f['ghosts_total']['C3F']} | |",
+              "", f"**F1-F4: {si(f['all_pass'])}.**", ""]
+    if "vs_C2" in r["C3F"]:
+        n = r["C3F"]["vs_C2"]
+        lineas.append("Frente a C2, solo información: " + ", ".join(
+            f"{k.split('_')[0]} {si(v['pass'])}" for k, v in n.items()
+            if isinstance(v, dict) and "pass" in v) + ".")
+    return "\n".join(lineas) + "\n"
+
+
+def seccion_6_23(args: argparse.Namespace) -> int:
+    from analysis_agents.identidad import AREA_MINIMA_TERCER_MOLAR_MM2
+
+    shas = {"C2": sha_de(args.c2), "C3": sha_de(args.c3)}
+    puerta = None
+    if args.split == "reserva-5":
+        if not args.evaluacion_final:
+            raise SystemExit("⚠ `reserva-5` es la evaluación final: pasa --evaluacion-final.")
+        gastada = reserva_5_gastada()
+        if gastada:
+            print(f"⚠ `reserva-5` ya se evaluó ({gastada}). Se evalúa UNA vez.", file=sys.stderr)
+            return 3
+        puerta = puerta_6_23(shas)
+        if not puerta["pass"]:
+            print("⚠ C3F no pasó la puerta de `reserva-4`: `reserva-5` no se evalúa.",
+                  file=sys.stderr)
+            return 4
+    pares = arcadas(args.split, args.limite)
+    faltan = [(p, a, x) for p, a in pares for x in shas.values()
+              if not ruta(x, args.split, p, a).is_file()]
+    if faltan:
+        print(f"Faltan {len(faltan)} predicciones; ejecuta `predice`.", file=sys.stderr)
+        return 2
+    rec = registro(sys.argv)
+    with ProcessPoolExecutor(max_workers=args.trabajos) as grupo:
+        filas = list(grupo.map(evalua_arcada_6_23, [(args.split, p, a, shas) for p, a in pares]))
+    salida: dict[str, Any] = {
+        "section": "6.23", "split": args.split, "arches": len(filas), "checkpoints": shas,
+        "area_min_mm2": AREA_MINIMA_TERCER_MOLAR_MM2,
+        "removed": sum(len(f["removed"]) for f in filas), "C3F": criterios_6_23(filas),
+        "gate": puerta, "run_record": rec,
+        "per_arch": [{k: f[k] for k in ("patient", "jaw", "flipped", "removed")} for f in filas],
+        "scope": "Teeth3DS+ only; not the project's clinical cases",
+    }
+    destino = SALIDA / f"seccion-6-23-{args.split}.json"
+    if args.limite:
+        destino = destino.with_name(destino.stem + f"-limite{args.limite}.json")
+    destino.write_text(json.dumps(salida, indent=2) + "\n")
+    destino.with_suffix(".md").write_text(informe_6_23(salida))
+    print(informe_6_23(salida))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1186,12 +1352,21 @@ def main() -> int:
     s21.add_argument("--trabajos", type=int, default=6)
     s21.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
     s21.set_defaults(funcion=seccion_6_21)
+    s23 = ordenes.add_parser("seccion-6-23", help="§6.23: C3 con el filtro de terceros molares")
+    s23.add_argument("--split", choices=SPLITS_6_23, required=True)
+    s23.add_argument("--c2", type=Path, required=True)
+    s23.add_argument("--c3", type=Path, required=True)
+    s23.add_argument("--evaluacion-final", action="store_true",
+                     help="Obligatorio en reserva-5, la última reserva de Teeth3DS+.")
+    s23.add_argument("--trabajos", type=int, default=6)
+    s23.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")
+    s23.set_defaults(funcion=seccion_6_23)
     # `reserva-2` se predice aquí y se evalúa una vez en total: con `testigo` (§6.16) o con
     # `benchmark_identidad.py evalua` (§6.11), lo que llegue antes. Ver `reserva_2_gastada`.
     p.add_argument("--orienta-borde", action="store_true",
                    help="§6.19: predice con el marco orientado por el borde, solo donde cambia")
     for sub, funcion, splits in ((p, predice, ("dev", "reserva", "reserva-2", "reserva-3",
-                                               "reserva-4")),
+                                               "reserva-4", "reserva-5")),
                                  (e, evalua, ("dev", "reserva"))):
         sub.add_argument("--split", choices=splits, required=True)
         sub.add_argument("--limite", type=int, help="Solo las N primeras arcadas.")

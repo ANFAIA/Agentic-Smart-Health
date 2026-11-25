@@ -2009,6 +2009,52 @@ sigue y se escribe.
 queda disponible con `--checkpoint`. Es una desviación declarada sobre un criterio fallado,
 no una confirmación. Es un caso clínico, no validación clínica.
 
+### 6.23 · Un filtro para los terceros molares pintados sobre la encía: pre-registro para `reserva-5` (2026-11-25)
+
+**Diagnóstico, en `reserva-4` (ya gastada) y `dev`.** C3 vio en su entrenamiento las tres
+primeras reservas, así que solo estas dos sirven. Se miraron las 129 instancias con código 8
+de C3:
+
+| `reserva-4` | 8 reales, bien numerados (27) | 8 fantasma (95) |
+|---|---:|---:|
+| Área, mínimo | 116 mm² | 0,7 mm² |
+| Área, mediana | 209 mm² | 50 mm² |
+| Área, percentil 75 | 228 mm² | 81 mm² |
+| Área frente a la de su 7, mediana | 1,03 | 0,21 |
+
+- **Lo que los separa es el tamaño.** La altura, la orientación de las caras y la distancia
+  al 7 se solapan mucho más.
+- **El umbral no sale de los fantasmas.** Es el percentil 5 del área del tercer molar del
+  *experto* en las tres reservas gastadas: 69,3 mm² sobre 89 piezas, redondeado a 69 mm²
+  (`identidad.AREA_MINIMA_TERCER_MOLAR_MM2`).
+- **En `reserva-4` dejaría pasar todos los 8 reales y quitaría unos 60 de los 95
+  fantasmas.** Por construcción, un 5 % de los terceros molares anotados del experto miden
+  menos; sobre C3 no se ha visto ninguno, porque C3 desborda la corona hacia la encía.
+
+**Candidato, uno solo.** C3F: C3 con `identidad.quita_terceros_molares_pequenos` sobre el
+voto, antes de la limpieza. Cada 18, 28, 38 o 48 de menos de 69 mm² vuelve a la encía.
+Nunca cambia un número: o lo deja o lo quita. Lo que quede dentro de una corona lo cierra la
+limpieza.
+
+**Cómo se mide** (`benchmark_separacion.py seccion-6-23`). C3F frente a C3, los dos con `O`,
+el voto y la limpieza de siempre.
+
+1. **Puerta en `reserva-4`.** Es donde se hizo el diagnóstico, así que solo comprueba que el
+   código hace lo previsto. Si falla, `reserva-5` no se toca.
+2. **`reserva-5`, una vez, con `--evaluacion-final`.** Es la última reserva de Teeth3DS+:
+   después no queda ningún paciente de este dataset sin ver.
+
+| | Criterio, C3F frente a C3 | Límite |
+|---|---|---|
+| F1 | Fantasmas con código 8 | ≤ la mitad de los de C3 |
+| F2 | Terceros molares bien numerados | ≥ C3 − 2 |
+| F3 | Piezas bien numeradas | ≥ C3 − 2 |
+| F4 | Coronas que pasan a < 85 % | ≤ 0,5 % de las piezas |
+
+Se informa también, sin que decida nada, si C3F cumple N1-N5 de §6.21 frente a C2. Es decir,
+si con el filtro ya no haría falta la desviación de §6.22. Si C3F cumple F1-F4, el filtro se
+aplica por defecto en `segmentar_fdi.py`. Si no, C3 sigue sin él y se escribe.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
