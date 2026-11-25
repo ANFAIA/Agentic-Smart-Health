@@ -182,3 +182,31 @@ def test_el_verificador_v3_no_juzga_los_fragmentos_pequenos():
                               area_minima=39.0)
     assert reg["too_small"] == [11] and reg["removed"] == [15]
     assert (salida == 11).sum() == 1 and not (salida == 15).any()
+
+
+def _rejilla(n: int, x0: float) -> tuple[np.ndarray, np.ndarray]:
+    """Un cuadrado de n×n vértices a 1 mm, desplazado `x0` mm: (n-1)² mm² de área."""
+    xs, ys = np.meshgrid(np.arange(n, dtype=float), np.arange(n, dtype=float))
+    pos = np.c_[xs.ravel() + x0, ys.ravel(), np.zeros(n * n)]
+    caras = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            a = i * n + j
+            caras += [[a, a + 1, a + n], [a + 1, a + n + 1, a + n]]
+    return pos, np.asarray(caras)
+
+
+def test_un_tercer_molar_pequeno_vuelve_a_la_encia_y_uno_grande_se_queda() -> None:
+    from analysis_agents.identidad import quita_terceros_molares_pequenos
+
+    p1, c1 = _rejilla(9, 0.0)     # 64 mm²: por debajo de 69
+    p2, c2 = _rejilla(11, 50.0)   # 100 mm²
+    p3, c3 = _rejilla(4, 100.0)   # 9 mm², pero es un 27: no se toca
+    pos = np.vstack([p1, p2, p3])
+    caras = np.vstack([c1, c2 + len(p1), c3 + len(p1) + len(p2)])
+    etq = np.r_[np.full(len(p1), 18), np.full(len(p2), 28), np.full(len(p3), 27)]
+    nuevas, quitados = quita_terceros_molares_pequenos(pos, caras, etq)
+    assert set(quitados) == {18} and abs(quitados[18] - 64.0) < 1e-9
+    assert (nuevas[: len(p1)] == 0).all()
+    assert (nuevas[len(p1):] == etq[len(p1):]).all()
+    assert (etq[: len(p1)] == 18).all()                     # no muta la entrada

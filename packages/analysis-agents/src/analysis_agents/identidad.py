@@ -53,6 +53,11 @@ RADIO_COMPONENTE_MM = 1.0
 # corona más pequeña, el incisivo central inferior, 78,0 mm² en 480 arcadas de entrenamiento
 # de Teeth3DS+ (`benchmark_identidad.py areas`, desde 5b1f39b). Fijado antes de evaluar.
 AREA_MINIMA_MM2 = 39.0
+# §6.23: un código de tercer molar más pequeño que esto vuelve a la encía. Es el percentil 5 del
+# área del tercer molar del EXPERTO en las tres reservas gastadas (89 piezas, 69,3 mm²); no se
+# ajustó sobre los fantasmas. En `reserva-4` los 8 que C3 numera bien miden 116 mm² o más, y la
+# mitad de sus 8 fantasmas, menos de 50.
+AREA_MINIMA_TERCER_MOLAR_MM2 = 69.0
 
 
 def instancias(etiquetas: np.ndarray) -> dict[int, np.ndarray]:
@@ -95,6 +100,26 @@ def areas_de_instancia(pos: np.ndarray, caras: np.ndarray,
     por_vertice = np.zeros(len(pos))
     np.add.at(por_vertice, tri.ravel(), np.repeat(a / 3.0, 3))
     return {c: float(por_vertice[v].sum()) for c, v in instancias(etiquetas).items()}
+
+
+def quita_terceros_molares_pequenos(
+    pos: np.ndarray, caras: np.ndarray, etiquetas: np.ndarray,
+    area_minima: float = AREA_MINIMA_TERCER_MOLAR_MM2,
+) -> tuple[np.ndarray, dict[int, float]]:
+    """Devuelve a la encía cada tercer molar (18, 28, 38, 48) de menos de `area_minima` mm².
+
+    **Por qué.** C3 aprendió los terceros molares (§6.21), pero también pone un 8 sobre la
+    encía lingual o retromolar de detrás del último molar. Esos 8 son pequeños: una franja de
+    encía, no una corona. Solo toca códigos de tercer molar, y nunca les cambia el número:
+    o se quedan como están o pasan a 0. Se aplica ANTES de la limpieza, que cierra como hueco
+    lo que quede dentro de una corona. Devuelve las etiquetas y `código → área` de lo quitado.
+    """
+    e = np.asarray(etiquetas, dtype=np.int64).copy()
+    quitados = {c: a for c, a in areas_de_instancia(pos, caras, e).items()
+                if c % 10 == 8 and a < area_minima}
+    for c in quitados:
+        e[e == c] = 0
+    return e, quitados
 
 
 def distancia_con_signo(pos: np.ndarray, dentro: np.ndarray, radio: float,

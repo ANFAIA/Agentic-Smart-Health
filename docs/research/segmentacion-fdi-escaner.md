@@ -1868,6 +1868,233 @@ Contra la segunda anotación sale lo mismo: 0,98, 0,11 y 0,19 mm.
 Las anotaciones de este caso quedan gastadas también para `M10`. Es un caso y una anotadora:
 no es validación clínica.
 
+### 6.21 · C3: C2 reentrenado con las reservas gastadas, pre-registro para `reserva-4` (2026-11-24)
+
+**Diagnóstico, antes de proponer nada.** C2 con `O`, voto y limpieza, sobre las 400 arcadas
+ya gastadas (`dev`, `dev-privado`, `reserva-2` y `reserva-3`). Lo que queda de error es
+numeración, y no está repartido.
+
+| | `dev` | `dev-privado` | `reserva-2` | `reserva-3` |
+|---|---:|---:|---:|---:|
+| Arcadas | 40 | 120 | 120 | 120 |
+| Bien numeradas | 508 de 520 | 1.551 de 1.657 | 1.580 de 1.672 | 1.556 de 1.648 |
+| Desplazadas | 11 | 91 | 79 | 91 |
+| Fantasmas con código 8 | 0 | 74 | 78 | 72 |
+| Otros fantasmas | 13 | 22 | 8 | 21 |
+| Terceros molares anotados | 0 | 24 | 38 | 27 |
+| Cuadrantes con un hueco entre 1 y 7 | 35 de 80 | 39 de 240 | 41 de 240 | 48 de 240 |
+
+- **Las desplazadas se concentran.** 218 de las 272 están en arcadas con tres o más, y 188 en
+  un cuadrante al que le falta una pieza entre la 1 y la 7. Con la pose nativa el error es el
+  mismo en 237 de ellas, así que no es de pose: es el modelo, que cuenta posiciones.
+- **Los fantasmas son casi todos un 8 sobre la encía.** De los 288, 224 llevan código de tercer
+  molar, y solo 25 en un cuadrante donde el experto anotó un 8. Su centro queda a 8,6 mm por
+  detrás del 7, y apenas lo tocan.
+- **No son terceros molares sin anotar.** Su altura lo sugería: sube 7,2 mm sobre la encía, y
+  un 8 anotado sube 8,0. Pero vistos en cuatro arcadas al azar, son una franja de encía
+  lingual o retromolar junto al último molar, a casi la altura de su corona.
+- **Es otra población.** En `dev`, del `public-training-set`, hay un 44 % de cuadrantes con
+  hueco y solo 11 desplazadas, y no hay ni un tercer molar ni un 8 fantasma. En las tres
+  reservas del `private-testing-set` hay menos huecos, pero desplazan mucho más, y cada una
+  trae 24-38 terceros molares anotados. C2 se entrenó solo con pacientes públicos.
+
+**Candidato, uno solo.** C3: la receta exacta de C2 (8.192 puntos, ±15°, 60 épocas, semilla
+0), entrenada además con los 180 pacientes de las tres reservas gastadas
+(`entrena_fdi_escaner.py --con-reservas-gastadas`). Ya no miden nada sin sesgo, y son la
+población donde C2 falla. `dev` sigue fuera del entrenamiento, igual que `reserva-4` y
+`reserva-5`.
+
+**Cómo se mide.** C2 y C3, los dos con `O`, el voto entre 3 de 18 referencias y la limpieza
+de siempre (`benchmark_separacion.py seccion-6-21`).
+
+1. **Puerta en `dev`.** C3 no pierde más de 6 piezas bien numeradas frente a C2, que es el
+   ruido de semilla de §6.15, y cumple N3. Si no pasa, `reserva-4` no se toca.
+2. **`reserva-4`, una vez.** C3 tiene que cumplir los cinco criterios.
+
+| | Criterio, C3 frente a C2 | Límite | De dónde sale |
+|---|---|---|---|
+| N1 | Bien numeradas | ≥ C2 + 20 | 3 veces el ruido de semilla (6) |
+| N2 | Fantasmas | ≤ C2 + 13 | el ruido de semilla |
+| N3 | Coronas que pasan a < 85 % | ≤ 0,5 % de las piezas | K5 |
+| N4 | Contacto interproximal, mediana | ≤ C2 + 0,03 mm | 3 veces el ruido (0,010) |
+| N5 | Encía marcada diente | ≤ C2 + 0,033 | 3 veces el ruido (0,011) |
+
+**Lo que no se sabe y se dirá.** La ganancia de C3 sería en la población del
+`private-testing-set`, que es la de `reserva-4`. No dice nada de otro escáner ni de los casos
+clínicos. Si C3 cumple, pasa a ser el candidato a checkpoint por defecto, y el cambio lo
+decide el responsable del proyecto. Si no cumple, C2 sigue y el resultado se escribe como
+negativo.
+
+**Resultado (2026-11-25), desde `3f36c4c`: negativo por un criterio.** C3 pasa la puerta
+de `dev`: 506 bien numeradas frente a 508, una corona dañada de 520. En `reserva-4`, 120
+arcadas evaluadas una vez, cumple cuatro de los cinco criterios. **Falla N2: los fantasmas
+suben de 103 a 126, con un límite de 116.**
+
+| `reserva-4`, 1.635 piezas | C2 | C3 | |
+|---|---:|---:|---|
+| N1 · bien numeradas | 1.551 | **1.595** | cumple (+44) |
+| N2 · fantasmas | 103 | **126** | **falla** (límite 116) |
+| N3 · coronas que pasan a < 85 % | — | 0 | cumple |
+| N4 · contacto, mediana | 0,169 mm | 0,186 mm | cumple |
+| N5 · encía marcada diente | 0,245 | 0,251 | cumple |
+| Desplazadas | 77 | 52 | |
+| Ausentes | 28 | 2 | |
+| Fragmentos | 21 | 14 | |
+| Piezas que sangran a la vecina | 110 | 33 | |
+
+**C2 sigue siendo el checkpoint por defecto.** La regla era conjunta, y un criterio fallado basta.
+
+**Diagnóstico posterior**, ya con `reserva-4` gastada.
+
+- **Todos los fantasmas de más llevan código de tercer molar.** Con código 8 pasan de 71 a
+  95; los demás, de 32 a 31.
+- **C3 sí aprendió los terceros molares.** Hay 30 anotados, y numera bien 27, frente a 8
+  de C2.
+- **Pero no aprendió dónde no los hay.** Pone un 8 en la encía de detrás del último molar
+  más a menudo que C2. La hipótesis de §6.21 era que la población privada arreglaría esos
+  fantasmas, y queda refutada: los empeora.
+- **Lo que sí confirma:** los desplazamientos y las ausencias venían de no haber visto esa
+  población. Las desplazadas bajan de 77 a 52 y las ausentes de 28 a 2.
+
+**Lo que queda.**
+
+- **Ya no hay conjunto fresco para elegir nada.** `reserva-4` queda gastada, y `reserva-5`
+  está cerrada para la evaluación final.
+- **Un filtro para los 8 dudosos.** Separar un 8 real de uno sobre la encía sería lo
+  siguiente, aplicado sobre C3 o sobre C2. Se tendría que ajustar sobre los conjuntos
+  gastados y llevarse una sola vez a `reserva-5`, y con eso se acaba Teeth3DS+.
+- **Adoptar C3 a pesar del fallo** sería una desviación declarada, como la de C2 en §6.10.
+  La decide el responsable del proyecto.
+
+### 6.22 · C3 por desviación declarada, con una comprobación sobre el caso clínico (2026-11-25)
+
+**Qué se decide.** C3 falló N2 en `reserva-4` (§6.21), y ese resultado no se reescribe. Aun
+así pasa a ser el checkpoint por defecto de `segmentar_fdi.py`, por desviación declarada,
+como C2 en §6.10. El responsable del proyecto delegó la decisión.
+
+**El intercambio que se acepta**, en `reserva-4`:
+
+- **Gana:** 25 piezas menos con el número desplazado, 26 piezas menos sin encontrar y 44
+  más bien numeradas.
+- **Pierde:** 23 fantasmas más, todos con código de tercer molar, sobre la encía de detrás
+  del último molar.
+- **Por qué compensa:** un número desplazado o una pieza perdida hace que un hallazgo del
+  informe acabe en el diente equivocado sin que nada lo avise. Un 8 de más al fondo de la
+  arcada se ve, y se descarta.
+
+**La condición, fijada antes de ejecutarlo.** C3 se pasa una vez por el caso clínico maxilar,
+con 18 referencias y `O`, y se puntúa contra sus dos anotaciones con `puntua_margen.py`. No
+mide el margen, porque esas líneas ya están gastadas. Solo comprueba que C3 no rompe lo que C2
+hace bien en un escáner real:
+
+| | Comprobación, contra la línea a ciegas | C2 hoy |
+|---|---|---|
+| S1 | Las 14 piezas anotadas, con el mismo código, sin renumerar ninguna | cumple |
+| S2 | Ninguna pieza anotada ausente ni con menos del 85 % de su corona | cumple |
+
+Las etiquetas que la línea no anota, como el 18 que ya añade C2, se informan pero no
+deciden. Si C3 cumple S1 y S2, pasa a ser el checkpoint por defecto. Si falla alguna, C2
+sigue y se escribe.
+
+**Resultado (2026-11-25), una ejecución desde `e081440`: C3 cumple S1 y S2.**
+
+- Numera las 14 piezas que anota la línea a ciegas con el mismo código, y
+  `puntua_margen.py` no declara ninguna renumeración.
+- Ninguna pieza anotada falta, y ninguna queda por debajo del 85 % de su corona.
+- Añade un 18 que la línea no anota, igual que C2.
+- Sin refinar el margen, deja la línea a 0,90 mm, frente a 0,88 con C2. Se informa, no
+  decide.
+
+**Así que C3 es el checkpoint por defecto de `segmentar_fdi.py` desde el 2026-11-25**, y C2
+queda disponible con `--checkpoint`. Es una desviación declarada sobre un criterio fallado,
+no una confirmación. Es un caso clínico, no validación clínica.
+
+### 6.23 · Un filtro para los terceros molares pintados sobre la encía: pre-registro para `reserva-5` (2026-11-25)
+
+**Diagnóstico, en `reserva-4` (ya gastada) y `dev`.** C3 vio en su entrenamiento las tres
+primeras reservas, así que solo estas dos sirven. Se miraron las 129 instancias con código 8
+de C3:
+
+| `reserva-4` | 8 reales, bien numerados (27) | 8 fantasma (95) |
+|---|---:|---:|
+| Área, mínimo | 116 mm² | 0,7 mm² |
+| Área, mediana | 209 mm² | 50 mm² |
+| Área, percentil 75 | 228 mm² | 81 mm² |
+| Área frente a la de su 7, mediana | 1,03 | 0,21 |
+
+- **Lo que los separa es el tamaño.** La altura, la orientación de las caras y la distancia
+  al 7 se solapan mucho más.
+- **El umbral no sale de los fantasmas.** Es el percentil 5 del área del tercer molar del
+  *experto* en las tres reservas gastadas: 69,3 mm² sobre 89 piezas, redondeado a 69 mm²
+  (`identidad.AREA_MINIMA_TERCER_MOLAR_MM2`).
+- **En `reserva-4` dejaría pasar todos los 8 reales y quitaría unos 60 de los 95
+  fantasmas.** Por construcción, un 5 % de los terceros molares anotados del experto miden
+  menos; sobre C3 no se ha visto ninguno, porque C3 desborda la corona hacia la encía.
+
+**Candidato, uno solo.** C3F: C3 con `identidad.quita_terceros_molares_pequenos` sobre el
+voto, antes de la limpieza. Cada 18, 28, 38 o 48 de menos de 69 mm² vuelve a la encía.
+Nunca cambia un número: o lo deja o lo quita. Lo que quede dentro de una corona lo cierra la
+limpieza.
+
+**Cómo se mide** (`benchmark_separacion.py seccion-6-23`). C3F frente a C3, los dos con `O`,
+el voto y la limpieza de siempre.
+
+1. **Puerta en `reserva-4`.** Es donde se hizo el diagnóstico, así que solo comprueba que el
+   código hace lo previsto. Si falla, `reserva-5` no se toca.
+2. **`reserva-5`, una vez, con `--evaluacion-final`.** Es la última reserva de Teeth3DS+:
+   después no queda ningún paciente de este dataset sin ver.
+
+| | Criterio, C3F frente a C3 | Límite |
+|---|---|---|
+| F1 | Fantasmas con código 8 | ≤ la mitad de los de C3 |
+| F2 | Terceros molares bien numerados | ≥ C3 − 2 |
+| F3 | Piezas bien numeradas | ≥ C3 − 2 |
+| F4 | Coronas que pasan a < 85 % | ≤ 0,5 % de las piezas |
+
+Se informa también, sin que decida nada, si C3F cumple N1-N5 de §6.21 frente a C2. Es decir,
+si con el filtro ya no haría falta la desviación de §6.22. Si C3F cumple F1-F4, el filtro se
+aplica por defecto en `segmentar_fdi.py`. Si no, C3 sigue sin él y se escribe.
+
+**Puerta en `reserva-4`, desde `ccc4e37`: cumple.** Los 8 fantasma pasan de 95 a 30, sin
+perder ningún 8 real ni ninguna pieza bien numerada.
+
+**`reserva-5`, una vez, desde `ccc4e37`: confirmado.** Son 120 arcadas y 1.662 piezas.
+
+| `reserva-5` | C3 | C3F | |
+|---|---:|---:|---|
+| F1 · fantasmas con código 8 | 71 | 21 | cumple (límite 35) |
+| F2 · terceros molares bien numerados | 30 | 30 | cumple |
+| F3 · piezas bien numeradas | 1.583 | 1.583 | cumple |
+| F4 · coronas que pasan a < 85 % | — | 0 | cumple |
+| Fantasmas en total | 92 | 43 | |
+
+- **El filtro solo quita fantasmas.** Quita 68 instancias y no cambia ninguna pieza bien
+  numerada ni ningún tercer molar real.
+- **Frente a C2 cumple los cinco criterios de §6.21.** Es información, pero pre-registrada:
+
+  | Criterio de §6.21 | C2 | C3 con filtro |
+  |---|---:|---:|
+  | N1 · bien numeradas | 1.554 | 1.583 |
+  | N2 · fantasmas | 82 | 43 |
+  | N3 · coronas dañadas | — | 0 |
+  | N4 · contacto | 0,171 mm | 0,187 mm |
+  | N5 · encía marcada diente | 0,254 | 0,251 |
+
+  Así que C3 con el filtro ya no necesita la desviación de §6.22. Es la primera vez que un
+  modelo nuevo cumple todos los criterios contra el anterior en una reserva sin ver.
+- **El filtro se aplica por defecto en `segmentar_fdi.py`** desde el 2026-11-25.
+  `--sin-filtro-terceros` lo desactiva.
+- **En el caso clínico**, el 18 que C2 y C3 añadían sin anotar medía 0,4 mm², y el filtro lo
+  quita. Ahora salen exactamente las 14 piezas de la línea a ciegas. Eso no se ha medido
+  contra nada: es lo que sale al aplicarlo.
+
+**Con esto Teeth3DS+ queda agotado.** Las cinco reservas están gastadas. Cualquier cambio
+futuro tendrá que medirse sobre otro dataset o sobre casos clínicos anotados.
+
+**Modelo congelado para el paper:** C3 con el filtro, etiqueta `segmentacion-fdi-c3-v1`. Su
+ficha, con el sha256, los datos y las cifras finales, está en
+[`modelo-fdi-escaner-c3.md`](modelo-fdi-escaner-c3.md).
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
