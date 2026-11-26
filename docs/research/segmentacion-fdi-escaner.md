@@ -2144,6 +2144,19 @@ da por buena si se cumplen los cinco:
 No hay anotación del CBCT, así que esto comprueba que la regla hace solo lo que dice. No
 comprueba que la numeración del CBCT sea correcta.
 
+**Resultado (`run-7`, desde `4b23406` con el árbol limpio): se cumplen los cinco.**
+
+| Criterio | Resultado |
+|---|---|
+| G1 · aviso de dos instancias | ninguno; el gate declara en su lugar las dos motas, de 97 y 45 gaussianas |
+| G2 · códigos detectados | los mismos 13, del 11 al 16 y del 21 al 27 |
+| G3 · gaussianas devueltas | 142 de 236.403 gaussianas de diente, el 0,060 % (límite 1 %) |
+| G4 · resto del `region_id` | idéntico; las únicas gaussianas que cambian son esas 142, y todas pasan a 0 |
+| G5 · registro | `registro.json` idéntico; rms 0,680 mm sobre el 13,6 % |
+
+La geometría del campo exportado también es idéntica. El `.uos` del caso B para el visor es
+el de `run-7`.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que
