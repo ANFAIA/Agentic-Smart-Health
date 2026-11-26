@@ -6,9 +6,11 @@ Multi-agent system for integrating, analysing and representing heterogeneous den
 
 > Open source · Apache 2.0 · Python ≥ 3.13
 
-![UOS viewer demo](docs/assets/viewer-demo.gif)
+![uos-viewer demo with the November case](docs/assets/viewer-demo.gif)
 
-The viewer demo shows the `.uos` container loaded in the interactive dental twin viewer.
+The November case opened in [uos-viewer](https://github.com/lgarbayo/uos-viewer): the loaded
+container, the frontal view with and without gingiva, tooth 11 isolated with the rest in grey,
+the Container and Clinical panels, light mode and the English interface.
 
 ### A real case in the viewer
 
