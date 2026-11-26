@@ -27,7 +27,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: pyproject.toml
+          # ⚠️ Fijado, no leído de `pyproject.toml`. Con `>=3.13` el runner coge la
+          # versión más nueva que tenga, y el 2026-11-26 pasó a 3.15, para la que `vtk`
+          # no publica wheel: `uv sync` fallaba antes de correr un solo check. 3.13 es
+          # el mínimo que declara el proyecto y con el que pasaba el CI.
+          python-version: "3.13"
 
       - name: Install dependencies (incl. ruff + mypy)
         run: uv sync --group dev
