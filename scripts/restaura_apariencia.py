@@ -12,7 +12,33 @@ import numpy as np
 RESUMEN_EN = "Restores archived appearance after verifying its source hashes and carried data."
 
 
-def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path]):
+def reetiqueta(params: dict, vertices: np.ndarray, etiquetas: np.ndarray) -> int:
+    """Vuelve a numerar cada gaussiana de la apariencia con las etiquetas de ESTA ejecución.
+
+    La apariencia archivada trae el `region_id` del modelo que segmentó cuando se entrenó.
+    Reutilizarla tal cual con otras etiquetas del escáner deja dos numeraciones en el mismo
+    contenedor: `derived/seg_teeth` con la nueva y la selección del visor con la vieja. Se
+    recalcula con la MISMA función y la misma cota que usa el entrenamiento
+    (`_fdi_por_gaussiana`, voto de `VOTOS_FDI` vértices, `LIMITE_VECINO` mm), en el marco
+    normalizado del artefacto. Devuelve cuántas gaussianas cambian de código.
+    """
+    from gaussian_engine.apariencia import LIMITE_VECINO, _fdi_por_gaussiana
+
+    escala = float(params["scan_scale"])
+    vn = (np.asarray(vertices, dtype=np.float64)
+          - np.asarray(params["scan_offset"], dtype=np.float64)) * escala
+    reg, _lejos, _ = _fdi_por_gaussiana(
+        np.asarray(params["means"], dtype=np.float64), vn, np.asarray(etiquetas),
+        limite=LIMITE_VECINO * escala,
+    )
+    antes = np.asarray(params["region_id"]).astype(np.int16)
+    params["region_id"] = reg
+    return int((reg != antes).sum())
+
+
+def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path],
+             etiquetas: tuple[np.ndarray, np.ndarray] | None = None):
+    """`etiquetas` = `(vértices, códigos)` de esta ejecución; con ellas se renumera."""
     from malla_mejorada import lee_apariencia_glb
     from uos import validate
     from uos.fidelidad import Process
@@ -64,6 +90,7 @@ def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path]):
         ))
     if not tones or "region_id" not in params:
         raise ValueError("La apariencia anterior no conserva tonos o etiquetas FDI")
+    renumeradas = None if etiquetas is None else reetiqueta(params, *etiquetas)
     process = Process(
         operation="reuse-archived-appearance", agent="caso_completo.restore",
         reproducibility="unknown", parameters={
@@ -72,6 +99,9 @@ def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path]):
             "source_artifact_sha256": hashlib.sha256(artefacto.read_bytes()).hexdigest(),
             "same_ios_sha256": ios["sha256"],
             "training_executed_this_run": False,
+            # `region_id` recalculado con las etiquetas del escáner de esta ejecución, o
+            # `None` si se conserva el del entrenamiento archivado.
+            "fdi_labels_recomputed_changed": renumeradas,
             "source_conforms_to_current_contract": report.valid,
         },
     )

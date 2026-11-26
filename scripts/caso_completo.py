@@ -981,10 +981,19 @@ def main() -> int:
     if args.reusa_apariencia_uos:
         from restaura_apariencia import restaura
 
+        # Con etiquetas del escáner en esta ejecución, la apariencia se renumera con ellas:
+        # si no, la selección del visor iría con la numeración del modelo que había cuando
+        # se entrenó y `derived/seg_teeth` con la de ahora.
+        antes_ap = None
         params_ap, tonos_previos = restaura(
             args.reusa_apariencia_uos, args.reusa_apariencia_artefacto,
             caso.mesh, list(caso.images),
+            etiquetas=None if etq_ios is None else (_V, etq_ios),
         )
+        if etq_ios is not None:
+            import json as _json
+            antes_ap = _json.loads(bytes(params_ap["processing_json"]).decode())[
+                "parameters"]["fdi_labels_recomputed_changed"]
         ref_ap = pipe.store.put(**params_ap)
         fus = replace(fus, snapshot=_con_color(fus.snapshot, tonos_previos).model_copy(
             update={"apariencia_ref": ref_ap}
@@ -992,6 +1001,9 @@ def main() -> int:
         print("\n--- 3b · APARIENCIA ARCHIVADA REUTILIZADA ---")
         print(f"  {len(tonos_previos)} tonos por pieza; mismo escaneo y fuentes verificadas")
         print("  No se ejecutó entrenamiento; se conserva la procedencia de la reutilización")
+        if antes_ap is not None:
+            print(f"  numeración FDI de la apariencia recalculada con las etiquetas de esta "
+                  f"ejecución: {antes_ap:,} de {len(params_ap['region_id']):,} gaussianas cambian")
 
     if args.entrena_apariencia:
         if args.gs_apariencia is None:
