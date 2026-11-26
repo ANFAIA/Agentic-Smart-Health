@@ -2095,6 +2095,55 @@ futuro tendrá que medirse sobre otro dataset o sobre casos clínicos anotados.
 ficha, con el sha256, los datos y las cifras finales, está en
 [`modelo-fdi-escaner-c3.md`](modelo-fdi-escaner-c3.md).
 
+### 6.24 · Motas con el número de su pieza al nombrar el CBCT (2026-11-26)
+
+Esta sección no toca el modelo congelado ni sus cifras. Trata de cómo esos números pasan al
+CBCT en el caso completo.
+
+**Diagnóstico.** El caso B se regeneró con C3 desde la etiqueta `segmentacion-fdi-c3-v1`
+(`run-6`), con M10. El gate avisó de que los códigos 13 y 26 estaban en dos instancias, cosa
+que con las etiquetas de agosto (`run-5`) no pasaba.
+
+- **En el escáner no hay nada raro.** Las 13 piezas de C3 son un bloque cada una, salvo dos
+  islitas de su propia corona: 12,6 mm² en el 13 y 3 mm² en el 15. Están rodeadas de su pieza
+  y de encía, no de otra pieza.
+- **El duplicado nace en el CBCT.** El modelo del CBCT es binario, y cada gaussiana de diente
+  recibe el código de la corona más cercana. Reproduciendo la agregación sobre las etiquetas
+  exportadas, con el mismo kNN, el mismo tamaño mínimo y la misma fusión (espaciado 0,424 mm,
+  fusión a 5,09 mm), las dos instancias que sobran son motas:
+  - en el 13, 97 gaussianas, el 0,6 % de la pieza, a 5,42 mm del cuerpo;
+  - en el 26, 45 gaussianas, el 0,4 % de la pieza, a 5,35 mm del cuerpo.
+- **Por qué ahora y antes no.** Los trozos grandes de la frontera sí se fusionan con su
+  pieza. Las coronas de C3 son más ajustadas que las de agosto (26: 290 → 145 mm²), así que
+  el reparto de la frontera cambia y dos motas quedan justo fuera de la distancia de fusión.
+
+**La regla.** `SegmentationAgent` quita una segunda instancia de un código cuando la mayor con
+ese mismo código es más de diez veces más grande (`DEFAULT_FRAGMENT_FRACTION` = 0,10). Esas
+gaussianas quedan sin `region_id`, cuentan como sin asignar, y el gate lo declara con su
+tamaño.
+
+- **Por qué un décimo.** Sale de la anatomía, no de este caso. El diente permanente más
+  pequeño, el incisivo central inferior, ronda un cuarto del volumen del mayor, el primer
+  molar superior. Así que un décimo deja más del doble de margen.
+- **Lo que la regla no hace.**
+  - Con dos instancias de tamaño parecido no elige: siguen yendo a revisión, porque ahí sí
+    puede haber dos dientes con el mismo número.
+  - Tampoco reasigna las motas al vecino, porque de quién son es justo lo que no se sabe.
+
+**Criterios, fijados en este commit antes de volver a ejecutar el caso.** Se ejecuta una vez,
+desde este commit con el árbol limpio, la misma orden que `run-6`, en `run-7`. La regla se
+da por buena si se cumplen los cinco:
+
+- **G1.** Ningún motivo «más de una instancia» en el gate.
+- **G2.** Se detectan los mismos 13 códigos FDI que en `run-6`.
+- **G3.** Las gaussianas devueltas a sin asignar son como mucho el 1 % de las gaussianas de
+  diente.
+- **G4.** Fuera de las gaussianas devueltas, el `region_id` exportado es idéntico al de `run-6`.
+- **G5.** El registro (rms y solape) es idéntico al de `run-6`.
+
+No hay anotación del CBCT, así que esto comprueba que la regla hace solo lo que dice. No
+comprueba que la numeración del CBCT sea correcta.
+
 ## 7 · Consecuencia sobre el producto
 
 `derived/seg_teeth.bin` sale con `regulatory.layer: 3` y `status: investigational`, que

@@ -212,6 +212,43 @@ def test_el_mismo_fdi_en_dos_instancias_pide_revision(store):
     assert any("más de una instancia" in m for m in out.hitl_reasons)
 
 
+def test_una_mota_con_el_codigo_de_su_pieza_vuelve_a_sin_asignar(store):
+    """Una segunda instancia de menos de un décimo de su pieza no es otro diente."""
+    encia = _nube((0.0, -40.0, 0.0), 60, semilla=1, radio=3.0)
+    diente = _nube((0.0, 0.0, 0.0), 400, semilla=2)
+    mota = _nube((40.0, 0.0, 0.0), 35, semilla=3, radio=0.5)
+    puntos = np.vstack([encia, diente, mota])
+    clases = np.array([GUM] * 60 + [A] * 435)
+
+    agente = SegmentationAgent(store, segmenter=_segmentador(clases))
+    out = agente.analyze(_snap(_campo(store, puntos)))
+
+    assert out.n_teeth == 1
+    assert set(out.detected) == {"11"}
+    assert not any("más de una instancia" in m for m in out.hitl_reasons)
+    assert any("mota" in m and "35 gaussianas" in m for m in out.hitl_reasons)
+    assert out.unassigned_fraction == pytest.approx(35 / 435)
+    region = store.load(out.snapshot.gaussian_field_ref)["region_id"]
+    assert (region[-35:] == 0).all()
+    assert (region[60:-35] == 11).all()
+
+
+def test_dos_instancias_de_tamano_parecido_siguen_yendo_a_revision(store):
+    """Con dos piezas posibles no se elige: el umbral solo quita motas."""
+    encia = _nube((0.0, -40.0, 0.0), 60, semilla=1, radio=3.0)
+    grande = _nube((0.0, 0.0, 0.0), 400, semilla=2)
+    otra = _nube((40.0, 0.0, 0.0), 60, semilla=3)  # 15 %: por encima del décimo
+    puntos = np.vstack([encia, grande, otra])
+    clases = np.array([GUM] * 60 + [A] * 460)
+
+    agente = SegmentationAgent(store, segmenter=_segmentador(clases))
+    out = agente.analyze(_snap(_campo(store, puntos)))
+
+    assert out.n_teeth == 2
+    assert any("más de una instancia" in m for m in out.hitl_reasons)
+    assert not any("mota" in m for m in out.hitl_reasons)
+
+
 def test_la_fragmentacion_descartada_pide_revision(store):
     """La agregación tira los trozos pequeños; que lo haga en silencio es el riesgo."""
     encia = _nube((0.0, -40.0, 0.0), 60, semilla=1, radio=3.0)

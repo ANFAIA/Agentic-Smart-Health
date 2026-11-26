@@ -48,6 +48,15 @@ DEFAULT_CODES: dict[int, int] = {i: int(c) for i, c in enumerate(all_fdi_codes()
 # es una señal de que el resultado no debería usarse sin mirarlo.
 DEFAULT_UNASSIGNED_LIMIT = 0.10
 
+# Una segunda instancia con el mismo código FDI y menos de esta fracción del tamaño de
+# la mayor no puede ser otro diente entero: el diente permanente más pequeño (incisivo
+# central inferior) ronda un cuarto del volumen del mayor (primer molar superior), así
+# que un décimo deja más del doble de margen. Es una mota separada de su pieza, no una
+# segunda pieza, y se devuelve a «sin asignar» declarándolo. Con dos instancias de
+# tamaño parecido no se elige: sigue yendo a revisión, porque ahí sí puede haber dos
+# dientes con el mismo número. Fijado por anatomía, no ajustado sobre ningún caso.
+DEFAULT_FRAGMENT_FRACTION = 0.10
+
 # Tolerancia al comprobar que el segmentador devuelve log-probabilidades (∑ p = 1).
 _LOGSUMEXP_TOL = 1e-3
 # Filas que se comprueban como mucho. Muestreo con paso fijo, no aleatorio: la
@@ -148,6 +157,7 @@ class SegmentationAgent(BaseAnalysisAgent[SegmentationOutput]):
         merge_mult: float = 12.0,
         enforce_unique: bool = False,
         unassigned_limit: float = DEFAULT_UNASSIGNED_LIMIT,
+        fragment_fraction: float = DEFAULT_FRAGMENT_FRACTION,
         quarantine_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> None:
@@ -162,6 +172,7 @@ class SegmentationAgent(BaseAnalysisAgent[SegmentationOutput]):
         self.merge_mult = merge_mult
         self.enforce_unique = enforce_unique
         self.unassigned_limit = unassigned_limit
+        self.fragment_fraction = fragment_fraction
 
     # --- análisis --------------------------------------------------------- #
     def _analyze(self, snapshot: TwinSnapshot, **inputs: Any) -> SegmentationOutput:
@@ -196,9 +207,11 @@ class SegmentationAgent(BaseAnalysisAgent[SegmentationOutput]):
                 hitl_reasons=["La segmentación no produjo ningún diente: no hay ancla FDI."],
             )
 
+        instancias, motivos_motas = self._descarta_motas(instancias)
         etiquetas = logprob.argmax(axis=1)
         region = self._region_array(len(puntos), instancias)
         detected, motivos = self._detectados(instancias)
+        motivos = motivos_motas + motivos
         sin_asignar = self._fraccion_sin_asignar(etiquetas, instancias)
         motivos += self._motivos_de_cobertura(sin_asignar)
 
@@ -247,6 +260,37 @@ class SegmentationAgent(BaseAnalysisAgent[SegmentationOutput]):
                 "Las etiquetas saldrían bien y las confianzas serían falsas."
             )
         return logprob
+
+    def _descarta_motas(
+        self, instancias: list[ToothInstance]
+    ) -> tuple[list[ToothInstance], list[str]]:
+        """Quita las segundas instancias de un código que son motas de su pieza.
+
+        Una instancia sale si otra con el mismo FDI es más de `1 / fragment_fraction`
+        veces mayor. Sus gaussianas quedan sin `region_id` (cuentan como sin asignar) y
+        el motivo lo declara con su tamaño: se quita, no se esconde. No se reasignan al
+        diente vecino, porque a quién pertenecen es justo lo que no se sabe.
+        """
+        mayor: dict[int, int] = {}
+        for inst in instancias:
+            if inst.fdi is not None:
+                mayor[inst.fdi] = max(mayor.get(inst.fdi, 0), inst.size)
+
+        quedan: list[ToothInstance] = []
+        quitadas: dict[int, list[int]] = {}
+        for inst in instancias:
+            if inst.fdi is not None and inst.size < self.fragment_fraction * mayor[inst.fdi]:
+                quitadas.setdefault(inst.fdi, []).append(inst.size)
+            else:
+                quedan.append(inst)
+
+        motivos = [
+            f"FDI {fdi}: {len(tam)} mota(s) separada(s) de la pieza ({sum(tam)} "
+            f"gaussianas, menos del {self.fragment_fraction:.0%} de la pieza) devuelta(s) "
+            "a sin asignar: no pueden ser otro diente entero y no se sabe de cuál son."
+            for fdi, tam in sorted(quitadas.items())
+        ]
+        return quedan, motivos
 
     def _region_array(self, n: int, instancias: list[ToothInstance]) -> np.ndarray:
         """`region_id` por gaussiana. `0` = sin asignar (encía o diente descartado)."""
