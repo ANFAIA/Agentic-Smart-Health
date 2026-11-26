@@ -10,6 +10,37 @@ Multi-agent system for integrating, analysing and representing heterogeneous den
 
 The viewer demo shows the `.uos` container loaded in the interactive dental twin viewer.
 
+### A real case in the viewer
+
+![A real patient's twin orbiting in uos-viewer](docs/assets/visor/noviembre-orbita.gif)
+
+This is a real patient (the "November case"), opened in
+[uos-viewer](https://github.com/lgarbayo/uos-viewer) exactly as this pipeline emits it,
+with the C3 FDI segmentation. Everything on screen belongs to this patient:
+
+- **Crowns:** 3DGS appearance from the intraoral scan. Their colour is learnt by the fit,
+  not measured.
+- **FDI numbering:** Layer 3, `investigational`, from `gaussian-engine.apariencia`. It is
+  what separates the gingiva, which is hidden by default.
+- **Bone and roots:** the measured CBCT density, in a grey display ramp. The CBCT → scan
+  registration reports an rms of 0.56 mm and has not been checked by a person.
+- **Nerve canals:** not in this container, and the viewer does not infer them.
+
+| Dark mode | Light mode |
+|---|---|
+| ![Front view in dark mode, with the layer panel](docs/assets/visor/noviembre-visor-oscuro.png) | ![The same view in light mode](docs/assets/visor/noviembre-visor-claro.png) |
+| **Tooth 11 isolated** from the odontogram | **Occlusal view** |
+| ![Tooth 11 isolated with its record](docs/assets/visor/noviembre-pieza-11.png) | ![Occlusal view of the upper arch](docs/assets/visor/noviembre-oclusal.png) |
+
+![Layer by layer: gingiva shown, gingiva hidden, no bone, tooth 11](docs/assets/visor/noviembre-capas.gif)
+
+**Video** (20 s, with Spanish captions):
+[`docs/assets/visor/noviembre-recorrido.mp4`](docs/assets/visor/noviembre-recorrido.mp4).
+
+The clinical team confirmed consent for use and publication. The raw data and the `.uos`
+container are not versioned, and the case identifier is masked in every capture. See
+[`docs/research/dataset-noviembre.md`](docs/research/dataset-noviembre.md).
+
 ---
 
 ## Project context
