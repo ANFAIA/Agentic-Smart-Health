@@ -275,6 +275,9 @@ class UOSExportAgent(BaseExportAgent):
         motivos: list[str] | None = None,
         etiquetas_ios: Any | None = None,
         modelo_segmentacion: Path | None = None,
+        # El sha256 de esos pesos, si el llamante lo tiene y no el fichero. Gana sobre
+        # `modelo_segmentacion`. Sin ninguno de los dos, `weights_sha256` va a null.
+        pesos_segmentacion_sha256: str | None = None,
         # Lo que hizo `analysis_agents.frontera.ancla_al_pliegue` por pieza. Viaja al
         # sidecar de `derived/seg_teeth`; `None` = no se ejecuto.
         margen_gingival: dict[str, Any] | None = None,
@@ -796,8 +799,9 @@ class UOSExportAgent(BaseExportAgent):
                         # inventarlo. El hash de los pesos sigue siendo lo que identifica
                         # el checkpoint de verdad.
                         version=version_segmentador,
-                        pesos_sha256=(None if modelo_segmentacion is None
-                                      else sha256_de_fichero(modelo_segmentacion)),
+                        pesos_sha256=(pesos_segmentacion_sha256
+                                      or (None if modelo_segmentacion is None
+                                          else sha256_de_fichero(modelo_segmentacion))),
                         calidad=_calidad_frontera(malla_ingerida, etq),
                         margen=margen_gingival,
                         # T-4 · el hash del array de POSITION tal y como va en la escena.

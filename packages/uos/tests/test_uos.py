@@ -768,6 +768,36 @@ def test_la_escena_conserva_el_orden_de_los_vertices(tmp_path, malla):
     assert g["accessors"][prims[0]["attributes"]["POSITION"]]["count"] == len(pos)
 
 
+def test_seg_teeth_declara_los_pesos_de_las_etiquetas_y_no_otros(tmp_path, malla):
+    """`weights_sha256` de `derived/seg_teeth` es el de quien produjo ESAS etiquetas.
+
+    El ejecutor del caso completo pasaba los pesos del segmentador del CBCT, y todos los
+    contenedores atribuían las etiquetas del escáner al modelo equivocado. Con el hash
+    explícito gana el hash; sin ninguno de los dos, `null`.
+    """
+    import json as _json
+
+    from uos.agente import UOSExportAgent
+
+    pos, etq = _arcada_de_juguete()
+    otro = tmp_path / "otro-modelo.pt"
+    otro.write_bytes(b"pesos de otro modelo")
+    sha = "ab" * 32
+
+    def meta_de(**kw):
+        salida = UOSExportAgent(_Almacen(pos)).export(
+            _snapshot(surface_ref="sha256:malla"), tmp_path / f"c{len(kw)}{sorted(kw)}",
+            pseudonimo="P-1", malla=malla, etiquetas_ios=etq, **kw,
+        )
+        assert salida.ok, salida.detail
+        with zipfile.ZipFile(salida.path) as z:
+            return _json.loads(z.read("derived/seg_teeth.meta.json"))["model"]
+
+    assert meta_de(pesos_segmentacion_sha256=sha,
+                   modelo_segmentacion=otro)["weights_sha256"] == sha
+    assert meta_de()["weights_sha256"] is None
+
+
 # --- §12: el esquema publicado ------------------------------------------------ #
 def test_el_esquema_publicado_valida_un_contenedor_de_verdad(tmp_path, malla):
     """§12 pide que el validador contraste contra un «JSON Schema publicado por version».

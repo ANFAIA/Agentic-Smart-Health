@@ -1583,6 +1583,7 @@ wrote.
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-11-26 | 0.18.0 | **`derived/seg_teeth` declared the wrong weights.** `caso_completo.py` passed `--modelo`, the CBCT segmenter, as the model that produced the scanner labels, so every complete-case container attributed `seg_teeth` to the CBCT checkpoint (`ec4558…`). The scanner labels come from `segmentar_fdi.py` through `--fdi`. `segmentar_fdi.py` now writes its checkpoint sha256 into `fdi_<arch>.json`. The runner reads it from there and passes it as `pesos_segmentacion_sha256`, which takes precedence over `modelo_segmentacion`. Without it, `weights_sha256` is null, never another model's hash. Containers written before this keep the wrong value. No contract change. |
 | 2026-10-07 | 0.18.0 | Separate centred field and DICOM frames; compose recorded origin with ICP; retain nonuniform slice positions. |
 | 2026-10-02 | 0.17.0 | Separate indexed appearance labels preserve picking without inference in the base scene. |
 | 2026-10-02 | 0.16.0 | Versioned fidelity/provenance extension, validated loss inheritance and sources, inferred global measurements, separate model-dependent representations and removal as a successor. |

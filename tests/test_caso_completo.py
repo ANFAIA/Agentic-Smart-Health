@@ -137,3 +137,23 @@ def test_la_correccion_de_iluminacion_viaja_con_el_color() -> None:
     # Ausente, NO cero: «no se corrigió» y «se corrigió con pendiente 0» son cosas
     # distintas, y sólo la primera hace el dato incomparable con el resto.
     assert snap2.regional[0].attributes.color.correccion_iluminacion is None
+
+
+def test_los_pesos_de_las_etiquetas_salen_de_su_sidecar(tmp_path: Path) -> None:
+    """`seg_teeth` declara los pesos que `segmentar_fdi.py` dejó junto a las etiquetas.
+
+    Sin sidecar, o con uno sin `checkpoint`, no se adivina: `None`, que sale como null.
+    """
+    import json
+
+    etq = tmp_path / "etiquetas_upper.npy"
+    etq.write_bytes(b"")
+    assert cc.pesos_de_etiquetas(etq) is None
+
+    (tmp_path / "fdi_upper.json").write_text(json.dumps({"modelo": "x"}), encoding="utf-8")
+    assert cc.pesos_de_etiquetas(etq) is None
+
+    sha = "cd" * 32
+    (tmp_path / "fdi_upper.json").write_text(
+        json.dumps({"checkpoint": {"file": "c3.pt", "sha256": sha}}), encoding="utf-8")
+    assert cc.pesos_de_etiquetas(etq) == sha

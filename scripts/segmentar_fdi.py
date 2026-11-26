@@ -84,6 +84,7 @@ paciente y otra patología.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import sys
@@ -498,7 +499,14 @@ def main() -> int:
     destino_json = args.salida / f"fdi_{args.arcada}.json"
     destino_json.write_text(
         json.dumps({"escaneo": args.escaneo.name, "arcada": args.arcada,
-                    "modelo": meta["name"], "monotonia_rho": rho, "pose": registro_pose,
+                    "modelo": meta["name"],
+                    # Qué pesos produjeron estas etiquetas. `caso_completo.py` lo lee
+                    # para declararlo en `derived/seg_teeth`: sin él tendría que
+                    # adivinar, y adivinó mal (puso el hash del modelo del CBCT).
+                    "checkpoint": {"file": args.checkpoint.name,
+                                   "sha256": hashlib.sha256(
+                                       args.checkpoint.read_bytes()).hexdigest()},
+                    "monotonia_rho": rho, "pose": registro_pose,
                     "instancias": filas,
                     "third_molars_removed": {str(c): round(a, 1)
                                              for c, a in sorted(terceros_quitados.items())}},
