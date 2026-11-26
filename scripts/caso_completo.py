@@ -115,6 +115,25 @@ def entorno_de_software() -> dict:
     return entorno
 
 
+def pesos_de_etiquetas(fdi: Path) -> str | None:
+    """El sha256 de los pesos que produjeron las etiquetas del escáner, o `None`.
+
+    Se lee del `fdi_<arcada>.json` que `segmentar_fdi.py` escribe junto a
+    `etiquetas_<arcada>.npy`. ⚠️ **Sin ese dato se declara `null`, nunca el de otro
+    modelo.** Aquí se pasaba `--modelo` —los pesos del segmentador del CBCT— como si
+    fueran los de las etiquetas del escáner, y todos los contenedores atribuían
+    `derived/seg_teeth` al modelo equivocado sin que nada lo distinguiera desde fuera.
+    """
+    sidecar = fdi.with_name(fdi.name.replace("etiquetas_", "fdi_", 1)).with_suffix(".json")
+    if sidecar == fdi or not sidecar.is_file():
+        return None
+    import json
+    import re
+
+    sha = (json.loads(sidecar.read_text(encoding="utf-8")).get("checkpoint") or {}).get("sha256")
+    return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None
+
+
 def registro_ejecucion(argv: list[str], semilla: int) -> dict:
     """Lo que identifica una ejecución: orden, semilla, código, entorno y versiones."""
     from datetime import UTC, datetime
@@ -1085,6 +1104,11 @@ def main() -> int:
         fus = replace(fus, hitl_reasons=[*fus.hitl_reasons, *motivos_cbct])
 
     print("\n--- 4 · EXPORTACIÓN ---")
+    pesos_escaner = pesos_de_etiquetas(args.fdi) if args.fdi else None
+    if args.fdi:
+        print("  pesos de las etiquetas del escáner: "
+              + (f"sha256 {pesos_escaner[:12]}…" if pesos_escaner
+                 else "no constan junto a `--fdi`: `seg_teeth` los declara null"))
     # Las etiquetas del escáner viajan al canal del visor: son las que dan las coronas
     # completas y separadas, que es lo que un clínico reconoce. El compuesto del CBCT
     # cubre el 51 % del volumen de cada pieza y de forma desigual.
@@ -1103,8 +1127,9 @@ def main() -> int:
         # Referencia externa de la serie realmente ingerida: hashes por instancia y
         # sidecar de geometría. El escritor no incluye los bytes DICOM originales.
         cbct=caso.cbct,
-        # Para el `meta.json` de `derived/`: qué pesos produjeron la segmentación.
-        modelo_segmentacion=args.modelo,
+        # Para el `meta.json` de `derived/seg_teeth`: qué pesos produjeron las etiquetas
+        # DEL ESCÁNER. No `--modelo`, que es el segmentador del CBCT.
+        pesos_segmentacion_sha256=pesos_escaner,
         margen_gingival=margen_gingival,
         # El campo ajustado va APARTE en el `.uos`: el twin lleva la semilla medida
         # (en `fus.snapshot.gaussian_field_ref`) y el ajustado como `asset.field_fit`.
