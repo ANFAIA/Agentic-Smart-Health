@@ -12,7 +12,11 @@ import numpy as np
 RESUMEN_EN = "Restores archived appearance after verifying its source hashes and carried data."
 
 
-def reetiqueta(params: dict, vertices: np.ndarray, etiquetas: np.ndarray) -> int:
+class ColorDeOtraFrontera(ValueError):
+    """La apariencia archivada se entrenó con otra frontera diente/encía que la de ahora."""
+
+
+def reetiqueta(params: dict, vertices: np.ndarray, etiquetas: np.ndarray) -> tuple[int, int]:
     """Vuelve a numerar cada gaussiana de la apariencia con las etiquetas de ESTA ejecución.
 
     La apariencia archivada trae el `region_id` del modelo que segmentó cuando se entrenó.
@@ -20,7 +24,10 @@ def reetiqueta(params: dict, vertices: np.ndarray, etiquetas: np.ndarray) -> int
     contenedor: `derived/seg_teeth` con la nueva y la selección del visor con la vieja. Se
     recalcula con la MISMA función y la misma cota que usa el entrenamiento
     (`_fdi_por_gaussiana`, voto de `VOTOS_FDI` vértices, `LIMITE_VECINO` mm), en el marco
-    normalizado del artefacto. Devuelve cuántas gaussianas cambian de código.
+    normalizado del artefacto.
+
+    Devuelve `(cambian, cruzan)`: cuántas gaussianas cambian de código y cuántas de ellas
+    cruzan la frontera diente/encía (de un código FDI a 0, o al revés). Ver `restaura`.
     """
     from gaussian_engine.apariencia import LIMITE_VECINO, _fdi_por_gaussiana
 
@@ -33,7 +40,8 @@ def reetiqueta(params: dict, vertices: np.ndarray, etiquetas: np.ndarray) -> int
     )
     antes = np.asarray(params["region_id"]).astype(np.int16)
     params["region_id"] = reg
-    return int((reg != antes).sum())
+    cruzan = (np.asarray(reg) > 0) != (antes > 0)
+    return int((reg != antes).sum()), int(cruzan.sum())
 
 
 def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path],
@@ -90,7 +98,22 @@ def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path],
         ))
     if not tones or "region_id" not in params:
         raise ValueError("La apariencia anterior no conserva tonos o etiquetas FDI")
-    renumeradas = None if etiquetas is None else reetiqueta(params, *etiquetas)
+    renumeradas = cruzan = None
+    if etiquetas is not None:
+        renumeradas, cruzan = reetiqueta(params, *etiquetas)
+        # ⚠️ **El color de la apariencia está CONDICIONADO por las etiquetas con que se
+        # entrenó** (`_colorea_malla` y `pinta_malla`: esmalte donde dice diente, encía donde
+        # no). Renumerar cambia la selección, no el color: una gaussiana que pasa de diente a
+        # encía conserva el color del diente. En el caso A, con C3, era una franja de encía
+        # de unos 2 mm alrededor de cada corona con el color del diente, en la vista
+        # frontal. Eso no se arregla renumerando: hay que volver a entrenar.
+        if cruzan:
+            raise ColorDeOtraFrontera(
+                f"{cruzan:,} de {len(params['region_id']):,} gaussianas de la apariencia "
+                "archivada cruzan la frontera diente/encía con las etiquetas de esta "
+                "ejecución. Su color se entrenó con la frontera vieja y saldría cambiado (encía "
+                "con color de diente, o al revés). Entrena la apariencia con estas etiquetas "
+                "(`--entrena-apariencia`) en vez de reutilizarla.")
     process = Process(
         operation="reuse-archived-appearance", agent="caso_completo.restore",
         reproducibility="unknown", parameters={
@@ -102,6 +125,9 @@ def restaura(uos: Path, artefacto: Path, malla: Path, fotos: list[Path],
             # `region_id` recalculado con las etiquetas del escáner de esta ejecución, o
             # `None` si se conserva el del entrenamiento archivado.
             "fdi_labels_recomputed_changed": renumeradas,
+            # Cuántas cruzan diente/encía: siempre 0 aquí, porque si no la reutilización se
+            # rechaza. Viaja para que la procedencia lo diga y no haya que suponerlo.
+            "fdi_labels_tooth_gingiva_crossed": cruzan,
             "source_conforms_to_current_contract": report.valid,
         },
     )
