@@ -18,12 +18,17 @@ This is a real patient (the "November case"), opened in
 [uos-viewer](https://github.com/lgarbayo/uos-viewer) exactly as this pipeline emits it,
 with the C3 FDI segmentation. Everything on screen belongs to this patient:
 
-- **Crowns:** 3DGS appearance from the intraoral scan. Their colour is learnt by the fit,
-  not measured.
+- **Crowns:** 3DGS appearance from the intraoral scan, trained on the C3 labels. Their
+  colour is learnt by the fit, not measured, and it is conditioned on each Gaussian's label
+  (enamel where it says tooth, gingiva where not). That is why an appearance trained on
+  other labels is no longer reused: its gingiva kept a band of tooth colour around each
+  crown.
 - **FDI numbering:** Layer 3, `investigational`, from `gaussian-engine.apariencia`. It is
   what separates the gingiva, which is hidden by default.
 - **Bone and roots:** the measured CBCT density, in a grey display ramp. The CBCT → scan
-  registration reports an rms of 0.56 mm and has not been checked by a person.
+  registration reports an rms of 0.56 mm and has not been checked by a person. This CBCT
+  arrives with missing slices (65 over 46.5 mm, gaps up to 6.75 mm), so the viewer starts
+  with the layer off and says why.
 - **Nerve canals:** not in this container, and the viewer does not infer them.
 
 | Dark mode | Light mode |
@@ -32,7 +37,7 @@ with the C3 FDI segmentation. Everything on screen belongs to this patient:
 | **Tooth 11 isolated** from the odontogram | **Occlusal view** |
 | ![Tooth 11 isolated with its record](docs/assets/visor/noviembre-pieza-11.png) | ![Occlusal view of the upper arch](docs/assets/visor/noviembre-oclusal.png) |
 
-![Layer by layer: gingiva shown, gingiva hidden, no bone, tooth 11](docs/assets/visor/noviembre-capas.gif)
+![Layer by layer: gingiva shown, gingiva hidden, bone with its missing slices, tooth 11 with the rest in grey](docs/assets/visor/noviembre-capas.gif)
 
 **Video** (20 s, with Spanish captions):
 [`docs/assets/visor/noviembre-recorrido.mp4`](docs/assets/visor/noviembre-recorrido.mp4).
