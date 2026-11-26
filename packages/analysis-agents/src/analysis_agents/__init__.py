@@ -37,6 +37,7 @@ from analysis_agents.dental import (
 )
 from analysis_agents.segmentation import (
     DEFAULT_CODES,
+    DEFAULT_FRAGMENT_FRACTION,
     DEFAULT_UNASSIGNED_LIMIT,
     GUM_CLASS,
     GaussianStore,
@@ -55,6 +56,7 @@ __all__ = [
     "rellena_huecos_interiores",
     "rellena_etiquetas",
     "DEFAULT_HITL_THRESHOLD",
+    "DEFAULT_FRAGMENT_FRACTION",
     "DEFAULT_UNASSIGNED_LIMIT",
     "GUM_CLASS",
     "AnalysisAgent",
