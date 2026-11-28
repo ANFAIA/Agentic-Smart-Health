@@ -102,10 +102,13 @@ implementation. Access to referenced originals still requires an external reposi
 mesh through the pipeline differs from its input by at most $4.59\times10^{-6}$\,mm, a
 numerical-preservation result rather than scanner accuracy. In case~A, a source audit found
 that the historical 0.666\,mm registration residual was computed on two DICOM series mixed
-together; registered separately, neither series reaches the overlap the review gate requires.
-In case~B, the production registration's pose varies by 1--3\,mm with its random seed and
-can flip by about $180^\circ$ at an unchanged residual. No landmark-based registration error
-exists for either case. Experimental tooth labels, photograph-based regional colour and
+together; registered separately, neither series reaches the overlap the review gate requires
+with the classical path. On the 301-instance series, a slice-restricted registration moved each tooth by at most
+0.58\,mm when that tooth was left out of the fit, but a starting rotation of 2--5$^\circ$
+shifted its pose by up to 0.41\,mm at an indistinguishable residual. In case~B, the
+production registration's pose varies by 1--3\,mm with its random seed and can flip by
+about $180^\circ$ at an unchanged residual. These are precision figures; no landmark-based
+registration error exists for either case. Experimental tooth labels, photograph-based regional colour and
 reconstructed roots remain prototypes: in case~A the default crown--gingiva margin lies a
 median 3.5\,mm from a periodontist's blind line, and reconstructed roots in case~B reach
 40\,mm.
@@ -885,13 +888,49 @@ A registration restricted to slices for sparse series was added on 9 November 20
 starts from anatomical axes (FDI labels on the scan, patient axes in the DICOM header) and
 fits CBCT tooth contours to the scan within a band 1.5--6\,mm above the occlusal plane. On
 the 301-instance series of case~A, the median distance from scan crown vertices to CBCT
-enamel fell from 4.92 to 1.59\,mm, and the pose moved by about 2\,mm (median) across three
+enamel fell from 4.92 to 1.59\,mm, and the pose moved by 1.97\,mm (median) across three
 contour thresholds. The method's starting pose, fitting direction and band were chosen on
 this same series, so these figures describe the fit it was tuned to, not an independent test.
 That check reuses the same DICOM and is one-sided: in case~B a check of
-the same kind scored two poses 2\,mm apart equally. It is not a TRE. \todo{Registration accuracy for cases A and
-B: landmark TRE pending specialist annotations; update after the robust-registration
-protocol is frozen and run.}
+the same kind scored two poses 2\,mm apart equally. It is not a TRE.
+
+\paragraph{Precision without an annotator.} After the case~B seed analysis
+(\S\ref{sec:relations}), two further measurements ask how much the pose depends on each
+tooth that enters the fit and on the starting point. Their protocol and
+pass criteria were fixed before either case was run, and each was executed once per case on
+28 November 2026. Both measure precision, not accuracy: a bias shared by every run, such as
+the contour isoline or the poorly measured height direction, cancels and does not appear.
+
+In case~A the measured registration is the slice registration of the 301-instance series
+that the landmark TRE will score (R1). Its RMS is 0.555\,mm over the 55.9\,\% of contour
+points with a scanner counterpart, and its pose moves 1.61\,mm (median) across three contour
+thresholds. Re-registering with one tooth left out, removing both its scan crown and its
+CBCT contour, moved that tooth's crown by at most 0.58\,mm (median vertex displacement;
+tooth~27, then 0.53\,mm for tooth~17), against a pre-set limit of 1.5\,mm. The median across
+teeth of the left-out tooth's residual rose from 0.834 to 0.841\,mm (a factor of 1.01),
+against a limit of 2. Both criteria pass. The stability criterion for the starting pose
+fails. All 16 starts rotated by 2 or 5$^\circ$ converged, but 0.11--0.41\,mm from the
+reference pose, against a limit of 0.1\,mm. The RMS of the rotated starts,
+0.549--0.561\,mm, cannot be told apart from the reference's 0.555\,mm. Starting heights offset by up to 3\,mm were recovered.
+A check that the result follows a rigid motion of the input, a test of the program rather
+than of precision, passed at $6\times10^{-13}$\,mm.
+
+In case~B the measured registration is the classical path on the dense series, with 20
+subsample seeds. Seven of the 20 registrations from the identity converged more than 5\,mm
+(median over crown vertices) from the reference pose, which this protocol counts as a flip;
+the definition differs from the first measurement's, so the counts are not comparable. Of
+560 starts perturbed by rotations of up to 5$^\circ$ or translations of up to 3\,mm around the
+reference pose, 88 did not return within 0.1\,mm of the unperturbed start with the same seed,
+by up to 2.6\,mm, already at 2$^\circ$ and 1\,mm. When one tooth was left out, none of the
+13 teeth moved beyond its own seed-to-seed variation: 6 stayed within it, and 7 could not be
+decided because too few unflipped pairs remained. In
+case~B the effect of a tooth on the pose therefore cannot be separated from the effect of
+the subsample.
+
+These are results for one registration method per case, each on one patient, and they say
+nothing about other patients. Nor do they say which of the poses is correct.
+\todo{Landmark TRE for cases A and B: landmarks requested from the annotators, not yet
+received.}
 
 \subsection{Appearance estimated from clinical photographs}
 
@@ -1398,8 +1437,9 @@ implementation and synthetic conformance fixtures exist.
 
 The measurements bound what can be claimed. Mesh regeneration preserves coordinates to
 \code{float32} rounding. Registration residuals describe the fit, not target accuracy: in
-case~A the historical residual came from mixed series, and in case~B the residual did not
-detect a $180^\circ$ flip. Tooth labels, regional colour and reconstructed roots remain
+case~A the historical residual came from mixed series and the slice registration's pose
+depends on its starting rotation by up to 0.41\,mm at the same residual, and in case~B the
+residual did not detect a $180^\circ$ flip. Tooth labels, regional colour and reconstructed roots remain
 experimental. The Gaussian experiments improved projection scores on a research cohort but
 not on case~A with segmented classes. No landmark-based registration error exists yet for
 either case, and independent calibration, independent readers and clinical evaluation remain
