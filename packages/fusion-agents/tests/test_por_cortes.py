@@ -239,8 +239,9 @@ def test_el_gate_dice_que_el_arranque_es_precision(dispersa_con_y_sin_arranque) 
     assert "8 arranques girados 5°" in lineas[0]
     assert f"{a['median']} mm de mediana" in lineas[0] and "no acota el error" in lineas[0]
     assert not any("orientación de partida" in m for m in motivos(sin))
-    # La línea del umbral no cambia en esta versión.
-    assert any(m.endswith("Esa es su incertidumbre, no el residuo") for m in motivos(con))
+    # P2 falló en el fantasma (§9 de registro-incertidumbre-arranque.md): la línea del umbral
+    # dice también que es precisión y no acota el error.
+    assert any(m.endswith("Es precisión, no el residuo: no acota el error") for m in motivos(con))
     otro = {**con, "start_spread_mm": {**a, "not_converged": 3}}
     assert "3 de esos arranques no convergen" in " ".join(motivos(otro))
 

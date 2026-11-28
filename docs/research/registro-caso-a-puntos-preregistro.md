@@ -324,3 +324,10 @@ el desacuerdo entre ellas y el suelo de altura, no la U del registro), ni las le
 R2b, ni la del sesgo vertical, ni la herramienta de §5, ni nada más. La lectura nueva no decide
 si R1 cumple A1, no se usa para excluir puntos y no ajusta nada (§8). Si `r1` no se ejecuta
 antes de la primera entrega, o se detiene en su V0, esta lectura no se hace y se dice.
+
+**Ejecutado (2026-11-28).** `r1` se ejecutó una vez desde `2fe061d`, con el árbol limpio y la
+carpeta de anotaciones sin ningún fichero: `data/processed/incertidumbre-arranque/r1-2fe061d6d7a4/declaracion.json`,
+**U = 1,62 mm** (umbral 1,61 mm, arranque 0,21 mm de mediana). Es la cifra con la que se hará
+esta lectura. En el fantasma, que tiene verdad, la U declarada no cubrió el error real en 0 de 7
+configuraciones ([`registro-incertidumbre-arranque.md`](registro-incertidumbre-arranque.md) §9):
+el registro tiene allí un sesgo vertical que ninguna dispersión ve.

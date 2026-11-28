@@ -51,7 +51,11 @@ las etiquetas del escáner. No se corrige restando: sería ajustar a un sintéti
 
 ⚠️ **La incertidumbre no es el residuo.** Se registra con tres umbrales de contorno y se
 declara cuánto se mueven las coronas entre ellos: sobre el caso disperso, 1,8 mm de
-mediana y 2,5 de máximo. Ese número va al gate; el residuo del ICP no lo ve.
+mediana y 2,5 de máximo. Ese número va al gate; el residuo del ICP no lo ve. **Pero no
+acota el error**: en el fantasma, con verdad conocida, el error real de las coronas
+(~0,6 mm, casi todo vertical hacia la raíz) quedó por encima de lo declarado en las siete
+configuraciones en que el umbral mueve el contorno
+(`docs/research/registro-incertidumbre-arranque.md`, §9). Es precisión.
 
 ⚠️ **Tampoco es indiferente al arranque, y también se declara.** Con `rot0` girado 2–5° el
 registro del caso A no vuelve a la misma pose: se queda a 0,11–0,41 mm con el mismo rms
@@ -469,8 +473,8 @@ def motivos(informe: Mapping[str, Any]) -> list[str]:
             "la pose cambia con el umbral del contorno ("
             + ", ".join(f"{u:.0f}" for u in spread["thresholds"])
             + f"): las coronas se mueven {spread['median']} mm de mediana y "
-            f"{spread['max']} de máximo, {spread['vertical']} mm en altura. Esa es su "
-            "incertidumbre, no el residuo"
+            f"{spread['max']} de máximo, {spread['vertical']} mm en altura. Es precisión, "
+            "no el residuo: no acota el error"
         )
     arranque = informe.get("start_spread_mm")
     if arranque:

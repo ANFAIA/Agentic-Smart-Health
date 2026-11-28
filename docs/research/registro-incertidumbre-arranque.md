@@ -1,6 +1,9 @@
 # Registro por cortes: declarar cuánto depende la pose del arranque, y si lo declarado cubre el error del fantasma
 
-> **Estado (2026-11-28): pre-registro.** Fijado en este commit **antes de ejecutar** la batería
+> **Estado (2026-11-28): ejecutado; resultados en §9.** P1, P3 y P4 pasan: la declaración del
+> arranque **se queda**, encendida por defecto. **P2 falla (0 de 7)**: lo declarado no cubre el
+> error del fantasma, así que la línea del umbral dice ya que es precisión y no acota el error.
+> R1 declara U = 1,62 mm. El pre-registro se fijó en `2fe061d` **antes de ejecutar** la batería
 > del fantasma (§2.1) y la declaración de R1 (§3.3). Las dos se ejecutan una sola vez, desde este
 > commit y con el árbol limpio. **Ya se ha visto** el resultado del caso A en la medida 3
 > ([`registro-navaja-arranques.md`](registro-navaja-arranques.md) §9.1), y se ha visto el tiempo
@@ -371,4 +374,79 @@ del TRE, y nada más.
 
 ## 9 · Resultados
 
-_Se escriben aquí después de la ejecución, con el commit y el árbol limpio._
+Ejecutado una sola vez cada subcomando el 2026-11-28 desde `2fe061d`, con el árbol limpio
+(`git_dirty: false`, blob del protocolo `5112bd7`). Los dos terminan con `status: ok`. Salidas en
+`data/processed/incertidumbre-arranque/fantasma-2fe061d6d7a4/` y `r1-2fe061d6d7a4/` (sin
+versionar). Las dos ejecuciones se solaparon en el tiempo: el cronómetro de P3 en R1 compartió
+CPU con la batería, lo que solo puede alargar los tiempos, es decir, juega en contra de P3.
+
+### 9.1 · Criterios
+
+| | Resultado | Límite | |
+|---|---|---|---|
+| V0 (R1) | máx 2·10⁻¹⁴ mm | ≤ 0,01 mm | sí |
+| P1 fantasma | 0,0 mm en las 12; origen, destino y todos los campos del registrador idénticos | 0,0 mm | **sí** |
+| P1 R1 | 0,0 mm; ídem | 0,0 mm | **sí** |
+| P2 | E ≤ U en **0 de 7** configuraciones con gradiente | ≥ 6 de 7 | **no** |
+| P3 (R1) | +14,8 s (mínimos 5,0 s sin y 19,8 s con) | ≤ 120 s | **sí** |
+| P4 | las 12 finitas, 0 arranques sin converger | — | **sí** |
+
+**Decisión (§5):** la declaración **se queda, encendida por defecto** (`mide_arranque=True`).
+Como P2 falla, la línea del umbral de `motivos()` deja de decir «Esa es su incertidumbre, no el
+residuo» y dice «Es precisión, no el residuo: no acota el error», y `AGENTS.md` lo dice.
+
+### 9.2 · El fantasma
+
+| | Grupo | E (mm) | E vertical (mm) | U_umbral | U_arranque | U (mm) | E ≤ U |
+|---|---|---:|---:|---:|---:|---:|---|
+| F1 | sin gradiente | 0,82 | 0,81 | 0,00 | 0,41 | 0,41 | no |
+| F2 | sin gradiente | 0,45 | 0,45 | 0,00 | 0,61 | 0,61 | sí |
+| F3 | sin gradiente | 0,61 | 0,61 | 0,00 | 0,01 | 0,01 | no |
+| F4 | gradiente | 0,61 | 0,61 | 0,01 | 0,01 | 0,01 | no |
+| F5 | gradiente | 0,61 | 0,61 | 0,02 | 0,05 | 0,05 | no |
+| F6 | gradiente | 0,62 | 0,62 | 0,26 | 0,01 | 0,26 | no |
+| F7 | gradiente | 0,61 | 0,61 | 0,25 | 0,12 | 0,28 | no |
+| F8 | gradiente | 0,61 | 0,61 | 0,25 | 0,24 | 0,35 | no |
+| F9 | sin gradiente | 0,61 | 0,61 | 0,00 | 0,24 | 0,24 | no |
+| F10 | gradiente | 0,61 | 0,61 | 0,01 | 0,03 | 0,03 | no |
+| F11 | sin gradiente | 1,55 | 1,37 | 0,00 | 0,38 | 0,38 | no |
+| F12 | gradiente | 0,70 | 0,69 | 0,05 | 0,50 | 0,50 | no |
+
+E vertical es la mediana de la componente vertical del error; U_umbral y U_arranque son medianas en mm.
+
+- **El error del fantasma es casi todo un desplazamiento vertical sistemático.** En las
+  configuraciones con capa de esmalte el error de las coronas es 0,61 mm de mediana con un p95 de
+  0,61 y un máximo de 0,61 (F4), y su componente vertical es 0,61: es la misma traslación hacia la
+  raíz para todo el arco. Es el sesgo de altura que el docstring de `por_cortes` ya describía
+  (0,37 mm con rejilla de 0,3 mm; aquí la rejilla es de 0,4). Ninguna dispersión lo ve, porque lo
+  comparten todas las poses. En las doce, la componente vertical es casi todo el error.
+- **Las dispersiones son pequeñas donde el error es sesgo:** U entre 0,01 y 0,50 mm en el grupo
+  con gradiente. Con el máximo en lugar de la mediana (descriptivo) se cubrirían 6 de 7; con la
+  componente vertical, 1 de 7.
+- **F11** (cabeza inclinada 10° con el plano dado antes de la inclinación) tiene el mayor error,
+  1,55 mm (1,37 mm vertical, máximo 2,69 mm), que incluye el error del plano declarado en §2.1.
+- **F2** es la única configuración cubierta (sin gradiente, por el arranque: 0,45 ≤ 0,61 mm).
+- **Coste en el fantasma (descriptivo):** ×9,3 en total (2,3 s sin, 21,1 s con).
+
+### 9.3 · R1
+
+| | Mediana | Máximo | Altura |
+|---|---:|---:|---:|
+| Umbral (1100/1900 frente a 1400) | 1,61 mm | 3,37 mm | 1,58 mm |
+| Arranque (8 × 5°) | 0,21 mm | 0,54 mm | 0,04 mm |
+| **U** (√ de la suma de cuadrados de las medianas) | **1,62 mm** | | |
+
+Es lo que se predijo (§5): U ≈ 1,6–1,7 mm, dominada por el umbral, y por encima de los 1,5 mm del
+criterio A1 del TRE. El arranque en R1 mueve sobre todo en planta (0,04 mm en altura). Con la
+regla de la enmienda del 2026-11-28 del pre-registro del TRE, esta U = 1,62 mm es la que se
+comparará con la mediana del TRE de R1 cuando lleguen los puntos.
+
+### 9.4 · Lo que se dice
+
+- El registro por cortes declara ahora cuánto depende su pose del arranque, a un coste de unos
+  15 s por caso disperso, sin cambiar la pose ni la confianza.
+- **Lo declarado es precisión y no acota el error.** En el fantasma, que tiene verdad, el error
+  real de las coronas quedó por encima de lo declarado en las siete configuraciones en que el
+  umbral mueve el contorno, porque es un sesgo vertical que comparten todas las poses. El
+  producto lo dice ya así en las dos líneas de la puerta.
+- Nada de esto mide la exactitud del caso A. Eso sigue siendo el TRE con puntos anatómicos.
