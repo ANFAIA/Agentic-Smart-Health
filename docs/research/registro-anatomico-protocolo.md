@@ -69,6 +69,10 @@ Esto es lo que se vio del caso B antes de congelar el protocolo:
   41,1 mm y valle 38,7 mm, más una inclinación de 4,1° por PCA que luego se comprobó que no
   es fiable (ver `registro-anatomico.md` §4).
 - **Las etiquetas FDI de §2** y la identidad de las series CBCT.
+- **Las medidas 2 y 3 sin anotador** ([`registro-navaja-arranques.md`](registro-navaja-arranques.md),
+  pre-registradas el 2026-11-28): navaja por diente, arranques desplazados y equivarianza del
+  camino **clásico** sobre el escaneo POST HIGIENE, con 20 semillas, y sus resultados (§9 de ese
+  documento). No ejecutan `fusion_agents.anatomico` sobre B.
 
 Ninguna constante sale del caso B. Las de `fusion_agents.anatomico` se heredan de
 `por_cortes`, que se fijaron sobre el caso A, o son a priori. Se desarrollaron solo sobre el
