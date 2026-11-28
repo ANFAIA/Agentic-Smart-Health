@@ -5,13 +5,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from fusion_agents.por_cortes import (
+    DIRECCIONES_ARRANQUE,
     EJES_LPS,
+    GIRO_ARRANQUE_GRADOS,
     RegistroPorCortes,
     SerieDensa,
     banda,
     contornos,
     contornos_con_normales,
     describe_cortes,
+    giros_de_arranque,
     motivos,
     pose_inicial,
     prepara_por_cortes,
@@ -182,6 +185,64 @@ def test_prepara_registra_una_serie_dispersa_y_declara_lo_que_no_sabe() -> None:
 
     texto = " ".join(motivos(informe))
     assert "dispersa" in texto and "umbral" in texto and "no es un TRE" in texto
+
+
+def test_los_giros_de_arranque_son_5_grados_alrededor_de_las_diagonales() -> None:
+    giros = giros_de_arranque()
+    assert len(giros) == len(DIRECCIONES_ARRANQUE) == 8
+    for R, d in zip(giros, DIRECCIONES_ARRANQUE, strict=True):
+        np.testing.assert_allclose(R.T @ R, np.eye(3), atol=1e-12)
+        assert abs(np.linalg.det(R) - 1.0) < 1e-12
+        angulo = np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1)))
+        assert abs(angulo - GIRO_ARRANQUE_GRADOS) < 1e-9
+        # El eje es la diagonal anatómica llevada al DICOM: derecha −x, anterior −y.
+        eje = EJES_LPS.T @ np.asarray(d, dtype=np.float64) / np.sqrt(3.0)
+        np.testing.assert_allclose(R @ eje, eje, atol=1e-12)
+
+
+@pytest.fixture(scope="module")
+def dispersa_con_y_sin_arranque():
+    campo, hu = _campo(DISPERSA)
+    rot_real = _rotacion(np.array([0.0, 1.0, 1.0]), 40)
+    escaner = _escaner(rot_real, np.array([3.0, 2.0, -5.0]))
+    ejes = EJES_LPS @ rot_real
+    con = prepara_por_cortes(campo, hu, escaner, ejes, "upper", plano=0.0)
+    sin = prepara_por_cortes(campo, hu, escaner, ejes, "upper", plano=0.0, mide_arranque=False)
+    return con, sin
+
+
+def test_el_arranque_se_declara_y_la_pose_no_cambia(dispersa_con_y_sin_arranque) -> None:
+    (o1, d1, reg1, inf1), (o2, d2, reg2, inf2) = dispersa_con_y_sin_arranque
+    arranque = inf1["start_spread_mm"]
+    assert arranque["angle_deg"] == GIRO_ARRANQUE_GRADOS and arranque["n_starts"] == 8
+    assert isinstance(arranque["not_converged"], int) and arranque["not_converged"] >= 0
+    for clave in ("median", "max", "vertical"):
+        assert np.isfinite(arranque[clave]) and arranque[clave] >= 0.0
+    assert arranque["median"] <= arranque["max"]
+    # Apagado no se mide, y lo demás del informe es lo mismo.
+    assert "start_spread_mm" not in inf2
+    assert {k: v for k, v in inf1.items() if k != "start_spread_mm"} == inf2
+    # Lo que se devuelve es idéntico bit a bit, así que la pose también.
+    assert o1.tobytes() == o2.tobytes() and d1.tobytes() == d2.tobytes()
+    assert np.asarray(reg1.rot0).tobytes() == np.asarray(reg2.rot0).tobytes()
+    assert (reg1.plano, reg1.arcada, reg1.trim, reg1.max_iter, reg1.tol_mm) == (
+        reg2.plano, reg2.arcada, reg2.trim, reg2.max_iter, reg2.tol_mm)
+    r1, r2 = reg1(o1, d1), reg2(o2, d2)
+    assert r1.rotation == r2.rotation and r1.translation == r2.translation
+
+
+def test_el_gate_dice_que_el_arranque_es_precision(dispersa_con_y_sin_arranque) -> None:
+    (_, _, _, con), (_, _, _, sin) = dispersa_con_y_sin_arranque
+    lineas = [m for m in motivos(con) if "orientación de partida" in m]
+    assert len(lineas) == 1
+    a = con["start_spread_mm"]
+    assert "8 arranques girados 5°" in lineas[0]
+    assert f"{a['median']} mm de mediana" in lineas[0] and "no acota el error" in lineas[0]
+    assert not any("orientación de partida" in m for m in motivos(sin))
+    # La línea del umbral no cambia en esta versión.
+    assert any(m.endswith("Esa es su incertidumbre, no el residuo") for m in motivos(con))
+    otro = {**con, "start_spread_mm": {**a, "not_converged": 3}}
+    assert "3 de esos arranques no convergen" in " ".join(motivos(otro))
 
 
 def test_una_serie_continua_se_deja_al_camino_de_siempre() -> None:
