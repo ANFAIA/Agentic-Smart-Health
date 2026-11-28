@@ -904,7 +904,10 @@ the contour isoline or the poorly measured height direction, cancels and does no
 In case~A the measured registration is the slice registration of the 301-instance series
 that the landmark TRE will score (R1). Its RMS is 0.555\,mm over the 55.9\,\% of contour
 points with a scanner counterpart, and its pose moves 1.61\,mm (median) across three contour
-thresholds. Re-registering with one tooth left out, removing both its scan crown and its
+thresholds. \todo{Pending PR~\#119 reaching \code{develop}: the start-pose spread R1 now
+declares, its combined uncertainty, and whether the declared spreads cover the error on a
+phantom with known ground truth (\code{registro-incertidumbre-arranque.md}, \S9). No figure
+until then.} Re-registering with one tooth left out, removing both its scan crown and its
 CBCT contour, moved that tooth's crown by at most 0.58\,mm (median vertex displacement;
 tooth~27, then 0.53\,mm for tooth~17), against a pre-set limit of 1.5\,mm. The median across
 teeth of the left-out tooth's residual rose from 0.834 to 0.841\,mm (a factor of 1.01),
