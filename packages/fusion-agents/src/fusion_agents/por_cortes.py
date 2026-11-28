@@ -51,13 +51,27 @@ las etiquetas del escáner. No se corrige restando: sería ajustar a un sintéti
 
 ⚠️ **La incertidumbre no es el residuo.** Se registra con tres umbrales de contorno y se
 declara cuánto se mueven las coronas entre ellos: sobre el caso disperso, 1,8 mm de
-mediana y 2,5 de máximo. Ese número va al gate; el residuo del ICP no lo ve.
+mediana y 2,5 de máximo. Ese número va al gate; el residuo del ICP no lo ve. **Pero no
+acota el error**: en el fantasma, con verdad conocida, el error real de las coronas
+(~0,6 mm, casi todo vertical hacia la raíz) quedó por encima de lo declarado en las siete
+configuraciones en que el umbral mueve el contorno
+(`docs/research/registro-incertidumbre-arranque.md`, §9). Es precisión.
+
+⚠️ **Tampoco es indiferente al arranque, y también se declara.** Con `rot0` girado 2–5° el
+registro del caso A no vuelve a la misma pose: se queda a 0,11–0,41 mm con el mismo rms
+(medida 3 de `docs/research/registro-navaja-arranques.md`, §9.1). Por eso se registra
+también desde `rot0` girado `GIRO_ARRANQUE_GRADOS` alrededor de las 8 diagonales del cubo y
+se declara cuánto se mueven las coronas. Esas poses **solo se miden**: el registrador, el
+origen y el destino que se devuelven son los mismos, así que la pose no cambia ni en un bit.
+Es precisión, como el umbral: ninguna de las dos dispersiones ve un sesgo que compartan
+todas las poses, como el de la altura del aviso anterior, y por eso no acotan el error.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -69,6 +83,7 @@ from fusion_agents.registration import (
     RegistrationResult,
     kabsch,
     matrix_to_quaternion,
+    rotacion_de_vector,
 )
 
 # Ejes del paciente en el marco del DICOM (LPS), en el mismo orden que la base del escáner:
@@ -102,6 +117,14 @@ HUECO_RELATIVO = 2.0
 # Mínimo de puntos de contorno para intentar el registro.
 MINIMO_CONTORNO = 500
 
+# Arranques girados con que se declara cuánto depende la pose de la orientación de partida
+# (`rot0 ← Rδ·rot0`). Las direcciones son las 8 diagonales del cubo en los ejes anatómicos
+# del CBCT (derecha, anterior, superior), y el giro el mayor con criterio de la medida 3 de
+# `docs/research/registro-navaja-arranques.md` (§3.3). Se fijaron allí antes de ejecutar
+# sobre el caso A; aquí se eligieron después de ver su resultado, y no se ajustaron a él.
+GIRO_ARRANQUE_GRADOS = 5.0
+DIRECCIONES_ARRANQUE = tuple((a, b, c) for a in (-1, 1) for b in (-1, 1) for c in (-1, 1))
+
 
 class SerieDensa(ValueError):
     """La serie no es dispersa en la banda: el camino de siempre registra mejor."""
@@ -124,6 +147,23 @@ def pose_inicial(ejes_escaner: np.ndarray, ejes_cbct: np.ndarray = EJES_LPS) -> 
             "DICOM: uno de los dos está en espejo y una rotación no lo corrige"
         )
     return c.T @ b
+
+
+def giros_de_arranque(
+    grados: float = GIRO_ARRANQUE_GRADOS,
+    direcciones: Sequence[Sequence[float]] = DIRECCIONES_ARRANQUE,
+) -> list[np.ndarray]:
+    """Los giros Rδ del DICOM con que se perturba `rot0`, uno por dirección.
+
+    Cada dirección va en (derecha, anterior, superior) y se lleva al DICOM con `EJES_LPS`;
+    el giro es de `grados` alrededor de ella. Es la misma construcción, en el mismo orden,
+    que la de la medida 3 (`scripts/registro_navaja_arranques.py`).
+    """
+    salida = []
+    for d in direcciones:
+        eje = EJES_LPS.T @ np.asarray(d, dtype=np.float64)
+        salida.append(rotacion_de_vector(eje / np.linalg.norm(eje) * math.radians(grados)))
+    return salida
 
 
 def banda(arcada: str, plano: float) -> tuple[float, float]:
@@ -300,6 +340,7 @@ def prepara_por_cortes(
     *,
     exige_dispersa: bool = True,
     plano: float | None = None,
+    mide_arranque: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, RegistroPorCortes, dict]:
     """`(origen, destino, registrador, informe)` para `GeometricFusionAgent`.
 
@@ -312,6 +353,11 @@ def prepara_por_cortes(
     `exige_dispersa` (por defecto) lanza `SerieDensa` si la banda no tiene huecos: ahí el
     camino de siempre registra mejor, ver el módulo. `plano` se puede dar de fuera; si no,
     es el modo de la altura del esmalte (`plano_oclusal_del_esmalte`).
+
+    Con `mide_arranque` (por defecto) registra además desde los `giros_de_arranque` y
+    declara en `informe["start_spread_mm"]` cuánto se mueven las coronas. Son ocho registros
+    más; quien no quiera pagarlos lo apaga. Ni ese registro ni los de los umbrales cambian
+    lo que se devuelve: la pose sale del mismo registrador sobre el mismo destino.
     """
     centros = np.asarray(campo["centers"], dtype=np.float64)
     if "origin" in campo:
@@ -380,6 +426,26 @@ def prepara_por_cortes(
             "max": round(float(todos.max()), 2),
             "vertical": round(max(verticales), 2),
         }
+
+    if mide_arranque:
+        # Registradores NUEVOS (`replace`), el devuelto no se toca; y el mismo destino.
+        rot0_base = np.asarray(registrador.rot0, dtype=np.float64)
+        movidas, alturas, sin_converger = [], [], 0
+        for giro in giros_de_arranque():
+            r = replace(registrador, rot0=giro @ rot0_base)(corona, destino)
+            sin_converger += int(not r.converged)
+            diferencia = coronas_en(r) - base
+            movidas.append(np.linalg.norm(diferencia, axis=1))
+            alturas.append(abs(float(diferencia[:, 2].mean())))
+        todas = np.concatenate(movidas)
+        informe["start_spread_mm"] = {
+            "angle_deg": GIRO_ARRANQUE_GRADOS,
+            "n_starts": len(movidas),
+            "median": round(float(np.median(todas)), 2),
+            "max": round(float(todas.max()), 2),
+            "vertical": round(max(alturas), 2),
+            "not_converged": sin_converger,
+        }
     return corona, destino, registrador, informe
 
 
@@ -407,7 +473,17 @@ def motivos(informe: Mapping[str, Any]) -> list[str]:
             "la pose cambia con el umbral del contorno ("
             + ", ".join(f"{u:.0f}" for u in spread["thresholds"])
             + f"): las coronas se mueven {spread['median']} mm de mediana y "
-            f"{spread['max']} de máximo, {spread['vertical']} mm en altura. Esa es su "
-            "incertidumbre, no el residuo"
+            f"{spread['max']} de máximo, {spread['vertical']} mm en altura. Es precisión, "
+            "no el residuo: no acota el error"
         )
+    arranque = informe.get("start_spread_mm")
+    if arranque:
+        texto = (
+            f"la pose cambia con la orientación de partida ({arranque['n_starts']} arranques "
+            f"girados {arranque['angle_deg']:g}°): las coronas se mueven {arranque['median']} "
+            f"mm de mediana y {arranque['max']} de máximo, {arranque['vertical']} mm en altura"
+        )
+        if arranque.get("not_converged"):
+            texto += f"; {arranque['not_converged']} de esos arranques no convergen"
+        salida.append(texto + ". Es precisión: no acota el error")
     return salida

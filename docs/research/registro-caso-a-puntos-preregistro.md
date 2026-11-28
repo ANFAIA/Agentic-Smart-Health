@@ -2,6 +2,7 @@
 
 **Fecha:** 2026-11-20. **Estado:** fijado **antes de recibir ningún punto**. A la fecha de
 este commit no se ha enviado el encargo a nadie y la carpeta de anotaciones está vacía.
+Enmendado el 2026-11-28 (§10), también antes de recibir ningún punto.
 
 Este documento fija qué se va a medir con los puntos anatómicos del caso A, contra qué
 registros, con qué comandos y qué se podrá concluir. Se escribe antes porque lo que se usa
@@ -277,3 +278,56 @@ coherente con el sesgo de §11. No prueba su causa.
   puede afirmar, no un error que se pueda restar.
 - **No toca el caso B**, que tiene su propio protocolo de precisión, ciego y pendiente
   ([`registro-anatomico-protocolo.md`](registro-anatomico-protocolo.md)).
+
+## 10 · Enmienda del 2026-11-28, antes de recibir ningún punto
+
+Hecha **antes de ver ningún punto**: la petición ya se envió a las observadoras, pero a la fecha
+de esta enmienda no ha llegado ninguna entrega y la carpeta de anotaciones solo tiene
+subcarpetas vacías, sin ningún fichero. Lo que no se menciona aquí queda como estaba.
+
+**Motivo.** El registro por cortes declara ahora, además de lo que se mueve la pose con el umbral
+del contorno, lo que se mueve con la orientación de partida
+([`registro-incertidumbre-arranque.md`](registro-incertidumbre-arranque.md)). La pose que
+devuelve no cambia ni en un bit, así que R1 sigue siendo el mismo registro y se puntúa tal cual.
+Lo que cambia es que el código declara para R1 una incertidumbre, U, y esa cifra se puede
+contrastar con los puntos.
+
+**Lo que se añade: una lectura descriptiva, solo para R1.** Se compara la **mediana del TRE de
+R1** (la mediana, entre los puntos comunes, del TRE por punto sobre la media de las dos
+observadoras de §6; con una sola entrega, la mediana del TRE por punto de esa observadora,
+informada como no conforme al protocolo igual que el resto) con la **U declarada para R1** por
+`scripts/incertidumbre_arranque.py r1`, ejecutado una sola vez desde el commit del pre-registro
+de esa nota, antes de abrir ninguna entrega: el campo `U_mm` de
+`data/processed/incertidumbre-arranque/r1-<commit[:12]>/declaracion.json`. La redacción queda
+fijada ahora:
+
+- TRE mediano ≤ U: «compatible con la incertidumbre declarada».
+- TRE mediano > U: «la incertidumbre declarada no cubre el error en este caso».
+
+**Lo que esta lectura vale, dicho antes.**
+
+- **La U de R1 ya es casi conocida.** La nota de la incertidumbre la predice en ≈ 1,6–1,7 mm
+  (su §5), con resultados de la medida 3 sobre el caso A que ya se han visto: la dispersión
+  entre umbrales de R1, 1,61 mm de mediana, y los mismos ocho arranques de 5°, 0,18–0,41 mm. Es
+  **más que el 1,5 mm de A1** (§6, §7). <!--const:EPSILON_IOS_CBCT_MM--> Así que el umbral de
+  esta lectura estaba prácticamente fijado al escribirla, y «compatible» sale para cualquier TRE
+  mediano hasta unos 1,6–1,7 mm, **también con un R1 que falle A1**. «Compatible» no dice nada
+  sobre A1 y **no es evidencia a favor de R1**: solo dice que la precisión que el código declara
+  no queda por debajo del error medido.
+- **No se agregan las mismas cosas.** U es una mediana de desplazamientos **entre poses**
+  calculados sobre todos los vértices de corona etiquetados del escáner; el TRE mediano es una
+  mediana **entre puntos anatómicos**, como mucho ocho, de la distancia a lo que marcan las
+  observadoras. Las dos poblaciones son distintas, y la comparación es descriptiva por eso.
+
+**Lo que no cambia.** Ni A1, ni la regla por punto de §7 (la U_k de las observadoras es otra cosa:
+el desacuerdo entre ellas y el suelo de altura, no la U del registro), ni las lecturas de R2 y
+R2b, ni la del sesgo vertical, ni la herramienta de §5, ni nada más. La lectura nueva no decide
+si R1 cumple A1, no se usa para excluir puntos y no ajusta nada (§8). Si `r1` no se ejecuta
+antes de la primera entrega, o se detiene en su V0, esta lectura no se hace y se dice.
+
+**Ejecutado (2026-11-28).** `r1` se ejecutó una vez desde `2fe061d`, con el árbol limpio y la
+carpeta de anotaciones sin ningún fichero: `data/processed/incertidumbre-arranque/r1-2fe061d6d7a4/declaracion.json`,
+**U = 1,62 mm** (umbral 1,61 mm, arranque 0,21 mm de mediana). Es la cifra con la que se hará
+esta lectura. En el fantasma, que tiene verdad, la U declarada no cubrió el error real en 0 de 7
+configuraciones ([`registro-incertidumbre-arranque.md`](registro-incertidumbre-arranque.md) §9):
+el registro tiene allí un sesgo vertical que ninguna dispersión ve.
