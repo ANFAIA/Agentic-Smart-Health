@@ -1,6 +1,7 @@
 # Registro escáner↔CBCT sin anotador: navaja por diente y arranques desplazados (casos A y B)
 
-> **Estado (2026-11-28): pre-registro.** Fijado en este commit **antes de ejecutar nada** sobre
+> **Estado (2026-11-28): ejecutado; resultados en §9.** Caso A: N1 y N2 sí, K1 **no**. Caso B: K1
+> **no**, navaja no atribuible. El pre-registro se fijó en `b16d0fc` **antes de ejecutar nada** sobre
 > los casos A y B. Son las medidas 2 y 3 de las que el proyecto se propuso hacer sin anotador; la
 > 1 es [`consistencia-registro-caso-b.md`](consistencia-registro-caso-b.md). Las dos miden la
 > **precisión** del registro: cuánto depende la pose de cada diente que entra en el ajuste y del
@@ -297,4 +298,91 @@ resultado.
 
 ## 9 · Resultados
 
-_Se escriben aquí después de la ejecución, con el commit y el árbol limpio._
+Ejecutado una sola vez por caso el 2026-11-28 desde `b16d0fc` con el árbol limpio
+(`git_dirty: false`, blob del protocolo `e5ddafb`). Los dos terminan con `status: ok`. Salidas en
+`data/processed/registro-navaja-arranques/A-b16d0fc6512c/` y `B-b16d0fc6512c/` (sin versionar).
+Los contenedores de referencia coinciden con las sha256 de §2 y los dientes con los esperados.
+
+### 9.1 · Caso A (R1, por cortes): N1 sí, N2 sí, K1 **no**, E1 sí
+
+| | Resultado | Límite |
+|---|---|---|
+| V0 | máx 2·10⁻¹⁴ mm; 67 iteraciones, rms con pareja 0,555 mm, solapamiento 55,9 % | ≤ 0,01 mm |
+| E1 | máx 6·10⁻¹³ mm en los 10 movimientos | ≤ 0,01 mm |
+| N1 (b) | mediana de res_X sin X 0,841 mm frente a 0,834 con todos (×1,01) | ≤ ×2 |
+| N2 (b) | movimiento mediano máximo 0,58 mm (27); ningún diente pasa | ≤ 1,5 mm |
+| K1 | 16 de 20 arranques no vuelven; máx 0,41 mm; 0 vueltas, 0 sin converger | ≤ 0,1 mm |
+
+- **Navaja (b), por diente** (movimiento mediano al quitarlo): 27 0,58 · 17 0,53 · 16 0,29 ·
+  23 0,29 · 26 0,28 · 22 0,21 · 13 0,20 · 12 0,18 · 25 0,15 · 21 0,14 · 14 0,13 · 24 0,12 ·
+  15 0,09 · 11 0,08 mm. Ningún diente se queda sin puntos de contorno. Se cumple lo previsto en §5:
+  los extremos 17 y 27 son los que más se mueven, y su residuo es también el que más sube
+  (17: 1,77 → 2,08 mm; 27: 1,05 → 1,16 mm).
+- **Navaja (a), descriptiva** (quitando solo la corona del escáner): N1 ×1,04; el 27 se mueve
+  1,04 mm y el 26 0,59 mm; ninguno pasa de 1,5 mm.
+- **Arranques.** Las cuatro alturas con criterio vuelven (±1 mm: ≤ 0,004 mm; ±3 mm: ≤ 0,083 mm), y
+  sin criterio, +5 mm vuelve (0,009 mm) y −5 mm se queda a 0,17 mm. **Los 16 giros con criterio fallan**, ya desde 2°:
+  - 2°: terminan a 0,11–0,19 mm (0,09–0,26° de la referencia);
+  - 5°: 0,18–0,41 mm (0,13–0,68°);
+  - 10°, sin criterio: 0,27–0,63 mm (0,05–1,32°).
+  
+  Ninguno sale de la cuenca y todos convergen, pero no vuelven al mismo punto: la pose final
+  conserva parte del giro de partida. Su rms con pareja (0,549–0,561 mm) es indistinguible del de
+  la referencia (0,555 mm), y algunas lo tienen menor.
+
+**Lo que se dice (§5).** Quitar un diente mueve la pose del caso A menos de 0,6 mm y no empeora
+el residuo de ese diente de forma apreciable. Pero el resultado **depende del arranque en la
+rotación desde 2°**: alrededor del mínimo el objetivo es casi plano, así que la rotación de partida
+que dan los ejes FDI fija parte de la pose final en décimas de milímetro, y el residuo no distingue
+esas poses. La altura sí se recupera. Nada de esto dice cuál de esas poses es la correcta: es
+precisión, no exactitud (§7).
+
+### 9.2 · Caso B (camino clásico, 20 semillas): K1 **no**, E1 sí, navaja descriptiva
+
+| | Resultado | Límite |
+|---|---|---|
+| V0 | máx 2·10⁻¹⁴ mm (la serie es densa: camino clásico) | ≤ 0,01 mm |
+| E1 | máx 2·10⁻¹² mm en los 10 movimientos | ≤ 0,01 mm |
+| Legibilidad | 7 de 20 registros completos desde cero son vuelta (35 %): se lee | ≤ 10 de 20 |
+| K1 | 88 de 560 arranques fallan (15,7 %); máx 2,61 mm; 0 vueltas, 0 sin converger | ≤ 0,1 mm |
+
+- **Arranques, por tamaño** (pares exactos frente al arranque en caliente de la misma semilla; la
+  mediana del desplazamiento es 0 en todos los grupos):
+
+  | Arranque | Fallos | p90 | Máx |
+  |---|---:|---:|---:|
+  | giro 2° | 23 / 160 | 0,20 mm | 2,02 mm |
+  | giro 5° | 27 / 160 | 0,29 mm | 2,02 mm |
+  | traslación 1 mm | 14 / 120 | 0,14 mm | 2,02 mm |
+  | traslación 3 mm | 24 / 120 | 0,37 mm | 2,61 mm |
+  | giro 10° (sin criterio) | 38 / 160 | 0,54 mm | 2,61 mm |
+  | traslación 5 mm (sin criterio) | 25 / 120 | 0,40 mm | 2,61 mm |
+
+  Los fallos se concentran en 8 de las 20 semillas (18, 16, 10 y 0 suman 75 de 88) y en los
+  arranques donde el árbitro eligió el objetivo de 1600 HU (25 de 56) o de 1800 HU (23 de 28),
+  frente a 34 de 361 con 1400 y 6 de 115 con 1200. Es descriptivo: no se pre-registró ninguna
+  lectura por umbral.
+- **Navaja, desde cero (la primaria):** ningún diente supera su suelo de semilla; 6 no lo superan
+  y 7 quedan indeterminados (menos de 10 pares sin vuelta). Movimiento mediano sin X entre 0,52 y
+  1,26 mm, frente a un p95 del suelo de 1,59–2,74 mm. Tasa de vuelta sin X 37,3 % (97 de 260),
+  frente al 35 % de los completos.
+- **Navaja, en caliente desde T₀:** los 13 dientes «no supera» (movimiento mediano 0,78–1,69 mm);
+  vuelta sin X 4 de 260, ninguna en los completos.
+
+**Lo que se dice (§5).** En el caso B el movimiento al quitar un diente **no se puede atribuir al
+diente**: lo tapa lo que el camino clásico se mueve con la submuestra. K1 falla ya en los
+desplazamientos más pequeños (2° y 1 mm), en uno de cada siete arranques y hasta 2,6 mm. Se cumple
+lo previsto en §5 para la navaja; K1 falla antes de lo previsto (ya a 2°, no solo a 5°). Es el
+mismo diagnóstico que la medida 1 ([`consistencia-registro-caso-b.md`](consistencia-registro-caso-b.md)):
+la pose del camino clásico sobre el caso B no está fijada por los datos.
+
+### 9.3 · Lo que queda
+
+- Ninguno de los dos registros es estable frente al arranque al nivel de 0,1 mm. En A la
+  dependencia es de décimas de milímetro y viene de la rotación; en B es de milímetros y viene del
+  muestreo y del árbitro.
+- Esto no cambia la lectura del TRE del caso A
+  ([`registro-caso-a-puntos-preregistro.md`](registro-caso-a-puntos-preregistro.md)), que puntúa R1
+  tal como está; solo añade que arrancar con la rotación inicial girada 2–5° habría dado un R1
+  distinto en hasta 0,4 mm con el mismo residuo.
+- No se ajusta nada a la vista de estos resultados (§6).
